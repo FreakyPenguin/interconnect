@@ -232,3 +232,48 @@ passphrase. Profile tests covered exclusive access, permission/symlink rejection
 and invalid record versions. A CLI check with an intentionally unavailable bus
 failed before profile creation or browser login, with the expected Secret Service
 error. Host keyring write/read and live session restoration remain pending.
+
+
+### User-run persistence result and shutdown regression — 2026-11-13
+
+The user confirmed host Secret Service reachability and successful
+`session-login`. `session-resume` reached the old “Room list available…” message,
+which means the preceding keyring retrieval, SQLite restore, device signing-key
+comparison and authenticated `whoami` check completed. The process then failed to
+exit. This is partial persistence evidence, not a passing end-to-end resume run.
+An agent inspection found the process still performing crypto-store WAL flushes;
+no message contents or credentials were read during diagnosis.
+
+After the correction, rerun `session-resume` using the existing profile once the
+old process has exited. Expected output ends with:
+
+```text
+Fresh room-list sync completed.
+Stopping SDK sync (up to 15 seconds)...
+SDK sync stopped.
+```
+
+The process should then exit. A stop/runtime-cleanup timeout must instead report
+an error and retain the session; report that outcome rather than treating it as a
+pass. The old executable's Ctrl-C listener only covered the initial wait, so it
+may ignore Ctrl-C during shutdown; use SIGTERM to terminate that old process if
+needed. Do not delete the profile or reauthenticate merely to work around this.
+
+The fresh-sync check has a 60-second deadline, SDK stop a 15-second deadline, and
+runtime cleanup a further five-second bound. Deadlines are one-shot timers, not
+idle polling. Unfinished blocking store work at process exit is explicitly
+reported; graceful cleanup and abrupt-restart reliability still require validation.
+
+
+Correction validation: locked binary build, Clippy with warnings denied,
+formatting and all 12 tests passed. New tests cover a two-run SQLite-backed sync
+against a local mock server (both runs require a fresh room-list request), SDK
+stop timeout/completion, and bounded runtime cleanup with blocked blocking work.
+
+The old live process had exited before termination was attempted, so no signal
+was sent. An agent-run `target/debug/spike session-resume` then reused the existing
+user profile, authenticated the saved device, checked the unchanged local signing
+key, completed fresh room-list sync, printed `SDK sync stopped.`, and exited with
+status 0. No browser login, new device or logout was performed. This verifies
+normal live resume and exit for this run; it does not establish the exact cause of
+the original slow shutdown or validate device trust/historical key availability.

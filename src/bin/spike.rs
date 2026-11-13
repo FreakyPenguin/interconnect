@@ -3,9 +3,23 @@ use chatclient::ViewWorker;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
+fn main() -> anyhow::Result<()> {
     chatclient::init_tracing();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let result = runtime.block_on(run());
+    // Tokio's default Drop waits indefinitely for blocking SQLite work. Keep
+    // the CLI's exit bounded, and report incomplete cleanup as a failure.
+    let cleanup = chatclient::shutdown_runtime(runtime, Duration::from_secs(5));
+    if let Err(error) = &cleanup {
+        eprintln!("{error:#}");
+    }
+    result?;
+    cleanup
+}
+
+async fn run() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("idle") => {

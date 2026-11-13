@@ -113,8 +113,8 @@ Login checks keyring availability and persists the random store key before
 opening SSO. It saves the session immediately after login and before sync.
 Closing the CLI preserves the device. Resume restores the same SDK store and
 session, verifies the local device signing key against the saved fingerprint,
-and calls `whoami` to confirm server account/device identity. Cached room-list
-availability alone does not prove a successful resumed network sync.
+and calls `whoami` to confirm server account/device identity. The sync probe waits for a fresh `RoomListService` transition after a successful
+network response; cached room-list availability alone is insufficient.
 
 Network errors retain the saved credentials. There is no silent relogin or
 replacement crypto store. This spike does not request refresh tokens or enable
@@ -132,3 +132,30 @@ using the other client and use a new profile directory. A crash after server
 logout but before tombstone persistence can likewise leave a revoked token in
 the keyring; recovery for that boundary is not yet automated. Live abrupt-exit,
 keyring failure and expired-session scenarios remain unverified.
+
+
+## CLI shutdown correction
+
+A user-run resume restored credentials and reached cached room-list availability,
+but did not exit promptly. The old probe accepted `RoomListLoadingState::Loaded`, which can
+come from SQLite before the newly started sync workers are ready, and then
+awaited `SyncService::stop()` without a deadline. Inspection of the pinned SDK
+shows stop requests use the sync streams' internal channels and await child tasks;
+early shutdown and slow crypto-store work are relevant failure paths. The exact
+SDK-internal cause of the observed hang has not been established. A short,
+metadata-only syscall trace showed ongoing crypto-store WAL flushes.
+
+The probe now requires a fresh `RoomListService` state transition (`SettingUp`,
+`Recovering`, or `Running`), published after a successful sync response. SDK stop
+has a 15-second deadline and handles Ctrl-C, with progress and completion messages.
+The CLI gives Tokio runtime cleanup another five seconds; an overrun is a failure,
+not a successful clean shutdown. Blocking database work cannot be safely cancelled
+by dropping its future. On timeout the CLI exits with incomplete cleanup reported;
+this is a CLI containment measure, not a demonstrated graceful production shutdown.
+The saved credentials are retained. No polling loop was added.
+
+
+The corrected command subsequently completed a live resume against the existing
+profile and exited with status 0. The original process had already exited by the
+time termination was attempted; no signal was sent. Thus the observed incident
+was prolonged shutdown, not a proven permanent deadlock.

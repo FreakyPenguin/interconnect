@@ -122,3 +122,43 @@ mod tests {
         }
     }
 }
+
+/// CLI-only runtime cleanup. A timeout is an error, never successful shutdown.
+/// The process must exit after failure; blocking work cannot be safely cancelled.
+pub fn shutdown_runtime(
+    runtime: tokio::runtime::Runtime,
+    deadline: std::time::Duration,
+) -> anyhow::Result<()> {
+    let (done, received) = std::sync::mpsc::sync_channel(1);
+    std::thread::spawn(move || {
+        drop(runtime);
+        let _ = done.send(());
+    });
+    received.recv_timeout(deadline).map_err(|_| anyhow::anyhow!(
+        "Runtime cleanup did not complete within {deadline:?}; exiting with incomplete cleanup. Saved session retained."
+    ))
+}
+
+#[cfg(test)]
+mod runtime_shutdown_tests {
+    use super::*;
+    #[test]
+    fn blocked_runtime_reports_incomplete_cleanup() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (started, ready) = std::sync::mpsc::sync_channel(1);
+        let (release, wait) = std::sync::mpsc::sync_channel(1);
+        runtime.spawn_blocking(move || {
+            started.send(()).unwrap();
+            let _ = wait.recv();
+        });
+        ready.recv().unwrap();
+        let result = shutdown_runtime(runtime, std::time::Duration::from_millis(10));
+        release.send(()).unwrap();
+        assert!(result.is_err());
+    }
+    #[test]
+    fn idle_runtime_shuts_down_cleanly() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        shutdown_runtime(runtime, std::time::Duration::from_secs(2)).unwrap();
+    }
+}
