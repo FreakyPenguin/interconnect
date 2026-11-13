@@ -4,11 +4,12 @@ Use `- [ ]` for unfinished acceptance checks and `- [x]` only when verified. A m
 
 ## 0. Validate dependencies and timeline design
 
-Resolve architectural uncertainties before building the full UI.
+Resolve architectural uncertainties before building the full UI. Implementation decisions and remaining gaps live in [the milestone 0 ADR](architecture/milestone-0.md); commands and evidence live in [the validation guide](validation/milestone-0.md).
 
-- [ ] Select and pin compatible Iced and Matrix SDK versions; document relevant features and Linux dependencies.
-- [ ] Verify the target homeserver's SSO and sliding-sync capabilities.
+- [x] Select and pin compatible Iced and Matrix SDK versions; document relevant features and Linux dependencies.
+- [x] Verify the target homeserver's SSO and sliding-sync capabilities.
 - [ ] Establish how Iced and the SDK share Tokio execution, task ownership, and cancellation.
+- [ ] Establish reproducible process/thread wakeup measurement and optional application tracing; capture the runtime spike’s idle baseline and verify that cancelled subscriptions leave no recurring application work.
 - [ ] Prototype SDK thread loading, pagination, encrypted replies, live updates, and restoration after restart.
 - [ ] Check SDK support for thread summaries, unread state, receipts, and message navigation; record gaps and implementation decisions.
 - [ ] Confirm initial section grouping rules and whether manual sections are deferred.
