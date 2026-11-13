@@ -43,3 +43,50 @@ Use native-host runs with hardware rendering for representative battery and susp
 - [Rust development container image](https://github.com/devcontainers/images/tree/main/src/rust)
 - [Rust toolchain overrides](https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file)
 - [Iced platform dependencies](https://github.com/iced-rs/iced/blob/master/DEPENDENCIES.md)
+
+## Using the host Secret Service from the container
+
+On a local Linux Docker host, the persistent-session spike can use the desktop
+keyring via the host's session D-Bus socket. A Secret Service provider such as
+GNOME Keyring, a compatible KWallet service, or KeePassXC with Secret Service
+integration enabled must be running on the host. Unlock prompts appear there.
+
+Launch VS Code from the desktop environment with `XDG_RUNTIME_DIR` set. Add the
+following mount to the existing `mounts` array in `.devcontainer/devcontainer.json`
+and merge the environment variable into any existing `containerEnv`:
+
+```json
+"mounts": [
+  "source=verifynet-codex,target=/home/vscode/.codex,type=volume",
+  "source=${localEnv:XDG_RUNTIME_DIR}/bus,target=/tmp/host-session-bus,type=bind"
+],
+"containerEnv": {
+  "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/host-session-bus"
+}
+```
+
+Rebuild the container. Keep `updateRemoteUserUID: true`; the container process UID
+must match the host desktop user's UID for normal D-Bus authentication. This
+assumes the host session socket is `$XDG_RUNTIME_DIR/bus` and Docker is local.
+Check the host's actual `DBUS_SESSION_BUS_ADDRESS` if it uses a different path.
+Recreate the container if the host login session replaces its bus socket.
+
+Check service reachability inside the rebuilt container without reading secrets:
+
+```sh
+dbus-send --session --print-reply --dest=org.freedesktop.secrets \
+  /org/freedesktop/secrets org.freedesktop.DBus.Peer.Ping
+```
+
+A socket mount exposes the **host session bus**, including other services allowed
+by its policy; it is not restricted to Secret Service. Use this with a trusted
+development container. A filtering D-Bus proxy is an option when service-level
+isolation is required. No host keyring files need to be mounted.
+
+The application uses Secret Service over D-Bus with an encrypted service session.
+It does not fall back to plain-text credentials if the service is unavailable.
+This mount is opt-in so headless/remote builds still work. See
+[session validation](validation/milestone-0.md#persistent-session-check).
+
+References: [Secret Service specification](https://specifications.freedesktop.org/secret-service/latest-single/),
+[Dev Container bind mounts](https://code.visualstudio.com/remote/advancedcontainers/add-local-file-mount).

@@ -17,6 +17,10 @@
   },
   "postCreateCommand": "rustc --version && cargo --version && cargo fmt --version && cargo clippy --version",
   "mounts": [
-    "source=verifynet-codex,target=/home/vscode/.codex,type=volume"
+    "source=verifynet-codex,target=/home/vscode/.codex,type=volume",
+    "source=${localEnv:XDG_RUNTIME_DIR}/bus,target=/tmp/host-session-bus,type=bind"
   ],
+  "containerEnv": {
+    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/host-session-bus"
+  }
 }

@@ -88,3 +88,47 @@ An interactive `spike sso` command checks those using a temporary in-memory
 session and logs out afterward. It is not the persistent-session design.
 The user has an account and a second client for later verification/thread checks.
 See the validation guide for the observations and callback forwarding procedure.
+
+## Persistent CLI session design
+
+The `session-login`, `session-resume`, and `session-logout` commands use Linux
+Secret Service (`secret-service` 5.1.0 with Tokio/Rust crypto), plus SDK SQLite
+storage. This replaces the contemplated passphrase-file approach; no such file
+backend was implemented. Container access is opt-in via the host session bus,
+as described in development.md.
+
+One keyring item stores a versioned bundle of homeserver, Matrix session tokens,
+a random 256-bit SDK store passphrase, and the local device signing-key
+fingerprint. Attributes identify the application and canonical profile-directory
+path; attributes are not secret. The bundle is never written to a local JSON
+file. SDK store encryption is enabled via its passphrase API; this is not a claim
+that every SQLite header/metadata byte or every local cache is encrypted.
+
+A private (0700) profile directory contains the SDK store and a process lock.
+Concurrent use of the same profile fails. Profile identity currently depends on
+its canonical path: keep that path stable across container rebuilds. The default
+`.matrix-spike` is ignored by git. Other profile paths must also stay out of git.
+
+Login checks keyring availability and persists the random store key before
+opening SSO. It saves the session immediately after login and before sync.
+Closing the CLI preserves the device. Resume restores the same SDK store and
+session, verifies the local device signing key against the saved fingerprint,
+and calls `whoami` to confirm server account/device identity. Cached room-list
+availability alone does not prove a successful resumed network sync.
+
+Network errors retain the saved credentials. There is no silent relogin or
+replacement crypto store. This spike does not request refresh tokens or enable
+automatic token refresh; expired/revoked sessions are reported and retained for
+explicit handling. Durable refresh-token rotation remains a later requirement.
+Logout revokes the server session first, then writes a logged-out tombstone and
+deletes the keyring item. Network failure preserves credentials for retry. A
+failure after the tombstone can be retried for local cleanup. The SDK store is
+retained; a later login uses a new profile rather than reusing old crypto state.
+
+There is no transaction spanning SSO/device creation and a keyring write. A crash
+in that interval can leave an abandoned device and a reserved profile with no
+saved session. The command refuses to overwrite it: remove any abandoned device
+using the other client and use a new profile directory. A crash after server
+logout but before tombstone persistence can likewise leave a revoked token in
+the keyring; recovery for that boundary is not yet automated. Live abrupt-exit,
+keyring failure and expired-session scenarios remain unverified.

@@ -1,3 +1,4 @@
+pub mod session;
 pub mod sso;
 
 use tokio::{sync::mpsc, task::JoinHandle};

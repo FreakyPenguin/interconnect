@@ -58,7 +58,7 @@ pub async fn check(homeserver: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn initial_sync(client: Client) -> anyhow::Result<()> {
+pub(crate) async fn initial_sync(client: Client) -> anyhow::Result<()> {
     let sync = SyncService::builder(client).build().await?;
     let list = sync.room_list_service().all_rooms().await?;
     let mut loading = list.loading_state();
@@ -69,7 +69,7 @@ async fn initial_sync(client: Client) -> anyhow::Result<()> {
             tokio::select! {
                 state = loading.next() => match state {
                     Some(RoomListLoadingState::Loaded { .. }) => {
-                        println!("Initial room list loaded through SDK native sliding sync.");
+                        println!("Room list available through SDK native sliding sync (may be cached on resume).");
                         return Ok(());
                     }
                     Some(RoomListLoadingState::NotLoaded) => {},

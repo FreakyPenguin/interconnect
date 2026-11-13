@@ -179,3 +179,56 @@ completion was not included in the reported output and remains unconfirmed.
 Device verification, historical key availability, encrypted threads, receipts,
 and restart/session restoration remain unverified. The application's milestone 2
 login UI and keyboard workflow are not completed by this CLI feasibility result.
+
+## Persistent-session check
+
+First expose and unlock the host Secret Service using [the container setup](../development.md#using-the-host-secret-service-from-the-container).
+The command fails before browser login if the service cannot be reached. No
+secrets should be shared in chat or committed to the repository.
+
+```sh
+cargo run --locked --bin spike -- session-login https://matrix.mpi-sws.org
+cargo run --locked --bin spike -- session-resume
+```
+
+Keep localhost:8765 forwarded for the first command. Login creates the private
+`.matrix-spike` directory, stores credentials and the SDK store key in the host
+keyring, synchronizes, and exits **without logout**. The second command must
+restore without opening a browser and print the same authenticated device ID.
+It also checks the local device signing key before using the restored account.
+Device trust and access to historical keys are still separate checks.
+
+Repeat `session-resume` after restarting the container, retaining the same profile
+path, volume contents, and host keyring. An optional profile directory can be
+passed as the final argument to each command; its parent must already exist.
+Never copy just the session token into a fresh store as a substitute for restore.
+
+When finished with a test device, explicitly run:
+
+```sh
+cargo run --locked --bin spike -- session-logout
+```
+
+Successful logout revokes the server session and removes the keyring entry. It
+retains the local SDK store, and a subsequent `session-resume` must fail with no
+saved session. Start future logins in a new profile directory. If logout fails
+because of a network error, the keyring entry remains so it can be retried.
+For an already expired/revoked token or a crash at the logout persistence
+boundary, explicit keyring cleanup may be needed; it is not automated yet.
+
+An interrupted login may leave a reserved profile whose record lacks session
+credentials. Do not overwrite it or reuse its crypto state; inspect/remove any
+abandoned chatclient device in the second client and use a new profile directory.
+
+Live validation remains pending: keyring unlock/save/read, two-process login and
+resume, container restart, logout, network loss, abrupt exit and historical key
+availability. The local SQLite regression test checks store reopen and unchanged
+device signing keys using a fake session; it does not verify live encryption.
+
+Local persistent-session implementation results (2026-11-13): locked binary build,
+formatting, Clippy with warnings denied, and all seven tests passed. The SQLite
+reopen test preserved the device signing key and rejected an incorrect store
+passphrase. Profile tests covered exclusive access, permission/symlink rejection,
+and invalid record versions. A CLI check with an intentionally unavailable bus
+failed before profile creation or browser login, with the expected Secret Service
+error. Host keyring write/read and live session restoration remain pending.
