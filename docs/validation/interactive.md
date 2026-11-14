@@ -183,3 +183,12 @@ Local checks after enabling the feature: locked binary build, all 19 workspace
 tests, formatting, and Clippy with warnings denied passed. `cargo tree --locked -e features -i matrix-sdk-crypto` confirms the feature propagates through
 matrix-sdk and matrix-sdk-base to matrix-sdk-crypto. These checks do not establish
 live historical-key recovery.
+
+
+### User-run historical-key exchange — 2026-11-14
+
+After enabling `automatic-room-key-forwarding`, the user confirmed that historical
+message decryption works. This is user-reported two-client evidence that the
+existing host profile can obtain the needed historical keys through this flow;
+no recovery-key entry or new login was requested. It does not establish recovery
+for every peer client, unavailable key, or unanswered request.

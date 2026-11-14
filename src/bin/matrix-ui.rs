@@ -1,10 +1,26 @@
-use chatclient::connected::{History, Model, Pane, Selection};
+#![recursion_limit = "256"]
+use chatclient::connected::{History, Model, Pane, RetrySend, Selection};
 use iced::{
     Element, Length, Subscription, Task,
     futures::SinkExt,
-    widget::{button, column, container, row, scrollable, text},
+    widget::{button, column, container, row, scrollable, text, text_editor},
 };
+use std::collections::{HashMap, HashSet};
 use tokio::sync::watch;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct DraftKey {
+    room: String,
+    root: Option<String>,
+}
+#[derive(Default)]
+struct Draft {
+    content: text_editor::Content,
+    pending: bool,
+    error: Option<String>,
+}
+
+const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
     profile: String,
@@ -14,6 +30,11 @@ struct App {
     generation: u64,
     closing: bool,
     stopped: bool,
+    drafts: HashMap<DraftKey, Draft>,
+    retrying: HashSet<String>,
+    retry_errors: HashMap<String, String>,
+    pending_ops: usize,
+    composing: bool,
 }
 #[derive(Clone, Debug)]
 enum Message {
@@ -26,6 +47,12 @@ enum Message {
     LoadOlder(u64),
     Close,
     Exit,
+    Edit(DraftKey, text_editor::Action),
+    Send(DraftKey),
+    Sent(DraftKey, Result<(), String>),
+    Retry(RetrySend),
+    Retried(String, Result<(), String>),
+    Composing(bool),
 }
 impl App {
     fn new() -> Self {
@@ -39,10 +66,79 @@ impl App {
             generation: 0,
             closing: false,
             stopped: false,
+            drafts: HashMap::new(),
+            retrying: HashSet::new(),
+            retry_errors: HashMap::new(),
+            pending_ops: 0,
+            composing: false,
         }
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
+            Message::Composing(active) => self.composing = active,
+            Message::Edit(key, action) if !self.closing && !self.stopped => {
+                if (self.draft_key(false).as_ref() == Some(&key)
+                    || self.draft_key(true).as_ref() == Some(&key))
+                    && let Some(draft) = self.drafts.get_mut(&key)
+                    && !draft.pending
+                {
+                    draft.content.perform(action);
+                }
+            }
+            Message::Send(key)
+                if !self.closing
+                    && !self.stopped
+                    && !self.composing
+                    && self.pending_ops < MAX_PENDING_OPERATIONS =>
+            {
+                if let Some(composer) = self.composer_for(&key)
+                    && let Some(draft) = self.drafts.get_mut(&key)
+                    && !draft.pending
+                    && !draft.content.text().trim().is_empty()
+                {
+                    let body = draft.content.text();
+                    draft.pending = true;
+                    draft.error = None;
+                    self.pending_ops += 1;
+                    return Task::perform(composer.send(body), move |result| {
+                        Message::Sent(key.clone(), result)
+                    });
+                }
+            }
+            Message::Sent(key, result) => {
+                self.pending_ops -= 1;
+                if let Some(draft) = self.drafts.get_mut(&key) {
+                    draft.pending = false;
+                    match result {
+                        Ok(()) => {
+                            draft.content = text_editor::Content::new();
+                            draft.error = None;
+                        }
+                        Err(error) => {
+                            draft.error = Some(format!("Could not queue message: {error}"))
+                        }
+                    }
+                }
+            }
+            Message::Retry(retry)
+                if !self.closing && !self.stopped && self.pending_ops < MAX_PENDING_OPERATIONS =>
+            {
+                let id = retry.transaction.clone();
+                if self.retrying.insert(id.clone()) {
+                    self.retry_errors.remove(&id);
+                    self.pending_ops += 1;
+                    return Task::perform(retry.retry(), move |result| {
+                        Message::Retried(id.clone(), result)
+                    });
+                }
+            }
+            Message::Retried(id, result) => {
+                self.pending_ops -= 1;
+                self.retrying.remove(&id);
+                if let Err(error) = result {
+                    self.retry_errors.insert(id, error);
+                }
+            }
             Message::Control(sender) => {
                 sender.send_replace(self.selection.clone());
                 self.control = Some(sender);
@@ -59,22 +155,28 @@ impl App {
                 }
             }
             Message::Close => {
-                if self.stopped {
+                if self.stopped && self.pending_ops == 0 {
                     return iced::exit();
                 }
                 self.closing = true;
-                self.selection.shutdown = true;
+                self.selection.shutdown = self.pending_ops == 0;
                 self.model.status = "Stopping synchronization…".into();
             }
-            Message::Exit => return iced::exit(),
+            Message::Exit => return self.update(Message::Close),
             Message::Room(id) if !self.closing && !self.stopped => {
                 self.generation += 1;
                 self.selection.room = Some((self.generation, id));
                 self.selection.thread = None;
+                self.drafts
+                    .entry(self.draft_key(false).unwrap())
+                    .or_default();
             }
             Message::Thread(id) if !self.closing && !self.stopped => {
                 self.generation += 1;
                 self.selection.thread = Some((self.generation, id));
+                if let Some(key) = self.draft_key(true) {
+                    self.drafts.entry(key).or_default();
+                }
             }
             Message::LoadOlder(generation) if !self.closing && !self.stopped => {
                 if self
@@ -97,6 +199,12 @@ impl App {
             Message::CloseThread => self.selection.thread = None,
             _ => {}
         }
+        if self.closing && self.pending_ops == 0 {
+            if self.stopped {
+                return iced::exit();
+            }
+            self.selection.shutdown = true;
+        }
         if let Some(control) = &self.control {
             // Navigation represents desired state, so superseded selections can be replaced.
             control.send_if_modified(|s| {
@@ -110,10 +218,46 @@ impl App {
         }
         Task::none()
     }
+    fn draft_key(&self, thread: bool) -> Option<DraftKey> {
+        let room = self.selection.room.as_ref()?.1.clone();
+        let root = if thread {
+            Some(self.selection.thread.as_ref()?.1.clone())
+        } else {
+            None
+        };
+        Some(DraftKey { room, root })
+    }
+    fn composer_for(&self, key: &DraftKey) -> Option<chatclient::connected::Composer> {
+        let thread = key.root.is_some();
+        if self.draft_key(thread).as_ref() != Some(key) {
+            return None;
+        }
+        let generation = if thread {
+            self.selection.thread.as_ref()?.0
+        } else {
+            self.selection.room.as_ref()?.0
+        };
+        let pane = if thread {
+            &self.model.thread
+        } else {
+            &self.model.room
+        };
+        current_pane(pane, generation)?.composer.clone()
+    }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
             Subscription::run_with(self.profile.clone(), |profile| connection(profile)),
             iced::window::close_requests().map(|_| Message::Close),
+            iced::event::listen_with(|event, _, _| match event {
+                iced::Event::InputMethod(iced::advanced::input_method::Event::Preedit(text, _)) => {
+                    Some(Message::Composing(!text.is_empty()))
+                }
+                iced::Event::InputMethod(
+                    iced::advanced::input_method::Event::Commit(_)
+                    | iced::advanced::input_method::Event::Closed,
+                ) => Some(Message::Composing(false)),
+                _ => None,
+            }),
         ])
     }
     fn view(&self) -> Element<'_, Message> {
@@ -209,6 +353,20 @@ impl App {
             if !message.send_state.is_empty() {
                 entry = entry.push(text(&message.send_state).size(12));
             }
+            if let Some(retry) = &message.retry {
+                let mut control = button(if self.retrying.contains(&retry.transaction) {
+                    "Retrying…"
+                } else {
+                    "Retry"
+                });
+                if !self.closing && !self.stopped && !self.retrying.contains(&retry.transaction) {
+                    control = control.on_press(Message::Retry(retry.clone()));
+                }
+                entry = entry.push(control);
+                if let Some(error) = self.retry_errors.get(&retry.transaction) {
+                    entry = entry.push(text(error));
+                }
+            }
             if !thread
                 && !self.closing
                 && !self.stopped
@@ -221,11 +379,78 @@ impl App {
         if pane.rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
             messages = messages.push(text("No messages loaded."));
         }
-        content
-            .push(scrollable(messages).height(Length::Fill))
-            .into()
+        content = content.push(scrollable(messages).height(Length::Fill));
+        if let Some(key) = self.draft_key(thread)
+            && let Some(draft) = self.drafts.get(&key)
+        {
+            let target = if thread {
+                format!(
+                    "Reply in thread · {}",
+                    self.model
+                        .rooms
+                        .iter()
+                        .find(|r| r.id == key.room)
+                        .map(|r| r.name.as_str())
+                        .unwrap_or(&key.room)
+                )
+            } else {
+                format!(
+                    "Message room · {}",
+                    self.model
+                        .rooms
+                        .iter()
+                        .find(|r| r.id == key.room)
+                        .map(|r| r.name.as_str())
+                        .unwrap_or(&key.room)
+                )
+            };
+            let edit_key = key.clone();
+            let send_key = key.clone();
+            let composing = self.composing;
+            let mut editor = text_editor(&draft.content)
+                .height(110)
+                .placeholder("Write a message…");
+            if !self.closing && !self.stopped && !draft.pending {
+                editor = editor
+                    .on_action(move |action| Message::Edit(edit_key.clone(), action))
+                    .key_binding(move |press| composer_binding(press, composing, &send_key));
+            }
+            let mut send = button(if draft.pending { "Queueing…" } else { "Send" });
+            if !self.closing
+                && !self.stopped
+                && !self.composing
+                && !draft.pending
+                && self.pending_ops < MAX_PENDING_OPERATIONS
+                && pane.composer.is_some()
+                && !draft.content.text().trim().is_empty()
+            {
+                send = send.on_press(Message::Send(key));
+            }
+            content = content
+                .push(text(target).size(14))
+                .push(editor)
+                .push(row![send, text("Enter: new line · Ctrl+Enter: send").size(12)].spacing(8));
+            if let Some(error) = &draft.error {
+                content = content.push(text(error));
+            }
+        }
+        content.into()
     }
 }
+fn composer_binding(
+    press: text_editor::KeyPress,
+    composing: bool,
+    key: &DraftKey,
+) -> Option<text_editor::Binding<Message>> {
+    if matches!(press.status, text_editor::Status::Focused { .. })
+        && press.key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter)
+        && press.modifiers == iced::keyboard::Modifiers::CTRL
+    {
+        return (!composing).then(|| text_editor::Binding::Custom(Message::Send(key.clone())));
+    }
+    text_editor::Binding::from_key_press(press)
+}
+
 fn current_pane(snapshot: &Option<Pane>, generation: u64) -> Option<&Pane> {
     snapshot.as_ref().filter(|p| p.generation == generation)
 }
@@ -271,6 +496,81 @@ fn main() -> iced::Result {
 mod tests {
     use super::*;
     #[test]
+    fn drafts_survive_navigation_and_send_results_apply_to_original_target() {
+        let mut app = App::new();
+        let _ = app.update(Message::Room("!one:example.org".into()));
+        let room_key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&room_key).unwrap().content =
+            text_editor::Content::with_text("room draft");
+        let _ = app.update(Message::Thread("$thread".into()));
+        let thread_key = app.draft_key(true).unwrap();
+        app.drafts.get_mut(&thread_key).unwrap().content =
+            text_editor::Content::with_text("thread draft");
+        let _ = app.update(Message::CloseThread);
+        let _ = app.update(Message::Thread("$thread".into()));
+        assert_eq!(
+            app.drafts[&thread_key].content.text().trim_end(),
+            "thread draft"
+        );
+        app.drafts.get_mut(&room_key).unwrap().pending = true;
+        app.pending_ops = 1;
+        let _ = app.update(Message::Room("!two:example.org".into()));
+        let second = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&second).unwrap().content =
+            text_editor::Content::with_text("unrelated draft");
+        let _ = app.update(Message::Sent(room_key.clone(), Err("queue failed".into())));
+        assert_eq!(
+            app.drafts[&room_key].content.text().trim_end(),
+            "room draft"
+        );
+        assert!(app.drafts[&room_key].error.is_some());
+        app.drafts.get_mut(&room_key).unwrap().pending = true;
+        app.pending_ops = 1;
+        let _ = app.update(Message::Close);
+        assert!(
+            !app.selection.shutdown,
+            "wait for queue admission before stopping sync"
+        );
+        let _ = app.update(Message::Sent(room_key.clone(), Ok(())));
+        assert!(app.selection.shutdown);
+        assert!(app.drafts[&room_key].content.text().trim().is_empty());
+        assert_eq!(
+            app.drafts[&second].content.text().trim_end(),
+            "unrelated draft"
+        );
+    }
+
+    #[test]
+    fn composer_shortcuts_respect_focus_newlines_and_ime() {
+        let key = DraftKey {
+            room: "!one:example.org".into(),
+            root: None,
+        };
+        let press = text_editor::KeyPress {
+            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::Enter),
+            modifiers: iced::keyboard::Modifiers::CTRL,
+            text: None,
+            status: text_editor::Status::Focused { is_hovered: false },
+        };
+        assert!(matches!(
+            composer_binding(press.clone(), false, &key),
+            Some(text_editor::Binding::Custom(Message::Send(_)))
+        ));
+        assert!(composer_binding(press.clone(), true, &key).is_none());
+        let mut unfocused = press.clone();
+        unfocused.status = text_editor::Status::Active;
+        assert!(composer_binding(unfocused, false, &key).is_none());
+        let mut plain = press;
+        plain.modifiers = iced::keyboard::Modifiers::empty();
+        assert!(matches!(
+            composer_binding(plain, false, &key),
+            Some(text_editor::Binding::Enter)
+        ));
+    }
+
+    #[test]
     fn stale_snapshots_are_rejected_after_navigation() {
         let snapshot = Some(Pane {
             generation: 1,
@@ -278,6 +578,7 @@ mod tests {
             error: None,
             history: History::Ready,
             load_older: None,
+            composer: None,
         });
         assert!(current_pane(&snapshot, 1).is_some());
         assert!(current_pane(&snapshot, 2).is_none());
@@ -294,6 +595,7 @@ mod tests {
             error: None,
             history: History::Ready,
             load_older: Some(sender),
+            composer: None,
         });
         let _ = app.update(Message::LoadOlder(generation + 1));
         assert!(requests.try_recv().is_err());

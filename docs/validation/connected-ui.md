@@ -4,9 +4,9 @@ The `matrix-ui` binary connects Iced to the existing persistent session. It rest
 credentials without browser login, lists joined rooms, and displays SDK room and
 thread timelines. Opening a room explicitly requests an initial history page of
 20 events through SDK back-pagination while continuing to display live updates.
-It is read-only: no composer, thread-pagination controls, verification
-UI, recovery, receipts, or automatic read marking are implemented. Use an already
-verified profile with access to the test room's keys.
+Room and thread text composers are implemented. Thread-pagination controls,
+verification UI, recovery UI, receipts, and automatic read marking remain pending.
+Use an already verified profile with access to the test room's keys.
 
 Close `session-live` or any other process using the profile first. Keep the host
 Secret Service available and unlocked, and provide a Wayland display as described
@@ -125,3 +125,77 @@ retry. Thread pagination controls remain outside this change.
 The mock-server integration covers an initial history page, a hidden-thread-reply
 page, and an older visible message on a subsequent page, followed by the end of
 history. UI tests reject stale-room clicks and immediate duplicate requests.
+
+
+## GUI text sending — 2026-11-14
+
+The user confirmed historical decryption after enabling SDK room-key requests;
+see [the key-exchange result](interactive.md#user-run-historical-key-exchange--2026-11-14).
+
+Each pane has its own multiline composer and a target label. Enter inserts a
+newline, Ctrl+Enter sends from the focused composer, and **Send** is also available.
+IME preedit state suppresses sending; test this with the host input method before
+claiming full IME acceptance. Opening panes does not focus the editor automatically.
+The stock editor may blink its caret while focused; the earlier empty-window idle
+baseline does not describe an actively focused editor.
+
+Drafts are retained separately per room and per thread across navigation and pane
+closure, in memory only. They are not saved across process restarts. While the SDK
+accepts a submission into its persistent send queue, that draft is temporarily
+locked. Queue acceptance clears only that draft; an admission error preserves it.
+Subsequent server delivery is shown by the timeline's **Pending**, **Sent**, or
+**Failed** state. A failed local echo offers **Retry**, which reuses its existing
+SDK transaction and resumes the room's queue (including other waiting messages).
+It does not create another message from the text.
+
+Finite Iced tasks own their captured timeline/queue handles until admission or
+retry completes, even if the view closes. At most eight such operations may be
+outstanding. Their results arrive as individual Iced messages, not replaceable
+snapshot updates. Window closure waits for those operations before asking the
+session to stop; queued network sends retain the SDK's persistence behavior.
+Total shutdown is still subject to the previously documented database/runtime
+cleanup limitations.
+
+### Two-client acceptance (partially verified)
+
+1. Send a multiline room message; confirm it appears once in the other client,
+   with no thread relationship. Check Pending then Sent locally.
+2. Open a known thread, send a reply, and confirm it belongs to that thread in the
+   other client. The room composer must still create an ordinary room message.
+3. Write different room/thread drafts. Switch rooms and close/reopen the thread;
+   confirm each draft returns to its own target.
+4. Send and immediately navigate away. Confirm the message keeps its original
+   target and the acknowledgement does not clear a different draft.
+5. Exercise Enter, Shift+Enter, Ctrl+Enter, and the active IME's composition and
+   confirmation keys. No send should occur during composition or in an unfocused
+   editor; ordinary editing/paste should work.
+6. With connectivity disabled, send a test message and allow the SDK to report a
+   failure (it may retry first). Restore connectivity and use Retry. Verify only
+   one event is created. Stop the UI while a message is pending, restart, and
+   inspect the existing queue before attempting any manual resend.
+
+The local mock test exercises real SDK encryption and room/thread relationship
+construction, an HTTP send failure, and retry using the same transaction URL.
+It decrypts captured test ciphertext to verify the intended message target.
+Live-server delivery, desktop composition behavior, and offline/restart acceptance
+remain separate checks.
+
+
+Local sending checks: all 21 workspace tests passed, including real SDK encrypted
+queue/retry checks and draft/shortcut tests. Formatting, locked binary build, and
+Clippy with warnings denied passed. This does not replace the pending desktop and
+two-client acceptance above.
+
+
+### User-run GUI sending — 2026-11-14
+
+The user reports that sending messages in both the room and thread composers
+works. This is user-reported live evidence for basic GUI room-message and
+thread-reply sending, following the earlier confirmations of message loading
+and historical decryption. No message contents or room identifiers are recorded.
+
+Multiline formatting, explicit Pending/Sent transitions, duplicate checks,
+draft retention, navigation during queue admission, keyboard/IME behavior,
+failed-send retry, and offline/restart scenarios were not specifically confirmed.
+Those acceptance cases remain pending; this result does not complete the full
+messaging milestone or ordinary-reply support.

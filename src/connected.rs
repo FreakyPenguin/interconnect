@@ -6,7 +6,7 @@ use iced::futures::{StreamExt, stream::BoxStream};
 use matrix_sdk::Client;
 use matrix_sdk_ui::{
     sync_service::{State, SyncService},
-    timeline::{Timeline, TimelineBuilder, TimelineFocus},
+    timeline::{EventSendState, Timeline, TimelineBuilder, TimelineFocus},
 };
 use tokio::sync::{mpsc, watch};
 
@@ -29,6 +29,46 @@ pub struct MessageRow {
     pub sender: String,
     pub body: String,
     pub send_state: String,
+    pub retry: Option<RetrySend>,
+}
+
+/// Captured send target; survives navigation until queue admission completes.
+#[derive(Clone)]
+pub struct Composer(Arc<Timeline>);
+impl std::fmt::Debug for Composer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Composer")
+    }
+}
+impl Composer {
+    pub async fn send(self, body: String) -> Result<(), String> {
+        if body.trim().is_empty() {
+            return Err("Message is empty".into());
+        }
+        Box::pin(
+            self.0.send(
+                matrix_sdk::ruma::events::room::message::RoomMessageEventContent::text_plain(body)
+                    .into(),
+            ),
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct RetrySend {
+    pub transaction: String,
+    handle: matrix_sdk::send_queue::SendHandle,
+    queue: matrix_sdk::send_queue::RoomSendQueue,
+}
+impl RetrySend {
+    pub async fn retry(self) -> Result<(), String> {
+        self.handle.unwedge().await.map_err(|e| e.to_string())?;
+        self.queue.set_enabled(true);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -46,6 +86,7 @@ pub struct Pane {
     pub error: Option<String>,
     pub history: History,
     pub load_older: Option<mpsc::Sender<()>>,
+    pub composer: Option<Composer>,
 }
 
 #[derive(Clone, Debug)]
@@ -244,6 +285,7 @@ async fn view(
         let timeline = tokio::time::timeout(Duration::from_secs(60), setup)
             .await
             .context("Timeline loading timed out")??;
+        let timeline = Arc::new(timeline);
         let (_, updates) = timeline.subscribe().await;
         let mut updates: BoxStream<'_, _> = Box::pin(updates);
         let (load_older, mut requests) = mpsc::channel(1);
@@ -279,6 +321,7 @@ async fn view(
                 error: Some(format!("{error:#}")),
                 history: History::Ready,
                 load_older: None,
+                composer: None,
             });
         });
     }
@@ -287,7 +330,7 @@ async fn view(
 // Owned by the view: room switches and shutdown cancel an in-flight page.
 // Live snapshots continue during each fetch, including retries.
 async fn load_room_history(
-    timeline: &Timeline,
+    timeline: &Arc<Timeline>,
     generation: u64,
     updates: &mut (impl iced::futures::Stream + Unpin),
     state: &watch::Sender<Model>,
@@ -321,7 +364,7 @@ async fn load_room_history(
 }
 
 async fn publish(
-    timeline: &Timeline,
+    timeline: &Arc<Timeline>,
     generation: u64,
     thread: bool,
     history: &History,
@@ -345,10 +388,28 @@ async fn publish(
                         .map(|m| m.body().to_owned())
                         .unwrap_or_else(|| "[non-text event]".into())
                 },
-                send_state: event
-                    .send_state()
-                    .map(|s| format!("{s:?}"))
-                    .unwrap_or_default(),
+                send_state: match event.send_state() {
+                    Some(EventSendState::NotSentYet { .. }) => "Pending".into(),
+                    Some(EventSendState::SendingFailed { error, .. }) => format!("Failed: {error}"),
+                    Some(EventSendState::Sent { .. }) => "Sent".into(),
+                    None if event.sender() == timeline.room().own_user_id() => "Sent".into(),
+                    None => String::new(),
+                },
+                retry: if matches!(
+                    event.send_state(),
+                    Some(EventSendState::SendingFailed { .. })
+                ) {
+                    event
+                        .local_echo_send_handle()
+                        .zip(event.transaction_id())
+                        .map(|(handle, id)| RetrySend {
+                            transaction: id.to_string(),
+                            handle,
+                            queue: timeline.room().send_queue(),
+                        })
+                } else {
+                    None
+                },
             }
         })
         .collect();
@@ -359,6 +420,7 @@ async fn publish(
             rows: Arc::new(rows),
             error: None,
             history: history.clone(),
+            composer: Some(Composer(timeline.clone())),
             load_older: (!thread && matches!(history, History::Ready | History::Failed(_)))
                 .then(|| load_older.clone()),
         });
@@ -479,6 +541,25 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[]})))
             .mount(&server)
             .await;
+        Mock::given(method("GET")).and(path_regex(".*/members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[{"type":"m.room.member","state_key":"@test:example.org","sender":"@test:example.org","event_id":"$member","origin_server_ts":0,"content":{"membership":"join"}}]})))
+            .mount(&server).await;
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let send_attempts = attempts.clone();
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/send/m.room.encrypted/.*"))
+            .respond_with(move |_: &wiremock::Request| {
+                let attempt = send_attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if attempt == 0 {
+                    ResponseTemplate::new(403)
+                        .set_body_json(json!({"errcode":"M_FORBIDDEN","error":"test send failure"}))
+                } else {
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"event_id":format!("$sent{attempt}")}))
+                }
+            })
+            .mount(&server)
+            .await;
         let client = Client::builder()
             .homeserver_url(server.uri())
             .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
@@ -573,7 +654,112 @@ mod tests {
             .unwrap()
             .unwrap()
             .clone();
-            assert!(model.thread.unwrap().error.is_none());
+            let thread_pane = model.thread.unwrap();
+            assert!(thread_pane.error.is_none());
+            if generation == 1 {
+                let room_composer = snapshots
+                    .borrow()
+                    .room
+                    .as_ref()
+                    .unwrap()
+                    .composer
+                    .clone()
+                    .unwrap();
+                room_composer
+                    .send("room send fixture".into())
+                    .await
+                    .unwrap();
+                let failed = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    snapshots.wait_for(|s| {
+                        s.room.as_ref().is_some_and(|p| {
+                            p.rows
+                                .iter()
+                                .any(|r| r.body == "room send fixture" && r.retry.is_some())
+                        })
+                    }),
+                )
+                .await
+                .unwrap()
+                .unwrap()
+                .clone();
+                let retry = failed
+                    .room
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .find_map(|r| r.retry.clone())
+                    .unwrap();
+                retry.retry().await.unwrap();
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    snapshots.wait_for(|s| {
+                        s.room.as_ref().is_some_and(|p| {
+                            p.rows
+                                .iter()
+                                .any(|r| r.body == "room send fixture" && r.send_state == "Sent")
+                        })
+                    }),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                let thread_composer = thread_pane.composer.unwrap();
+                let decrypt_room = thread_composer.0.room().clone();
+                thread_composer
+                    .send("thread send fixture".into())
+                    .await
+                    .unwrap();
+                tokio::time::timeout(
+                    Duration::from_secs(10),
+                    snapshots.wait_for(|s| {
+                        s.thread.as_ref().is_some_and(|p| {
+                            p.rows
+                                .iter()
+                                .any(|r| r.body == "thread send fixture" && r.send_state == "Sent")
+                        })
+                    }),
+                )
+                .await
+                .unwrap()
+                .unwrap();
+                let requests = server.received_requests().await.unwrap();
+                let sends: Vec<_> = requests
+                    .iter()
+                    .filter(|r| r.url.path().contains("/send/m.room.encrypted/"))
+                    .collect();
+                assert_eq!(
+                    sends.len(),
+                    3,
+                    "failed send, same-transaction retry, then thread send"
+                );
+                assert_eq!(sends[0].url.path(), sends[1].url.path());
+                for (request, threaded) in [(sends[1], false), (sends[2], true)] {
+                    let content: serde_json::Value = request.body_json().unwrap();
+                    assert!(
+                        content.get("body").is_none(),
+                        "message must be encrypted on the wire"
+                    );
+                    let event = matrix_sdk::ruma::serde::Raw::from_json_string(json!({"type":"m.room.encrypted", "event_id":if threaded {"$sent2"} else {"$sent1"}, "sender":"@test:example.org", "origin_server_ts":2, "content":content}).to_string()).unwrap();
+                    let decrypted = decrypt_room.decrypt_event(&event, None).await.unwrap();
+                    let json: serde_json::Value =
+                        serde_json::from_str(decrypted.raw().json().get()).unwrap();
+                    assert_eq!(
+                        json["content"]["body"],
+                        if threaded {
+                            "thread send fixture"
+                        } else {
+                            "room send fixture"
+                        }
+                    );
+                    if threaded {
+                        assert_eq!(json["content"]["m.relates_to"]["rel_type"], "m.thread");
+                        assert_eq!(json["content"]["m.relates_to"]["event_id"], "$root");
+                    } else {
+                        assert!(json["content"].get("m.relates_to").is_none());
+                    }
+                }
+            }
             navigation.send_modify(|s| s.thread = None);
             let model = tokio::time::timeout(
                 Duration::from_secs(5),

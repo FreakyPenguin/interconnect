@@ -2,8 +2,9 @@
 
 Use `- [ ]` for planned work and `- [x]` for completed, verified work. These are product goals; implementation order and acceptance checks live in [milestones.md](milestones.md). No features are marked complete yet. The CLI feasibility harness has verified device verification, encrypted room/thread send and receive, thread pagination, closed-thread updates, and decryption after restart; see [the validation record](validation/interactive.md). These results do not complete the corresponding application UI workflows.
 
-The read-only `matrix-ui` prototype now connects the saved session to Iced room
-and thread views. [Connected UI validation](validation/connected-ui.md) records
+The `matrix-ui` prototype now connects the saved session to Iced room
+and thread views with text composers, draft retention across navigation, and SDK
+send-state/retry controls. [Connected UI validation](validation/connected-ui.md) records
 local integration checks and the pending desktop acceptance steps.
 
 ## Platform and architecture

@@ -59,6 +59,10 @@ Exit evidence: navigate a representative account with nested spaces and shared r
 
 Threads are required for the first usable release, not a later enhancement.
 
+The user has confirmed basic GUI room and thread sending; see the
+[GUI validation record](validation/connected-ui.md#user-run-gui-sending--2026-11-14).
+The broader acceptance checks below retain their unverified requirements.
+
 - [ ] Display and paginate the encrypted room timeline.
 - [ ] Display thread summaries and open a dedicated thread pane.
 - [ ] Paginate thread replies and receive live updates without duplicates or ordering errors.

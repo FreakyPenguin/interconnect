@@ -246,3 +246,25 @@ key. Our SDK `EncryptionSettings` currently uses the default `Manual` backup
 strategy, so automatic backup downloads are not configured. That route is not
 changed here. Peer support and successful receipt of historical keys still need
 live validation; enabling the feature alone is not evidence of recovery.
+
+
+## GUI sending — 2026-11-14
+
+Room and thread panes expose captured SDK timeline handles for finite queue
+admission operations. Iced `Task` completions carry individual results; these are
+not coalesced through the snapshot channel. Drafts are keyed by room and optional
+thread root, retained across navigation in memory, and cleared only on successful
+queue admission. At most eight admission/retry operations can be outstanding.
+Window closure waits for them before stopping sync. A captured handle may briefly
+retain its timeline after navigation until the operation finishes.
+
+SDK local echoes supply Pending/Sent/Failed states. Retry calls the original
+`SendHandle::unwedge` and enables that room's send queue, preserving the transaction
+ID rather than calling send again. A mock test verifies encrypted payloads, room
+versus thread relations, and the unchanged transaction URL on retry. Desktop and
+live-server acceptance are recorded in the connected UI guide.
+
+Iced's `advanced` feature exposes input-method events for composer preedit tracking.
+The multiline editor preserves normal Enter behavior; focused Ctrl+Enter sends only
+outside composition. No global send-key subscription is used. Stock editor caret
+blinking means focused-editor idle measurements must be recorded separately.
