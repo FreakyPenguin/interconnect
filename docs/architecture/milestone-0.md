@@ -15,8 +15,9 @@ representative desktop battery measurements remain milestone 1 work; this is not
 a final renderer decision. No X11 fallback is enabled in this spike.
 Matrix SDK enables `e2e-encryption`, `sqlite`, `rustls-aws-lc-rs`, and `sso-login` explicitly.
 The SSO feature enables the SDK-managed localhost callback server.
-The UI SDK has defaults disabled and shares that TLS selection. The default
-`automatic-room-key-forwarding` feature is not enabled pending trust-flow design.
+The UI SDK has defaults disabled and shares that TLS selection. The `automatic-room-key-forwarding` feature is explicitly enabled. It controls
+both automatic missing-key requests and answering incoming room-key requests
+under the SDK trust policy; see the historical-key follow-up below.
 
 The container supplies C/C++, CMake, pkg-config, Wayland, xkbcommon, fonts, and
 SQLite build support. TLS uses Rustls/AWS-LC rather than OpenSSL. Existing GPU,
@@ -213,3 +214,35 @@ navigation. Desktop encrypted delivery and idle/lifecycle measurements remain
 pending. See [the connected UI procedure](../validation/connected-ui.md) for scope,
 shutdown limitations, and acceptance steps. The original `runtime-ui` probe remains
 available as the synthetic comparison baseline.
+
+
+## Historical key requests — 2026-11-14
+
+After pagination exposed pre-login events, the new host device could not decrypt
+them. Inspection of the pinned 0.19.1 sources and `cargo tree -e features` found
+that our `default-features = false` configuration omitted
+`automatic-room-key-forwarding`. Despite its name this feature also gates the
+creation of outgoing requests after missing-key/unknown-message-index errors.
+The feature is now enabled explicitly for both CLI and GUI.
+
+In `matrix-sdk-crypto/src/machine/mod.rs`, `decrypt_room_event` queues a key request
+on those failures only with this feature. In `gossiping/machine.rs`,
+`should_request_key` requires at least one verified own device and suppresses
+requests already recorded for the session. Requests target our own account's
+devices. `receive_supported_keys` accepts a forwarded key only for a matching
+request and `should_accept_forward` requires a verified device on our account.
+The SDK event-cache redecryptor observes received keys and retries loaded events.
+No custom crypto, polling, automatic verification, or trust bypass was added.
+
+The same feature enables outgoing key forwarding: the SDK can share its earliest
+known session with a verified own device. For other users' devices, its policy
+requires that the outbound session was originally shared with that device and
+restricts the shared message index accordingly. This is not unrestricted key
+sharing. See `GossipMachine::should_share_key` in the pinned dependency.
+
+A second, distinct route is secret sharing after verification: the peer can send
+the backup recovery secret via `m.secret.send`, without user entry of a recovery
+key. Our SDK `EncryptionSettings` currently uses the default `Manual` backup
+strategy, so automatic backup downloads are not configured. That route is not
+changed here. Peer support and successful receipt of historical keys still need
+live validation; enabling the feature alone is not evidence of recovery.

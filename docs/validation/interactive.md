@@ -154,3 +154,32 @@ message navigation, historical keys unavailable to the existing device, and
 broader cache/lifecycle stress cases. Exact page counts, event counts and raw
 traces were not supplied; these are manual scenario results, not an exhaustive
 ordering/deduplication proof. No private room IDs or message contents are needed.
+
+
+## Historical room-key exchange — 2026-11-14
+
+Both binaries now enable the pinned SDK's `automatic-room-key-forwarding` feature,
+which also enables automatic missing-key requests. Previously it was compiled out.
+
+Keep the trusted client that can decrypt the old messages online. Restart the
+updated `session-live` with the existing profile (do not log in again). Run
+`devices` and ensure the trusted peer is reported as verified. If necessary,
+complete `verify DEVICE_ID` and the SAS comparison before opening the room.
+Then open the encrypted room and use `page-room` / `show-oldest` to reach older
+undecryptable events. Leave both clients syncing and check whether those entries
+become readable. The GUI follows the same path when opening/loading older history.
+
+Report only whether the peer is verified and whether older entries decrypt; no
+keys or message contents are needed. The peer must hold keys covering the old
+message indices and support answering requests. The SDK deduplicates already-sent
+requests, so reopening a view is not a guaranteed explicit re-request after an
+unanswered attempt. Request retries/diagnostic controls remain future work.
+
+Compilation and the feature graph verify that requests are enabled; actual key
+exchange and recovery remain pending two-client validation. No recovery-key entry
+or backup creation was added by this change.
+
+Local checks after enabling the feature: locked binary build, all 19 workspace
+tests, formatting, and Clippy with warnings denied passed. `cargo tree --locked -e features -i matrix-sdk-crypto` confirms the feature propagates through
+matrix-sdk and matrix-sdk-base to matrix-sdk-crypto. These checks do not establish
+live historical-key recovery.
