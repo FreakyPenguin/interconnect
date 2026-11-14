@@ -641,6 +641,7 @@ dependencies = [
  "anyhow",
  "iced",
  "matrix-sdk",
+ "matrix-sdk-common",
  "matrix-sdk-ui",
  "rand 0.9.5",
  "secret-service",

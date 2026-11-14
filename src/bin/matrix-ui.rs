@@ -74,6 +74,7 @@ impl App {
         }
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        chatclient::diagnostics::update();
         match message {
             Message::Composing(active) => self.composing = active,
             Message::Edit(key, action) if !self.closing && !self.stopped => {
@@ -248,6 +249,19 @@ impl App {
         Subscription::batch([
             Subscription::run_with(self.profile.clone(), |profile| connection(profile)),
             iced::window::close_requests().map(|_| Message::Close),
+            if chatclient::diagnostics::enabled() {
+                iced::event::listen_raw(|event, _, _| {
+                    if matches!(
+                        event,
+                        iced::Event::Window(iced::window::Event::RedrawRequested(_))
+                    ) {
+                        chatclient::diagnostics::redraw();
+                    }
+                    None
+                })
+            } else {
+                Subscription::none()
+            },
             iced::event::listen_with(|event, _, _| match event {
                 iced::Event::InputMethod(iced::advanced::input_method::Event::Preedit(text, _)) => {
                     Some(Message::Composing(!text.is_empty()))
@@ -463,6 +477,7 @@ fn connection(profile: &str) -> impl iced::futures::Stream<Item = Message> + use
         if output.send(Message::Control(control)).await.is_err() {
             return;
         }
+        let diagnostics = state.borrow().diagnostics.clone();
         let backend = chatclient::connected::run(profile, selection, state);
         let result = {
             let forward = async {
@@ -478,6 +493,7 @@ fn connection(profile: &str) -> impl iced::futures::Stream<Item = Message> + use
             tokio::select! {
                 result = &mut backend => result.map_err(|e| format!("{e:#}")),
                 _ = &mut forward => unreachable!(),
+                _ = diagnostics.reports() => unreachable!(),
             }
         };
         let _ = output.send(Message::Stopped(result)).await;

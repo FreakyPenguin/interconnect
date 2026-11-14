@@ -70,7 +70,8 @@ absence of app timers is not evidence of zero SDK/network wakeups or redraws.
 - A slow UI cannot block the backend on snapshot delivery. Snapshot delivery is
   independent of sync stop and view cancellation. This transport is for replaceable
   state only; future send commands/results will need separate delivery semantics.
-- Restoration retains the exclusive profile lock through sync shutdown and shares
+- Persistent client construction retains the exclusive profile lock until process
+  exit, covering late GUI handles and runtime cleanup, and shares
   the CLI's device-key and server-identity checks. SDK stop has a 15-second bound.
   The GUI owns one Tokio runtime and lends its handle to Iced. After UI teardown,
   runtime cleanup has a five-second bound and reports incomplete cleanup on timeout.
@@ -281,3 +282,49 @@ Local recovery checks: all 26 workspace tests, formatting, Clippy with warnings
 denied, and locked binary build passed. The HTTP-503 outage/recovery regression
 passed; a separate HTTP-401 `M_UNKNOWN_TOKEN` test confirms that revoked sessions
 are reported as requiring sign-in rather than entering endless network recovery.
+
+### User-run Wi-Fi recovery — 2026-11-14
+
+The user confirmed that the Wi-Fi loss/reconnection correction works. This is
+user-reported live evidence that the UI remains usable and can resume operation
+after connectivity returns, without requiring an application restart.
+
+The confirmation does not separately establish failed-send deduplication, shutdown
+while offline, repeated suspend/resume, or startup without connectivity. Those
+checks retain their existing validation status.
+
+
+### Lifecycle and idle-resource follow-up — 2026-11-14
+
+See [idle resource measurements](idle-resources.md) for the 100-cycle SDK timeline
+ownership check, opt-in diagnostics, and host visible/hidden CPU, memory and
+redraw captures. No stale timeline ownership was observed in the fixture. Hidden
+windows delivered zero redraws in the sampled intervals; background CPU and
+crypto-store flush activity were investigated further. After tracefs permissions
+were corrected, two visible/hidden room-list capture pairs measured about 170 client scheduler wakeups/s with zero redraws or UI
+updates. Background CPU remained about 3.5–3.6% of one core. Subsequent CPU
+stacks attribute 70.8% of samples to crypto lease/lock work;
+`sched_waking` stacks show worker handoffs and filesystem/flush completions.
+The SDK lease-renewal path is the main optimization target, with profile-guard
+lifetime auditing required before a single-process configuration experiment.
+See the linked report for methodology and limits.
+
+
+### Single-process store fix — 2026-11-14
+
+Persistent clients now use SDK `SingleProcess` store mode, protected by the OS
+profile lock retained until process exit. Late GUI handles and runtime-cleanup
+timeouts cannot release that lock early. Reopening a used profile in the same
+process is deliberately unsupported; restart the application. SQLite durability
+and existing session/device keys are unchanged.
+
+All 27 regular tests, the 100-cycle navigation stress test, Clippy, formatting,
+and GUI build passed. The subprocess regression verifies exclusion through late
+SDK handles and cleanup timeout, followed by acquisition after owner exit.
+SDK outage/reconnect and encrypted sending fixtures run in the new mode.
+
+The host A/B check reduced quiet idle scheduler wakeups from approximately 170/s
+to 1.6/s, with CPU dropping from 3.6–3.8% to 0.17% of one core. Separate three-second
+traces found 51 crypto-store flushes before and none after. See
+[the measurement report](idle-resources.md#single-process-fix-and-ab-check--2026-11-14)
+for capture conditions and limits. No live messages were sent during this check.

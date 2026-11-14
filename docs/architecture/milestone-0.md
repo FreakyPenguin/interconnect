@@ -302,3 +302,35 @@ observed separately through session-change notifications and remains terminal.
 Failed send queues retain explicit Retry semantics after connectivity returns.
 Full offline startup is still blocked by the restoration identity check and is
 not claimed by this change.
+
+
+## Single-process store ownership — 2026-11-14
+
+Persistent session clients now use SDK `CrossProcessLockConfig::SingleProcess`.
+The shared builder in `session.rs` covers persistent login, CLI resume/live/logout,
+and GUI restoration. Capability discovery and ephemeral clients do not share the
+persistent store. The pinned `matrix-sdk-common` dependency exposes this SDK
+configuration type; no dependency version changed.
+
+Before opening SQLite, the builder retains a duplicate of the already-locked
+profile file descriptor in a process-lifetime registry. The session still owns
+its profile, but dropping that owner cannot release the last lock descriptor.
+This covers GUI timelines/composers, pending operations, errors/cancellation,
+and runtime-cleanup timeout paths without relying on every SDK clone carrying an
+application guard. The kernel releases the lock at process exit. No periodic
+application task or SDK lease write is needed for this exclusive ownership.
+
+This deliberately supports one account per process: once a persistent client
+has been constructed (or construction attempted), that profile cannot be
+reopened by another session until the process exits. Future in-process account
+switching needs an explicit ownership/drain design before relaxing retention.
+Other programs opening this store must honor the same profile lock; shared-store
+multiprocess access is not supported. SQLite durability settings are unchanged.
+
+A real subprocess regression creates a SQLite client, drops its session/profile
+owner while retaining a late SDK clone, and exercises a runtime-cleanup timeout
+with blocked work. A competing process cannot acquire the profile in these
+phases or before owner exit, and can acquire it after exit. The SDK-backed
+reconnect/history/send and navigation fixtures also run in single-process mode.
+See [idle-resource validation](../validation/idle-resources.md) for before/after
+host measurements.

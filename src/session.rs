@@ -4,6 +4,7 @@ use std::{
     fs::{self, File, OpenOptions},
     os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
     time::Duration,
 };
 
@@ -93,6 +94,20 @@ impl Profile {
         })
     }
 
+    /// Persistent stores use SDK SingleProcess mode. Keep the OS lock until
+    /// process exit, including late UI handles and timed-out runtime cleanup.
+    /// This prototype opens one account per process; reopening requires restart.
+    fn retain_lock_until_exit(&self) -> anyhow::Result<()> {
+        static LOCKS: OnceLock<Mutex<HashMap<PathBuf, File>>> = OnceLock::new();
+        let mut locks = LOCKS.get_or_init(Mutex::default).lock().unwrap();
+        if !locks.contains_key(&self.directory) {
+            locks.insert(self.directory.clone(), self._lock.try_clone()?);
+        }
+        // Static values are not dropped at shutdown. The kernel releases the
+        // duplicated descriptor when the process exits; never unlock it early.
+        Ok(())
+    }
+
     fn attributes(&self) -> HashMap<&str, &str> {
         HashMap::from([("application", APPLICATION), ("profile", self.id.as_str())])
     }
@@ -152,7 +167,12 @@ async fn connect() -> anyhow::Result<SecretService<'static>> {
 }
 
 async fn client(profile: &Profile, saved: &SavedSession) -> anyhow::Result<Client> {
+    // Retain before opening SQLite, including build failures/cancellation.
+    profile.retain_lock_until_exit()?;
     Ok(Client::builder()
+        .cross_process_store_config(
+            matrix_sdk_common::cross_process_lock::CrossProcessLockConfig::SingleProcess,
+        )
         .homeserver_url(&saved.homeserver)
         // Restoration must open the same local store even when offline.
         // Native support is verified by the login discovery step.
@@ -291,7 +311,8 @@ async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Resu
     }
 }
 
-/// Keeps the exclusive profile lock alive for the entire connected UI session.
+/// Session owner; persistent-client construction also retains the OS lock until
+/// process exit, so SDK handles may safely outlive this owner.
 pub struct RestoredSession {
     pub client: Client,
     _profile: Profile,
@@ -386,6 +407,94 @@ mod tests {
         drop(profile);
         assert!(Profile::open(&path, false).is_ok());
     }
+    #[test]
+    fn process_lock_survives_handles_and_runtime_cleanup() {
+        use std::io::{BufRead, Read, Write};
+        const CHILD_PROFILE: &str = "CHATCLIENT_TEST_LOCK_PROFILE";
+        if let Some(path) = std::env::var_os(CHILD_PROFILE) {
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let profile = Profile::open(Path::new(&path), false).unwrap();
+            let saved = SavedSession {
+                version: 1,
+                homeserver: "http://127.0.0.1:1".into(),
+                store_key: "test-only-key".into(),
+                session: None,
+                logged_out: false,
+                device_key: None,
+            };
+            let client = runtime.block_on(client(&profile, &saved)).unwrap();
+            assert!(matches!(
+                client.cross_process_lock_config(),
+                matrix_sdk_common::cross_process_lock::CrossProcessLockConfig::SingleProcess
+            ));
+            let late_handle = client.clone();
+            drop(client);
+            drop(profile);
+            let phase = |name| {
+                println!("LOCK_PHASE:{name}");
+                std::io::stdout().flush().unwrap();
+                std::io::stdin().read_exact(&mut [0]).unwrap();
+            };
+            phase("late-handle");
+            {
+                let _entered = runtime.enter();
+                drop(late_handle);
+            }
+            let (release, blocked) = std::sync::mpsc::channel();
+            let (started, ready) = std::sync::mpsc::channel();
+            runtime.spawn_blocking(move || {
+                started.send(()).unwrap();
+                let _ = blocked.recv();
+            });
+            ready.recv().unwrap();
+            // Exercise the actual timeout path while a cleanup worker survives.
+            assert!(crate::shutdown_runtime(runtime, Duration::from_millis(20)).is_err());
+            phase("cleanup-timeout");
+            release.send(()).unwrap();
+            // Lock retention is deliberately independent of cleanup completion.
+            phase("before-process-exit");
+            return;
+        }
+        let parent = tempfile::tempdir().unwrap();
+        let path = parent.path().join("profile");
+        drop(Profile::open(&path, true).unwrap());
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "session::tests::process_lock_survives_handles_and_runtime_cleanup",
+                "--nocapture",
+            ])
+            .env(CHILD_PROFILE, &path)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut output = std::io::BufReader::new(child.stdout.take().unwrap());
+        for phase in ["late-handle", "cleanup-timeout", "before-process-exit"] {
+            loop {
+                let mut line = String::new();
+                assert_ne!(
+                    output.read_line(&mut line).unwrap(),
+                    0,
+                    "child exited before {phase}"
+                );
+                if line.contains(&format!("LOCK_PHASE:{phase}")) {
+                    break;
+                }
+            }
+            assert!(
+                Profile::open(&path, false).is_err(),
+                "profile unlocked during {phase}"
+            );
+            child.stdin.as_mut().unwrap().write_all(b"x").unwrap();
+        }
+        assert!(child.wait().unwrap().success());
+        assert!(
+            Profile::open(&path, false).is_ok(),
+            "kernel must release lock at process exit"
+        );
+    }
+
     #[test]
     fn reject_public_or_symlinked_profile() {
         let parent = tempfile::tempdir().unwrap();

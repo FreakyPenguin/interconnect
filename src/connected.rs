@@ -132,6 +132,7 @@ pub struct Pane {
 
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub diagnostics: Arc<crate::diagnostics::Diagnostics>,
     pub status: String,
     pub rooms: Arc<Vec<RoomEntry>>,
     pub room: Option<Pane>,
@@ -140,6 +141,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            diagnostics: Arc::default(),
             status: "Restoring saved session…".into(),
             rooms: Arc::default(),
             room: None,
@@ -308,13 +310,6 @@ fn refresh_rooms(client: &Client, state: &watch::Sender<Model>) {
     });
 }
 
-struct ViewLifetime;
-impl Drop for ViewLifetime {
-    fn drop(&mut self) {
-        tracing::debug!(target: "chatclient", "connected presentation view stopped");
-    }
-}
-
 async fn view(
     client: Client,
     room_id: String,
@@ -323,7 +318,8 @@ async fn view(
     state: watch::Sender<Model>,
 ) {
     tracing::debug!(target: "chatclient", generation, thread = root.is_some(), "connected presentation view started");
-    let _lifetime = ViewLifetime;
+    let diagnostics = state.borrow().diagnostics.clone();
+    let _lifetime = diagnostics.view(root.is_some());
     let is_thread = root.is_some();
     let result: anyhow::Result<()> = async {
         let setup = async {
@@ -352,6 +348,7 @@ async fn view(
             .await
             .context("Timeline loading timed out")??;
         let timeline = Arc::new(timeline);
+        diagnostics.timeline(&timeline);
         let (_, updates) = timeline.subscribe().await;
         let mut updates: BoxStream<'_, _> = Box::pin(updates);
         let (load_older, mut requests) = mpsc::channel(1);
@@ -537,6 +534,9 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let client = runtime.block_on(async {
             let client = Client::builder()
+                .cross_process_store_config(
+                    matrix_sdk_common::cross_process_lock::CrossProcessLockConfig::SingleProcess,
+                )
                 .homeserver_url("http://127.0.0.1:1")
                 .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
                 .sqlite_store(directory.path(), Some("test-only-passphrase"))
@@ -552,17 +552,17 @@ mod tests {
 
     #[tokio::test]
     async fn sdk_views_switch_and_shutdown_without_ui_consumption() {
-        history_fixture(false, false).await;
+        history_fixture(false, false, 3).await;
     }
 
     #[tokio::test]
     async fn shutdown_cancels_pending_initial_history() {
-        history_fixture(true, false).await;
+        history_fixture(true, false, 3).await;
     }
 
     #[tokio::test]
     async fn offline_views_recover_and_can_send_without_restarting_ui() {
-        history_fixture(false, true).await;
+        history_fixture(false, true, 3).await;
     }
 
     #[tokio::test]
@@ -582,6 +582,9 @@ mod tests {
             .respond_with(ResponseTemplate::new(401).set_body_json(json!({"errcode":"M_UNKNOWN_TOKEN","error":"revoked fixture session","soft_logout":false})))
             .mount(&server).await;
         let client = Client::builder()
+            .cross_process_store_config(
+                matrix_sdk_common::cross_process_lock::CrossProcessLockConfig::SingleProcess,
+            )
             .homeserver_url(server.uri())
             .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
             .build()
@@ -635,7 +638,7 @@ mod tests {
         .unwrap()
     }
 
-    async fn history_fixture(cancel_history: bool, reconnect: bool) {
+    async fn history_fixture(cancel_history: bool, reconnect: bool, cycles: u64) {
         let server = MockServer::start().await;
         let online = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let versions_online = online.clone();
@@ -742,6 +745,9 @@ mod tests {
             .mount(&server)
             .await;
         let client = Client::builder()
+            .cross_process_store_config(
+                matrix_sdk_common::cross_process_lock::CrossProcessLockConfig::SingleProcess,
+            )
             .homeserver_url(server.uri())
             .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
             .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
@@ -762,7 +768,11 @@ mod tests {
         let sync = build_sync(client.clone()).await.unwrap();
         crate::sso::start_and_wait(&sync).await.unwrap();
         let (navigation, mut selections) = watch::channel(Selection::default());
-        let (state, mut snapshots) = watch::channel(Model::default());
+        let diagnostics = Arc::new(crate::diagnostics::Diagnostics::new(true));
+        let (state, mut snapshots) = watch::channel(Model {
+            diagnostics: diagnostics.clone(),
+            ..Model::default()
+        });
         let worker = tokio::spawn(async move {
             let result = connected(&client, &sync, &mut selections, &state).await;
             crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(5))
@@ -790,7 +800,7 @@ mod tests {
                 .unwrap();
             return;
         }
-        for generation in 1..=3 {
+        for generation in 1..=cycles {
             navigation.send_replace(Selection {
                 room: Some((generation, "!room:example.org".into())),
                 ..Default::default()
@@ -886,7 +896,7 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-                let thread_composer = thread_pane.composer.unwrap();
+                let thread_composer = thread_pane.composer.clone().unwrap();
                 let decrypt_room = thread_composer.0.room().clone();
                 thread_composer
                     .send("thread send fixture".into())
@@ -942,6 +952,7 @@ mod tests {
                     }
                 }
             }
+            drop(thread_pane);
             navigation.send_modify(|s| s.thread = None);
             let model = tokio::time::timeout(
                 Duration::from_secs(5),
@@ -952,6 +963,11 @@ mod tests {
             .unwrap()
             .clone();
             assert_eq!(model.room.unwrap().generation, generation);
+            assert_eq!(diagnostics.snapshot()["active_views"], json!([1, 0]));
+            assert_eq!(diagnostics.snapshot()["peak_views"], json!([1, 1]));
+            // Old GUI snapshots can retain timelines; release our snapshots before checking.
+            drop(pane);
+            assert_eq!(diagnostics.snapshot()["live_timelines"], 1);
         }
         if reconnect {
             online.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1058,5 +1074,18 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        drop(snapshots);
+        assert_eq!(diagnostics.snapshot()["active_views"], json!([0, 0]));
+        assert_eq!(diagnostics.snapshot()["live_timelines"], 0);
+        assert_eq!(
+            diagnostics.snapshot()["view_starts"],
+            json!([cycles, cycles])
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "100-cycle SDK lifecycle stress check; run explicitly"]
+    async fn repeated_navigation_releases_timelines() {
+        history_fixture(false, false, 100).await;
     }
 }
