@@ -70,8 +70,10 @@ edits, reactions, redactions, receipts, or send retry controls.
 Both views display event IDs, text, local send state, undecryptable-event markers,
 and SDK thread summaries where present. Terminal output is local test evidence;
 it can contain decrypted message text. Avoid recording private conversations or
-posting raw output. Each snapshot shows the latest 20 items and reports duplicate
-loaded event IDs. Pagination requests 20 older events per command; SDK pagination
+posting raw output. Live snapshots and `show` display the latest 20 items and report duplicate
+loaded event IDs. Pagination also prints the first 20 loaded items so that older
+history can be inspected; `show-oldest` repeats that view. A latest-items snapshot
+alone cannot establish whether older events were fetched. Pagination requests 20 older events per command; SDK pagination
 may fetch additional batches internally. Verify ordering and completeness against
 the other client; the duplicate check alone does not establish correctness.
 

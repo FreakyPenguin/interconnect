@@ -1,6 +1,6 @@
 # Development container
 
-Open the repository in VS Code with the Dev Containers extension and choose **Dev Containers: Reopen in Container**. The default configuration supports building, linting, and testing without requiring a display or GPU on the host. The Cargo project contains milestone 0 headless and Iced runtime probes; see [validation commands](validation/milestone-0.md).
+Open the repository in VS Code with the Dev Containers extension and choose **Dev Containers: Reopen in Container**. The default configuration supports building, linting, and testing without requiring a display or GPU on the host. The Cargo project contains milestone 0 headless and Iced runtime probes; see [validation commands](validation/milestone-0.md). A separate `matrix-ui` binary connects the saved session to room and thread views; see [connected UI validation](validation/connected-ui.md).
 
 The image uses Debian Bookworm and installs the latest stable Rust available when its Rust installation layer is built, together with rustfmt, Clippy, and rust-src. The repository's `rust-toolchain.toml` selects stable both inside and outside the container. To refresh an existing container, run `rustup update stable`; alternatively rebuild without the Docker cache. This intentionally tracks stable rather than pinning an exact compiler version. Pin a version when reproducible release builds are introduced.
 

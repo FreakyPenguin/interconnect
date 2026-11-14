@@ -1,3 +1,4 @@
+pub mod connected;
 pub mod live;
 pub mod session;
 pub mod sso;

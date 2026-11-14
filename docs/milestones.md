@@ -25,6 +25,11 @@ Exit evidence: a short architecture decision record and reproducible results for
 - [ ] Capture empty-window visible and hidden baselines for redraws, wakeups, CPU time, and memory.
 - [ ] Verify that a settled window has no recurring application-driven redraws.
 
+Implementation in progress: `matrix-ui` now connects the existing saved session to
+room/thread views with bounded snapshot delivery and cancellation. Local SDK mock
+tests pass; [desktop acceptance and measurements](validation/connected-ui.md) remain
+pending. This does not yet include the full shell or keyboard workflows.
+
 Exit evidence: runnable shell and recorded measurement procedure, hardware, and baseline results.
 
 ## 2. SSO, persistent session, and device trust

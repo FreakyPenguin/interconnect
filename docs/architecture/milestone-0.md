@@ -40,8 +40,8 @@ presentation workers. `ViewWorker` is the first isolated lifecycle experiment:
 commands and results use bounded channels, cancellation interrupts blocked
 sends, explicit close joins completion, and drop requests cancellation. Results
 are not silently dropped on channel saturation. The Iced probe opens/closes a synthetic event subscription with a view-owned
-worker and rejects stale generation IDs. Full-state coalescing and wiring actual
-SDK subscriptions into Iced remain to be implemented and tested.
+worker and rejects stale generation IDs. The separate `matrix-ui` prototype now connects actual SDK subscriptions to Iced
+using replaceable full-state snapshots; see the connected UI follow-up below.
 Never coalesce raw timeline diffs without retaining their ordering/application.
 
 There is no recurring application timer. Optional `RUST_LOG=chatclient=trace`
@@ -191,3 +191,25 @@ and historical message decryption plus new replies after restart. Use SDK
 thread-focused timelines for the initial implementation. Read-state/navigation
 gaps and unloaded-root edge cases still need assessment. Exact SDK cross-signing status
 was not reported. See the interactive validation record for the evidence scope.
+
+
+## Connected Iced follow-up — 2026-11-14
+
+`matrix-ui` restores the existing profile with a lifetime-owned profile lock and
+runs one `SyncService` on Iced's Tokio executor. The backend owns independently
+cancellable room/thread futures. Dropping a view future releases its timeline
+subscription; no separate presentation task needs an asynchronous join.
+Room selection manages explicit SDK room subscriptions. Closing a thread leaves
+the room view and account synchronization running.
+
+A latest-value channel carries desired navigation, another carries complete UI
+snapshots, and a capacity-one channel forwards snapshots into Iced. Generation
+IDs prevent queued old pane snapshots from appearing after navigation. The SDK
+applies timeline diffs; the app reads ordered snapshots and coalesces only those.
+This is not a command-result transport for future sending workflows.
+
+A mock-server integration test exercises actual SDK room/thread views and repeated
+navigation. Desktop encrypted delivery and idle/lifecycle measurements remain
+pending. See [the connected UI procedure](../validation/connected-ui.md) for scope,
+shutdown limitations, and acceptance steps. The original `runtime-ui` probe remains
+available as the synthetic comparison baseline.

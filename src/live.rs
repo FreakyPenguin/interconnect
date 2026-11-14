@@ -32,6 +32,7 @@ const HELP: &str = "Commands:
   close-thread               release the thread view; room sync continues
   page-room / page-thread    fetch up to 20 older events
   show                       print the last 20 items in each open view
+  show-oldest                print the first 20 loaded items in each open view
   send-room TEXT             queue a new ordinary room message
   send-thread TEXT           queue a reply to the explicitly opened thread
   help / quit
@@ -79,8 +80,13 @@ impl View {
 }
 
 async fn display(timeline: &Timeline, label: &str) {
+    display_window(timeline, label, false).await;
+}
+
+async fn display_window(timeline: &Timeline, label: &str, oldest: bool) {
     let items = timeline.items().await;
-    println!("[{label}] {} loaded items; last 20:", items.len());
+    let window = if oldest { "first" } else { "last" };
+    println!("[{label}] {} loaded items; {window} 20:", items.len());
     let mut seen = std::collections::HashSet::new();
     for item in &items {
         if let Some(id) = item.as_event().and_then(|event| event.event_id())
@@ -89,7 +95,12 @@ async fn display(timeline: &Timeline, label: &str) {
             eprintln!("[{label}] duplicate loaded event ID: {id}");
         }
     }
-    for item in items.iter().skip(items.len().saturating_sub(20)) {
+    let start = if oldest {
+        0
+    } else {
+        items.len().saturating_sub(20)
+    };
+    for item in items.iter().skip(start).take(20) {
         if let Some(event) = item.as_event() {
             let content = event.content();
             let text = if content.is_unable_to_decrypt() {
@@ -198,10 +209,13 @@ pub async fn run(client: Client) -> anyhow::Result<()> {
                                 let view = view.as_ref().context("open that view first")?;
                                 let end = view.timeline.paginate_backwards(20).await?;
                                 println!("Pagination finished; reached beginning={end}");
+                                let label = if command == "page-room" { "room" } else { "thread" };
+                                display_window(&view.timeline, label, true).await;
                             }
-                            "show" => {
-                                if let Some(view) = &room_view { display(&view.timeline, "room").await; }
-                                if let Some(view) = &thread_view { display(&view.timeline, "thread").await; }
+                            "show" | "show-oldest" => {
+                                let oldest = command == "show-oldest";
+                                if let Some(view) = &room_view { display_window(&view.timeline, "room", oldest).await; }
+                                if let Some(view) = &thread_view { display_window(&view.timeline, "thread", oldest).await; }
                             }
                             "send-room" | "send-thread" => {
                                 ensure!(!argument.is_empty(), "message text is required");

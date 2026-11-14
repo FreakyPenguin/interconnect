@@ -280,15 +280,7 @@ async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Resu
         );
         return Ok(());
     }
-    let expected_key = saved
-        .device_key
-        .as_ref()
-        .context("saved device fingerprint is missing; refusing unverified store restoration")?;
-    ensure!(
-        &device_key(&client).await? == expected_key,
-        "local device key changed; refusing to use a replacement crypto store"
-    );
-    verify_identity(&client, &session).await.context("session check failed; saved credentials retained (no automatic relogin or device replacement)")?;
+    validate_restored(&client, &saved, &session).await?;
     println!(
         "Restored the same account and device without browser login. Trust and historical keys remain separate checks."
     );
@@ -297,6 +289,57 @@ async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Resu
     } else {
         crate::sso::initial_sync(client).await
     }
+}
+
+/// Keeps the exclusive profile lock alive for the entire connected UI session.
+pub struct RestoredSession {
+    pub client: Client,
+    _profile: Profile,
+}
+
+pub async fn restore(directory: &str) -> anyhow::Result<RestoredSession> {
+    let service = connect().await?;
+    let profile = Profile::open(Path::new(directory), false)?;
+    let saved = profile
+        .read(&service)
+        .await?
+        .context("no saved session for this profile")?;
+    ensure!(
+        !saved.logged_out,
+        "session was logged out; finish cleanup with session-logout"
+    );
+    let session = saved.session.clone().context("saved login is incomplete")?;
+    ensure!(
+        profile.directory.join("store").is_dir(),
+        "SDK store missing; refusing replacement crypto state"
+    );
+    let client = client(&profile, &saved).await?;
+    client
+        .matrix_auth()
+        .restore_session(session.clone(), Default::default())
+        .await?;
+    validate_restored(&client, &saved, &session).await?;
+    Ok(RestoredSession {
+        client,
+        _profile: profile,
+    })
+}
+
+async fn validate_restored(
+    client: &Client,
+    saved: &SavedSession,
+    session: &MatrixSession,
+) -> anyhow::Result<()> {
+    let expected_key = saved
+        .device_key
+        .as_ref()
+        .context("saved device fingerprint is missing; refusing unverified store restoration")?;
+    ensure!(
+        &device_key(client).await? == expected_key,
+        "local device key changed; refusing to use a replacement crypto store"
+    );
+    verify_identity(client, session).await.context("session check failed; saved credentials retained (no automatic relogin or device replacement)")?;
+    Ok(())
 }
 
 async fn device_key(client: &Client) -> anyhow::Result<String> {
