@@ -1,6 +1,6 @@
 # Feature goals
 
-Use `- [ ]` for planned work and `- [x]` for completed, verified work. These are product goals; implementation order and acceptance checks live in [milestones.md](milestones.md). No features are marked complete yet.
+Use `- [ ]` for planned work and `- [x]` for completed, verified work. These are product goals; implementation order and acceptance checks live in [milestones.md](milestones.md). No features are marked complete yet. The CLI feasibility harness has verified device verification, encrypted room/thread send and receive, thread pagination, closed-thread updates, and decryption after restart; see [the validation record](validation/interactive.md). These results do not complete the corresponding application UI workflows.
 
 ## Platform and architecture
 

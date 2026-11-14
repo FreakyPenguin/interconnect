@@ -157,6 +157,9 @@ async fn client(profile: &Profile, saved: &SavedSession) -> anyhow::Result<Clien
         // Restoration must open the same local store even when offline.
         // Native support is verified by the login discovery step.
         .sliding_sync_version_builder(VersionBuilder::Native)
+        .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
+            with_subscriptions: false,
+        })
         .sqlite_store(profile.directory.join("store"), Some(&saved.store_key))
         .build()
         .await?)
@@ -223,6 +226,14 @@ pub async fn login(homeserver: &str, directory: &str) -> anyhow::Result<()> {
 }
 
 pub async fn resume(directory: &str, logout: bool) -> anyhow::Result<()> {
+    resume_inner(directory, logout, false).await
+}
+
+pub async fn live(directory: &str) -> anyhow::Result<()> {
+    resume_inner(directory, false, true).await
+}
+
+async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Result<()> {
     let service = connect().await?;
     let profile = Profile::open(Path::new(directory), false)?;
     let mut saved = profile
@@ -281,7 +292,11 @@ pub async fn resume(directory: &str, logout: bool) -> anyhow::Result<()> {
     println!(
         "Restored the same account and device without browser login. Trust and historical keys remain separate checks."
     );
-    crate::sso::initial_sync(client).await
+    if live {
+        crate::live::run(client).await
+    } else {
+        crate::sso::initial_sync(client).await
+    }
 }
 
 async fn device_key(client: &Client) -> anyhow::Result<String> {

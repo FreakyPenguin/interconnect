@@ -46,6 +46,10 @@ async fn run() -> anyhow::Result<()> {
             }
             println!("100 open/deliver/close cycles passed");
         }
+        Some("session-live") => {
+            let profile = args.get(1).map(String::as_str).unwrap_or(".matrix-spike");
+            chatclient::session::live(profile).await?;
+        }
         Some("session-login") => {
             let url = args
                 .get(1)
@@ -83,7 +87,7 @@ async fn run() -> anyhow::Result<()> {
             println!("Discovery alone does not verify SSO or sliding-sync operation.");
         }
         _ => bail!(
-            "usage: spike idle [seconds] | lifecycle | probe <homeserver URL> | sso <homeserver URL> | session-login <homeserver URL> [profile-directory] | session-resume [profile-directory] | session-logout [profile-directory]"
+            "usage: spike idle [seconds] | lifecycle | probe <homeserver URL> | sso <homeserver URL> | session-login <homeserver URL> [profile-directory] | session-resume [profile-directory] | session-logout [profile-directory] | session-live [profile-directory]"
         ),
     }
     Ok(())

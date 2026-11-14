@@ -60,10 +60,24 @@ pub async fn check(homeserver: &str) -> anyhow::Result<()> {
 
 pub(crate) async fn initial_sync(client: Client) -> anyhow::Result<()> {
     let sync = SyncService::builder(client).build().await?;
+    let result = start_and_wait(&sync).await;
+    println!("Stopping SDK sync (up to 15 seconds)...");
+    let stopped = stop_with_deadline(sync.stop(), Duration::from_secs(15)).await;
+    // Keep the original failure visible even if shutdown also fails.
+    if let Err(error) = &stopped {
+        eprintln!("{error:#}");
+    }
+    result?;
+    stopped?;
+    println!("SDK sync stopped.");
+    Ok(())
+}
+
+pub(crate) async fn start_and_wait(sync: &SyncService) -> anyhow::Result<()> {
     let mut room_states = sync.room_list_service().state();
     let mut states = sync.state();
     sync.start().await;
-    let result = tokio::time::timeout(Duration::from_secs(60), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             tokio::select! {
                 state = room_states.next() => match state {
@@ -86,20 +100,10 @@ pub(crate) async fn initial_sync(client: Client) -> anyhow::Result<()> {
                 }
             }
         }
-    }).await.context("initial sync timed out after 60 seconds");
-    println!("Stopping SDK sync (up to 15 seconds)...");
-    let stopped = stop_with_deadline(sync.stop(), Duration::from_secs(15)).await;
-    // Keep the original failure visible even if shutdown also fails.
-    if let Err(error) = &stopped {
-        eprintln!("{error:#}");
-    }
-    result??;
-    stopped?;
-    println!("SDK sync stopped.");
-    Ok(())
+    }).await.context("initial sync timed out after 60 seconds")?
 }
 
-async fn stop_with_deadline(
+pub(crate) async fn stop_with_deadline(
     stop: impl std::future::Future<Output = ()>,
     deadline: Duration,
 ) -> anyhow::Result<()> {

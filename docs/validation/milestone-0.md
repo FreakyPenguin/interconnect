@@ -277,3 +277,11 @@ key, completed fresh room-list sync, printed `SDK sync stopped.`, and exited wit
 status 0. No browser login, new device or logout was performed. This verifies
 normal live resume and exit for this run; it does not establish the exact cause of
 the original slow shutdown or validate device trust/historical key availability.
+
+## Next: interactive verification and threads
+
+The persistent `session-live` console is implemented. Follow the
+[interactive validation procedure](interactive.md) to verify against the second
+client and test encrypted room/thread messages, pagination, live updates,
+close/reopen, and restart. These live cases remain unchecked until executed;
+API availability and compilation are not sufficient evidence.

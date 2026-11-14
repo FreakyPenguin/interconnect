@@ -10,7 +10,7 @@ Resolve architectural uncertainties before building the full UI. Implementation 
 - [x] Verify the target homeserver's SSO and sliding-sync capabilities.
 - [ ] Establish how Iced and the SDK share Tokio execution, task ownership, and cancellation.
 - [ ] Establish reproducible process/thread wakeup measurement and optional application tracing; capture the runtime spike’s idle baseline and verify that cancelled subscriptions leave no recurring application work.
-- [ ] Prototype SDK thread loading, pagination, encrypted replies, live updates, and restoration after restart.
+- [x] Prototype SDK thread loading, pagination, encrypted replies, live updates, and restoration after restart. Passed in the [user-run checks](validation/interactive.md), including multi-page history, closed-view updates, and decryption after restart; see the recorded scope and remaining edge cases.
 - [ ] Check SDK support for thread summaries, unread state, receipts, and message navigation; record gaps and implementation decisions.
 - [ ] Confirm initial section grouping rules and whether manual sections are deferred.
 
@@ -31,7 +31,7 @@ Exit evidence: runnable shell and recorded measurement procedure, hardware, and 
 
 - [ ] Complete browser SSO against the target homeserver and return safely to the application.
 - [ ] Persist credentials securely and restore the session after restart.
-- [ ] Verify the device using an existing client.
+- [x] Verify the device using an existing client. Verified through the CLI feasibility harness; application UI remains pending.
 - [ ] Display trust and key availability separately from login success.
 - [ ] Demonstrate encrypted send/receive in a test room through a minimal UI.
 - [ ] Handle cancelled login, failed verification, expired sessions, and logout visibly.

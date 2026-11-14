@@ -159,3 +159,35 @@ The corrected command subsequently completed a live resume against the existing
 profile and exited with status 0. The original process had already exited by the
 time termination was attempted; no signal was sent. Thus the observed incident
 was prolonged shutdown, not a proven permanent deadlock.
+
+## Interactive verification and thread harness
+
+`session-live` extends the persistent profile with one ongoing SDK `SyncService`,
+a command console, and optional room/thread timeline views. Threading is explicitly
+enabled in the SDK client; experimental thread subscription extensions remain off
+(the target server did not advertise MSC4306). Explicit selected-room subscriptions
+ensure room events are synced independently of the visible room-list range.
+
+Verification uses the released `Device::request_verification_with_methods`,
+`VerificationRequest` changes, and SAS changes/confirm/mismatch/cancel APIs. Only
+self-verification initiated by a user command is supported. A comparison-specific
+confirmation is required; there is no automatic trust grant. Account login,
+SDK device trust and historical decryption remain separate outputs.
+
+The console uses a bounded input channel and a dedicated stdin thread owning no
+SDK state, so blocked terminal input does not hold Tokio's shutdown open. Views
+own their timeline display tasks, which abort on drop. Each stream notification
+renders the SDK's current timeline snapshot; it does not apply or reorder raw
+timeline diffs. No polling timer is used. SDK cache budgets, full event navigation,
+ordinary reply controls, receipts, edits, reactions and redactions remain future
+harness/product work. See [interactive validation](../validation/interactive.md).
+
+
+On 2026-11-13 the user confirmed successful device verification and encrypted
+room/thread sends and receives with the second client. This establishes basic
+SDK thread-messaging feasibility. The user subsequently confirmed multi-page
+thread pagination with ordering/duplicate checks, closed-view updates on reopen,
+and historical message decryption plus new replies after restart. Use SDK
+thread-focused timelines for the initial implementation. Read-state/navigation
+gaps and unloaded-root edge cases still need assessment. Exact SDK cross-signing status
+was not reported. See the interactive validation record for the evidence scope.
