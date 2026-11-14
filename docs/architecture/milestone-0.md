@@ -32,8 +32,9 @@ API observations below were checked against the downloaded release sources.
 
 ## Runtime and ownership
 
-Use Iced's Tokio executor in the application; do not nest a second Tokio runtime
-inside it. The headless executable has its own runtime because it is a separate
+Use one Tokio runtime in the application; do not nest a second runtime. The GUI
+now owns it through final UI teardown and gives Iced an executor adapter borrowing
+its handle (see the teardown correction below). The headless executable has its own runtime because it is a separate
 process. `runtime-ui` exercises a finite `Task::perform` on Iced's runtime.
 
 The session will own one SDK `SyncService`. Views own timeline subscriptions and
@@ -268,3 +269,36 @@ Iced's `advanced` feature exposes input-method events for composer preedit track
 The multiline editor preserves normal Enter behavior; focused Ctrl+Enter sends only
 outside composition. No global send-key subscription is used. Stock editor caret
 blinking means focused-editor idle measurements must be recorded separately.
+
+
+### Runtime context for SDK handles retained by the UI
+
+Iced can drop application state and queued message/widget copies outside its
+executor's entered Tokio context. Composer timelines and retry queue handles can
+own the final reference to SQLite resources, whose destructors schedule blocking
+cleanup. These UI-facing capabilities now use a shared `RuntimeOwned` guard that
+enters the originating runtime for final drop. A SQLite-backed regression covers
+release outside `block_on`; see the connected UI teardown correction. This replaces
+the assumption that stopping sync was sufficient for safe UI-state destruction.
+
+
+The GUI's `run_ui` wrapper owns the single Tokio runtime through Iced teardown.
+Its `UiExecutor` adapter holds only a handle, so Iced dropping the executor cannot
+prematurely destroy the runtime. The main thread remains entered until UI-owned
+SDK resources are dropped; runtime shutdown then uses the existing five-second
+cleanup deadline. This complements the per-capability drop guard for handles
+released on other threads. A regression drops the Iced adapter before a real
+SQLite-backed client and checks that blocking cleanup completes before return.
+
+
+### Recoverable synchronization lifecycle — 2026-11-14
+
+The GUI enables the SDK's offline mode and keeps presentation futures alive during
+`SyncService::State::Offline`. The SDK owns availability probes and sync restart;
+room-list refreshes update navigation metadata without changing connection status.
+The GUI handles startup in the same ongoing loop rather than applying the CLI
+probe's finite initial-sync deadline/error policy. Account-token rejection is
+observed separately through session-change notifications and remains terminal.
+Failed send queues retain explicit Retry semantics after connectivity returns.
+Full offline startup is still blocked by the restoration identity check and is
+not claimed by this change.

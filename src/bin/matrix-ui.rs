@@ -484,17 +484,93 @@ fn connection(profile: &str) -> impl iced::futures::Stream<Item = Message> + use
         std::future::pending::<()>().await;
     })
 }
-fn main() -> iced::Result {
+/// Iced borrows this executor; main owns the one runtime until all UI state
+/// has been destroyed. Dropping Iced's executor cannot shut down SDK cleanup.
+struct UiExecutor(tokio::runtime::Handle);
+impl iced::Executor for UiExecutor {
+    fn new() -> Result<Self, std::io::Error> {
+        tokio::runtime::Handle::try_current()
+            .map(Self)
+            .map_err(std::io::Error::other)
+    }
+    fn spawn(&self, future: impl Future<Output = ()> + Send + 'static) {
+        drop(self.0.spawn(future));
+    }
+    fn enter<R>(&self, f: impl FnOnce() -> R) -> R {
+        let _entered = self.0.enter();
+        f()
+    }
+    fn block_on<T>(&self, future: impl Future<Output = T>) -> T {
+        self.0.block_on(future)
+    }
+}
+
+fn run_ui(run: impl FnOnce() -> iced::Result) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Runtime::new()?;
+    let result = {
+        // Covers normal UI teardown and error paths outside Executor::enter.
+        let _entered = runtime.enter();
+        run()
+    };
+    let cleanup = chatclient::shutdown_runtime(runtime, std::time::Duration::from_secs(5));
+    if let Err(error) = &cleanup {
+        eprintln!("{error:#}");
+    }
+    result?;
+    cleanup
+}
+
+fn main() -> anyhow::Result<()> {
     chatclient::init_tracing();
-    iced::application(App::new, App::update, App::view)
-        .subscription(App::subscription)
-        .exit_on_close_request(false)
-        .run()
+    run_ui(|| {
+        iced::application(App::new, App::update, App::view)
+            .executor::<UiExecutor>()
+            .subscription(App::subscription)
+            .exit_on_close_request(false)
+            .run()
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sqlite_cleanup_outlives_iced_executor_and_runs_before_return() {
+        use iced::Executor;
+        let directory = tempfile::tempdir().unwrap();
+        let (finished, received) = std::sync::mpsc::channel();
+        struct Cleanup(std::sync::mpsc::Sender<()>);
+        impl Drop for Cleanup {
+            fn drop(&mut self) {
+                let finished = self.0.clone();
+                drop(tokio::task::spawn_blocking(move || {
+                    finished.send(()).unwrap()
+                }));
+            }
+        }
+        assert!(UiExecutor::new().is_err());
+        run_ui(|| {
+            let executor = UiExecutor::new().unwrap();
+            let client = executor.block_on(async {
+                matrix_sdk::Client::builder()
+                    .homeserver_url("http://127.0.0.1:1")
+                    .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+                    .sqlite_store(directory.path(), Some("test-only-passphrase"))
+                    .build()
+                    .await
+                    .unwrap()
+            });
+            // Match Iced's problematic order: executor first, UI-owned SDK data last.
+            drop(executor);
+            drop(client);
+            drop(Cleanup(finished));
+            Ok(())
+        })
+        .unwrap();
+        received.try_recv().unwrap();
+        assert!(tokio::runtime::Handle::try_current().is_err());
+    }
+
     #[test]
     fn drafts_survive_navigation_and_send_results_apply_to_original_target() {
         let mut app = App::new();

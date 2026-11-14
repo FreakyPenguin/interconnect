@@ -5,6 +5,7 @@ use anyhow::{Context, ensure};
 use iced::futures::{StreamExt, stream::BoxStream};
 use matrix_sdk::Client;
 use matrix_sdk_ui::{
+    room_list_service::State as RoomState,
     sync_service::{State, SyncService},
     timeline::{EventSendState, Timeline, TimelineBuilder, TimelineFocus},
 };
@@ -32,9 +33,41 @@ pub struct MessageRow {
     pub retry: Option<RetrySend>,
 }
 
+/// UI snapshots and messages can be destroyed on Iced's main thread, outside
+/// Executor::enter. SDK/SQLite destructors may call Tokio's spawn_blocking.
+/// Keep their final drop inside the originating runtime context, including when
+/// a queued snapshot or retry message is discarded rather than handled.
+#[derive(Debug)]
+struct RuntimeOwned<T> {
+    value: Option<T>,
+    runtime: tokio::runtime::Handle,
+}
+impl<T> RuntimeOwned<T> {
+    fn new(value: T) -> Arc<Self> {
+        Arc::new(Self {
+            value: Some(value),
+            runtime: tokio::runtime::Handle::current(),
+        })
+    }
+}
+impl<T> std::ops::Deref for RuntimeOwned<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.value
+            .as_ref()
+            .expect("runtime-owned value present until drop")
+    }
+}
+impl<T> Drop for RuntimeOwned<T> {
+    fn drop(&mut self) {
+        let _entered = self.runtime.enter();
+        drop(self.value.take());
+    }
+}
+
 /// Captured send target; survives navigation until queue admission completes.
 #[derive(Clone)]
-pub struct Composer(Arc<Timeline>);
+pub struct Composer(Arc<RuntimeOwned<Arc<Timeline>>>);
 impl std::fmt::Debug for Composer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Composer")
@@ -60,13 +93,21 @@ impl Composer {
 #[derive(Clone, Debug)]
 pub struct RetrySend {
     pub transaction: String,
+    state: Arc<RuntimeOwned<RetryState>>,
+}
+#[derive(Debug)]
+struct RetryState {
     handle: matrix_sdk::send_queue::SendHandle,
     queue: matrix_sdk::send_queue::RoomSendQueue,
 }
 impl RetrySend {
     pub async fn retry(self) -> Result<(), String> {
-        self.handle.unwedge().await.map_err(|e| e.to_string())?;
-        self.queue.set_enabled(true);
+        self.state
+            .handle
+            .unwedge()
+            .await
+            .map_err(|e| e.to_string())?;
+        self.state.queue.set_enabled(true);
         Ok(())
     }
 }
@@ -123,24 +164,41 @@ pub async fn run(
         result = tokio::time::timeout(Duration::from_secs(90), crate::session::restore(&profile)) => result.context("session restoration timed out")??,
         _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
     };
-    let sync = SyncService::builder(restored.client.clone())
-        .build()
-        .await?;
-    let outcome = tokio::select! {
-        result = crate::sso::start_and_wait(&sync) => result,
-        _ = selection.wait_for(|s| s.shutdown) => Ok(()),
-    };
-    let outcome = if outcome.is_ok() && !selection.borrow().shutdown {
-        connected(&restored.client, &sync, &mut selection, &state).await
-    } else {
-        outcome
-    };
+    let sync = build_sync(restored.client.clone()).await?;
+    // GUI lifecycle differs from the finite CLI probe: sync startup/network
+    // errors must not discard an already restored session or its views.
+    let outcome = connected(&restored.client, &sync, &mut selection, &state).await;
     state.send_modify(|s| s.status = "Stopping synchronization…".into());
     let stopped = crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(15)).await;
     // Keep the profile guard alive until SDK stop has completed or failed.
     drop(sync);
     drop(restored);
     outcome.and(stopped)
+}
+
+async fn build_sync(client: Client) -> anyhow::Result<SyncService> {
+    Ok(SyncService::builder(client)
+        .with_offline_mode()
+        .build()
+        .await?)
+}
+
+fn connection_status(sync: &State, rooms: &RoomState) -> &'static str {
+    match sync {
+        State::Offline => {
+            "Offline — reconnecting automatically. You can still compose and queue messages."
+        }
+        State::Running
+            if matches!(
+                rooms,
+                RoomState::SettingUp | RoomState::Running | RoomState::Recovering
+            ) =>
+        {
+            "Connected"
+        }
+        State::Running | State::Idle => "Connecting… Messages and drafts are retained.",
+        State::Error(_) | State::Terminated => "Synchronization interrupted. Session retained.",
+    }
 }
 
 async fn connected(
@@ -152,6 +210,10 @@ async fn connected(
     refresh_rooms(client, state);
     let mut sync_states = sync.state();
     let mut room_states = sync.room_list_service().state();
+    let mut session_changes = client.subscribe_to_session_changes();
+    if !selection.borrow().shutdown {
+        sync.start().await;
+    }
     let mut active = Selection::default();
     let mut room_view = inactive();
     let mut thread_view = inactive();
@@ -159,6 +221,10 @@ async fn connected(
         loop {
             let next = selection.borrow_and_update().clone();
             if next.shutdown { break; }
+            let status = connection_status(&sync_states.get(), &room_states.get());
+            state.send_if_modified(|s| {
+                if s.status == status { false } else { s.status = status.into(); true }
+            });
             if active.room != next.room {
                 // Drop the old subscriptions before constructing replacements.
                 room_view = inactive();
@@ -196,8 +262,13 @@ async fn connected(
                     if event.is_none() { anyhow::bail!("room-list stream ended"); }
                     refresh_rooms(client, state);
                 }
+                event = session_changes.recv() => match event {
+                    Ok(matrix_sdk::SessionChange::UnknownToken(_)) => anyhow::bail!("The server rejected this session. Sign-in is required; saved credentials retained."),
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => anyhow::bail!("Session notification stream ended"),
+                },
                 event = sync_states.next() => match event {
-                    Some(State::Error(_)) => anyhow::bail!("Synchronization failed; close and reopen to retry. Session retained."),
+                    Some(State::Error(error)) => anyhow::bail!("Synchronization service stopped: {error}. Session retained."),
                     None | Some(State::Terminated) => anyhow::bail!("Synchronization ended. Session retained."),
                     _ => {},
                 }
@@ -233,12 +304,7 @@ fn refresh_rooms(client: &Client, state: &watch::Sender<Model>) {
         if changed {
             s.rooms = Arc::new(rooms);
         }
-        let status = "Connected — select an encrypted room";
-        let status_changed = s.status != status;
-        if status_changed {
-            s.status = status.into();
-        }
-        changed || status_changed
+        changed
     });
 }
 
@@ -404,8 +470,10 @@ async fn publish(
                         .zip(event.transaction_id())
                         .map(|(handle, id)| RetrySend {
                             transaction: id.to_string(),
-                            handle,
-                            queue: timeline.room().send_queue(),
+                            state: RuntimeOwned::new(RetryState {
+                                handle,
+                                queue: timeline.room().send_queue(),
+                            }),
                         })
                 } else {
                     None
@@ -420,7 +488,7 @@ async fn publish(
             rows: Arc::new(rows),
             error: None,
             history: history.clone(),
-            composer: Some(Composer(timeline.clone())),
+            composer: Some(Composer(RuntimeOwned::new(timeline.clone()))),
             load_older: (!thread && matches!(history, History::Ready | History::Failed(_)))
                 .then(|| load_older.clone()),
         });
@@ -437,14 +505,111 @@ mod tests {
         matchers::{method, path, path_regex, query_param},
     };
 
+    #[test]
+    fn final_ui_handle_drop_enters_runtime_and_drains_blocking_cleanup() {
+        struct NeedsRuntime(std::sync::mpsc::Sender<()>);
+        impl Drop for NeedsRuntime {
+            fn drop(&mut self) {
+                let done = self.0.clone();
+                drop(tokio::task::spawn_blocking(move || done.send(()).unwrap()));
+            }
+        }
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (done, finished) = std::sync::mpsc::channel();
+        let first = runtime.block_on(async { RuntimeOwned::new(NeedsRuntime(done)) });
+        let queued_message = first.clone();
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        drop(first);
+        assert!(finished.try_recv().is_err());
+        // Models, queued messages, and widget trees may release their last clone
+        // on arbitrary non-runtime threads.
+        std::thread::spawn(move || drop(queued_message))
+            .join()
+            .unwrap();
+        finished.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        crate::shutdown_runtime(runtime, Duration::from_secs(5)).unwrap();
+    }
+
+    #[test]
+    fn sqlite_client_final_drop_outside_executor_is_safe() {
+        let directory = tempfile::tempdir().unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let client = runtime.block_on(async {
+            let client = Client::builder()
+                .homeserver_url("http://127.0.0.1:1")
+                .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+                .sqlite_store(directory.path(), Some("test-only-passphrase"))
+                .build()
+                .await
+                .unwrap();
+            RuntimeOwned::new(client)
+        });
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        drop(client);
+        crate::shutdown_runtime(runtime, Duration::from_secs(5)).unwrap();
+    }
+
     #[tokio::test]
     async fn sdk_views_switch_and_shutdown_without_ui_consumption() {
-        history_fixture(false).await;
+        history_fixture(false, false).await;
     }
 
     #[tokio::test]
     async fn shutdown_cancels_pending_initial_history() {
-        history_fixture(true).await;
+        history_fixture(true, false).await;
+    }
+
+    #[tokio::test]
+    async fn offline_views_recover_and_can_send_without_restarting_ui() {
+        history_fixture(false, true).await;
+    }
+
+    #[tokio::test]
+    async fn revoked_session_is_not_treated_as_a_network_outage() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET")).and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"],"unstable_features":{"org.matrix.simplified_msc3575":true}})))
+            .mount(&server).await;
+        Mock::given(method("POST"))
+            .and(path_regex(".*/keys/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({"device_keys":{},"one_time_key_counts":{"signed_curve25519":50}}),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST")).and(path("/_matrix/client/unstable/org.matrix.simplified_msc3575/sync"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({"errcode":"M_UNKNOWN_TOKEN","error":"revoked fixture session","soft_logout":false})))
+            .mount(&server).await;
+        let client = Client::builder()
+            .homeserver_url(server.uri())
+            .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+            .build()
+            .await
+            .unwrap();
+        let session: MatrixSession = serde_json::from_value(
+            json!({"user_id":"@test:example.org","device_id":"TEST","access_token":"fake"}),
+        )
+        .unwrap();
+        client
+            .matrix_auth()
+            .restore_session(session, Default::default())
+            .await
+            .unwrap();
+        let sync = build_sync(client.clone()).await.unwrap();
+        let (_control, mut selection) = watch::channel(Selection::default());
+        let (state, _snapshots) = watch::channel(Model::default());
+        let error = tokio::time::timeout(
+            Duration::from_secs(10),
+            connected(&client, &sync, &mut selection, &state),
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+        crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(5))
+            .await
+            .unwrap();
+        assert!(error.to_string().contains("Sign-in is required"));
     }
 
     async fn request_page(snapshots: &mut watch::Receiver<Model>) -> Pane {
@@ -470,13 +635,24 @@ mod tests {
         .unwrap()
     }
 
-    async fn history_fixture(cancel_history: bool) {
+    async fn history_fixture(cancel_history: bool, reconnect: bool) {
         let server = MockServer::start().await;
+        let online = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let versions_online = online.clone();
+        let sync_online = online.clone();
         let root = json!({"type":"m.room.message", "event_id":"$root", "sender":"@test:example.org", "origin_server_ts":1, "content":{"msgtype":"m.text", "body":"fixture root"}});
         Mock::given(method("GET")).and(path("/_matrix/client/versions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"], "unstable_features":{"org.matrix.simplified_msc3575":true}}))).mount(&server).await;
+            .respond_with(move |_: &wiremock::Request| {
+                if versions_online.load(std::sync::atomic::Ordering::SeqCst) {
+                    ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"], "unstable_features":{"org.matrix.simplified_msc3575":true}}))
+                } else { ResponseTemplate::new(503).set_body_json(json!({"errcode":"M_UNKNOWN", "error":"offline fixture"})) }
+            }).mount(&server).await;
         Mock::given(method("POST")).and(path("/_matrix/client/unstable/org.matrix.simplified_msc3575/sync"))
-            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_millis(50)).set_body_json(json!({
+            .respond_with(move |_: &wiremock::Request| {
+                if !sync_online.load(std::sync::atomic::Ordering::SeqCst) {
+                    return ResponseTemplate::new(503).set_body_json(json!({"errcode":"M_UNKNOWN", "error":"offline fixture"}));
+                }
+                ResponseTemplate::new(200).set_delay(Duration::from_millis(50)).set_body_json(json!({
                 "pos":"test-pos", "lists":{"all_rooms":{"count":1,"ops":[{"op":"SYNC","range":[0,0],"room_ids":["!room:example.org"]}]}},
                 "rooms":{"!room:example.org":{"name":"Fixture", "initial":true, "is_dm":false, "joined_count":1, "invited_count":0,
                     "required_state":[
@@ -484,7 +660,7 @@ mod tests {
                         {"type":"m.room.encryption","state_key":"","sender":"@test:example.org","event_id":"$encryption","origin_server_ts":0,"content":{"algorithm":"m.megolm.v1.aes-sha2"}}
                     ], "timeline":[],"prev_batch":"older","num_live":0}},
                 "extensions":{"e2ee":{"device_one_time_keys_count":{"signed_curve25519":50},"device_unused_fallback_key_types":["signed_curve25519"]}}
-            }))).mount(&server).await;
+            })) }).mount(&server).await;
         Mock::given(method("POST"))
             .and(path("/_matrix/client/v3/keys/upload"))
             .respond_with(
@@ -546,9 +722,14 @@ mod tests {
             .mount(&server).await;
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let send_attempts = attempts.clone();
+        let sends_online = online.clone();
         Mock::given(method("PUT"))
             .and(path_regex(".*/send/m.room.encrypted/.*"))
             .respond_with(move |_: &wiremock::Request| {
+                if !sends_online.load(std::sync::atomic::Ordering::SeqCst) {
+                    return ResponseTemplate::new(503)
+                        .set_body_json(json!({"errcode":"M_UNKNOWN", "error":"offline fixture"}));
+                }
                 let attempt = send_attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 if attempt == 0 {
                     ResponseTemplate::new(403)
@@ -562,6 +743,7 @@ mod tests {
             .await;
         let client = Client::builder()
             .homeserver_url(server.uri())
+            .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
             .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
                 with_subscriptions: false,
             })
@@ -577,7 +759,7 @@ mod tests {
             .restore_session(session, Default::default())
             .await
             .unwrap();
-        let sync = SyncService::builder(client.clone()).build().await.unwrap();
+        let sync = build_sync(client.clone()).await.unwrap();
         crate::sso::start_and_wait(&sync).await.unwrap();
         let (navigation, mut selections) = watch::channel(Selection::default());
         let (state, mut snapshots) = watch::channel(Model::default());
@@ -770,6 +952,105 @@ mod tests {
             .unwrap()
             .clone();
             assert_eq!(model.room.unwrap().generation, generation);
+        }
+        if reconnect {
+            online.store(false, std::sync::atomic::Ordering::SeqCst);
+            let offline = tokio::time::timeout(
+                Duration::from_secs(15),
+                snapshots.wait_for(|s| s.status.starts_with("Offline")),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .clone();
+            assert!(
+                !worker.is_finished(),
+                "offline must not terminate the UI backend"
+            );
+            let pane = offline.room.unwrap();
+            assert_eq!(pane.generation, 3);
+            pane.composer
+                .unwrap()
+                .send("queued during outage".into())
+                .await
+                .unwrap();
+            let failed = tokio::time::timeout(
+                Duration::from_secs(20),
+                snapshots.wait_for(|s| {
+                    s.room.as_ref().is_some_and(|p| {
+                        p.rows
+                            .iter()
+                            .any(|r| r.body == "queued during outage" && r.retry.is_some())
+                    })
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .clone();
+            let retry = failed
+                .room
+                .unwrap()
+                .rows
+                .iter()
+                .find(|r| r.body == "queued during outage")
+                .unwrap()
+                .retry
+                .clone()
+                .unwrap();
+            online.store(true, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::timeout(
+                Duration::from_secs(20),
+                snapshots.wait_for(|s| s.status == "Connected"),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            retry.retry().await.unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                snapshots.wait_for(|s| {
+                    s.room.as_ref().is_some_and(|p| {
+                        p.rows
+                            .iter()
+                            .any(|r| r.body == "queued during outage" && r.send_state == "Sent")
+                    })
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            let composer = snapshots
+                .borrow()
+                .room
+                .as_ref()
+                .unwrap()
+                .composer
+                .clone()
+                .unwrap();
+            composer.send("after reconnect".into()).await.unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                snapshots.wait_for(|s| {
+                    s.room.as_ref().is_some_and(|p| {
+                        p.rows
+                            .iter()
+                            .any(|r| r.body == "after reconnect" && r.send_state == "Sent")
+                    })
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            // A second outage verifies shutdown interrupts SDK offline probes.
+            online.store(false, std::sync::atomic::Ordering::SeqCst);
+            tokio::time::timeout(
+                Duration::from_secs(15),
+                snapshots.wait_for(|s| s.status.starts_with("Offline")),
+            )
+            .await
+            .unwrap()
+            .unwrap();
         }
         // A UI that stops draining snapshots cannot block navigation or shutdown.
         navigation.send_modify(|s| s.shutdown = true);

@@ -72,8 +72,9 @@ absence of app timers is not evidence of zero SDK/network wakeups or redraws.
   state only; future send commands/results will need separate delivery semantics.
 - Restoration retains the exclusive profile lock through sync shutdown and shares
   the CLI's device-key and server-identity checks. SDK stop has a 15-second bound.
-  Iced owns final runtime teardown; unlike the CLI's runtime wrapper, total GUI
-  process teardown is not independently bounded if blocking SDK database work stalls.
+  The GUI owns one Tokio runtime and lends its handle to Iced. After UI teardown,
+  runtime cleanup has a five-second bound and reports incomplete cleanup on timeout.
+  In-progress queue admission still has no total deadline.
 - The local mock-server integration test uses actual SDK room/thread timelines,
   checks repeated navigation and thread closure, and shuts down without draining
   UI snapshots. Its room has encryption state but plaintext fixture events: this
@@ -199,3 +200,84 @@ draft retention, navigation during queue admission, keyboard/IME behavior,
 failed-send retry, and offline/restart scenarios were not specifically confirmed.
 Those acceptance cases remain pending; this result does not complete the full
 messaging milestone or ordinary-reply support.
+
+
+## Composer teardown correction — 2026-11-14
+
+The user reported an abort when closing the UI after sending. The supplied trace
+runs from `App -> Model -> Pane -> Composer -> Timeline -> Client -> SQLite pool`
+to `deadpool_sync::SyncWrapper::drop`, which calls Tokio `spawn_blocking` with no
+current runtime. A second panic during destructor cleanup aborts the process.
+Stopping sync alone did not release the SDK handles retained by UI snapshots.
+
+Composer and retry handles now wrap their SDK-owned values with the originating
+Tokio handle. Their final drop enters that runtime context before releasing those
+values. This covers the app model, widget/message copies, and discarded snapshots,
+without depending on a particular final UI message being processed. It uses the
+existing runtime and does not wait for SQLite I/O inside those destructors.
+
+The GUI now owns its one Tokio runtime in `main`; a small Iced executor adapter
+borrows its handle. The runtime remains entered on the UI thread until Iced and
+its application state have been destroyed, even if Iced drops its executor first.
+Afterward the existing five-second runtime-cleanup helper drains blocking work,
+reporting a timeout as an error. No second Tokio runtime is created.
+
+Regression tests release the last shared handle on a non-runtime thread and verify
+blocking cleanup completes, and release a real SQLite-backed SDK client outside
+`block_on` before shutting down the runtime. A GUI-lifecycle regression drops the
+Iced executor before a SQLite client and confirms background cleanup completes
+before the UI runtime wrapper returns. Existing encrypted send/retry and
+navigation checks also remain applicable. This fixes the missing-runtime destructor
+path and bounds final runtime cleanup; it does not establish a total deadline for
+queue-admission operations before sync shutdown.
+
+Desktop follow-up: open a room and thread, send, then close the window; also close
+with a failed-send retry button present. Confirm the process exits without a panic
+and that restarting restores the same session. Live confirmation remains pending.
+
+
+Local teardown checks: all 24 workspace tests, locked binary build, formatting,
+and Clippy with warnings denied passed. No live account was opened or modified
+for these regressions; the SQLite tests use temporary stores.
+
+
+## Wi-Fi loss and automatic reconnection — 2026-11-14
+
+The user reported that losing Wi-Fi caused a terminal synchronization error and
+forced the UI to exit. The GUI now enables `SyncService::with_offline_mode()`.
+The SDK retains ownership of synchronization, probes server availability while
+offline, and restarts sync after connectivity returns. No additional app polling
+loop or second sync service was introduced.
+
+The GUI displays an offline/reconnecting status and retains timelines, composers,
+and drafts. Room-list metadata refreshes no longer overwrite connection status.
+The GUI also stops using the finite CLI initial-sync success/failure gate after
+session restoration: SDK startup and recovery states are handled in its ongoing
+session loop. `UnknownToken` notifications remain a sign-in-required failure,
+rather than retrying a revoked session indefinitely.
+
+A message can be queued while offline. If the SDK marks it Failed, use **Retry**
+after reconnecting; this resumes the room queue with the existing transaction.
+Synchronization recovery does not automatically retry every failed send. Messages
+queued behind a failed send may wait for that room queue to be resumed.
+
+Manual check: open an encrypted room, disable Wi-Fi, and wait for the offline
+banner. Confirm drafts remain editable and the window stays open. Queue a message,
+restore Wi-Fi, and wait for Connected. Retry any failed message, then send a new
+message. Confirm each appears once in the other client. Repeat the outage and
+close the UI while offline to verify cancellation of the SDK availability checks.
+
+The mock-server regression switches sync and availability endpoints to HTTP 503,
+checks that the same view can queue a message, restores the endpoints, retries the
+failed send, sends another message, then shuts down during a second outage.
+Physical Wi-Fi and live-server confirmation remain pending.
+
+Starting the application entirely offline remains a separate limitation: the
+existing saved-session restoration still validates identity with `whoami` before
+entering this recoverable sync lifecycle. No change to that check was made here.
+
+
+Local recovery checks: all 26 workspace tests, formatting, Clippy with warnings
+denied, and locked binary build passed. The HTTP-503 outage/recovery regression
+passed; a separate HTTP-401 `M_UNKNOWN_TOKEN` test confirms that revoked sessions
+are reported as requiring sign-in rather than entering endless network recovery.
