@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
     libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
     libegl1-mesa-dev libgl1-mesa-dev libvulkan1 mesa-vulkan-drivers \
-    fonts-dejavu-core dbus-x11 xdg-utils wayland-utils vulkan-tools \
+    fonts-dejavu-core fonts-noto-color-emoji \
+    dbus-x11 xdg-utils wayland-utils vulkan-tools \
     strace ripgrep \
     && rm -rf /var/lib/apt/lists/*
 

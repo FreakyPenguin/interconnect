@@ -6,6 +6,13 @@ The image uses Debian Bookworm and installs the latest stable Rust available whe
 
 Included native dependencies cover Wayland, X11 fallback, font availability, Vulkan/EGL with Mesa software rendering, OpenSSL, SQLite, D-Bus, and C/C++ builds. Selected Cargo dependencies and features are documented in [the milestone 0 ADR](architecture/milestone-0.md).
 
+The container installs `fonts-noto-color-emoji` for Unicode emoji fallback
+alongside DejaVu. Rebuild the container to apply this addition. Confirm the font
+is installed with `fc-list ':family=Noto Color Emoji' family file`. Visual
+acceptance remains pending: check emoji color, joined sequences, wrapping, and
+selection in demo mode with both renderers; installing the font alone does not
+verify fallback priority or rendering correctness.
+
 Run the repository checks:
 
 ```sh
