@@ -102,6 +102,7 @@ impl ImageRequest for Key {
     const MEMORY_BYTES: usize = 32 * 1024 * 1024;
     // One original (<=16 MiB RGBA) and 16 previews (<=12 MiB) fit together.
     const MAX_REQUESTED: usize = MAX_PREVIEWS + 1;
+    const RETAIN_READY: bool = true;
     fn parameters(&self) -> MediaRequestParameters {
         MediaRequestParameters {
             source: self.source(),
@@ -428,6 +429,32 @@ mod tests {
         });
         ready(&mut images, &original).await;
         assert!(images.borrow().failed.is_empty());
+        let cached_id = images.borrow().ready[&original].id();
+        // Closing and reopening must keep the same decoded handle available
+        // synchronously, rather than sending empty/loading/ready snapshots.
+        for _ in 0..3 {
+            images.borrow_and_update();
+            control.send_replace(Demand {
+                uris: vec![preview.clone()],
+                ..Default::default()
+            });
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), images.changed())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(images.borrow().ready[&original].id(), cached_id);
+            control.send_replace(Demand {
+                uris: vec![original.clone()],
+                ..Default::default()
+            });
+            assert!(
+                tokio::time::timeout(Duration::from_millis(50), images.changed())
+                    .await
+                    .is_err()
+            );
+            assert_eq!(images.borrow().ready[&original].id(), cached_id);
+        }
         drop(control);
         worker.await.unwrap().unwrap();
         drop(first);

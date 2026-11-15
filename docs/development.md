@@ -15,6 +15,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+Development/test builds optimize `iced_tiny_skia` and `tiny-skia` at level 2.
+Raster conversion, compositing, and scaling execute on the UI thread; leaving
+these crates unoptimized made large image views stall input during redraws.
+Application code retains the normal development profile, and release settings
+are unchanged. Rebuilding picks up these package-specific profile settings.
+
 ## Design preview
 
 Run `cargo run --locked --bin matrix-ui -- --demo` for a memory-only workspace

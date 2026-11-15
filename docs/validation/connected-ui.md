@@ -25,6 +25,40 @@ messages appear in the window.
 
 ## Image messages — 2026-11-15
 
+### Image-viewer responsiveness correction
+
+The user reported roughly two-second cached-image opening and CPU-heavy closing,
+with both **Close** and Escape slow. A headless test that actually rasterizes a
+2048×2048 RGBA image reproduced expensive UI-thread work in the development
+software renderer: initial layout was about 240 ms and full redraws about 350 ms
+at a 1000×800 physical viewport. Optimizing `iced_tiny_skia` and `tiny-skia` at
+level 2 in the development/test profile reduced these observations to about
+17 ms initial layout and 36 ms warm redraws (about 76 ms first redraw). These are
+local fixture measurements, not timing guarantees or connected desktop evidence.
+
+Attachment snapshots now retain ready handles from the bounded 32 MiB LRU when
+the viewer closes. Reopening an image still in that cache starts with its decoded
+handle available, without an empty/loading/ready snapshot exchange. Eviction
+still removes entries within the existing budget; original network requests
+still require explicit opening. Snapshot comparison uses handle identity rather
+than comparing pixel buffers. Avatar snapshot behavior is unchanged.
+
+Plain and encrypted SQLite fixtures repeatedly close/reopen the same original,
+assert the decoded handle ID stays stable, and observe no extra media requests
+or redundant snapshots. A real widget/render test exercises a 2048px image at
+1× and 2× scale and retains the Close button's press across redraws and an
+incoming model/caption update; one release emits one Close action. The previous
+layout-only checks did not cover actual rasterization. `tiny-skia` is now a
+test-only direct dependency at its existing version, with default features off;
+no crate versions or vendored code changed.
+
+Validation: all 48 regular library tests and 59 GUI tests passed. Native desktop
+confirmation of the reported stall and idle-resource measurements remain
+pending. Apply the rebuilt binary on the next user-controlled launch; this work
+did not restart or open the connected profile.
+
+### Preview and viewer behavior
+
 Room and thread timelines display image previews beneath their existing text
 caption/filename. Visible image rows request static 512×384 thumbnails; a fixed
 180px preview frame (up to 320px wide) preserves row geometry while loading or

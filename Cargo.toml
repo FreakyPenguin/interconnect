@@ -28,10 +28,18 @@ zeroize = "1"
 [dev-dependencies]
 matrix-sdk-crypto = { version = "=0.19.1", default-features = false }
 tempfile = "3"
+tiny-skia = { version = "=0.11.4", default-features = false }
 wiremock = "0.6"
 
 [profile.dev]
 debug = 0
+
+# Raster conversion and scaling run on the UI thread, including debug builds.
+[profile.dev.package.iced_tiny_skia]
+opt-level = 2
+
+[profile.dev.package.tiny-skia]
+opt-level = 2
 
 # Iced 0.14 has no public switch for the editor's blink timer.
 [patch.crates-io]

@@ -192,9 +192,12 @@ impl App {
                     .width(Length::Fill)
                     .height(36)
                     .clip(true),
-                button("Close")
-                    .on_press(Message::Image(Event::Close))
-                    .style(shell::quiet_button)
+                container(
+                    button("Close")
+                        .on_press(Message::Image(Event::Close))
+                        .style(shell::quiet_button)
+                )
+                .id("image-viewer-close")
             ]
             .spacing(12);
             let card = container(column![header, content].spacing(12))
@@ -404,5 +407,129 @@ mod tests {
                 .iter()
                 .all(|message| matches!(message, Message::Image(Event::Ignore)))
         );
+    }
+
+    #[test]
+    fn loaded_large_image_closes_with_one_mouse_click_across_redraws() {
+        for scale in [1, 2] {
+            large_image_click_fixture(scale);
+        }
+    }
+
+    fn large_image_click_fixture(scale: u32) {
+        use iced::advanced::{Renderer as _, Shell, graphics, mouse, widget};
+        struct CloseBounds(Option<iced::Rectangle>);
+        impl widget::Operation for CloseBounds {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::from("image-viewer-close")) {
+                    self.0 = Some(bounds);
+                }
+            }
+        }
+        let mut app = sample();
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let key = app.model.room.as_ref().unwrap().rows[0]
+            .image
+            .as_ref()
+            .unwrap()
+            .original
+            .clone();
+        let large = image::Handle::from_rgba(2048, 2048, vec![160; 2048 * 2048 * 4]);
+        Arc::make_mut(&mut app.model.images.ready).insert(key, large);
+        open(&mut app, generation);
+        let mut renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut tree = Tree::empty();
+        let size = iced::Size::new(1000.0, 800.0);
+        let mut pixels = tiny_skia::Pixmap::new(1000 * scale, 800 * scale).unwrap();
+        let mut mask = tiny_skia::Mask::new(1000 * scale, 800 * scale).unwrap();
+        let viewport = graphics::Viewport::with_physical_size(
+            iced::Size::new(1000 * scale, 800 * scale),
+            scale as f32,
+        );
+        let mut click = None;
+        let mut close_count = 0;
+        for event in [
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                iced::time::Instant::now(),
+            )),
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                iced::time::Instant::now(),
+            )),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ] {
+            let mut messages = Vec::new();
+            {
+                let mut view = app.view();
+                tree.diff(view.as_widget());
+                let started = std::time::Instant::now();
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                eprintln!("large viewer layout ({scale}x): {:?}", started.elapsed());
+                let mut bounds = CloseBounds(None);
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut bounds,
+                );
+                click.get_or_insert(bounds.0.expect("close control").center());
+                let mut shell = Shell::new(&mut messages);
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &event,
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Available(click.unwrap()),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &iced::Rectangle::with_size(size),
+                );
+                let started = std::time::Instant::now();
+                renderer.reset(iced::Rectangle::with_size(size));
+                view.as_widget().draw(
+                    &tree,
+                    &mut renderer,
+                    &shell::theme(),
+                    &iced::advanced::renderer::Style::default(),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Available(click.unwrap()),
+                    &iced::Rectangle::with_size(size),
+                );
+                renderer.draw(
+                    &mut pixels.as_mut(),
+                    &mut mask,
+                    &viewport,
+                    &[iced::Rectangle::with_size(size)],
+                    iced::Color::WHITE,
+                );
+                eprintln!(
+                    "large viewer rasterization ({scale}x): {:?}",
+                    started.elapsed()
+                );
+            }
+            for message in messages {
+                if matches!(message, Message::Image(Event::Close)) {
+                    close_count += 1;
+                }
+                let _ = app.update(message);
+            }
+            if matches!(event, iced::Event::Mouse(mouse::Event::ButtonPressed(_))) {
+                // A real SDK/media snapshot can arrive between press/release.
+                // Rebuilding the responsive viewer must retain the button state.
+                let mut model = app.model.clone();
+                Arc::make_mut(&mut model.room.as_mut().unwrap().rows)[0].body =
+                    "Updated image caption".into();
+                let _ = app.update(Message::State(Box::new(model)));
+            }
+        }
+        assert_eq!(close_count, 1);
+        assert!(app.image_view.is_none());
     }
 }

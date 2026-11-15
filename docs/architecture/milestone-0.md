@@ -413,3 +413,21 @@ explicit Retry advances a request epoch rather than starting a polling timer.
 versions or vendored Iced files changed. See [image validation](../validation/connected-ui.md#image-messages--2026-11-15)
 for limits, evidence, and remaining acceptance checks. Custom emoji, file export,
 uploads, and configurable storage controls remain separate work.
+
+### Cached image reopening and software rendering
+
+Attachment presentation snapshots retain the decoded entries of their existing
+32 MiB LRU, including originals whose viewer was closed. Demand continues to
+control downloads and cancellation; keeping a ready handle does not fetch an
+unclicked original. Publishing by handle ID avoids pixel-buffer comparisons.
+Avatars continue to publish only currently demanded handles. This removes a
+loading-frame round trip when reopening a resident image while preserving
+account isolation and bounded cache ownership.
+
+The development/test profile optimizes only the software-renderer crates
+`iced_tiny_skia` and `tiny-skia`, whose raster conversion and drawing run on the
+UI thread. A large-image regression now performs actual rasterization as well
+as mouse press/redraw/release handling at 1× and 2× scale, including an intervening
+model update. See [responsiveness validation](../validation/connected-ui.md#image-viewer-responsiveness-correction)
+for measured costs and pending desktop confirmation. No vendor patch, new
+animation/polling task, release-profile change, or key-store change is involved.

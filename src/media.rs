@@ -45,6 +45,7 @@ impl<K> Default for Snapshot<K> {
 pub(crate) trait ImageRequest: Clone + Eq + Hash + Send + Sync + 'static {
     const MEMORY_BYTES: usize;
     const MAX_REQUESTED: usize;
+    const RETAIN_READY: bool = false;
     fn parameters(&self) -> MediaRequestParameters;
     fn decode(&self, bytes: Vec<u8>) -> anyhow::Result<Decoded>;
 }
@@ -286,11 +287,23 @@ pub(crate) async fn run_requests<K: ImageRequest>(
                 });
             }
         }
+        if K::RETAIN_READY {
+            // Retain the bounded decoded cache in the presentation snapshot so
+            // reopening an original can render immediately, without a loading
+            // frame and an asynchronous round trip to rediscover the handle.
+            images = cache
+                .entries
+                .iter()
+                .map(|(key, entry)| (key.clone(), entry.image.handle.clone()))
+                .collect();
+        }
         output.send_if_modified(|old| {
             if old.ready.len() == images.len()
-                && images
-                    .iter()
-                    .all(|(uri, handle)| old.ready.get(uri) == Some(handle))
+                && images.iter().all(|(uri, handle)| {
+                    old.ready
+                        .get(uri)
+                        .is_some_and(|old| old.id() == handle.id())
+                })
                 && old.failed.as_ref() == &failed
             {
                 false
