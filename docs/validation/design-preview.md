@@ -63,8 +63,13 @@ Shortcuts:
 
 ## Feasibility findings and scope
 
+Room/thread scroll positions are remembered during the session; first-time opens
+start at the bottom. The header chevron jumps to the newest message. See the
+[scrolling validation](connected-ui.md#timeline-scrolling--2026-11-15).
+
 The shell uses standard Iced layout and styling APIs. No new custom layout,
-drawing, or navigation widget is required for this visual treatment. The existing
+drawing, or navigation widget is required for this visual treatment. A small timeline wrapper scopes widget state to each view; scrolling and layout
+still use Iced. The existing
 vendored caret option was extended to the search input to preserve idle behavior.
 
 The important unresolved work is interaction depth: selecting/copying timeline

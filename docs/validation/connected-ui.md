@@ -77,7 +77,7 @@ room does not have to belong to the saved sidebar scope. Until
 then, the ordinary navigation remains usable; any explicit space/room/section
 choice cancels pending restoration. Unavailable saved selections therefore cannot
 force a room open or overwrite a user's new choice. Threads, drafts, searches,
-scroll offsets, and arbitrary section order are not restored. Section ordering is
+scroll offsets, and arbitrary section order are not restored across process restarts. Section ordering is
 currently fixed. Opening the restored room still does not send receipts.
 Demo mode neither reads nor writes these preferences.
 
@@ -86,6 +86,38 @@ latest-value flushing on shutdown, late metadata arrival, and explicit navigatio
 overriding an unavailable saved room. Live check: choose a space and room,
 collapse a section, close normally, restart, and verify the same context returns
 without marking the room read in the other client.
+
+## Timeline scrolling — 2026-11-15
+
+A room or thread opened for the first time starts at the bottom. Returning to a
+previously opened conversation restores its own in-memory scroll position after
+initial history loading completes. Room and thread positions are independent.
+Each pane has a down-chevron in its header, with the tooltip **Jump to newest
+message**, that returns that pane to the bottom. No read receipt is sent by the
+button. Scroll positions are not written to the profile or restored after exit.
+
+Iced's bottom anchor handles messages arriving after the initial empty view.
+A small widget wrapper gives scroll state the lifetime of the selected view;
+remembered positions are then restored explicitly. History controls occupy a
+stable widget slot so switching between loading/ready/end states does not reset
+the timeline. Scroll notifications and jump actions carry the view generation,
+so queued events from a previous room cannot change the current position. There
+is no scroll polling or animation timer.
+
+Positions are pixel distances from the bottom of loaded content, not message-ID
+anchors. Changes in available history, wrapping, or incoming content can shift
+the exact message at the top of a scrolled-up viewport; robust anchoring across
+all such changes and virtualization remain separate work.
+
+Validation: all 16 GUI tests, locked GUI build, formatting, and Clippy with
+warnings denied passed. Tests exercise real Iced layout through empty-to-loaded
+history, loading-control changes, and view replacement, plus independent saved
+positions, delayed restoration, and stale-event rejection. A native Wayland demo
+check confirmed first-open bottom position, scrolling up, switching to another
+room and back, position restoration, and the chevron returning to the latest
+message. The demo closed normally (exit 0). Local screenshots and the smoke
+script are in `artifacts/scroll-2026-11-15/` (ignored). This desktop check did not
+send messages or restart the user's connected app.
 
 ## Interactive acceptance
 

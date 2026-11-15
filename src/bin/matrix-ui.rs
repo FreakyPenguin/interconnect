@@ -3,6 +3,8 @@
 mod demo;
 #[path = "matrix-ui/shell.rs"]
 mod shell;
+#[path = "matrix-ui/timeline.rs"]
+mod timeline;
 
 use chatclient::connected::{History, Model, Pane, RetrySend, Selection};
 use chatclient::navigation::Scope;
@@ -46,6 +48,8 @@ struct App {
     demo: Option<demo::Demo>,
     preferences_ready: bool,
     pending_navigation: Option<Preferences>,
+    scroll_positions: HashMap<DraftKey, f32>,
+    pending_scroll: [Option<f32>; 2],
 }
 #[derive(Clone, Debug)]
 enum Message {
@@ -65,6 +69,15 @@ enum Message {
     Room(String),
     Thread(String),
     CloseThread,
+    JumpToNewest {
+        thread: bool,
+        generation: u64,
+    },
+    Scrolled {
+        thread: bool,
+        generation: u64,
+        offset: f32,
+    },
     LoadOlder(u64),
     Close,
     Exit,
@@ -96,6 +109,8 @@ impl App {
             demo: None,
             preferences_ready: false,
             pending_navigation: None,
+            scroll_positions: HashMap::new(),
+            pending_scroll: [None, None],
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -120,12 +135,45 @@ impl App {
             &message,
             Message::Room(_) | Message::Thread(_) | Message::CloseThread
         );
-        let scroll_target = match &message {
-            Message::Room(_) => Some("room-timeline"),
-            Message::Thread(_) => Some("thread-timeline"),
-            _ => None,
-        };
         match message {
+            Message::JumpToNewest { thread, generation } => {
+                let selected = if thread {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                };
+                if selected
+                    .as_ref()
+                    .is_some_and(|(current, _)| *current == generation)
+                {
+                    self.pending_scroll[usize::from(thread)] = None;
+                    if let Some(key) = self.draft_key(thread) {
+                        self.scroll_positions.insert(key, 0.0);
+                    }
+                    return jump_to_newest(thread);
+                }
+            }
+
+            Message::Scrolled {
+                thread,
+                generation,
+                offset,
+            } => {
+                let selected = if thread {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                };
+                if selected
+                    .as_ref()
+                    .is_some_and(|(current, _)| *current == generation)
+                    && self.pending_scroll[usize::from(thread)].is_none()
+                    && offset.is_finite()
+                    && let Some(key) = self.draft_key(thread)
+                {
+                    self.scroll_positions.insert(key, offset.max(0.0));
+                }
+            }
             Message::Space(space) if !self.closing && !self.stopped => {
                 self.shell.space = space;
                 self.shell.query.clear();
@@ -221,11 +269,7 @@ impl App {
                             self.refresh_demo();
                         }
                     }
-                    return iced::widget::operation::snap_to_end(if key.root.is_some() {
-                        "thread-timeline"
-                    } else {
-                        "room-timeline"
-                    });
+                    return jump_to_newest(key.root.is_some());
                 }
                 if let Some(composer) = self.composer_for(&key)
                     && let Some(draft) = self.drafts.get_mut(&key)
@@ -325,6 +369,7 @@ impl App {
                 self.generation += 1;
                 self.selection.room = Some((self.generation, id));
                 self.selection.thread = None;
+                self.pending_scroll = [Some(self.saved_scroll(false)), None];
                 self.drafts
                     .entry(self.draft_key(false).unwrap())
                     .or_default();
@@ -334,6 +379,7 @@ impl App {
             {
                 self.generation += 1;
                 self.selection.thread = Some((self.generation, id));
+                self.pending_scroll[1] = Some(self.saved_scroll(true));
                 if let Some(key) = self.draft_key(true) {
                     self.drafts.entry(key).or_default();
                 }
@@ -356,7 +402,11 @@ impl App {
                     pane.load_older = None;
                 }
             }
-            Message::CloseThread => self.selection.thread = None,
+            Message::CloseThread => {
+                self.selection.thread = None;
+                self.pending_scroll[1] = None;
+                self.pending_scroll[0] = Some(self.saved_scroll(false));
+            }
             _ => {}
         }
         if navigation {
@@ -389,7 +439,45 @@ impl App {
                 }
             });
         }
-        scroll_target.map_or_else(Task::none, iced::widget::operation::snap_to_end)
+        self.restore_scroll()
+    }
+    fn saved_scroll(&self, thread: bool) -> f32 {
+        self.draft_key(thread)
+            .and_then(|key| self.scroll_positions.get(&key).copied())
+            .unwrap_or(0.0)
+    }
+    fn restore_scroll(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for thread in [false, true] {
+            let index = usize::from(thread);
+            let selected = if thread {
+                &self.selection.thread
+            } else {
+                &self.selection.room
+            };
+            let snapshot = if thread {
+                &self.model.thread
+            } else {
+                &self.model.room
+            };
+            if let Some(offset) = self.pending_scroll[index]
+                && let Some((generation, _)) = selected
+                && let Some(pane) = current_pane(snapshot, *generation)
+                && pane.error.is_none()
+                && !matches!(pane.history, History::Loading)
+            {
+                self.pending_scroll[index] = None;
+                tasks.push(iced::widget::operation::scroll_to(
+                    if thread {
+                        "thread-timeline"
+                    } else {
+                        "room-timeline"
+                    },
+                    iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset },
+                ));
+            }
+        }
+        Task::batch(tasks)
     }
     fn restore_navigation(&mut self) -> Option<String> {
         if self.demo.is_some() {
@@ -562,6 +650,19 @@ impl App {
             iced::widget::space().width(Length::Fill)
         ]
         .align_y(iced::Alignment::Center);
+        header = header.push(iced::widget::tooltip(
+            button(text("⌄").size(24))
+                .padding([2, 10])
+                .style(shell::quiet_button)
+                .on_press(Message::JumpToNewest {
+                    thread,
+                    generation: *generation,
+                }),
+            container(text("Jump to newest message").size(12))
+                .padding(8)
+                .style(container::rounded_box),
+            iced::widget::tooltip::Position::Bottom,
+        ));
         if thread {
             header = header.push(
                 button("Close")
@@ -590,16 +691,19 @@ impl App {
                 ))
                 .into();
         }
+        let mut history_controls = column![].spacing(6);
         match &pane.history {
-            History::Loading => content = content.push(text("Loading room history…")),
+            History::Loading => {
+                history_controls = history_controls.push(text("Loading room history…"))
+            }
             History::Failed(error) => {
-                content = content.push(text(format!(
+                history_controls = history_controls.push(text(format!(
                     "Could not load history: {error}. Live messages remain active."
                 )))
             }
             History::Ready => {}
             History::End => {
-                content = content.push(
+                history_controls = history_controls.push(
                     container(
                         text("Beginning of conversation")
                             .size(11)
@@ -620,8 +724,9 @@ impl App {
             if pane.load_older.is_some() && !self.closing && !self.stopped {
                 control = control.on_press(Message::LoadOlder(*generation));
             }
-            content = content.push(control);
+            history_controls = history_controls.push(control);
         }
+        content = content.push(history_controls);
         let mut messages = column![].spacing(20).padding([16, 24]);
         for message in pane.rows.iter() {
             let mut entry = column![
@@ -667,17 +772,25 @@ impl App {
                 "Send the first message in this conversation.",
             ));
         }
-        content = content.push(
-            scrollable(messages)
-                .direction(shell::scrollbar())
-                .style(shell::scroll_style)
-                .id(if thread {
-                    "thread-timeline"
-                } else {
-                    "room-timeline"
-                })
-                .height(Length::Fill),
-        );
+        let view_generation = *generation;
+        let timeline = scrollable(messages)
+            .direction(shell::scrollbar())
+            .anchor_bottom()
+            .on_scroll(move |viewport| Message::Scrolled {
+                thread,
+                generation: view_generation,
+                offset: viewport.absolute_offset().y,
+            })
+            .style(shell::scroll_style)
+            .id(if thread {
+                "thread-timeline"
+            } else {
+                "room-timeline"
+            })
+            .height(Length::Fill);
+        // New view identity resets the scroll state; async rows retain that
+        // state and a zero distance from the bottom follows loaded history.
+        content = content.push(timeline::view(*generation, timeline.into()));
         if let Some(key) = self.draft_key(thread)
             && let Some(draft) = self.drafts.get(&key)
         {
@@ -763,6 +876,18 @@ impl App {
         content.into()
     }
 }
+fn jump_to_newest(thread: bool) -> Task<Message> {
+    // Offsets are measured from the anchor: zero is the bottom here.
+    iced::widget::operation::snap_to(
+        if thread {
+            "thread-timeline"
+        } else {
+            "room-timeline"
+        },
+        iced::widget::operation::RelativeOffset::START,
+    )
+}
+
 fn shell_shortcut(
     key: &iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
@@ -1077,6 +1202,140 @@ mod tests {
         let _ = app.update(Message::Search("no matching room".into()));
         let _ = app.update(Message::SearchOpen);
         assert_eq!(app.selection.room.as_ref().unwrap().1, "alex");
+    }
+
+    #[test]
+    fn scroll_positions_are_per_conversation_and_wait_for_loaded_history() {
+        let mut app = demo_app();
+        let first = app.selection.room.as_ref().unwrap().0;
+        let _ = app.update(Message::Scrolled {
+            thread: false,
+            generation: first,
+            offset: 320.0,
+        });
+        let _ = app.update(Message::Thread("proposal".into()));
+        let thread_generation = app.selection.thread.as_ref().unwrap().0;
+        let _ = app.update(Message::Scrolled {
+            thread: true,
+            generation: thread_generation,
+            offset: 80.0,
+        });
+        let _ = app.update(Message::Room("home".into()));
+        assert_eq!(app.saved_scroll(false), 0.0);
+        app.demo = None;
+        let _ = app.update(Message::Room("studio".into()));
+        let generation = app.selection.room.as_ref().unwrap().0;
+        assert_eq!(app.pending_scroll[0], Some(320.0));
+        // A delayed event from the old view must not overwrite the remembered offset.
+        let _ = app.update(Message::Scrolled {
+            thread: false,
+            generation: first,
+            offset: 0.0,
+        });
+        assert_eq!(app.saved_scroll(false), 320.0);
+        let mut model = app.model.clone();
+        model.room = Some(Pane {
+            generation,
+            rows: Default::default(),
+            error: None,
+            history: History::Loading,
+            load_older: None,
+            composer: None,
+        });
+        let _ = app.update(Message::State(Box::new(model.clone())));
+        let _ = app.update(Message::Scrolled {
+            thread: false,
+            generation,
+            offset: 0.0,
+        });
+        assert_eq!(app.pending_scroll[0], Some(320.0));
+        assert_eq!(app.saved_scroll(false), 320.0);
+        model.room.as_mut().unwrap().history = History::Ready;
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.pending_scroll[0].is_none());
+        let _ = app.update(Message::Thread("proposal".into()));
+        assert_eq!(app.pending_scroll[1], Some(80.0));
+        let _ = app.update(Message::JumpToNewest {
+            thread: false,
+            generation: first,
+        });
+        assert_eq!(app.saved_scroll(false), 320.0);
+        let _ = app.update(Message::JumpToNewest {
+            thread: false,
+            generation,
+        });
+        assert_eq!(app.saved_scroll(false), 0.0);
+        assert_eq!(app.saved_scroll(true), 80.0);
+    }
+
+    #[test]
+    fn timeline_layout_starts_at_bottom_and_keeps_offset_across_history_controls() {
+        use iced::advanced::{layout, widget};
+        struct Probe {
+            distance: Option<f32>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("room-timeline")) {
+                    self.distance = Some((content.height - bounds.height).max(0.0) - translation.y);
+                }
+            }
+        }
+        fn inspect(app: &App, tree: &mut widget::Tree, set_offset: Option<f32>) -> f32 {
+            let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let mut pane = app.pane(false);
+            tree.diff(pane.as_widget());
+            let node = pane.as_widget_mut().layout(
+                tree,
+                &renderer,
+                &layout::Limits::new(iced::Size::ZERO, iced::Size::new(600.0, 700.0)),
+            );
+            if let Some(y) = set_offset {
+                pane.as_widget_mut().operate(
+                    tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut widget::operation::scrollable::scroll_to::<()>(
+                        widget::Id::new("room-timeline"),
+                        iced::widget::operation::AbsoluteOffset {
+                            x: Some(0.0),
+                            y: Some(y),
+                        },
+                    ),
+                );
+            }
+            let mut probe = Probe { distance: None };
+            pane.as_widget_mut()
+                .operate(tree, layout::Layout::new(&node), &renderer, &mut probe);
+            probe.distance.unwrap()
+        }
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("busy".into()));
+        let mut tree = widget::Tree::empty();
+        let rows = app.model.room.as_ref().unwrap().rows.clone();
+        app.model.room.as_mut().unwrap().rows = Default::default();
+        app.model.room.as_mut().unwrap().history = History::Loading;
+        assert!(inspect(&app, &mut tree, None).abs() < 1.0);
+        app.model.room.as_mut().unwrap().rows = rows;
+        assert!(inspect(&app, &mut tree, None).abs() < 1.0);
+        assert!((inspect(&app, &mut tree, Some(120.0)) - 120.0).abs() < 1.0);
+        app.model.room.as_mut().unwrap().history = History::Loading;
+        assert!((inspect(&app, &mut tree, None) - 120.0).abs() < 1.0);
+        app.model.room.as_mut().unwrap().history = History::Ready;
+        assert!((inspect(&app, &mut tree, None) - 120.0).abs() < 1.0);
+        // Replacing a view cannot inherit another view's internal widget offset.
+        let _ = app.update(Message::Room("busy".into()));
+        assert!(inspect(&app, &mut tree, None).abs() < 1.0);
     }
 
     #[test]
