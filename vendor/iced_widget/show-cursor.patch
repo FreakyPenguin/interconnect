@@ -1,0 +1,51 @@
+diff --git a/vendor/iced_widget/src/text_editor.rs b/vendor/iced_widget/src/text_editor.rs
+index b0bc1ca..857dab6 100644
+--- a/vendor/iced_widget/src/text_editor.rs
++++ b/vendor/iced_widget/src/text_editor.rs
+@@ -129,6 +129,7 @@ pub struct TextEditor<
+     ) -> highlighter::Format<Renderer::Font>,
+     last_status: Option<Status>,
+     cursor_blinking: bool,
++    show_cursor: bool,
+ }
+ 
+ impl<'a, Message, Theme, Renderer>
+@@ -161,6 +162,7 @@ where
+             },
+             last_status: None,
+             cursor_blinking: true,
++            show_cursor: true,
+         }
+     }
+ 
+@@ -201,6 +203,12 @@ where
+         self
+     }
+ 
++    /// Controls whether the caret is drawn (selection highlighting is retained).
++    pub fn show_cursor(mut self, show: bool) -> Self {
++        self.show_cursor = show;
++        self
++    }
++
+     /// Sets the height of the [`TextEditor`].
+     pub fn height(mut self, height: impl Into<Length>) -> Self {
+         self.height = height.into();
+@@ -315,6 +323,7 @@ where
+             highlighter_format: to_format,
+             last_status: self.last_status,
+             cursor_blinking: self.cursor_blinking,
++            show_cursor: self.show_cursor,
+         }
+     }
+ 
+@@ -1034,7 +1043,8 @@ where
+         if let Some(focus) = state.focus.as_ref() {
+             match internal.editor.selection() {
+                 Selection::Caret(position)
+-                    if focus.is_cursor_visible(self.cursor_blinking) =>
++                    if self.show_cursor
++                        && focus.is_cursor_visible(self.cursor_blinking) =>
+                 {
+                     let cursor =
+                         Rectangle::new(

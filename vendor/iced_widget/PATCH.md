@@ -27,3 +27,8 @@ option for the room search field; see `input-cursor-blinking.patch`. It preserve
 input-method requests and ordinary focus/input redraws while disabling only the
 caret's scheduled redraw. The GUI includes the equivalent focused-input
 regression across multiple blink phases. The search field opts out of blinking.
+
+`src/text_editor.rs` additionally exposes default-on `show_cursor(bool)`; see
+`show-cursor.patch`. This only hides the caret, retaining range highlights.
+The app's read-only message widget uses it with blinking disabled, filters edit
+bindings/actions and IME requests, and leaves wheel events to the timeline.

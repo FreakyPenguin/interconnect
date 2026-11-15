@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 #[path = "matrix-ui/demo.rs"]
 mod demo;
+#[path = "matrix-ui/selectable.rs"]
+mod selectable;
 #[path = "matrix-ui/shell.rs"]
 mod shell;
 #[path = "matrix-ui/timeline.rs"]
@@ -718,7 +720,10 @@ impl App {
         for (index, message) in pane.rows.iter().enumerate() {
             let mut entry = column![
                 shell::title(&message.sender, 13),
-                text(&message.body).size(14)
+                selectable::view(
+                    message.event_id.as_deref().unwrap_or(&message.body),
+                    &message.body
+                )
             ]
             .spacing(6);
             if !message.send_state.is_empty() {

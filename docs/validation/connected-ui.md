@@ -506,3 +506,12 @@ visible there, and clicking it returns to the bottom and hides it. The demo
 closed normally (exit 0). Screenshots are in `artifacts/scroll-anchor-2026-11-15/`
 (ignored). Incoming-content cases were exercised through widget-layout tests;
 this check sent no Matrix messages and did not restart the connected app.
+
+Message text selection (2026-11-15): room and thread bodies support dragging,
+word/line selection, keyboard selection, and the platform copy shortcut. Bodies
+remain read-only, have no caret or input-method request, and schedule no blink
+redraws. Wheel events continue to scroll the conversation. Selection is within
+one message; cross-message selection is not implemented. Selection resets when
+its widget slot changes identity or its body changes. The widget regression
+exercises partial selection/copy, rejected typing/cut/paste, identity reset, and
+idle redraw behavior. The demo scroll smoke still passes with selectable bodies.
