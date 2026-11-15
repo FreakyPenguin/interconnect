@@ -373,6 +373,24 @@ impl App {
             ]
             .spacing(8)
             .align_y(Alignment::Center);
+            if self.demo.is_some() || self.model.verification.control.is_some() {
+                footer = footer.push(
+                    button(
+                        text(if self.model.verification.incoming.is_some() {
+                            "Verification requested"
+                        } else if self.model.verification.trust
+                            == matrix_sdk::encryption::VerificationState::Verified
+                        {
+                            "Device verified"
+                        } else {
+                            "Verify device"
+                        })
+                        .size(11),
+                    )
+                    .style(quiet_button)
+                    .on_press(Message::Verification(super::verification::Event::Open)),
+                );
+            }
             if let Some(error) = &self.model.media_error {
                 footer = footer.push(widget::tooltip(
                     text("Media unavailable").size(11).color(MUTED),

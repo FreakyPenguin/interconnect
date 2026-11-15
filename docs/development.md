@@ -38,6 +38,15 @@ use the same visual shell with the saved Matrix session, or show the login form
 for a new or signed-out profile. The desktop supports password and browser SSO
 sign-in; see [desktop login validation](validation/connected-ui.md#desktop-login--2026-11-15).
 
+## Device verification
+
+The desktop footer opens own-device SAS verification with another Matrix client.
+The session-owned worker subscribes to SDK trust and incoming to-device requests,
+loads devices on demand, and sends confirmation only for the current displayed
+comparison. See [verification validation](validation/verification.md) for protocol
+fixture coverage, cancellation, scope, and live acceptance. In `--demo`, the same
+entry opens a memory-only sample comparison without an account or network.
+
 ## Emoji picker
 
 `src/bin/interconnect/emoji_picker.rs` owns the reusable catalog, search/category/

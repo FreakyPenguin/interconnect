@@ -358,6 +358,7 @@ impl std::error::Error for SignInRequired {}
 pub struct Model {
     pub authentication: Option<Authentication>,
     pub account_id: Option<String>,
+    pub verification: crate::verification::Snapshot,
     pub diagnostics: Arc<crate::diagnostics::Diagnostics>,
     pub status: String,
     pub rooms: Arc<Vec<RoomEntry>>,
@@ -379,6 +380,7 @@ impl Default for Model {
         Self {
             authentication: Some(Authentication::Checking),
             account_id: None,
+            verification: Default::default(),
             diagnostics: Arc::default(),
             status: "Restoring saved session…".into(),
             rooms: Arc::default(),
@@ -515,18 +517,30 @@ async fn run_authenticated(
     // and never holds up SDK sync processing on a desktop service.
     let notifications =
         crate::notifications::Service::install(client, selection.clone(), state.clone()).await;
+    let stop_verification = tokio_util::sync::CancellationToken::new();
+    let verification = crate::verification::Service::new(client.clone())
+        .run(state.clone(), stop_verification.clone());
+    tokio::pin!(verification);
     let connection = async {
         tokio::select! {
             result = connected(client, &sync, &mut selection, &state) => result,
             _ = notifications.run() => anyhow::bail!("Notification worker ended"),
         }
     };
+    let mut verification_finished = false;
     let outcome = {
         tokio::pin!(persistence, connection);
         let mut writer_finished = false;
         let result = tokio::select! {
             result = &mut connection => result,
-            _ = &mut persistence => { writer_finished = true; connection.await },
+            _ = &mut verification => { verification_finished = true; Err(anyhow::anyhow!("Verification worker ended")) },
+            _ = &mut persistence => {
+                writer_finished = true;
+                tokio::select! {
+                    result = &mut connection => result,
+                    _ = &mut verification => { verification_finished = true; Err(anyhow::anyhow!("Verification worker ended")) },
+                }
+            },
         };
         stop_preferences.cancel();
         if !writer_finished {
@@ -534,6 +548,10 @@ async fn run_authenticated(
         }
         result
     };
+    stop_verification.cancel();
+    if !verification_finished {
+        verification.await;
+    }
     state.send_modify(|s| s.status = "Stopping synchronization…".into());
     let stopped = crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(15)).await;
     // Keep the profile guard alive until SDK stop has completed or failed.

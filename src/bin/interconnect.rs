@@ -33,6 +33,8 @@ mod shell;
 mod thread_activity;
 #[path = "interconnect/timeline.rs"]
 mod timeline;
+#[path = "interconnect/verification.rs"]
+mod verification;
 
 use iced::{
     Element, Length, Subscription, Task,
@@ -62,6 +64,7 @@ const MAX_PENDING_OPERATIONS: usize = 8;
 struct App {
     settings: settings::State,
     login: login::State,
+    verification: verification::State,
     profile: String,
     account_id: Option<String>,
     model: Model,
@@ -97,6 +100,7 @@ struct App {
 #[derive(Clone, Debug)]
 enum Message {
     Login(login::Event),
+    Verification(verification::Event),
     Settings(settings::Event),
     Image(images::Event),
     Reaction(reaction_picker::Event),
@@ -166,6 +170,7 @@ impl App {
         let mut app = Self {
             settings: settings::State::default(),
             login: login::State::default(),
+            verification: verification::State::default(),
             profile: String::new(),
             account_id: None,
             model: Model::default(),
@@ -212,11 +217,18 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if let Message::Verification(event) = message {
+            let task = self.verification_update(event);
+            self.publish_notification_context();
+            return task;
+        }
         if let Message::Login(event) = message {
             return self.login_update(event);
         }
         if let Message::Settings(event) = message {
-            if self.image_view.is_some() && matches!(event, settings::Event::Open) {
+            if (self.image_view.is_some() || self.verification.open)
+                && matches!(event, settings::Event::Open)
+            {
                 return Task::none();
             }
             if matches!(event, settings::Event::Open) {
@@ -264,11 +276,15 @@ impl App {
             return self.update(dismiss);
         }
         if self.settings.draft.is_some()
+            || self.verification.open
             || self.image_view.is_some()
             || self.reaction_picker.is_some()
             || self.composer_picker.is_some()
         {
             if matches!(message, Message::Escape) {
+                if self.verification.open {
+                    return self.update(Message::Verification(verification::Event::Close));
+                }
                 if self.image_view.is_some() {
                     return self.update(Message::Image(images::Event::Close));
                 }
@@ -658,7 +674,7 @@ impl App {
                     self.retry_errors.insert(id, error);
                 }
             }
-            Message::Login(_) => unreachable!(),
+            Message::Login(_) | Message::Verification(_) => unreachable!(),
             Message::Control(sender) => {
                 sender.send_replace(self.selection.clone());
                 self.control = Some(sender);
@@ -679,6 +695,11 @@ impl App {
                         self.pending_navigation = None;
                     }
                     self.account_id = Some(account_id.clone());
+                }
+                if state.authentication.is_some()
+                    || state.verification.control.is_none() && self.demo.is_none()
+                {
+                    self.verification.open = false;
                 }
                 self.model = *state;
                 if let Some(room) = self.restore_navigation() {
@@ -1020,7 +1041,15 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if (self.demo.is_none() && self.model.authentication.is_some())
+            if self.verification.open {
+                iced::event::listen_with(|event, _, _| match event {
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        ..
+                    }) => Some(Message::Escape),
+                    _ => None,
+                })
+            } else if (self.demo.is_none() && self.model.authentication.is_some())
                 || self.composing
                 || self.reaction_picker.is_some()
                 || self.composer_picker.is_some()
@@ -1092,6 +1121,9 @@ impl App {
         }
         if self.image_view.is_some() {
             layers = layers.push(self.image_viewer());
+        }
+        if self.verification.open {
+            layers = layers.push(self.verification_view());
         }
         layers.into()
     }

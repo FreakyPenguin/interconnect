@@ -8,8 +8,10 @@ when the profile is missing or signed out. It lists joined rooms and displays SD
 thread timelines in encrypted and unencrypted rooms. History loads automatically
 in 50-event batches, filling the viewport and an older-message buffer while
 continuing to display live updates.
-Room and thread text composers are implemented. Verification UI,
-recovery UI, receipts, and automatic read marking remain pending.
+Room and thread text composers and own-device SAS verification are implemented.
+See [desktop verification](verification.md) for the comparison flow, SDK trust
+reporting, automated protocol evidence, and pending native acceptance. Recovery
+UI, receipts, and automatic read marking remain pending.
 For encrypted rooms, use an already verified profile with access to the test
 room's keys.
 
@@ -66,7 +68,9 @@ keyring. Enter the homeserver URL, username/Matrix ID, and password, then select
 **Sign in**. For SSO, enter the homeserver and select **Continue in browser**,
 then **Open browser** (or **Copy sign-in link**). The homeserver must support
 native sliding sync; browser login also requires Matrix SSO. Registration,
-OAuth/OIDC-native login, device verification, and key recovery are not provided.
+OAuth/OIDC-native login and key recovery are not provided. After login, use
+**Verify device** to compare with an existing trusted client; see
+[desktop verification](verification.md).
 
 The callback listens on localhost port 8765. In a development container, forward
 that port to the same port on the browser's host. The sign-in attempt has a

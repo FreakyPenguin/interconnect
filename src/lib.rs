@@ -11,6 +11,7 @@ pub mod notifications;
 pub mod session;
 pub mod settings;
 pub mod sso;
+pub mod verification;
 
 use tokio::{sync::mpsc, task::JoinHandle};
 use tokio_util::sync::CancellationToken;

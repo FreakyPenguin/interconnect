@@ -16,6 +16,11 @@ checks pass; native acceptance and notification click navigation remain pending.
 See [notification validation](validation/notifications.md), including the existing
 macOS saved-account limitation.
 
+Own-device SAS verification is available from the footer, including explicit
+incoming-request acceptance, emoji/number comparison, mismatch/cancel, and SDK
+trust reporting. A two-client mock fixture exercises real cryptographic exchange;
+[live desktop acceptance](validation/verification.md) remains pending.
+
 ## Platform and architecture
 
 - [ ] Native, lightweight Rust GUI client for Linux/Wayland laptops.

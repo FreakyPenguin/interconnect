@@ -1,5 +1,15 @@
 # Connected UI lifecycle and idle resources
 
+## Device verification — 2026-11-15
+
+The session-owned SAS worker listens to SDK trust changes, scoped incoming
+verification events, and bounded UI commands. It adds no polling or frame timer.
+Device lists refresh only on explicit open/refresh; deadlines run only during
+pending requests, discovery, exchanges, or cancellation. Mock-client coverage
+checks no HTTP requests while idle and joined cancellation on shutdown. Actual
+CPU, wakeups, and native hidden-window behavior have not been remeasured; earlier
+resource measurements predate this worker. See [verification validation](verification.md).
+
 ## Notification delivery — 2026-11-15
 
 Desktop notifications use a bounded SDK-event queue and async OS delivery, with
