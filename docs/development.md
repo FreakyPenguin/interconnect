@@ -15,6 +15,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+## Design preview
+
+Run `cargo run --locked --bin matrix-ui -- --demo` for a memory-only workspace
+with spaces, sectioned room navigation, and room/thread conversations. It uses
+no saved session and sends no Matrix messages. See the [design preview guide](validation/design-preview.md)
+for shortcuts, fixtures, and known interaction gaps. Normal `matrix-ui` launches
+use the same visual shell with the saved Matrix session.
+
 ## Running on the host Wayland desktop
 
 For a local Linux Docker host, launch VS Code from a terminal with `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` set. Add the following top-level properties to `.devcontainer/devcontainer.json` and rebuild:

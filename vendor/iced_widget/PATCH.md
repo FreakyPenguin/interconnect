@@ -21,3 +21,9 @@ Do not edit the Cargo registry cache or silently update the vendored version.
 `src/pick_list.rs` also removes the legacy `use std::f32` module import,
 so `f32::INFINITY` resolves to the primitive type’s associated constant. This
 removes the deprecation warning without changing behavior or suppressing lints.
+
+`src/text_input.rs` now exposes the same default-on `cursor_blinking(bool)`
+option for the room search field; see `input-cursor-blinking.patch`. It preserves
+input-method requests and ordinary focus/input redraws while disabling only the
+caret's scheduled redraw. The GUI includes the equivalent focused-input
+regression across multiple blink phases. The search field opts out of blinking.

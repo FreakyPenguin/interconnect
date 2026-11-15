@@ -1,4 +1,9 @@
 #![recursion_limit = "256"]
+#[path = "matrix-ui/demo.rs"]
+mod demo;
+#[path = "matrix-ui/shell.rs"]
+mod shell;
+
 use chatclient::connected::{History, Model, Pane, RetrySend, Selection};
 use iced::{
     Element, Length, Subscription, Task,
@@ -35,9 +40,21 @@ struct App {
     retry_errors: HashMap<String, String>,
     pending_ops: usize,
     composing: bool,
+    shell: shell::State,
+    demo: Option<demo::Demo>,
 }
 #[derive(Clone, Debug)]
 enum Message {
+    Space(usize),
+    Section(String),
+    Search(String),
+    SearchFocus,
+    SearchOpen,
+    AdjacentRoom(bool),
+    OpenLastThread,
+    ToggleNavigation,
+    Focus(bool),
+    Escape,
     Control(watch::Sender<Selection>),
     State(Model),
     Stopped(Result<(), String>),
@@ -56,7 +73,7 @@ enum Message {
 }
 impl App {
     fn new() -> Self {
-        Self {
+        let mut app = Self {
             profile: std::env::args()
                 .nth(1)
                 .unwrap_or_else(|| ".matrix-spike".into()),
@@ -71,11 +88,107 @@ impl App {
             retry_errors: HashMap::new(),
             pending_ops: 0,
             composing: false,
+            shell: shell::State::default(),
+            demo: None,
+        };
+        if std::env::args().any(|arg| arg == "--demo") {
+            app.demo = Some(demo::Demo::default());
+            app.model.rooms = demo::rooms().into();
+            app.model.status = "Design preview · local sample data".into();
+            let _ = app.update(Message::Room("studio".into()));
         }
+        app
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         chatclient::diagnostics::update();
+        let navigation = matches!(
+            &message,
+            Message::Room(_) | Message::Thread(_) | Message::CloseThread
+        );
+        let scroll_target = match &message {
+            Message::Room(_) => Some("room-timeline"),
+            Message::Thread(_) => Some("thread-timeline"),
+            _ => None,
+        };
         match message {
+            Message::Space(space) => {
+                self.shell.space = space;
+                self.shell.query.clear();
+                if self.demo.is_some() {
+                    let room = demo::ROOMS
+                        .iter()
+                        .find(|r| space == 0 || r.space == space)
+                        .unwrap();
+                    return self.update(Message::Room(room.id.into()));
+                }
+            }
+            Message::Section(section) => {
+                if !self.shell.collapsed.remove(&section) {
+                    self.shell.collapsed.insert(section);
+                }
+            }
+            Message::Search(query) => self.shell.query = query,
+            Message::SearchOpen => {
+                if let Some(id) = self.visible_rooms().first().cloned() {
+                    let task = self.update(Message::Room(id));
+                    return task.chain(iced::widget::operation::focus("room-composer"));
+                }
+            }
+            Message::AdjacentRoom(previous) => {
+                let rooms = self.visible_rooms();
+                if !rooms.is_empty() {
+                    let index = rooms
+                        .iter()
+                        .position(|id| {
+                            self.selection
+                                .room
+                                .as_ref()
+                                .is_some_and(|(_, selected)| selected == id)
+                        })
+                        .unwrap_or(0);
+                    let next = if previous {
+                        (index + rooms.len() - 1) % rooms.len()
+                    } else {
+                        (index + 1) % rooms.len()
+                    };
+                    return self.update(Message::Room(rooms[next].clone()));
+                }
+            }
+            Message::OpenLastThread => {
+                if let Some(root) = self
+                    .model
+                    .room
+                    .as_ref()
+                    .and_then(|p| p.rows.last())
+                    .and_then(|r| r.event_id.clone())
+                {
+                    let task = self.update(Message::Thread(root));
+                    return task.chain(iced::widget::operation::focus("thread-composer"));
+                }
+            }
+            Message::SearchFocus => {
+                self.shell.navigation = true;
+                return iced::widget::operation::focus("room-search")
+                    .chain(iced::widget::operation::select_all("room-search"));
+            }
+            Message::ToggleNavigation => self.shell.navigation = !self.shell.navigation,
+            Message::Focus(backwards) => {
+                return if backwards {
+                    iced::widget::operation::focus_previous()
+                } else {
+                    iced::widget::operation::focus_next()
+                };
+            }
+            Message::Escape => {
+                if !self.shell.query.is_empty() {
+                    self.shell.query.clear();
+                } else {
+                    return self
+                        .update(Message::CloseThread)
+                        .chain(iced::widget::operation::focus("room-composer"));
+                }
+            }
+
             Message::Composing(active) => self.composing = active,
             Message::Edit(key, action) if !self.closing && !self.stopped => {
                 if (self.draft_key(false).as_ref() == Some(&key)
@@ -92,6 +205,21 @@ impl App {
                     && !self.composing
                     && self.pending_ops < MAX_PENDING_OPERATIONS =>
             {
+                if self.demo.is_some() {
+                    if let Some(draft) = self.drafts.get_mut(&key) {
+                        let body = draft.content.text();
+                        if !body.trim().is_empty() {
+                            self.demo.as_mut().unwrap().send(&key, body);
+                            draft.content = text_editor::Content::new();
+                            self.refresh_demo();
+                        }
+                    }
+                    return iced::widget::operation::snap_to_end(if key.root.is_some() {
+                        "thread-timeline"
+                    } else {
+                        "room-timeline"
+                    });
+                }
                 if let Some(composer) = self.composer_for(&key)
                     && let Some(draft) = self.drafts.get_mut(&key)
                     && !draft.pending
@@ -155,6 +283,7 @@ impl App {
                     }
                 }
             }
+            Message::Close if self.demo.is_some() => return iced::exit(),
             Message::Close => {
                 if self.stopped && self.pending_ops == 0 {
                     return iced::exit();
@@ -200,6 +329,9 @@ impl App {
             Message::CloseThread => self.selection.thread = None,
             _ => {}
         }
+        if navigation {
+            self.refresh_demo();
+        }
         if self.closing && self.pending_ops == 0 {
             if self.stopped {
                 return iced::exit();
@@ -217,7 +349,7 @@ impl App {
                 }
             });
         }
-        Task::none()
+        scroll_target.map_or_else(Task::none, iced::widget::operation::snap_to_end)
     }
     fn draft_key(&self, thread: bool) -> Option<DraftKey> {
         let room = self.selection.room.as_ref()?.1.clone();
@@ -247,7 +379,33 @@ impl App {
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
-            Subscription::run_with(self.profile.clone(), |profile| connection(profile)),
+            if self.demo.is_some() {
+                Subscription::run(|| {
+                    iced::stream::channel(1, async |_output| {
+                        chatclient::diagnostics::Diagnostics::default()
+                            .reports()
+                            .await;
+                    })
+                })
+            } else {
+                Subscription::run_with(self.profile.clone(), |profile| connection(profile))
+            },
+            if self.composing {
+                Subscription::none()
+            } else {
+                iced::event::listen_with(|event, _, _| {
+                    if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key,
+                        modifiers,
+                        ..
+                    }) = event
+                    {
+                        shell_shortcut(&key, modifiers)
+                    } else {
+                        None
+                    }
+                })
+            },
             iced::window::close_requests().map(|_| Message::Close),
             if chatclient::diagnostics::enabled() {
                 iced::event::listen_raw(|event, _, _| {
@@ -275,44 +433,29 @@ impl App {
         ])
     }
     fn view(&self) -> Element<'_, Message> {
-        let mut rooms = column![text("Rooms").size(22)].spacing(8);
-        for room in self.model.rooms.iter() {
-            let selected = self
-                .selection
-                .room
-                .as_ref()
-                .is_some_and(|(_, id)| id == &room.id);
-            let label = if selected {
-                format!("› {}", room.name)
-            } else {
-                room.name.clone()
-            };
-            let mut control = button(text(label)).width(Length::Fill);
-            if !self.closing && !self.stopped {
-                control = control.on_press(Message::Room(room.id.clone()));
-            }
-            rooms = rooms.push(control);
+        self.shell_view()
+    }
+    fn refresh_demo(&mut self) {
+        if let Some(demo) = &mut self.demo {
+            self.model.room = self.selection.room.as_ref().map(|(generation, room)| {
+                demo.pane(
+                    DraftKey {
+                        room: room.clone(),
+                        root: None,
+                    },
+                    *generation,
+                )
+            });
+            self.model.thread = self.selection.thread.as_ref().map(|(generation, root)| {
+                demo.pane(
+                    DraftKey {
+                        room: self.selection.room.as_ref().unwrap().1.clone(),
+                        root: Some(root.clone()),
+                    },
+                    *generation,
+                )
+            });
         }
-        let mut panes = row![
-            scrollable(rooms).width(240).height(Length::Fill),
-            container(self.pane(false)).width(Length::FillPortion(2)),
-        ]
-        .spacing(16)
-        .height(Length::Fill);
-        if self.selection.thread.is_some() {
-            panes = panes.push(container(self.pane(true)).width(Length::FillPortion(2)));
-        }
-        let mut content = column![
-            text("Matrix — connected prototype").size(24),
-            text(&self.model.status),
-            panes
-        ]
-        .spacing(12)
-        .padding(16);
-        if self.stopped {
-            content = content.push(button("Exit").on_press(Message::Exit));
-        }
-        content.into()
     }
     fn pane(&self, thread: bool) -> Element<'_, Message> {
         let selected = if thread {
@@ -326,18 +469,61 @@ impl App {
             &self.model.room
         };
         let Some((generation, _)) = selected else {
-            return text("Select an encrypted room to read messages.").into();
+            return shell::empty_state(
+                "A little room to talk",
+                "Choose a conversation from the sidebar.",
+            );
         };
-        let mut content =
-            column![text(if thread { "Thread" } else { "Room timeline" }).size(22)].spacing(10);
+        let name = self
+            .selection
+            .room
+            .as_ref()
+            .and_then(|(_, id)| self.model.rooms.iter().find(|r| &r.id == id))
+            .map(|r| r.name.as_str())
+            .unwrap_or("Conversation");
+        let heading = if thread { "Thread" } else { name };
+        let mut header = row![
+            column![
+                shell::title(heading, 18),
+                text(if thread {
+                    "A focused conversation"
+                } else {
+                    "Messages"
+                })
+                .size(12)
+                .color(shell::MUTED)
+            ]
+            .spacing(5),
+            iced::widget::space().width(Length::Fill)
+        ]
+        .align_y(iced::Alignment::Center);
         if thread {
-            content = content.push(button("Close thread").on_press(Message::CloseThread));
+            header = header.push(
+                button("Close")
+                    .style(shell::quiet_button)
+                    .on_press(Message::CloseThread),
+            );
         }
+        let mut content = column![
+            container(header).padding([18, 24]),
+            iced::widget::rule::horizontal(1)
+        ]
+        .spacing(0);
         let Some(pane) = current_pane(snapshot, *generation) else {
-            return content.push(text("Loading…")).into();
+            return content
+                .push(shell::empty_state(
+                    "Opening conversation…",
+                    "Messages will appear here shortly.",
+                ))
+                .into();
         };
         if let Some(error) = &pane.error {
-            return content.push(text(error)).into();
+            return content
+                .push(shell::empty_state(
+                    "Could not open this conversation",
+                    error,
+                ))
+                .into();
         }
         match &pane.history {
             History::Loading => content = content.push(text("Loading room history…")),
@@ -347,7 +533,17 @@ impl App {
                 )))
             }
             History::Ready => {}
-            History::End => content = content.push(text("Beginning of history reached.")),
+            History::End => {
+                content = content.push(
+                    container(
+                        text("Beginning of conversation")
+                            .size(11)
+                            .color(shell::MUTED),
+                    )
+                    .padding([12, 24])
+                    .center_x(Length::Fill),
+                )
+            }
         }
         if !thread && !matches!(pane.history, History::End) {
             let label = match pane.history {
@@ -355,15 +551,19 @@ impl App {
                 History::Failed(_) => "Retry loading history",
                 _ => "Load older",
             };
-            let mut control = button(label);
+            let mut control = button(label).style(shell::quiet_button);
             if pane.load_older.is_some() && !self.closing && !self.stopped {
                 control = control.on_press(Message::LoadOlder(*generation));
             }
             content = content.push(control);
         }
-        let mut messages = column![].spacing(12);
+        let mut messages = column![].spacing(20).padding([16, 24]);
         for message in pane.rows.iter() {
-            let mut entry = column![text(&message.sender).size(14), text(&message.body)].spacing(4);
+            let mut entry = column![
+                shell::title(&message.sender, 13),
+                text(&message.body).size(14)
+            ]
+            .spacing(6);
             if !message.send_state.is_empty() {
                 entry = entry.push(text(&message.send_state).size(12));
             }
@@ -386,14 +586,33 @@ impl App {
                 && !self.stopped
                 && let Some(id) = &message.event_id
             {
-                entry = entry.push(button("Open thread").on_press(Message::Thread(id.clone())));
+                entry = entry.push(
+                    button(text("Reply in thread  ›").size(12))
+                        .style(shell::quiet_button)
+                        .padding([4, 0])
+                        .on_press(Message::Thread(id.clone())),
+                );
             }
-            messages = messages.push(container(entry).padding(8));
+            messages = messages
+                .push(row![shell::avatar(&message.sender), entry.width(Length::Fill)].spacing(12));
         }
         if pane.rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
-            messages = messages.push(text("No messages loaded."));
+            messages = messages.push(shell::empty_state(
+                "The start of something",
+                "Send the first message in this conversation.",
+            ));
         }
-        content = content.push(scrollable(messages).height(Length::Fill));
+        content = content.push(
+            scrollable(messages)
+                .direction(shell::scrollbar())
+                .style(shell::scroll_style)
+                .id(if thread {
+                    "thread-timeline"
+                } else {
+                    "room-timeline"
+                })
+                .height(Length::Fill),
+        );
         if let Some(key) = self.draft_key(thread)
             && let Some(draft) = self.drafts.get(&key)
         {
@@ -422,29 +641,56 @@ impl App {
             let send_key = key.clone();
             let composing = self.composing;
             let mut editor = text_editor(&draft.content)
+                .id(if thread {
+                    "thread-composer"
+                } else {
+                    "room-composer"
+                })
                 .cursor_blinking(false)
-                .height(110)
-                .placeholder("Write a message…");
+                .height(88)
+                .padding(12)
+                .style(shell::editor_style)
+                .placeholder(if thread {
+                    "Reply to this thread…"
+                } else {
+                    "Write a message…"
+                });
             if !self.closing && !self.stopped && !draft.pending {
                 editor = editor
                     .on_action(move |action| Message::Edit(edit_key.clone(), action))
                     .key_binding(move |press| composer_binding(press, composing, &send_key));
             }
-            let mut send = button(if draft.pending { "Queueing…" } else { "Send" });
+            let mut send = button(if draft.pending { "Queueing…" } else { "Send" })
+                .padding([7, 16])
+                .style(shell::send_button);
             if !self.closing
                 && !self.stopped
                 && !self.composing
                 && !draft.pending
                 && self.pending_ops < MAX_PENDING_OPERATIONS
-                && pane.composer.is_some()
+                && (pane.composer.is_some() || self.demo.is_some())
                 && !draft.content.text().trim().is_empty()
             {
                 send = send.on_press(Message::Send(key));
             }
-            content = content
-                .push(text(target).size(14))
-                .push(editor)
-                .push(row![send, text("Enter: new line · Ctrl+Enter: send").size(12)].spacing(8));
+            let composer = column![
+                text(target).size(11).color(shell::MUTED),
+                editor,
+                row![
+                    text(if self.demo.is_some() {
+                        "Local preview · messages stay here"
+                    } else {
+                        "Ctrl+Enter to send"
+                    })
+                    .size(11)
+                    .color(shell::MUTED),
+                    iced::widget::space().width(Length::Fill),
+                    send
+                ]
+                .align_y(iced::Alignment::Center)
+            ]
+            .spacing(9);
+            content = content.push(container(composer).padding([16, 24]));
             if let Some(error) = &draft.error {
                 content = content.push(text(error));
             }
@@ -452,11 +698,30 @@ impl App {
         content.into()
     }
 }
+fn shell_shortcut(
+    key: &iced::keyboard::Key,
+    modifiers: iced::keyboard::Modifiers,
+) -> Option<Message> {
+    use iced::keyboard::{Key, key::Named};
+    match key.as_ref() {
+        Key::Named(Named::Tab) => Some(Message::Focus(modifiers.shift())),
+        Key::Named(Named::Escape) => Some(Message::Escape),
+        Key::Named(Named::ArrowUp) if modifiers.alt() => Some(Message::AdjacentRoom(true)),
+        Key::Named(Named::ArrowDown) if modifiers.alt() => Some(Message::AdjacentRoom(false)),
+        Key::Character("t") if modifiers.alt() => Some(Message::OpenLastThread),
+        Key::Character("k") if modifiers.command() => Some(Message::SearchFocus),
+        _ => None,
+    }
+}
+
 fn composer_binding(
     press: text_editor::KeyPress,
     composing: bool,
     key: &DraftKey,
 ) -> Option<text_editor::Binding<Message>> {
+    if shell_shortcut(&press.key, press.modifiers).is_some() {
+        return None;
+    }
     if matches!(press.status, text_editor::Status::Focused { .. })
         && press.key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter)
         && press.modifiers == iced::keyboard::Modifiers::CTRL
@@ -541,6 +806,16 @@ fn main() -> anyhow::Result<()> {
     chatclient::init_tracing();
     run_ui(|| {
         iced::application(App::new, App::update, App::view)
+            .title("Matrix")
+            .theme(shell::theme())
+            .default_font(iced::Font::with_name("Inter"))
+            .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())
+            .font(include_bytes!("../../assets/fonts/Inter-SemiBold.otf").as_slice())
+            .window(iced::window::Settings {
+                size: iced::Size::new(1240.0, 820.0),
+                min_size: Some(iced::Size::new(640.0, 480.0)),
+                ..Default::default()
+            })
             .executor::<UiExecutor>()
             .subscription(App::subscription)
             .exit_on_close_request(false)
@@ -551,6 +826,132 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn demo_app() -> App {
+        let mut app = App::new();
+        app.demo = Some(demo::Demo::default());
+        app.model.rooms = demo::rooms().into();
+        let _ = app.update(Message::Room("studio".into()));
+        app
+    }
+
+    #[test]
+    fn demo_messages_and_drafts_stay_with_their_room_and_thread() {
+        let mut app = demo_app();
+        let room_key = app.draft_key(false).unwrap();
+        let _ = app.update(Message::Thread("proposal".into()));
+        let thread_key = app.draft_key(true).unwrap();
+        assert_eq!(
+            app.model.thread.as_ref().unwrap().rows[0]
+                .event_id
+                .as_deref(),
+            Some("proposal")
+        );
+        app.drafts.get_mut(&room_key).unwrap().content =
+            text_editor::Content::with_text("room draft");
+        app.drafts.get_mut(&thread_key).unwrap().content =
+            text_editor::Content::with_text("a local reply");
+        let _ = app.update(Message::Send(thread_key.clone()));
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.control.is_none());
+        assert!(app.composer_for(&thread_key).is_none());
+        assert!(app.drafts[&thread_key].content.text().trim().is_empty());
+        assert_eq!(app.drafts[&room_key].content.text().trim(), "room draft");
+        let _ = app.update(Message::Space(3));
+        assert!(app.selection.thread.is_none());
+        assert!(
+            app.model
+                .room
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .all(|r| r.body.trim() != "a local reply")
+        );
+        let _ = app.update(Message::Space(1));
+        let _ = app.update(Message::Thread("proposal".into()));
+        assert_eq!(
+            app.model
+                .thread
+                .as_ref()
+                .unwrap()
+                .rows
+                .last()
+                .unwrap()
+                .body
+                .trim(),
+            "a local reply"
+        );
+        assert_eq!(app.drafts[&room_key].content.text().trim(), "room draft");
+    }
+
+    #[test]
+    fn search_and_keyboard_navigation_respect_selected_space() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Search("MAYA".into()));
+        assert_eq!(app.visible_rooms(), ["maya"]);
+        let _ = app.update(Message::SearchOpen);
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "maya");
+        let _ = app.update(Message::Space(3));
+        assert!(app.shell.query.is_empty());
+        assert_eq!(app.visible_rooms(), ["home", "alex"]);
+        let _ = app.update(Message::AdjacentRoom(true));
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "alex");
+        let _ = app.update(Message::Search("no matching room".into()));
+        let _ = app.update(Message::SearchOpen);
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "alex");
+    }
+
+    #[test]
+    fn focused_search_schedules_redraw_only_when_blinking_is_enabled() {
+        use iced::advanced::{Shell, Widget, layout, mouse, widget};
+        use iced::window::RedrawRequest;
+        for blinking in [false, true] {
+            let mut editor = iced::widget::text_input("Find a room", "fixture")
+                .on_input(std::convert::identity)
+                .cursor_blinking(blinking);
+            let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let mut tree =
+                widget::Tree::new(&editor as &dyn Widget<String, iced::Theme, iced::Renderer>);
+            tree.state
+                .downcast_mut::<iced::widget::text_input::State<
+                    <iced::Renderer as iced::advanced::text::Renderer>::Paragraph,
+                >>()
+                .focus();
+            let node = Widget::layout(
+                &mut editor,
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(iced::Size::ZERO, iced::Size::new(300.0, 110.0)),
+            );
+            let now = iced::time::Instant::now();
+            // First redraw resolves focus style; later redraws must not arm a
+            // blink deadline when disabled, even across multiple blink phases.
+            for milliseconds in [0, 750, 1250] {
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                editor.update(
+                    &mut tree,
+                    &iced::Event::Window(iced::window::Event::RedrawRequested(
+                        now + std::time::Duration::from_millis(milliseconds),
+                    )),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &iced::Rectangle::with_size(iced::Size::new(300.0, 110.0)),
+                );
+                if milliseconds > 0 {
+                    if blinking {
+                        assert!(matches!(shell.redraw_request(), RedrawRequest::At(_)));
+                    } else {
+                        assert_eq!(shell.redraw_request(), RedrawRequest::Wait);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn focused_editor_schedules_redraw_only_when_blinking_is_enabled() {
         use iced::advanced::text::highlighter::PlainText;

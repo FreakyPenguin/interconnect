@@ -21,6 +21,15 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
+## Visual shell — 2026-11-15
+
+The connected app now shares the light desktop shell with the
+[design preview](design-preview.md). It includes room search, a collapsible Rooms
+section, avatars derived from sender labels, and a responsive thread pane. Live
+space membership and unread grouping are not yet exposed; use `--demo` to explore
+those organizational fixtures without opening the saved session. Existing
+connected send, retry, cancellation, and history behavior remains in place.
+
 ## Interactive acceptance
 
 1. Restore the existing profile. Confirm the room list appears without browser

@@ -30,6 +30,12 @@ room/thread views with bounded snapshot delivery and cancellation. Local SDK moc
 tests pass; [desktop acceptance and measurements](validation/connected-ui.md) remain
 pending. This does not yet include the full shell or keyboard workflows.
 
+The [design preview](validation/design-preview.md) adds a shared visual shell and
+an explicit `--demo` mode with sample spaces, collapsible room sections, search,
+and an adaptive thread pane. The connected app uses the same presentation with
+its real room list. Space/unread SDK wiring, complete keyboard access, timeline
+selection, and scroll/virtualization acceptance remain pending.
+
 Exit evidence: runnable shell and recorded measurement procedure, hardware, and baseline results.
 
 ## 2. SSO, persistent session, and device trust

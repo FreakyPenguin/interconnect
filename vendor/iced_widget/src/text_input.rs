@@ -107,6 +107,7 @@ pub struct TextInput<
     placeholder: String,
     value: Value,
     is_secure: bool,
+    cursor_blinking: bool,
     font: Option<Renderer::Font>,
     width: Length,
     padding: Padding,
@@ -138,6 +139,7 @@ where
             placeholder: String::from(placeholder),
             value: Value::new(value),
             is_secure: false,
+            cursor_blinking: true,
             font: None,
             width: Length::Fill,
             padding: DEFAULT_PADDING,
@@ -156,6 +158,13 @@ where
     /// Sets the [`widget::Id`] of the [`TextInput`].
     pub fn id(mut self, id: impl Into<widget::Id>) -> Self {
         self.id = Some(id.into());
+        self
+    }
+
+    /// Sets whether the focused caret blinks. Defaults to true.
+    /// Disabling blinking keeps the caret visible without scheduled redraws.
+    pub fn cursor_blinking(mut self, enabled: bool) -> Self {
+        self.cursor_blinking = enabled;
         self
     }
 
@@ -513,9 +522,10 @@ where
                         );
 
                     let is_cursor_visible = !is_disabled
-                        && ((focus.now - focus.updated_at).as_millis()
-                            / CURSOR_BLINK_INTERVAL_MILLIS)
-                            .is_multiple_of(2);
+                        && (!self.cursor_blinking
+                            || ((focus.now - focus.updated_at).as_millis()
+                                / CURSOR_BLINK_INTERVAL_MILLIS)
+                                .is_multiple_of(2));
 
                     let cursor = if is_cursor_visible {
                         Some((
@@ -1333,10 +1343,12 @@ where
                 if let Some(focus) = &mut state.is_focused
                     && focus.is_window_focused
                 {
-                    if matches!(
-                        state.cursor.state(&self.value),
-                        cursor::State::Index(_)
-                    ) {
+                    if self.cursor_blinking
+                        && matches!(
+                            state.cursor.state(&self.value),
+                            cursor::State::Index(_)
+                        )
+                    {
                         focus.now = *now;
 
                         let millis_until_redraw = CURSOR_BLINK_INTERVAL_MILLIS
