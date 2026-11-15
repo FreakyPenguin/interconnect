@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Interconnect
+Comment=Matrix desktop client
+Exec=interconnect
+Icon=internet-chat
+Terminal=false
+Categories=Network;InstantMessaging;

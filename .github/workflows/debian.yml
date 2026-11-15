@@ -1,0 +1,131 @@
+name: Debian packages
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '13 5 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build Debian ${{ matrix.suite }} (amd64)
+    runs-on: ubuntu-24.04
+    container: debian:${{ matrix.suite }}-slim
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [stable, testing]
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      CARGO_HOME: /opt/cargo
+      RUSTUP_HOME: /opt/rustup
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: '0'
+      CARGO_BUILD_JOBS: '2'
+      RUST_BACKTRACE: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install build and packaging dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git python3 dpkg-dev desktop-file-utils \
+            build-essential cmake ninja-build pkg-config clang libclang-dev \
+            libssl-dev libsqlite3-dev libdbus-1-dev \
+            libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libegl1-mesa-dev libgl1-mesa-dev libvulkan1 mesa-vulkan-drivers
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install repository Rust toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh
+          sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain none --no-modify-path
+          echo "$CARGO_HOME/bin" >> "$GITHUB_PATH"
+          "$CARGO_HOME/bin/rustup" show active-toolchain
+          "$CARGO_HOME/bin/rustc" --version --verbose
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            /opt/cargo/registry/index
+            /opt/cargo/registry/cache
+            /opt/cargo/git/db
+          key: debian-${{ matrix.suite }}-cargo-downloads-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            debian-${{ matrix.suite }}-cargo-downloads-
+
+      - name: Build release client
+        run: cargo build --locked --release --bin interconnect
+
+      - name: Package client
+        env:
+          DEBIAN_SUITE: ${{ matrix.suite }}
+        run: |
+          version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+          version="${version}~dev$(date -u +%Y%m%d%H%M%S).${GITHUB_RUN_NUMBER}.g${GITHUB_SHA:0:12}"
+          desktop-file-validate packaging/debian/interconnect.desktop
+          bash scripts/package-debian.sh "$DEBIAN_SUITE" "$version" target/release/interconnect
+          dpkg-deb --info target/debian/*.deb
+          dpkg-deb --contents target/debian/*.deb
+
+      - name: Upload bleeding-edge package
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: Interconnect-debian-${{ matrix.suite }}-amd64-${{ github.sha }}
+          path: target/debian/*.deb
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
+
+  install:
+    name: Check installation on Debian ${{ matrix.suite }}
+    needs: build
+    runs-on: ubuntu-24.04
+    container: debian:${{ matrix.suite }}-slim
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [stable, testing]
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install artifact action runtime dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates libstdc++6
+
+      - name: Download package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Interconnect-debian-${{ matrix.suite }}-amd64-${{ github.sha }}
+          path: downloads
+
+      - name: Install in a clean runtime container
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ./downloads/*.deb desktop-file-utils
+          test -x /usr/bin/interconnect
+          desktop-file-validate /usr/share/applications/interconnect.desktop
+          ldd /usr/bin/interconnect > /tmp/interconnect-libraries.txt
+          cat /tmp/interconnect-libraries.txt
+          if grep -q 'not found' /tmp/interconnect-libraries.txt; then
+            exit 1
+          fi

@@ -83,6 +83,42 @@ Artifact upload/download and the extracted app still require a hosted macOS run
 to validate; only workflow syntax and a local archive round trip were checked
 on Linux.
 
+## Debian package automation
+
+[Debian packages](../.github/workflows/debian.yml) builds separate amd64 `.deb`
+files in the official `debian:stable-slim` and `debian:testing-slim` containers.
+The moving suite names follow Debian's current stable/testing distributions;
+both packages contain bleeding-edge application code, not separate application
+release channels. Builds run on pushes, pull requests, manual dispatch, and
+daily at 05:13 UTC on the default branch.
+
+CI compiles with `cargo build --locked --release --bin interconnect`, then runs
+`scripts/package-debian.sh SUITE VERSION BINARY`. The script installs the client
+under `/usr/bin`, adds an application-menu entry, derives linked-library
+dependencies with `dpkg-shlibdeps`, and declares dynamically loaded graphics
+libraries and fonts explicitly. Portal and keyring services are recommended;
+native desktop integration still needs a running session and suitable providers.
+Version strings include the Cargo version, build timestamp, run number, commit,
+and Debian suite to distinguish builds. A separate job installs each package
+in a clean container for its suite, validates the desktop entry, and checks
+linked libraries without launching the client or opening an account.
+
+To download, open **Actions → Debian packages**, choose a successful run, and
+select **Interconnect-debian-stable-amd64-&lt;commit&gt;** or
+**Interconnect-debian-testing-amd64-&lt;commit&gt;** under **Artifacts**. As with the
+macOS builds, downloads require a GitHub login and repository read access and
+expire after 14 days. Choose the package matching your Debian distribution.
+Install the downloaded file with APT so dependencies are resolved:
+
+```sh
+sudo apt install ./interconnect_VERSION_amd64.deb
+```
+
+These are downloadable packages, not an APT repository with automatic updates.
+Package creation and clean-container installation were checked locally using
+the existing debug binary; the first hosted runs must still confirm release
+compilation against each suite. Desktop behavior remains manual validation.
+
 ## Design preview
 
 Run `cargo run --locked --bin interconnect -- --demo` for a memory-only workspace
