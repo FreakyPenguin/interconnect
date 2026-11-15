@@ -53,11 +53,35 @@ is limited to two concurrent jobs to fit the runner's memory.
 
 The workflow runs `scripts/bundle-macos.sh`, which builds the debug client with
 `--locked`, validates its Info.plist, and creates an ad-hoc-signed `.app`; CI then
-verifies that signature. It does not launch the app, publish a download, or
-perform distribution signing/notarization. Tests and Clippy remain in Linux CI.
+verifies that signature and uploads a bleeding-edge download. It does not launch
+the app or perform distribution signing/notarization. Tests and Clippy remain
+in Linux CI.
 Intel builds and native account/desktop validation are separate follow-up work.
 The workflow and bundle script syntax were checked on Linux; macOS compilation
 and signing still require the first hosted run.
+
+### Download a bleeding-edge macOS build
+
+On GitHub, open **Actions → macOS build**, select a successful run for the branch
+and commit you want, then download **Interconnect-macos-arm64-&lt;commit&gt;** from
+**Artifacts**. Downloads require a GitHub login and repository read access;
+artifacts expire after 14 days. For the latest development build, choose the
+newest successful default-branch run. Pull-request runs contain that PR's code.
+
+Extract `Interconnect-macos-arm64.tar.gz` to get `Interconnect.app`, then move it
+to Applications if desired. The archive preserves executable permissions.
+These are experimental debug builds for Apple Silicon only, signed ad hoc and
+not notarized; macOS Gatekeeper may block opening them. They are not distribution
+releases, and native account/desktop behavior still needs validation. To try the
+UI without an account, run:
+
+```sh
+open /path/to/Interconnect.app --args --demo
+```
+
+Artifact upload/download and the extracted app still require a hosted macOS run
+to validate; only workflow syntax and a local archive round trip were checked
+on Linux.
 
 ## Design preview
 

@@ -55,3 +55,16 @@ jobs:
 
       - name: Verify app signature
         run: codesign --verify --strict --verbose=2 target/Interconnect.app
+
+      - name: Package bleeding-edge app
+        # Archive the bundle before uploading to preserve executable permissions.
+        run: tar -czf target/Interconnect-macos-arm64.tar.gz -C target Interconnect.app
+
+      - name: Upload bleeding-edge app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: Interconnect-macos-arm64-${{ github.sha }}
+          path: target/Interconnect-macos-arm64.tar.gz
+          archive: false
+          if-no-files-found: error
+          retention-days: 14
