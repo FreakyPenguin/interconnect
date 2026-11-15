@@ -14,6 +14,8 @@ use matrix_sdk_ui::{
 };
 use tokio::sync::{mpsc, watch};
 
+mod typing;
+pub use typing::{Activity as TypingActivity, Typing};
 mod members;
 pub use members::{Member, Members};
 mod pinned;
@@ -21,6 +23,7 @@ pub use pinned::Pinned;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
+    pub typing: Option<TypingActivity>,
     pub room: Option<(u64, String)>,
     pub thread: Option<(u64, String)>,
     /// Unique request generation; only load the selected room while People is open.
@@ -530,6 +533,7 @@ impl std::error::Error for SignInRequired {}
 
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub typing: Option<Typing>,
     pub authentication: Option<Authentication>,
     pub account_id: Option<String>,
     pub verification: crate::verification::Snapshot,
@@ -554,6 +558,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            typing: None,
             authentication: Some(Authentication::Checking),
             account_id: None,
             verification: Default::default(),
@@ -794,6 +799,11 @@ async fn connected(
     }
     let mut active = Selection::default();
     let mut room_view = inactive();
+    let mut typing_view = inactive();
+    let typing_stop = tokio_util::sync::CancellationToken::new();
+    let outgoing = typing::outgoing(client.clone(), selection.clone(), typing_stop.clone());
+    tokio::pin!(outgoing);
+    let mut outgoing_finished = false;
     let mut pinned_view = inactive();
     let mut members_view = inactive();
     let mut thread_view = inactive();
@@ -816,6 +826,7 @@ async fn connected(
             if active.room != next.room {
                 // Drop the old subscriptions before constructing replacements.
                 members_view = inactive();
+                typing_view = inactive();
                 room_view = inactive();
                 pinned_view = inactive();
                 thread_view = inactive();
@@ -823,15 +834,16 @@ async fn connected(
                     let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
                     sync.room_list_service().remove_room_subscriptions(&[&id]);
                 }
-                state.send_modify(|s| { s.room = None; s.thread = None; s.pinned = None; });
+                state.send_modify(|s| { s.room = None; s.thread = None; s.pinned = None; s.typing = None; });
                 if let Some((generation, id)) = &next.room {
                     let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
+                    typing_view = typing::incoming(client.clone(), id.to_string(), *generation, state.clone());
                     // Sync subscription setup is cancelled by a newer navigation request.
                     let room_list = sync.room_list_service();
                     let ids = [&*id];
                     tokio::select! {
                         _ = room_list.set_room_subscriptions(&ids) => {},
-                        changed = selection.changed() => { changed.context("UI closed")?; sync.room_list_service().remove_room_subscriptions(&[&id]); active = Selection::default(); continue; }
+                        changed = selection.changed() => { changed.context("UI closed")?; typing_view = inactive(); sync.room_list_service().remove_room_subscriptions(&[&id]); active = Selection::default(); continue; }
                     }
                     room_view = Box::pin(view(client.clone(), id.to_string(), None, *generation, state.clone()));
                     pinned_view = Box::pin(pinned::view(client.clone(), id.to_string(), *generation, state.clone()));
@@ -880,6 +892,8 @@ async fn connected(
                 changed = selection.changed() => { if changed.is_err() { break; } }
                 _ = &mut profile => {},
                 _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
+                _ = &mut typing_view => typing_view = inactive(),
+                _ = &mut outgoing, if !outgoing_finished => outgoing_finished = true,
                 _ = &mut room_view => room_view = inactive(),
                 _ = &mut pinned_view => pinned_view = inactive(),
                 _ = &mut members_view => members_view = inactive(),
@@ -903,6 +917,11 @@ async fn connected(
         }
         Ok(())
     }.await;
+    typing_stop.cancel();
+    if !outgoing_finished {
+        outgoing.await;
+    }
+    drop(typing_view);
     drop(room_view);
     drop(pinned_view);
     drop(members_view);

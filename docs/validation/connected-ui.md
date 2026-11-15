@@ -2069,3 +2069,58 @@ persistence after reopening People, the unchanged joined-member badge, and the
 absent. Local captures/logs are ignored under
 `artifacts/pending-invites-2026-11-15/`. No real invitation was sent and no saved
 account or connected client was opened or restarted.
+
+## Typing notifications — 2026-11-15
+
+The room and thread composers show a static typing line using cached member names
+(or Matrix IDs when unknown). The line reserves its height, so starting/stopping
+activity does not resize the timeline. Multiple people share one line; more than
+three use an additional count. The thread line says **In this room:** because
+Matrix `m.typing` is room-wide, including activity from thread composers. Own-user
+activity is excluded. Complete SDK snapshots replace the previous list; an empty
+snapshot clears it immediately. A one-shot 30-second safety expiry clears stale
+activity if synchronization stalls. Changing rooms cancels the old listener, and
+room generations reject old labels. Changing spaces keeps the open conversation.
+
+Text edits, text paste, and emoji insertion notify the current room asynchronously.
+Cursor movement, scrolling, restored drafts, and selecting attachments do not.
+The SDK throttles repeated notices and requests a four-second server timeout.
+After four seconds without edits, clearing the text, sending, navigation, window
+focus loss, opening Settings/verification, or shutdown, a best-effort stop is sent.
+Requests serialize in a session-owned worker with a two-second deadline each;
+shutdown finishes bounded cleanup before stopping sync. Network failures do not
+block composing or sending. If a request cannot reach the server, its timeout
+provides the fallback. Typing activity is neither persisted nor encrypted by the
+Matrix protocol.
+
+Demo mode shows sample Alex/Sam activity in Design studio. It creates no account
+or network requests and sends no outgoing typing updates.
+
+Automated fixtures cover incoming self-filtering, deduplication, cached names,
+unknown IDs, replacement, clearing, safety expiry and cancellation; outgoing
+request bodies, SDK throttling, idle expiry, stale generations, room navigation
+and shutdown cleanup. UI coverage checks static labels, old-room rejection,
+edit-only activity, focus-loss cleanup, and retained drafts/space selection.
+
+Manual acceptance still required:
+
+1. Run `cargo run --locked --bin interconnect -- --demo`. Inspect the static line
+   in Design studio and its room-wide label in a thread, including a narrow
+   window. Change rooms/spaces and check draft and timeline positions.
+2. In a separately authorized connected session with a peer client, type in each
+   composer and verify incoming/outgoing activity, name resolution, multiple
+   typists, clearing, send, room navigation, focus loss and the idle timeout.
+3. Stop/reconnect the network while activity is visible. Confirm stale activity
+   disappears and typing resumes after reconnection. Check shutdown during a
+   slow request and resource use when active, idle and hidden.
+
+Real-server interoperability, native visual acceptance, macOS and measured idle
+resources remain untested for this change. No saved account or connected client
+was opened or restarted, and no real Matrix message or typing notice was sent.
+
+Validation passed: formatting, locked workspace Clippy with warnings denied,
+locked workspace tests (90 library tests passed, two existing opt-in fixtures
+ignored; 149 GUI tests passed), and the locked desktop build. The incoming
+fixture also delivers its first sync before polling the view, checking that
+listener registration precedes subscription processing. No desktop session was
+launched for these checks.

@@ -487,3 +487,15 @@ closed, and unfocused. Allow unrelated UI redraws to settle before each idle
 sample. Confirm redraws/wakeups return to the initial idle level after stopping;
 record renderer, window visibility, and chosen playback duration with results.
 Live-account measurements require the existing connected-validation precautions.
+
+## Typing notifications — 2026-11-15
+
+Incoming activity uses one selected-room SDK handler and a one-shot safety expiry
+only while names are present. Outgoing activity uses the existing selection watch
+channel, SDK request throttling, a four-second idle deadline only while editing,
+and a two-second deadline per request. There is no animation, redraw subscription,
+periodic refresh or polling. Names use cached membership without network profile
+lookups. Navigation drops the incoming handler; session shutdown joins bounded
+outgoing stop cleanup before stopping sync. Local protocol/lifecycle fixtures
+exercise expiry and cleanup. CPU, wakeups and hidden-window resource measurements
+have not been repeated for this change.

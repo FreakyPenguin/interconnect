@@ -102,6 +102,7 @@ impl App {
             {
                 if matches!(event, emoji_picker::Event::Close) {
                     self.composer_picker = None;
+                    self.typing_edited(&target.key);
                     return focus(&target);
                 }
                 if !self.composer_picker_valid(&target) {

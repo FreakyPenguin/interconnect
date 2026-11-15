@@ -49,6 +49,8 @@ mod thread_activity;
 mod timeline;
 #[path = "interconnect/topic.rs"]
 mod topic;
+#[path = "interconnect/typing.rs"]
+mod typing;
 #[path = "interconnect/verification.rs"]
 mod verification;
 
@@ -255,6 +257,22 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if matches!(
+            &message,
+            Message::Room(_)
+                | Message::Thread(_)
+                | Message::CloseThread
+                | Message::Close
+                | Message::Exit
+                | Message::Send(_)
+                | Message::WindowFocused(false)
+                | Message::SearchFocus
+                | Message::Focus(_)
+                | Message::Settings(settings::Event::Open)
+                | Message::Verification(verification::Event::Open)
+        ) {
+            self.stop_typing();
+        }
         if let Message::Verification(event) = message {
             let task = self.verification_update(event);
             self.publish_notification_context();
@@ -675,8 +693,12 @@ impl App {
                     && let Some(draft) = self.drafts.get_mut(&key)
                     && !draft.pending
                 {
+                    let edit = matches!(action, text_editor::Action::Edit(_));
                     let refresh_completion = !matches!(action, text_editor::Action::Scroll { .. });
                     draft.content.perform(action);
+                    if edit {
+                        self.typing_edited(&key);
+                    }
                     if refresh_completion {
                         self.refresh_emoji_completion(&key);
                     }
@@ -910,6 +932,16 @@ impl App {
         }
         if self.selection.room.is_none() || self.closing || self.stopped {
             self.selection.members = None;
+        }
+        if self.selection.typing.as_ref().is_some_and(|typing| {
+            self.selection
+                .room
+                .as_ref()
+                .is_none_or(|(generation, _)| *generation != typing.generation)
+        }) || self.closing
+            || self.stopped
+        {
+            self.stop_typing();
         }
         self.validate_invite();
         self.validate_pin_error();
@@ -1253,6 +1285,16 @@ impl App {
     }
     fn refresh_demo(&mut self) {
         if let Some(demo) = &mut self.demo {
+            self.model.typing = self.selection.room.as_ref().map(|(generation, room)| {
+                interconnect::connected::Typing {
+                    generation: *generation,
+                    names: if room == "studio" {
+                        vec!["Alex Chen".into(), "Sam Rivera".into()]
+                    } else {
+                        Vec::new()
+                    },
+                }
+            });
             self.model.members = self.selection.members.map(|generation| {
                 let direct = self
                     .selection
@@ -2019,6 +2061,26 @@ impl App {
             if let Some(chip) = self.attachment_chip(&key, *generation) {
                 content = content.push(container(chip).padding([0, 24]));
             }
+            // Reserve one static line so typing updates never resize the timeline.
+            let label = self.typing_label();
+            let label = if thread && !label.is_empty() {
+                format!("In this room: {label}")
+            } else {
+                label
+            };
+            content = content.push(
+                container(
+                    text(label)
+                        .size(12)
+                        .color(shell::MUTED)
+                        .wrapping(iced::widget::text::Wrapping::None)
+                        .width(Length::Fill),
+                )
+                .width(Length::Fill)
+                .clip(true)
+                .height(18)
+                .padding([0, 24]),
+            );
             let composer = iced::widget::stack![
                 editor,
                 container(actions)

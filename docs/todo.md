@@ -1,7 +1,6 @@
 # Rooms
-- attachments
-- markdown
-
+- formatting
+  
 
 # Management tasks
 - logout / account switching UI

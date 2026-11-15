@@ -259,7 +259,9 @@ impl App {
             .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
                 std::sync::Arc::new(choice.glyph.clone()),
             )));
-        let thread = active.trigger.key.root.is_some();
+        let edited_key = active.trigger.key.clone();
+        let thread = edited_key.root.is_some();
+        self.typing_edited(&edited_key);
         self.emoji_completion.clear();
         self.emoji_completion.dismissed = None;
         iced::widget::operation::focus(if thread {

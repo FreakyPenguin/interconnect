@@ -228,6 +228,7 @@ impl App {
                             iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
                         ));
                     draft.error = None;
+                    self.typing_edited(&target.key);
                     self.refresh_emoji_completion(&target.key);
                 } else {
                     draft.error = Some("Draft changed before paste completed. Paste again.".into());
