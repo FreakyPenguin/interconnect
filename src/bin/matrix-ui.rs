@@ -737,11 +737,16 @@ impl App {
         ]
         .align_y(iced::Alignment::Center);
         if thread {
-            header = header.push(
-                button("Close")
-                    .style(shell::quiet_button)
+            header = header.push(iced::widget::tooltip(
+                button(container(text("×").size(18)).center_x(28).center_y(28))
+                    .padding(0)
+                    .style(shell::icon_button)
                     .on_press(Message::CloseThread),
-            );
+                container(text("Close thread").size(12))
+                    .padding(8)
+                    .style(container::rounded_box),
+                iced::widget::tooltip::Position::Bottom,
+            ));
         }
         let mut content = column![
             container(header).padding([18, 24]),
@@ -1009,7 +1014,7 @@ impl App {
                     .center_y(26),
             )
             .padding(0)
-            .style(shell::send_button);
+            .style(shell::icon_button);
             if !self.closing
                 && !self.stopped
                 && !self.composing

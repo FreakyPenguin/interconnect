@@ -124,7 +124,7 @@ pub fn jump_button(theme: &Theme, status: button::Status) -> button::Style {
     };
     style
 }
-pub fn send_button(theme: &Theme, status: button::Status) -> button::Style {
+pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     let mut style = quiet_button(theme, status);
     style.text_color = match status {
         button::Status::Disabled => MUTED.scale_alpha(0.45),
@@ -141,7 +141,7 @@ pub fn message_actions<'a>(
 ) -> Element<'a, Message> {
     let mut reply = button(container(text("↩").size(16)).center_x(28).center_y(20))
         .padding(0)
-        .style(send_button);
+        .style(icon_button);
     if enabled {
         reply = reply.on_press(Message::Thread(event_id.to_owned()));
     }

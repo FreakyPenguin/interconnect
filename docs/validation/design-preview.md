@@ -51,6 +51,7 @@ replies. Its author, timestamp, and selectable text stay visible when opening a
 busy thread at the newest reply. Long originals scroll independently within a
 144-pixel area. The original appears once, and threads without replies show
 **No replies yet**. The current room supplies the original while the thread loads.
+The header's muted × button closes the thread; its tooltip is **Close thread**.
 
 Shortcuts:
 
