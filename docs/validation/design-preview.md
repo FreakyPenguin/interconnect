@@ -73,9 +73,9 @@ pagination and incoming messages, and virtualization for large histories. The
 150-message fixture is a usability probe, not a performance budget or evidence of
 bounded rendering. The presentation still renders every loaded row. Message
 formatting, display-name resolution, timestamps, grouping consecutive senders,
-media, saved navigation, and complete unread/receipt semantics remain future
-work. Demo memberships and sections are intentionally presentation fixtures;
-connected mode now supports joined nested spaces and SDK unread metadata.
+media and complete unread/receipt semantics remain future work. Demo memberships and sections are intentionally presentation fixtures;
+connected mode now supports joined nested spaces, SDK unread metadata, and
+profile-local navigation restoration. Demo mode remains memory-only.
 
 The prototype is ready for visual feedback; aesthetic acceptance is the user's
 judgment. Completing this slice does not complete the Wayland-shell milestone or

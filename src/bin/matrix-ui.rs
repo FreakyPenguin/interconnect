@@ -6,6 +6,7 @@ mod shell;
 
 use chatclient::connected::{History, Model, Pane, RetrySend, Selection};
 use chatclient::navigation::Scope;
+use chatclient::navigation_preferences::Preferences;
 use iced::{
     Element, Length, Subscription, Task,
     futures::SinkExt,
@@ -43,6 +44,8 @@ struct App {
     composing: bool,
     shell: shell::State,
     demo: Option<demo::Demo>,
+    preferences_ready: bool,
+    pending_navigation: Option<Preferences>,
 }
 #[derive(Clone, Debug)]
 enum Message {
@@ -57,7 +60,7 @@ enum Message {
     Focus(bool),
     Escape,
     Control(watch::Sender<Selection>),
-    State(Model),
+    State(Box<Model>),
     Stopped(Result<(), String>),
     Room(String),
     Thread(String),
@@ -91,6 +94,8 @@ impl App {
             composing: false,
             shell: shell::State::default(),
             demo: None,
+            preferences_ready: false,
+            pending_navigation: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -104,6 +109,13 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         chatclient::diagnostics::update();
+        if matches!(
+            &message,
+            Message::Space(_) | Message::Room(_) | Message::Section(_)
+        ) {
+            self.pending_navigation = None;
+        }
+
         let navigation = matches!(
             &message,
             Message::Room(_) | Message::Thread(_) | Message::CloseThread
@@ -283,7 +295,10 @@ impl App {
                 self.control = Some(sender);
             }
             Message::State(state) => {
-                self.model = state;
+                self.model = *state;
+                if let Some(room) = self.restore_navigation() {
+                    return self.update(Message::Room(room));
+                }
                 if self.model.navigation_error.is_none() {
                     if let Scope::Space(id) = &self.shell.space
                         && !self.model.spaces.iter().any(|s| &s.id == id)
@@ -368,6 +383,16 @@ impl App {
             }
             self.selection.shutdown = true;
         }
+        if self.preferences_ready && self.pending_navigation.is_none() && self.demo.is_none() {
+            let mut collapsed: Vec<_> = self.shell.collapsed.iter().cloned().collect();
+            collapsed.sort();
+            self.selection.preferences = Some(Preferences {
+                scope: self.shell.space.clone(),
+                room: self.selection.room.as_ref().map(|(_, id)| id.clone()),
+                collapsed,
+                ..Default::default()
+            });
+        }
         if let Some(control) = &self.control {
             // Navigation represents desired state, so superseded selections can be replaced.
             control.send_if_modified(|s| {
@@ -380,6 +405,37 @@ impl App {
             });
         }
         scroll_target.map_or_else(Task::none, iced::widget::operation::snap_to_end)
+    }
+    fn restore_navigation(&mut self) -> Option<String> {
+        if self.demo.is_some() {
+            return None;
+        }
+        if !self.preferences_ready
+            && let Some(saved) = &self.model.saved_navigation
+        {
+            self.preferences_ready = true;
+            self.shell.collapsed = saved.collapsed.iter().cloned().collect();
+            self.pending_navigation = Some(saved.clone());
+        }
+        let saved = self.pending_navigation.as_ref()?;
+        if let Scope::Space(id) = &saved.scope
+            && !self.model.spaces.iter().any(|s| &s.id == id)
+        {
+            return None;
+        }
+        self.shell.space = saved.scope.clone();
+        if let Some(id) = &saved.room {
+            let members = chatclient::navigation::members(&saved.scope, &self.model.spaces);
+            if !self
+                .model
+                .rooms
+                .iter()
+                .any(|r| &r.id == id && chatclient::navigation::includes(&saved.scope, &members, r))
+            {
+                return None;
+            }
+        }
+        self.pending_navigation.take().and_then(|saved| saved.room)
     }
     fn draft_key(&self, thread: bool) -> Option<DraftKey> {
         let room = self.selection.room.as_ref()?.1.clone();
@@ -779,7 +835,11 @@ fn connection(profile: &str) -> impl iced::futures::Stream<Item = Message> + use
             let forward = async {
                 while updates.changed().await.is_ok() {
                     let snapshot = updates.borrow_and_update().clone();
-                    if output.send(Message::State(snapshot)).await.is_err() {
+                    if output
+                        .send(Message::State(Box::new(snapshot)))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -917,12 +977,70 @@ mod tests {
     }
 
     #[test]
+    fn saved_navigation_waits_for_metadata_and_restores_without_a_thread() {
+        let mut app = App::new();
+        let prefs = Preferences {
+            scope: Scope::Space("home-space".into()),
+            room: Some("alex".into()),
+            collapsed: vec!["saved-section".into()],
+            ..Default::default()
+        };
+        let mut model = Model {
+            saved_navigation: Some(prefs.clone()),
+            ..Default::default()
+        };
+        let _ = app.update(Message::State(Box::new(model.clone())));
+        assert!(app.selection.room.is_none());
+        assert!(
+            app.selection.preferences.is_none(),
+            "do not overwrite while cache is empty"
+        );
+        assert!(app.pending_navigation.is_some());
+        model.rooms = demo::rooms().into();
+        model.spaces = demo::spaces().into();
+        let _ = app.update(Message::State(Box::new(model)));
+        assert_eq!(app.shell.space, prefs.scope);
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "alex");
+        assert!(app.selection.thread.is_none());
+        assert!(app.shell.collapsed.contains("saved-section"));
+        assert!(app.pending_navigation.is_none());
+        assert_eq!(app.selection.preferences, Some(prefs));
+    }
+
+    #[test]
+    fn explicit_navigation_overrides_an_unavailable_saved_room() {
+        let mut app = App::new();
+        let model = Model {
+            rooms: demo::rooms().into(),
+            spaces: demo::spaces().into(),
+            saved_navigation: Some(Preferences {
+                scope: Scope::Space("missing-space".into()),
+                room: Some("missing-room".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let _ = app.update(Message::State(Box::new(model.clone())));
+        assert!(app.pending_navigation.is_some());
+        let _ = app.update(Message::Space(Scope::Space("studio-space".into())));
+        let selected = app.selection.room.clone();
+        let _ = app.update(Message::State(Box::new(model)));
+        assert_eq!(app.shell.space, Scope::Space("studio-space".into()));
+        assert_eq!(app.selection.room, selected);
+        assert!(app.pending_navigation.is_none());
+        assert_eq!(
+            app.selection.preferences.as_ref().unwrap().scope,
+            app.shell.space
+        );
+    }
+
+    #[test]
     fn live_metadata_preserves_space_identity_and_clears_removed_rooms() {
         let mut app = demo_app();
         app.demo = None;
         let mut state = app.model.clone();
         std::sync::Arc::make_mut(&mut state.spaces).reverse();
-        let _ = app.update(Message::State(state.clone()));
+        let _ = app.update(Message::State(Box::new(state.clone())));
         assert_eq!(app.shell.space, Scope::Space("studio-space".into()));
         assert_eq!(app.selection.room.as_ref().unwrap().1, "studio");
         let _ = app.update(Message::Thread("root".into()));
@@ -933,10 +1051,10 @@ mod tests {
             .cloned()
             .collect::<Vec<_>>()
             .into();
-        let _ = app.update(Message::State(state.clone()));
+        let _ = app.update(Message::State(Box::new(state.clone())));
         assert!(app.selection.room.is_none() && app.selection.thread.is_none());
         state.spaces = Default::default();
-        let _ = app.update(Message::State(state));
+        let _ = app.update(Message::State(Box::new(state)));
         assert_eq!(app.shell.space, Scope::All);
     }
 

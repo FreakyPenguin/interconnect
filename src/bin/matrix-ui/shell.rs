@@ -339,6 +339,9 @@ impl App {
         let mut rooms = column![].spacing(5);
         let sections = ["Favorites", "Direct messages", "Unread", "Rooms"];
         let visible = self.visible_rooms();
+        if let Some(error) = &self.model.preferences_error {
+            rooms = rooms.push(text(error).size(12).color(MUTED));
+        }
         if let Some(error) = &self.model.navigation_error {
             rooms = rooms.push(text(error).size(12).color(MUTED));
         }

@@ -5,7 +5,10 @@ Use `- [ ]` for planned work and `- [x]` for completed, verified work. These are
 The `matrix-ui` prototype now connects the saved session to Iced room
 and thread views with text composers, draft retention across navigation, and SDK
 send-state/retry controls. [Connected UI validation](validation/connected-ui.md) records
-local integration checks and the pending desktop acceptance steps.
+local integration checks and the pending desktop acceptance steps. Joined-space
+navigation (including nested/shared membership), SDK-driven room sections and
+metadata updates, and profile-local navigation restoration are now implemented.
+Live acceptance of those navigation workflows remains pending.
 
 ## Platform and architecture
 

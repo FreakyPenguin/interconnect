@@ -58,6 +58,31 @@ without selecting each affected room. Use dedicated test rooms for mutations.
 The [design preview](design-preview.md) still runs with `--demo`, now through the
 same navigation projection as the connected app.
 
+## Navigation restoration
+
+Connected mode saves the selected navigation context, selected room, and collapsed
+sections to `navigation.json` inside the locked account profile. The versioned
+file contains IDs and UI state, not credentials or message text. One owned writer
+coalesces changes, performs filesystem work off the UI thread, uses a private
+atomic replacement file, and flushes the latest state during graceful shutdown.
+There is no debounce/polling timer. A failure is shown in the navigation sidebar;
+future navigation changes retry the write. A malformed/unknown-version file falls
+back to the default view and is replaced only after preferences actually change.
+
+Restoration waits for the saved scope and room to exist in SDK metadata. Until
+then, the ordinary navigation remains usable; any explicit space/room/section
+choice cancels pending restoration. Unavailable saved selections therefore cannot
+force a room open or overwrite a user's new choice. Threads, drafts, searches,
+scroll offsets, and arbitrary section order are not restored. Section ordering is
+currently fixed. Opening the restored room still does not send receipts.
+Demo mode neither reads nor writes these preferences.
+
+Local tests cover file round-trip, file permissions, malformed/unknown versions,
+latest-value flushing on shutdown, late metadata arrival, and explicit navigation
+overriding an unavailable saved room. Live check: choose a space and room,
+collapse a section, close normally, restart, and verify the same context returns
+without marking the room read in the other client.
+
 ## Interactive acceptance
 
 1. Restore the existing profile. Confirm the room list appears without browser
@@ -80,7 +105,7 @@ same navigation projection as the connected app.
    selecting a room is also a way to retry a failed timeline load.
 6. Close the window. It should wait for SDK sync to stop, then exit. A shutdown
    error stays visible; close again or use **Exit** to dismiss it. Restart and
-   confirm the same session still works. This prototype does not save navigation.
+   confirm the same session still works. Navigation restores as described above; threads and drafts remain transient.
 
 For presentation-lifetime traces (without SDK event logging):
 
@@ -392,3 +417,20 @@ The draft was cleared afterward without sending a message. Earlier blinking
 behavior produced 63 redraw events in 30 seconds in a focused thread composer;
 these are redraw observations, not whole-process scheduler-wakeup counts. Raw
 local evidence is in `artifacts/static-caret-2026-11-15/` (ignored).
+
+### Connected-navigation implementation checks — 2026-11-15
+
+All 39 regular workspace tests passed; the existing 100-cycle SDK lifecycle
+stress test remains explicitly ignored. The locked GUI build, formatting, Clippy
+with warnings denied, and diff whitespace checks passed. After boxing the larger
+UI snapshot message, the 13 GUI tests were rerun successfully. A native
+Sway/Wayland demo smoke check rendered the shared navigation shell and exited
+normally on a window-close request (exit 0). Its local screenshot/log are in
+`artifacts/connected-navigation-2026-11-15/` (ignored).
+
+This pass did not open the real saved account or send Matrix messages. The
+SDK-backed navigation scenarios used a local mock server. Live space/unread and
+restart acceptance, and resource measurements on a representative account,
+remain pending. Metadata refresh currently scans the joined-room cache and
+stored space links per coalesced update; larger-account costs still need to be
+measured before claiming a navigation performance budget.

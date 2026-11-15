@@ -16,6 +16,7 @@ pub struct Selection {
     pub room: Option<(u64, String)>,
     pub thread: Option<(u64, String)>,
     pub shutdown: bool,
+    pub preferences: Option<crate::navigation_preferences::Preferences>,
 }
 
 pub use crate::navigation::{RoomEntry, SpaceEntry};
@@ -133,6 +134,8 @@ pub struct Model {
     pub rooms: Arc<Vec<RoomEntry>>,
     pub spaces: Arc<Vec<SpaceEntry>>,
     pub navigation_error: Option<String>,
+    pub saved_navigation: Option<crate::navigation_preferences::Preferences>,
+    pub preferences_error: Option<String>,
     pub room: Option<Pane>,
     pub thread: Option<Pane>,
 }
@@ -144,6 +147,8 @@ impl Default for Model {
             rooms: Arc::default(),
             spaces: Arc::default(),
             navigation_error: None,
+            saved_navigation: None,
+            preferences_error: None,
             room: None,
             thread: None,
         }
@@ -166,10 +171,46 @@ pub async fn run(
         result = tokio::time::timeout(Duration::from_secs(90), crate::session::restore(&profile)) => result.context("session restoration timed out")??,
         _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
     };
+    let directory = std::path::PathBuf::from(&profile);
+    let load_directory = directory.clone();
+    let loaded = tokio::task::spawn_blocking(move || {
+        crate::navigation_preferences::Preferences::load(&load_directory)
+    })
+    .await;
+    let preferences = match loaded {
+        Ok(Ok(preferences)) => preferences,
+        _ => {
+            state.send_modify(|s| {
+                s.preferences_error =
+                    Some("Could not restore navigation. Using the default view.".into())
+            });
+            Default::default()
+        }
+    };
+    state.send_modify(|s| s.saved_navigation = Some(preferences.clone()));
     let sync = build_sync(restored.client.clone()).await?;
-    // GUI lifecycle differs from the finite CLI probe: sync startup/network
-    // errors must not discard an already restored session or its views.
-    let outcome = connected(&restored.client, &sync, &mut selection, &state).await;
+    let stop_preferences = tokio_util::sync::CancellationToken::new();
+    let persistence = crate::navigation_preferences::persist(
+        directory,
+        selection.clone(),
+        state.clone(),
+        preferences,
+        stop_preferences.clone(),
+    );
+    let connection = connected(&restored.client, &sync, &mut selection, &state);
+    let outcome = {
+        tokio::pin!(persistence, connection);
+        let mut writer_finished = false;
+        let result = tokio::select! {
+            result = &mut connection => result,
+            _ = &mut persistence => { writer_finished = true; connection.await },
+        };
+        stop_preferences.cancel();
+        if !writer_finished {
+            persistence.await;
+        }
+        result
+    };
     state.send_modify(|s| s.status = "Stopping synchronization…".into());
     let stopped = crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(15)).await;
     // Keep the profile guard alive until SDK stop has completed or failed.

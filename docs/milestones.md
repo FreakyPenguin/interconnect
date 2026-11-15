@@ -63,6 +63,8 @@ Connected navigation is implemented with SDK metadata for joined spaces, nested
 and shared membership, exclusive sections, and live room updates. The
 [connected navigation record](validation/connected-ui.md#connected-navigation--2026-11-15)
 defines grouping and documents local test evidence and pending live acceptance.
+Selected space/room and collapsed sections now persist per profile; section order
+is fixed, and live restart acceptance remains pending.
 
 Exit evidence: navigate a representative account with nested spaces and shared rooms; restart and recover the navigation state.
 
