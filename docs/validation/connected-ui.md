@@ -1897,3 +1897,58 @@ desktop build passed against the fetched Git revision. The pushed branch's
 remote SHA was verified. Native Wayland acceptance above exercised the identical
 runtime sources before the source migration; no additional desktop/account
 session was launched for this dependency-source change.
+
+## Room membership — 2026-11-15
+
+The room header shows a joined-member count. Click the people badge to open
+People in the thread sidebar; opening a thread replaces People. At narrow
+widths, People occupies the conversation area, matching thread behavior. Close
+or Escape returns to the room. Changing spaces keeps the open conversation and
+People panel; choosing another room closes the panel. Room and thread drafts
+and saved timeline positions remain conversation-owned.
+
+People lists joined users only, with names, Matrix IDs, avatars (or initials),
+and the SDK's suggested Creator/Admin/Moderator role. Invitations, departed and
+banned users are excluded. Search matches names and Matrix IDs without case
+sensitivity. Lists are paged in groups of 50; avatar demand is bounded to the
+current page and uses the existing media cache. This is a membership display;
+inviting or changing members is outside its scope.
+
+The badge uses the SDK's cached joined-member summary, without fetching a roster
+for unopened panels. Opening People loads complete membership asynchronously,
+including lazy-loaded members, with a 30-second timeout and a Retry button on
+failure. Membership/profile, power-level, creation, and redaction updates refresh
+an open panel. No polling or animation timer is added. Closing, navigation, and
+shutdown drop the worker future; request generations reject old snapshots.
+
+Automated coverage includes a local Matrix fixture for lazy member loading,
+joined-only filtering, roles, avatars, departure updates, and cancellation. UI
+state tests cover mutual exclusion with threads, retained drafts/scroll offsets,
+space filtering, room changes, Escape, search, pagination, and stale snapshots.
+Real-server acceptance and macOS validation remain pending.
+
+Manual acceptance:
+
+1. Run `cargo run --locked --bin interconnect -- --demo`. Click the header badge
+   and check five sample members, roles, Matrix IDs, and initials. Search a name
+   and a Matrix ID; clear search and close with both × and Escape.
+2. Write separate room/thread drafts and scroll each timeline. Open People over
+   the thread, reopen the thread, then close it. Check drafts and scroll offsets.
+3. Resize to a narrow window. Open/close People and confirm the room returns.
+   Change space filters while People is open, then choose another room.
+4. In an independently authorized connected session, compare the badge and list
+   with another client. Check joins, departures, profile and power-level changes
+   from that client. Test a room larger than 50 members, page/search avatar
+   loading, network failure/Retry, and navigation during loading.
+
+Validation passed: locked workspace tests (84 library tests; two existing
+opt-in tests ignored), all 139 final GUI tests, workspace Clippy with warnings
+denied, formatting, and the locked desktop build. The focused People search
+regression verifies no scheduled redraw across caret blink phases. Native
+Wayland demo checks covered the badge, People list, Matrix-ID search, a
+760-pixel-wide panel, and Escape returning to the room; final outline-icon and
+panel screenshots were inspected at 1400 pixels wide. Both demo launches closed
+normally. Captures/logs remain ignored under `artifacts/members-2026-11-15/`;
+the explicit demo config path remained absent. No saved account or connected
+client was opened or restarted. Real-server, macOS, and measured idle-resource
+acceptance remain pending.

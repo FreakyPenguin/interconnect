@@ -14,6 +14,8 @@ use matrix_sdk_ui::{
 };
 use tokio::sync::{mpsc, watch};
 
+mod members;
+pub use members::{Member, Members};
 mod pinned;
 pub use pinned::Pinned;
 
@@ -21,6 +23,8 @@ pub use pinned::Pinned;
 pub struct Selection {
     pub room: Option<(u64, String)>,
     pub thread: Option<(u64, String)>,
+    /// Unique request generation; only load the selected room while People is open.
+    pub members: Option<u64>,
     pub shutdown: bool,
     pub preferences: Option<crate::navigation_preferences::Preferences>,
     pub avatars: Vec<matrix_sdk::ruma::OwnedMxcUri>,
@@ -490,6 +494,7 @@ pub struct Model {
     pub room: Option<Pane>,
     pub thread: Option<Pane>,
     pub pinned: Option<Pinned>,
+    pub members: Option<Members>,
 }
 impl Default for Model {
     fn default() -> Self {
@@ -513,6 +518,7 @@ impl Default for Model {
             room: None,
             thread: None,
             pinned: None,
+            members: None,
         }
     }
 }
@@ -734,6 +740,7 @@ async fn connected(
     let mut active = Selection::default();
     let mut room_view = inactive();
     let mut pinned_view = inactive();
+    let mut members_view = inactive();
     let mut thread_view = inactive();
     let result = async {
         loop {
@@ -753,6 +760,7 @@ async fn connected(
             });
             if active.room != next.room {
                 // Drop the old subscriptions before constructing replacements.
+                members_view = inactive();
                 room_view = inactive();
                 pinned_view = inactive();
                 thread_view = inactive();
@@ -779,6 +787,13 @@ async fn connected(
                 state.send_modify(|s| s.thread = None);
                 if let (Some((_, room)), Some((generation, root))) = (&next.room, &next.thread) {
                     thread_view = Box::pin(view(client.clone(), room.clone(), Some(root.clone()), *generation, state.clone()));
+                }
+            }
+            if active.members != next.members || active.room != next.room {
+                members_view = inactive();
+                state.send_modify(|s| s.members = None);
+                if let (Some((_, room)), Some(generation)) = (&next.room, next.members) {
+                    members_view = Box::pin(members::view(client.clone(), room.clone(), generation, state.clone()));
                 }
             }
             active = next;
@@ -812,6 +827,7 @@ async fn connected(
                 _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
                 _ = &mut room_view => room_view = inactive(),
                 _ = &mut pinned_view => pinned_view = inactive(),
+                _ = &mut members_view => members_view = inactive(),
                 _ = &mut thread_view => thread_view = inactive(),
                 event = room_states.next() => {
                     if event.is_none() { anyhow::bail!("room-list stream ended"); }
@@ -834,6 +850,7 @@ async fn connected(
     }.await;
     drop(room_view);
     drop(pinned_view);
+    drop(members_view);
     drop(thread_view);
     if let Some((_, id)) = active.room {
         let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;

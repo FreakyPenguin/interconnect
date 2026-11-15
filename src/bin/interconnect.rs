@@ -17,6 +17,8 @@ mod file_drop;
 mod images;
 #[path = "interconnect/login.rs"]
 mod login;
+#[path = "interconnect/members.rs"]
+mod members;
 #[path = "interconnect/pin_action.rs"]
 mod pin_action;
 #[path = "interconnect/pinned.rs"]
@@ -110,6 +112,7 @@ struct App {
     clipboard_paste: Option<attachments::Paste>,
     emoji_completion: emoji_completion::State,
     topic_editor: Option<topic::State>,
+    members: members::State,
     pinning: HashSet<reaction_picker::Target>,
     pin_error: Option<(reaction_picker::Target, String)>,
 }
@@ -117,6 +120,7 @@ struct App {
 enum Message {
     Pin(pin_action::Event),
     Topic(topic::Event),
+    Members(members::Event),
     Login(login::Event),
     Verification(verification::Event),
     Settings(settings::Event),
@@ -224,6 +228,7 @@ impl App {
             clipboard_paste: None,
             emoji_completion: emoji_completion::State::default(),
             topic_editor: None,
+            members: members::State::default(),
             pinning: HashSet::new(),
             pin_error: None,
         };
@@ -272,6 +277,7 @@ impl App {
             Message::Room(_)
                 | Message::Thread(_)
                 | Message::CloseThread
+                | Message::Members(_)
                 | Message::AdjacentRoom(_)
                 | Message::OpenLastThread
                 | Message::OpenThreadLatest(_)
@@ -329,6 +335,7 @@ impl App {
                     | Message::Thread(_)
                     | Message::OpenThreadLatest(_)
                     | Message::CloseThread
+                    | Message::Members(_)
                     | Message::Edit(..)
                     | Message::Send(_)
                     | Message::Retry(_)
@@ -352,13 +359,19 @@ impl App {
 
         let navigation = matches!(
             &message,
-            Message::Room(_) | Message::Thread(_) | Message::CloseThread
+            Message::Room(_)
+                | Message::Thread(_)
+                | Message::CloseThread
+                | Message::Members(
+                    members::Event::Open | members::Event::Close | members::Event::Retry
+                )
         );
         let observe_threads =
             navigation || matches!(&message, Message::State(_) | Message::DemoThreadReply);
         let opening_image = matches!(&message, Message::Image(images::Event::Open { .. }));
         let closing_image = matches!(&message, Message::Image(images::Event::Close));
-        let refresh_media = navigation
+        let refresh_media = matches!(&message, Message::Members(_))
+            || navigation
             || matches!(
                 &message,
                 Message::State(_)
@@ -373,6 +386,7 @@ impl App {
         match message {
             Message::Pin(event) => action_task = self.pin_event(event),
             Message::Topic(event) => action_task = self.topic_event(event),
+            Message::Members(event) => action_task = self.members_event(event),
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::Attachment(event) => action_task = self.attachment_event(event),
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
@@ -615,7 +629,11 @@ impl App {
                     self.shell.query.clear();
                 } else {
                     return self
-                        .update(Message::CloseThread)
+                        .update(if self.selection.members.is_some() {
+                            Message::Members(members::Event::Close)
+                        } else {
+                            Message::CloseThread
+                        })
                         .chain(iced::widget::operation::focus("room-composer"));
                 }
             }
@@ -799,6 +817,7 @@ impl App {
             Message::Room(id) if !self.closing && !self.stopped => {
                 self.visible_rows = Default::default();
                 self.generation += 1;
+                self.selection.members = None;
                 self.selection.room = Some((self.generation, id));
                 self.selection.thread = None;
                 self.pending_scroll = [Some(self.saved_scroll(false)), None];
@@ -811,6 +830,7 @@ impl App {
             {
                 self.visible_rows[1].clear();
                 self.generation += 1;
+                self.selection.members = None;
                 self.selection.thread = Some((self.generation, id));
                 self.pending_scroll[1] = Some(self.saved_scroll(true));
                 if let Some(key) = self.draft_key(true) {
@@ -862,6 +882,9 @@ impl App {
         {
             self.thread_activity
                 .observe(room, &pane.rows, &pane.history);
+        }
+        if self.selection.room.is_none() || self.closing || self.stopped {
+            self.selection.members = None;
         }
         self.validate_pin_error();
         self.validate_topic_editor();
@@ -931,6 +954,18 @@ impl App {
         if let Some(view) = &self.image_view {
             self.selection.images.push(view.original.clone());
             return;
+        }
+        for uri in self
+            .visible_members()
+            .into_iter()
+            .filter_map(|m| m.avatar_url.clone())
+            .collect::<Vec<_>>()
+        {
+            if !self.selection.avatars.contains(&uri)
+                && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED
+            {
+                self.selection.avatars.push(uri);
+            }
         }
         let mut previews = 0;
         for (index, (selected, snapshot)) in [
@@ -1185,6 +1220,15 @@ impl App {
     }
     fn refresh_demo(&mut self) {
         if let Some(demo) = &mut self.demo {
+            self.model.members = self.selection.members.map(|generation| {
+                let direct = self
+                    .selection
+                    .room
+                    .as_ref()
+                    .and_then(|(_, id)| self.model.rooms.iter().find(|r| &r.id == id))
+                    .is_some_and(|r| r.direct);
+                members::demo(generation, direct)
+            });
             self.model.room = self.selection.room.as_ref().map(|(generation, room)| {
                 demo.pane(
                     DraftKey {
@@ -1466,6 +1510,9 @@ impl App {
                 .width(Length::Fill),
         ]
         .align_y(iced::Alignment::Center);
+        if !thread {
+            header = header.push(self.member_badge());
+        }
         if !thread && self.demo.is_some() && selected_id == "threads" {
             header = header.push(
                 button(text("New sample reply").size(12))

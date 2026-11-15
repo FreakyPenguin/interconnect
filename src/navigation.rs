@@ -18,6 +18,8 @@ pub struct RoomEntry {
     pub id: String,
     pub name: String,
     pub topic: String,
+    /// Joined members, excluding invitations and departed users.
+    pub member_count: u64,
     pub can_edit_topic: bool,
     pub can_pin: bool,
     pub pinned_events: Vec<String>,
@@ -106,6 +108,7 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<(Vec<RoomEntry>, Vec<Sp
                 id,
                 name,
                 topic: room.topic().unwrap_or_default(),
+                member_count: room.joined_members_count(),
                 // Incomplete cached permissions must not hide the conversation.
                 can_edit_topic: levels.as_ref().is_some_and(|levels| {
                     levels.user_can_send_state(

@@ -365,3 +365,12 @@ the filename/caption. Local files can also be dropped onto either conversation p
 pane is outlined, and the file is staged without sending. See
 [attachment validation](connected-ui.md#sending-attachments--2026-11-15) for
 coverage and native-host limits.
+
+## People panel — 2026-11-15
+
+The room-header people badge opens the shared thread sidebar with five local
+sample members (two for direct messages). Search accepts names and Matrix IDs;
+roles and initials render without network or saved-account access. Opening a
+thread replaces People, and Escape/× closes it. At narrow widths the panel
+replaces the conversation until closed. See the membership acceptance checklist
+in [connected UI validation](connected-ui.md#room-membership--2026-11-15).

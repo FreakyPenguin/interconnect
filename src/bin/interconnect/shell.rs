@@ -328,9 +328,16 @@ pub fn empty_state<'a>(heading: &'a str, detail: &'a str) -> Element<'a, Message
 }
 
 impl App {
-    pub(super) fn thread_replaces_room(&self, width: f32) -> bool {
-        self.selection.thread.is_some()
+    pub(super) fn side_panel_replaces_room(&self, width: f32) -> bool {
+        (self.selection.thread.is_some() || self.selection.members.is_some())
             && width < if self.shell.navigation { 1120.0 } else { 870.0 }
+    }
+    fn side_panel(&self) -> Element<'_, Message> {
+        if self.selection.members.is_some() {
+            self.members_view()
+        } else {
+            self.pane(true)
+        }
     }
     pub(super) fn section_key(&self, section: &str) -> String {
         format!("{:?}/{section}", self.shell.space)
@@ -372,14 +379,14 @@ impl App {
                     .push(self.room_navigation())
                     .push(widget::rule::vertical(1));
             }
-            if self.thread_replaces_room(size.width) {
-                body = body.push(container(self.pane(true)).width(Length::Fill));
+            if self.side_panel_replaces_room(size.width) {
+                body = body.push(container(self.side_panel()).width(Length::Fill));
             } else {
                 body = body.push(container(self.pane(false)).width(Length::Fill));
-                if self.selection.thread.is_some() {
+                if self.selection.thread.is_some() || self.selection.members.is_some() {
                     body = body
                         .push(widget::rule::vertical(1))
-                        .push(container(self.pane(true)).width(360));
+                        .push(container(self.side_panel()).width(360));
                 }
             }
             let mut footer = row![

@@ -1,5 +1,4 @@
 # Rooms
-- show room membersihp
 - attachments
 - markdown
 

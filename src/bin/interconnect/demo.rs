@@ -144,6 +144,7 @@ pub fn rooms() -> Vec<RoomEntry> {
             } else {
                 String::new()
             },
+            member_count: if r.section == "Direct messages" { 2 } else { 5 },
             can_edit_topic: r.section != "Direct messages" && r.id != "release",
             can_pin: r.section != "Direct messages" && r.id != "release",
             pinned_events: if r.id == "studio" {

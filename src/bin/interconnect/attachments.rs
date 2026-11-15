@@ -48,7 +48,7 @@ impl App {
             && (thread
                 || !self
                     .window_width
-                    .is_some_and(|width| self.thread_replaces_room(width)))
+                    .is_some_and(|width| self.side_panel_replaces_room(width)))
             && self.account_id == target.account
             && self.settings.draft.is_none()
             && !self.verification.open
