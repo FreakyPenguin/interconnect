@@ -715,7 +715,7 @@ impl App {
         }
         content = content.push(history_controls);
         let mut messages = column![].spacing(20).padding([16, 24]);
-        for message in pane.rows.iter() {
+        for (index, message) in pane.rows.iter().enumerate() {
             let mut entry = column![
                 shell::title(&message.sender, 13),
                 text(&message.body).size(14)
@@ -750,8 +750,12 @@ impl App {
                         .on_press(Message::Thread(id.clone())),
                 );
             }
-            messages = messages
-                .push(row![shell::avatar(&message.sender), entry.width(Length::Fill)].spacing(12));
+            messages = messages.push(
+                container(
+                    row![shell::avatar(&message.sender), entry.width(Length::Fill)].spacing(12),
+                )
+                .id(timeline::row_id(index)),
+            );
         }
         if pane.rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
             messages = messages.push(shell::empty_state(
@@ -777,7 +781,11 @@ impl App {
             .height(Length::Fill);
         // New view identity resets the scroll state; async rows retain that
         // state and a zero distance from the bottom follows loaded history.
-        let mut message_area = iced::widget::stack![timeline::view(*generation, timeline.into())];
+        let mut message_area = iced::widget::stack![timeline::view(
+            *generation,
+            pane.rows.iter().map(|row| row.event_id.clone()).collect(),
+            timeline.into()
+        )];
         // Keep the timeline in the same widget slot as this overlay appears and
         // disappears. The one-pixel tolerance accounts for layout rounding.
         if self.pending_scroll[usize::from(thread)].is_none() && self.saved_scroll(thread) > 1.0 {
@@ -1280,10 +1288,11 @@ mod tests {
     }
 
     #[test]
-    fn timeline_layout_starts_at_bottom_and_keeps_offset_across_history_controls() {
+    fn timeline_layout_starts_at_bottom_and_keeps_position_across_history_controls() {
         use iced::advanced::{layout, widget};
         struct Probe {
             distance: Option<f32>,
+            translation: f32,
         }
         impl widget::Operation for Probe {
             fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
@@ -1299,10 +1308,11 @@ mod tests {
             ) {
                 if id == Some(&widget::Id::new("room-timeline")) {
                     self.distance = Some((content.height - bounds.height).max(0.0) - translation.y);
+                    self.translation = translation.y;
                 }
             }
         }
-        fn inspect(app: &App, tree: &mut widget::Tree, set_offset: Option<f32>) -> f32 {
+        fn inspect(app: &App, tree: &mut widget::Tree, set_offset: Option<f32>) -> (f32, f32) {
             let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
             let mut pane = app.pane(false);
             tree.diff(pane.as_widget());
@@ -1325,10 +1335,13 @@ mod tests {
                     ),
                 );
             }
-            let mut probe = Probe { distance: None };
+            let mut probe = Probe {
+                distance: None,
+                translation: 0.0,
+            };
             pane.as_widget_mut()
                 .operate(tree, layout::Layout::new(&node), &renderer, &mut probe);
-            probe.distance.unwrap()
+            (probe.distance.unwrap(), probe.translation)
         }
         let mut app = demo_app();
         let _ = app.update(Message::Room("busy".into()));
@@ -1336,17 +1349,18 @@ mod tests {
         let rows = app.model.room.as_ref().unwrap().rows.clone();
         app.model.room.as_mut().unwrap().rows = Default::default();
         app.model.room.as_mut().unwrap().history = History::Loading;
-        assert!(inspect(&app, &mut tree, None).abs() < 1.0);
+        assert!(inspect(&app, &mut tree, None).0.abs() < 1.0);
         app.model.room.as_mut().unwrap().rows = rows;
-        assert!(inspect(&app, &mut tree, None).abs() < 1.0);
-        assert!((inspect(&app, &mut tree, Some(120.0)) - 120.0).abs() < 1.0);
+        assert!(inspect(&app, &mut tree, None).0.abs() < 1.0);
+        assert!((inspect(&app, &mut tree, Some(120.0)).0 - 120.0).abs() < 1.0);
         app.model.room.as_mut().unwrap().history = History::Loading;
-        assert!((inspect(&app, &mut tree, None) - 120.0).abs() < 1.0);
+        assert!((inspect(&app, &mut tree, None).0 - 120.0).abs() < 1.0);
+        let top = inspect(&app, &mut tree, None).1;
         app.model.room.as_mut().unwrap().history = History::Ready;
-        assert!((inspect(&app, &mut tree, None) - 120.0).abs() < 1.0);
+        assert!((inspect(&app, &mut tree, None).1 - top).abs() < 1.0);
         // Replacing a view cannot inherit another view's internal widget offset.
         let _ = app.update(Message::Room("busy".into()));
-        assert!(inspect(&app, &mut tree, None).abs() < 1.0);
+        assert!(inspect(&app, &mut tree, None).0.abs() < 1.0);
     }
 
     #[test]

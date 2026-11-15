@@ -73,8 +73,9 @@ still use Iced. The existing
 vendored caret option was extended to the search input to preserve idle behavior.
 
 The important unresolved work is interaction depth: selecting/copying timeline
-text, keyboard focus for message and navigation buttons, scroll anchoring during
-pagination and incoming messages, and virtualization for large histories. The
+text, keyboard focus for message and navigation buttons, restoring message-ID
+anchors across closed views, and virtualization for large histories. Open panes
+now anchor the visible message when scrolled up and follow arrivals at the bottom. The
 150-message fixture is a usability probe, not a performance budget or evidence of
 bounded rendering. The presentation still renders every loaded row. Message
 formatting, display-name resolution, timestamps, grouping consecutive senders,
