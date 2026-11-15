@@ -43,6 +43,22 @@ continue using the relevant validation guides for those checks. The workflow
 does not launch the client or publish binaries. Its first hosted run is still
 needed to confirm the runner setup.
 
+## macOS build automation
+
+[macOS build](../.github/workflows/macos.yml) builds the desktop client on the
+Apple Silicon `macos-15` runner for pushes, pull requests, manual dispatch, and
+daily at 04:43 UTC on the default branch. It follows stable Rust and uses the
+runner's Xcode command-line tools. Cargo downloads are cached, and compilation
+is limited to two concurrent jobs to fit the runner's memory.
+
+The workflow runs `scripts/bundle-macos.sh`, which builds the debug client with
+`--locked`, validates its Info.plist, and creates an ad-hoc-signed `.app`; CI then
+verifies that signature. It does not launch the app, publish a download, or
+perform distribution signing/notarization. Tests and Clippy remain in Linux CI.
+Intel builds and native account/desktop validation are separate follow-up work.
+The workflow and bundle script syntax were checked on Linux; macOS compilation
+and signing still require the first hosted run.
+
 ## Design preview
 
 Run `cargo run --locked --bin interconnect -- --demo` for a memory-only workspace

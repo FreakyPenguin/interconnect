@@ -1,0 +1,57 @@
+name: macOS build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '43 4 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: '0'
+  # The standard Apple Silicon runner has 7 GB of RAM.
+  CARGO_BUILD_JOBS: '2'
+  RUST_BACKTRACE: '1'
+
+jobs:
+  build:
+    name: Build app (macOS, Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Update repository Rust toolchain
+        run: |
+          rustup update stable
+          rustup show active-toolchain
+          rustc --version --verbose
+          xcodebuild -version
+
+      - name: Cache Cargo downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-cargo-downloads-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-downloads-
+
+      - name: Build desktop app bundle
+        run: bash scripts/bundle-macos.sh
+
+      - name: Verify app signature
+        run: codesign --verify --strict --verbose=2 target/Interconnect.app
