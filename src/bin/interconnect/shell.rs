@@ -679,6 +679,25 @@ impl App {
                 .style(container::rounded_box),
             widget::tooltip::Position::Bottom,
         );
+        let mut create_room = button(container(text("#+").size(16)).center_x(24).center_y(24))
+            .padding(2)
+            .style(icon_button);
+        if !self.closing && !self.stopped {
+            create_room =
+                create_room.on_press(Message::CreateRoom(super::create_room::Event::Open));
+        }
+        let shortcut = if cfg!(target_os = "macos") {
+            "Create room (Cmd+Shift+N)"
+        } else {
+            "Create room (Ctrl+Shift+N)"
+        };
+        let create_room = widget::tooltip(
+            create_room,
+            container(text(shortcut).size(12))
+                .padding(8)
+                .style(container::rounded_box),
+            widget::tooltip::Position::Bottom,
+        );
         container(
             column![
                 row![
@@ -686,6 +705,7 @@ impl App {
                         .padding([4, 4])
                         .width(Length::Fill),
                     new_chat,
+                    create_room,
                 ]
                 .align_y(Alignment::Center),
                 search,

@@ -76,6 +76,8 @@ the room timeline; at wider widths it sits beside it. Thread and room drafts
 remain separate across these transitions and navigation.
 
 **Ctrl+Shift+N** (**Cmd+Shift+N** on macOS) opens the room-creation dialog.
+The **#+** button beside the new-chat **+** in the room-list heading opens the
+same dialog; its tooltip shows **Create room** and the shortcut.
 Name is required; topic is optional. The selected space is preselected, with
 No space available. Public/private joining, optional directory listing,
 encryption and history visibility are configurable. Create with the button or

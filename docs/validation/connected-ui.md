@@ -2254,7 +2254,10 @@ Manual acceptance:
 ## Create room dialog — 2026-11-15
 
 **Ctrl+Shift+N** (**Cmd+Shift+N** on macOS) opens a room-creation dialog, distinct
-from the Ctrl+N direct-chat picker. Name is required; topic is optional. The
+from the Ctrl+N direct-chat picker. The **#+** button beside the new-chat **+**
+in the room-list heading opens the same dialog. Its tooltip shows **Create room**
+and the platform shortcut; it is disabled while stopping or disconnected.
+Name is required; topic is optional. The
 space defaults to the selected sidebar space, or **No space** in All rooms/DMs.
 Choose another joined space or No space. A private, encrypted room with history
 visible from joining is the default.
@@ -2309,7 +2312,8 @@ creation, server refusal and retrying a failed child link without recreating.
 Manual acceptance:
 
 1. Run `cargo run --locked --bin interconnect -- --demo`. Open Ctrl+Shift+N
-   from a selected space. Check defaults, enter name/topic using Tab, then
+   from a selected space, then repeat using the **#+** header button. Check
+   defaults, enter name/topic using Tab, then
    create using the button or Ctrl+Enter. Verify the new empty room appears
    in that space and opens without changing the sidebar filter.
 2. Repeat from All rooms/DMs; check No space. Change the selected space, public/
@@ -2332,6 +2336,10 @@ locked workspace tests (95 library and 169 desktop tests passed; two existing
 opt-in library tests ignored), and the locked desktop build. Native demo checks
 covered Ctrl+Shift+N, name/topic entry using Tab, Ctrl+Enter creation, Escape,
 space membership, and 1000×720/640×480 layout.
+The room-list **#+** button was also clicked in the isolated demo; its tooltip
+and the opened dialog were inspected. Formatting, locked workspace Clippy, all
+169 desktop tests and the locked build passed for the button addition. Captures
+stay ignored under `artifacts/create-room-button-2026-11-15/`.
 
 Native demo checks use an isolated headless Wayland/tiny-skia compositor and no
 saved account or network. Captures/logs stay ignored under
