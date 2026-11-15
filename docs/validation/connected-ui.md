@@ -510,9 +510,8 @@ this check sent no Matrix messages and did not restart the connected app.
 Message text selection (2026-11-15): room and thread bodies support dragging,
 word/line selection, keyboard selection, and the platform copy shortcut. Bodies
 remain read-only, have no caret or input-method request, and schedule no blink
-redraws. Wheel events continue to scroll the conversation. Selection is within
-one message; cross-message selection is not implemented. Selection resets when
-its widget slot changes identity or its body changes. The widget regression
+redraws. Wheel events continue to scroll the conversation. This initially selected within one message; the timeline-wide implementation
+below now preserves selection by message ID across layout/slot changes. The widget regression
 exercises partial selection/copy, rejected typing/cut/paste, identity reset, and
 idle redraw behavior. The demo scroll smoke still passes with selectable bodies.
 
@@ -538,3 +537,39 @@ smoke. Desktop capture confirmed partial selection; automated desktop clipboard
 verification was interrupted by a focus change. Controlled widget tests verify
 clipboard contents. No actual-account messages were sent or client restarted.
 Hover actions do not yet provide a complete keyboard navigation workflow.
+
+
+Cross-message selection (2026-11-15): drag in either direction from a message
+body to select partial endpoints and complete intermediate messages. Copying
+within one message returns only the selected source text. Copying across messages
+adds the current speaker name above each selected fragment, with a blank line
+between messages:
+
+```text
+Alice:
+selected end of the first message
+
+Bob:
+  selected beginning of the next message
+```
+
+Names are plain text, not literal Markdown bold markers: Iced's clipboard API
+currently exposes text rather than HTML/rich-text formats. Avatars, dates,
+timestamps, status text, reply counts, and actions never enter the clipboard.
+Source indentation, blank lines, Unicode, and line endings are preserved; soft
+wrapping adds no newlines. Labels flatten line breaks in display names.
+
+Selection belongs to each room/thread timeline and uses message IDs plus logical
+text positions. Appending messages, prepending history, and reflow preserve the
+selected range. Navigation, an outside click, or a shell focus/navigation shortcut
+clears it. Editing/removing an endpoint clears selection instead of retaining
+stale text offsets. Keyboard extension across message boundaries is not yet
+implemented; ordinary within-message keyboard selection remains available.
+
+Dragging near the top/bottom edge scrolls through already-loaded history. Only
+an active edge drag schedules frame deadlines; release, window focus loss, or
+reaching the boundary stops them. This does not fetch additional history.
+Real-widget regressions exercise forward/backward copy, body-only sources,
+partial endpoints, Unicode/whitespace fidelity, stable IDs across append/prepend,
+focus/navigation invalidation, and both auto-scroll directions including their
+idle boundaries. No new SDK requests or subscriptions are involved.

@@ -8,17 +8,60 @@ use iced::advanced::{
 use iced::widget::text_editor::{self, Action, Binding};
 use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme};
 
+#[cfg(test)]
 pub fn view<'a>(id: &'a str, body: &'a str) -> Element<'a, Message> {
-    Element::new(Selectable { id, body })
+    named_view(id, body, "")
+}
+pub fn named_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, Message> {
+    Element::new(Selectable { id, body, name })
 }
 struct Selectable<'a> {
+    name: &'a str,
     id: &'a str,
     body: &'a str,
 }
-struct State {
-    id: String,
-    body: String,
-    content: text_editor::Content,
+pub(super) struct State {
+    pub id: String,
+    pub name: String,
+    pub body: String,
+    pub content: text_editor::Content,
+    pub selected: bool,
+    pub clicks: u64,
+}
+// The editor exposes raw word/line anchors through cursor(), but its copy()
+// expands them. Normalize to explicit logical positions so the timeline can
+// preserve exactly the same selection across later layouts.
+fn normalize_selection(content: &mut text_editor::Content) {
+    use iced::advanced::text::editor::{Cursor, Position};
+    let Some(selected) = content.selection().filter(|text| !text.is_empty()) else {
+        return;
+    };
+    let lines: Vec<_> = content.lines().map(|line| line.text.into_owned()).collect();
+    let position = content.cursor().position;
+    let offset = lines
+        .iter()
+        .take(position.line)
+        .map(|line| line.len() + 1)
+        .sum::<usize>()
+        + position.column;
+    let normalized = lines.join("\n");
+    if let Some((begin, _)) = normalized
+        .match_indices(&selected)
+        .find(|(begin, _)| *begin <= offset && offset <= *begin + selected.len())
+    {
+        let logical = |offset: usize| {
+            let prefix = &normalized[..offset];
+            Position {
+                line: prefix.bytes().filter(|byte| *byte == b'\n').count(),
+                column: prefix.rsplit('\n').next().unwrap_or("").len(),
+            }
+        };
+        let cursor = Cursor {
+            position: logical(begin + selected.len()),
+            selection: Some(logical(begin)),
+        };
+        content.move_to(cursor);
+    }
 }
 fn editor(
     content: &text_editor::Content,
@@ -58,6 +101,9 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
     fn state(&self) -> widget::tree::State {
         widget::tree::State::new(State {
             id: self.id.into(),
+            name: self.name.into(),
+            selected: false,
+            clicks: 0,
             body: self.body.into(),
             content: text_editor::Content::with_text(self.body),
         })
@@ -68,9 +114,34 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
     }
     fn diff(&self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<State>();
+        state.name = self.name.into();
         if state.id != self.id || state.body != self.body {
             tree.state = self.state();
             tree.children = self.children();
+        }
+    }
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _: &Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        use iced::advanced::widget::operation::Focusable;
+        let state = tree.state.downcast_mut::<State>();
+        let was_selected = state.selected;
+        operation.custom(None, layout.bounds(), state);
+        if was_selected && !state.selected {
+            tree.children[0]
+                .state
+                .downcast_mut::<text_editor::State<iced::advanced::text::highlighter::PlainText>>()
+                .unfocus();
+        }
+        if state.selected {
+            tree.children[0]
+                .state
+                .downcast_mut::<text_editor::State<iced::advanced::text::highlighter::PlainText>>()
+                .focus();
         }
     }
     fn size(&self) -> Size<Length> {
@@ -122,7 +193,17 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         shell.request_redraw_at(local.redraw_request());
         for action in actions {
             if !action.is_edit() {
+                if matches!(
+                    action,
+                    Action::Click(_) | Action::SelectWord | Action::SelectLine
+                ) {
+                    state.clicks = state.clicks.wrapping_add(1);
+                }
+                let expand = matches!(action, Action::SelectWord | Action::SelectLine);
                 state.content.perform(action);
+                if expand {
+                    normalize_selection(&mut state.content);
+                }
                 shell.request_redraw();
             }
         }
@@ -185,6 +266,7 @@ mod tests {
     fn partial_selection_copies_but_cannot_edit_or_schedule_a_timer() {
         let mut view = Selectable {
             id: "$one",
+            name: "Alice",
             body: "hello world café 👋",
         };
         let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(14.0));

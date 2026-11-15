@@ -58,6 +58,7 @@ struct Snapshot {
     rows: Vec<Row>,
 }
 struct Identity {
+    selection: super::selection::Selection,
     generation: u64,
     snapshot: Option<Snapshot>,
 }
@@ -156,6 +157,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         widget::tree::State::new(Identity {
             generation: self.generation,
             snapshot: None,
+            selection: Default::default(),
         })
     }
     fn children(&self) -> Vec<Tree> {
@@ -166,6 +168,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         if identity.generation != self.generation {
             identity.generation = self.generation;
             identity.snapshot = None;
+            identity.selection = Default::default();
             tree.children = self.children();
         } else {
             tree.children[0].diff(self.content.as_widget());
@@ -219,7 +222,14 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             );
             current.metrics.translation = (current.metrics.maximum() - offset).round();
         }
-        tree.state.downcast_mut::<Identity>().snapshot = Some(current);
+        let identity = tree.state.downcast_mut::<Identity>();
+        identity.snapshot = Some(current);
+        identity.selection.restore(
+            self.content.as_widget_mut(),
+            &mut tree.children[0],
+            Layout::new(&node),
+            renderer,
+        );
         node
     }
     fn operate(
@@ -245,7 +255,8 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        self.content.as_widget_mut().update(
+        tree.state.downcast_mut::<Identity>().selection.update(
+            self.content.as_widget_mut(),
             &mut tree.children[0],
             event,
             layout,
@@ -254,6 +265,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             clipboard,
             shell,
             viewport,
+            self.generation,
         );
         self.remember_scroll(tree, layout, renderer);
     }

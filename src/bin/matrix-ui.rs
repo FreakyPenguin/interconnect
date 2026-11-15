@@ -5,6 +5,8 @@ mod demo;
 mod presentation;
 #[path = "matrix-ui/selectable.rs"]
 mod selectable;
+#[path = "matrix-ui/selection.rs"]
+mod selection;
 #[path = "matrix-ui/shell.rs"]
 mod shell;
 #[path = "matrix-ui/timeline.rs"]
@@ -731,9 +733,10 @@ impl App {
                 text(presentation::time_detail(message)).size(12),
                 iced::widget::tooltip::Position::Top,
             );
-            let body = selectable::view(
+            let body = selectable::named_view(
                 message.event_id.as_deref().unwrap_or(&message.body),
                 &message.body,
+                &message.display_name,
             );
             let mut entry = if grouped {
                 column![row![body, timestamp].spacing(12)]
