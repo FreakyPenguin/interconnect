@@ -46,6 +46,12 @@ Hover over a room message to reveal a small action panel at its top right.
 The reply arrow opens its thread; the tooltip says **Reply in thread**.
 The panel overlays the full-width message without changing wrapping or height.
 
+Thread panels keep the original message beneath the header, above the scrolling
+replies. Its author, timestamp, and selectable text stay visible when opening a
+busy thread at the newest reply. Long originals scroll independently within a
+144-pixel area. The original appears once, and threads without replies show
+**No replies yet**. The current room supplies the original while the thread loads.
+
 Shortcuts:
 
 - Ctrl+K: focus room search and select the current query (Command+K on macOS).
@@ -90,6 +96,11 @@ Shortcuts:
    should stay fixed. Select/copy text away from the panel and open a thread
    through its arrow. Repeat at the minimum width. This overlay-specific desktop
    check remains pending.
+9. Open threads with zero and several replies. Confirm the original appears once
+   above the replies and stays put while they scroll. Open a thread on the long
+   message and scroll its original independently; replies and the composer should
+   remain accessible. Switch threads and check the original returns to its top.
+   This thread-original desktop check remains pending.
 
 ## Feasibility findings and scope
 
@@ -151,3 +162,9 @@ For the compact composer follow-up, the same checks passed, including all 27 GUI
 tests covering draft isolation, keyboard sending/IME guards, scroll restoration,
 and static caret behavior. Desktop inspection of the new action-row layout and
 tooltip remains pending.
+
+For the pinned thread original, formatting, workspace Clippy with warnings
+denied, all 29 GUI tests, and the locked GUI build passed. New tests exercise
+current-generation lookup with room fallback, stale-source rejection, a bounded
+long original, deduplication, and independent reply scrolling through real Iced
+layout. Desktop inspection remains pending.

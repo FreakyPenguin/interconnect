@@ -12,7 +12,7 @@ mod shell;
 #[path = "matrix-ui/timeline.rs"]
 mod timeline;
 
-use chatclient::connected::{History, Model, Pane, RetrySend, Selection};
+use chatclient::connected::{History, MessageRow, Model, Pane, RetrySend, Selection};
 use chatclient::navigation::Scope;
 use chatclient::navigation_preferences::Preferences;
 use iced::{
@@ -616,6 +616,86 @@ impl App {
             });
         }
     }
+    fn thread_original(&self) -> Option<&MessageRow> {
+        let (generation, root) = self.selection.thread.as_ref()?;
+        current_pane(&self.model.thread, *generation)
+            .and_then(|pane| {
+                pane.rows
+                    .iter()
+                    .find(|row| row.event_id.as_ref() == Some(root))
+            })
+            .or_else(|| {
+                let (generation, _) = self.selection.room.as_ref()?;
+                current_pane(&self.model.room, *generation)?
+                    .rows
+                    .iter()
+                    .find(|row| row.event_id.as_ref() == Some(root))
+            })
+    }
+
+    fn thread_original_view(&self) -> Element<'_, Message> {
+        let original: Element<'_, Message> = if let Some(message) = self.thread_original() {
+            let timestamp = iced::widget::tooltip(
+                text(presentation::time_label(message))
+                    .size(11)
+                    .color(shell::MUTED),
+                text(presentation::time_detail(message)).size(12),
+                iced::widget::tooltip::Position::Top,
+            );
+            column![
+                row![
+                    iced::widget::tooltip(
+                        shell::title(&message.display_name, 13),
+                        text(&message.sender).size(12),
+                        iced::widget::tooltip::Position::Top,
+                    ),
+                    iced::widget::space().width(Length::Fill),
+                    timestamp,
+                ]
+                .spacing(12),
+                selectable::named_view(
+                    message.event_id.as_deref().unwrap_or(&message.body),
+                    &message.body,
+                    &message.display_name,
+                ),
+            ]
+            .spacing(6)
+            .into()
+        } else {
+            text(
+                if self
+                    .selection
+                    .thread
+                    .as_ref()
+                    .is_some_and(|(generation, _)| {
+                        current_pane(&self.model.thread, *generation).is_none()
+                    })
+                {
+                    "Loading original message…"
+                } else {
+                    "Original message unavailable"
+                },
+            )
+            .size(12)
+            .color(shell::MUTED)
+            .into()
+        };
+        column![
+            container(
+                container(
+                    scrollable(original)
+                        .id("thread-original")
+                        .direction(shell::scrollbar())
+                        .style(shell::scroll_style)
+                )
+                .max_height(144)
+            )
+            .padding([12, 24]),
+            iced::widget::rule::horizontal(1),
+        ]
+        .into()
+    }
+
     fn pane(&self, thread: bool) -> Element<'_, Message> {
         let selected = if thread {
             &self.selection.thread
@@ -627,7 +707,7 @@ impl App {
         } else {
             &self.model.room
         };
-        let Some((generation, _)) = selected else {
+        let Some((generation, selected_id)) = selected else {
             return shell::empty_state(
                 "A little room to talk",
                 "Choose a conversation from the sidebar.",
@@ -668,6 +748,13 @@ impl App {
             iced::widget::rule::horizontal(1)
         ]
         .spacing(0);
+        if thread {
+            // Reset the original's own scroll/selection state on thread changes.
+            content = content.push(iced::widget::keyed_column([(
+                *generation,
+                self.thread_original_view(),
+            )]));
+        }
         let Some(pane) = current_pane(snapshot, *generation) else {
             return content
                 .push(shell::empty_state(
@@ -694,8 +781,7 @@ impl App {
                     "Could not load history: {error}. Live messages remain active."
                 )))
             }
-            History::Ready => {}
-            History::End => {
+            History::End if !thread => {
                 history_controls = history_controls.push(
                     container(
                         text("Beginning of conversation")
@@ -706,6 +792,7 @@ impl App {
                     .center_x(Length::Fill),
                 )
             }
+            History::Ready | History::End => {}
         }
         if !thread && !matches!(pane.history, History::End) {
             let label = match pane.history {
@@ -720,9 +807,14 @@ impl App {
             history_controls = history_controls.push(control);
         }
         content = content.push(history_controls);
+        let rows: Vec<_> = pane
+            .rows
+            .iter()
+            .filter(|message| !thread || message.event_id.as_ref() != Some(selected_id))
+            .collect();
         let mut messages = column![].spacing(0).padding([16, 24]);
-        for (index, message) in pane.rows.iter().enumerate() {
-            let previous = index.checked_sub(1).and_then(|i| pane.rows.get(i));
+        for (index, message) in rows.iter().copied().enumerate() {
+            let previous = index.checked_sub(1).map(|i| rows[i]);
             let grouped = presentation::grouped(previous, message);
             let new_date = presentation::date(message)
                 .filter(|date| previous.and_then(presentation::date).as_ref() != Some(date));
@@ -821,11 +913,15 @@ impl App {
             message_row = message_row.push(body);
             messages = messages.push(container(message_row).id(timeline::row_id(index)));
         }
-        if pane.rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
-            messages = messages.push(shell::empty_state(
-                "The start of something",
-                "Send the first message in this conversation.",
-            ));
+        if rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
+            messages = messages.push(if thread {
+                shell::empty_state("No replies yet", "Reply below to start the thread.")
+            } else {
+                shell::empty_state(
+                    "The start of something",
+                    "Send the first message in this conversation.",
+                )
+            });
         }
         let view_generation = *generation;
         let timeline = scrollable(messages)
@@ -847,7 +943,7 @@ impl App {
         // state and a zero distance from the bottom follows loaded history.
         let mut message_area = iced::widget::stack![timeline::view(
             *generation,
-            pane.rows.iter().map(|row| row.event_id.clone()).collect(),
+            rows.iter().map(|row| row.event_id.clone()).collect(),
             timeline.into()
         )];
         // Keep the timeline in the same widget slot as this overlay appears and
@@ -1165,6 +1261,123 @@ mod tests {
             "a local reply"
         );
         assert_eq!(app.drafts[&room_key].content.text().trim(), "room draft");
+    }
+
+    #[test]
+    fn thread_original_uses_current_snapshots_and_room_fallback() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Thread("review".into()));
+        assert_eq!(
+            app.thread_original().unwrap().event_id.as_deref(),
+            Some("review")
+        );
+        let thread = app.model.thread.as_mut().unwrap();
+        std::sync::Arc::make_mut(&mut thread.rows)[0].body = "updated original".into();
+        assert_eq!(app.thread_original().unwrap().body, "updated original");
+        // A loading/stale thread can use the current room, never a stale pane.
+        app.model.thread.as_mut().unwrap().generation += 1;
+        assert_ne!(app.thread_original().unwrap().body, "updated original");
+        app.model.thread = None;
+        assert_eq!(
+            app.thread_original().unwrap().event_id.as_deref(),
+            Some("review")
+        );
+        app.model.room.as_mut().unwrap().generation += 1;
+        assert!(app.thread_original().is_none());
+    }
+
+    #[test]
+    fn thread_original_is_bounded_and_stays_above_scrolling_replies_once() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Probe {
+            ids: Vec<String>,
+            original: Option<iced::Rectangle>,
+            replies: Option<iced::Rectangle>,
+            replies_translation: f32,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn custom(
+                &mut self,
+                _: Option<&widget::Id>,
+                _: iced::Rectangle,
+                state: &mut dyn std::any::Any,
+            ) {
+                if let Some(state) = state.downcast_ref::<selectable::State>() {
+                    self.ids.push(state.id.clone());
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("thread-original")) {
+                    self.original = Some(bounds);
+                } else if id == Some(&widget::Id::new("thread-timeline")) {
+                    self.replies = Some(bounds);
+                    self.replies_translation = translation.y;
+                }
+            }
+        }
+        let mut app = demo_app();
+        let _ = app.update(Message::Thread("review".into()));
+        let rows = std::sync::Arc::make_mut(&mut app.model.thread.as_mut().unwrap().rows);
+        rows[0].body = "A long original message.\n".repeat(80);
+        let reply = rows[1].clone();
+        for index in 0..40 {
+            let mut reply = reply.clone();
+            reply.event_id = Some(format!("reply-{index}-extra"));
+            rows.push(reply);
+        }
+        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut pane = app.pane(true);
+        let mut tree = widget::Tree::new(&pane);
+        let node = pane.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(iced::Size::ZERO, iced::Size::new(360.0, 640.0)),
+        );
+        let mut before = Probe::default();
+        pane.as_widget_mut().operate(
+            &mut tree,
+            layout::Layout::new(&node),
+            &renderer,
+            &mut before,
+        );
+        assert_eq!(before.ids.iter().filter(|id| *id == "review").count(), 1);
+        let original = before.original.unwrap();
+        let replies = before.replies.unwrap();
+        assert!(original.height <= 144.0);
+        assert!(original.y + original.height <= replies.y);
+        assert!(
+            replies.height > 100.0,
+            "long originals leave space for replies"
+        );
+        pane.as_widget_mut().operate(
+            &mut tree,
+            layout::Layout::new(&node),
+            &renderer,
+            &mut widget::operation::scrollable::scroll_to::<()>(
+                widget::Id::new("thread-timeline"),
+                iced::widget::operation::AbsoluteOffset {
+                    x: None,
+                    y: Some(120.0),
+                },
+            ),
+        );
+        let mut after = Probe::default();
+        pane.as_widget_mut()
+            .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut after);
+        assert_eq!(after.original, before.original);
+        assert_eq!(after.replies, before.replies);
+        assert_ne!(after.replies_translation, before.replies_translation);
     }
 
     #[test]

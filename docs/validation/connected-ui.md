@@ -142,8 +142,10 @@ send messages or restart the user's connected app.
    The button disables while loading; failures offer **Retry loading history**.
    Missing keys should appear as decryption
    failures rather than a login failure.
-3. Select **Open thread** under a known thread root. Confirm its root and loaded
-   replies appear, then send another reply from the second client.
+3. Use a message's reply arrow or existing reply-count link to open its thread.
+   Confirm the original appears once beneath the header, with its author and
+   timestamp, and stays visible while replies scroll. Long originals scroll
+   independently in a bounded area. Then send another reply from the second client.
 4. Close the thread. Send another reply from the second client and reopen it.
    Confirm the reply appears. Room synchronization should remain active.
 5. Rapidly switch rooms and threads, including switching while a timeline is
