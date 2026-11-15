@@ -15,7 +15,7 @@ pub fn view(
     keys: Vec<Option<String>>,
     content: Element<'_, Message>,
 ) -> Element<'_, Message> {
-    make_view(generation, keys, content, None)
+    make_view(generation, keys, content, None, false)
 }
 
 pub fn history_view(
@@ -26,7 +26,30 @@ pub fn history_view(
     revision: u64,
     ready: bool,
 ) -> Element<'_, Message> {
-    make_view(generation, keys, content, Some((thread, revision, ready)))
+    make_view(
+        generation,
+        keys,
+        content,
+        Some((thread, revision, ready)),
+        false,
+    )
+}
+
+pub fn thread_history_view(
+    generation: u64,
+    keys: Vec<Option<String>>,
+    content: Element<'_, Message>,
+    revision: u64,
+    ready: bool,
+    observe_visible: bool,
+) -> Element<'_, Message> {
+    make_view(
+        generation,
+        keys,
+        content,
+        Some((true, revision, ready)),
+        observe_visible,
+    )
 }
 
 fn make_view(
@@ -34,10 +57,12 @@ fn make_view(
     keys: Vec<Option<String>>,
     content: Element<'_, Message>,
     history: Option<(bool, u64, bool)>,
+    observe_visible: bool,
 ) -> Element<'_, Message> {
     Element::new(Timeline {
         generation,
         history,
+        observe_visible,
         keys: keys
             .into_iter()
             .enumerate()
@@ -49,6 +74,7 @@ fn make_view(
 struct Timeline<'a> {
     generation: u64,
     history: Option<(bool, u64, bool)>,
+    observe_visible: bool,
     keys: HashMap<widget::Id, String>,
     content: Element<'a, Message>,
 }
@@ -88,6 +114,7 @@ struct Identity {
     generation: u64,
     snapshot: Option<Snapshot>,
     reported: Option<(Metrics, u64, bool)>,
+    visible: Option<(Metrics, Vec<String>)>,
 }
 
 struct Measure<'a> {
@@ -185,6 +212,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             generation: self.generation,
             snapshot: None,
             reported: None,
+            visible: None,
             selection: Default::default(),
         })
     }
@@ -197,9 +225,13 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             identity.generation = self.generation;
             identity.snapshot = None;
             identity.reported = None;
+            identity.visible = None;
             identity.selection = Default::default();
             tree.children = self.children();
         } else {
+            if !self.observe_visible {
+                identity.visible = None;
+            }
             tree.children[0].diff(self.content.as_widget());
         }
     }
@@ -297,6 +329,30 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             self.generation,
         );
         self.remember_scroll(tree, layout, renderer);
+        if self.observe_visible && !matches!(event, Event::Window(iced::window::Event::Unfocused)) {
+            let identity = tree.state.downcast_mut::<Identity>();
+            if let Some(snapshot) = &identity.snapshot {
+                let metrics = snapshot.metrics;
+                let visible: Vec<_> = snapshot
+                    .rows
+                    .iter()
+                    .filter(|row| {
+                        row.y + row.height > metrics.translation + 1.0
+                            && row.y < metrics.translation + metrics.height - 1.0
+                    })
+                    .map(|row| row.key.clone())
+                    .collect();
+                let report = (metrics, visible);
+                if identity.visible.as_ref() != Some(&report) {
+                    shell.publish(Message::ThreadVisible {
+                        generation: self.generation,
+                        keys: report.1.clone(),
+                        metrics,
+                    });
+                    identity.visible = Some(report);
+                }
+            }
+        }
         if let Some((thread, revision, ready)) = self.history {
             let identity = tree.state.downcast_mut::<Identity>();
             if let Some(snapshot) = &identity.snapshot {
@@ -491,6 +547,117 @@ mod tests {
     }
     fn screen_y(snapshot: &Snapshot, key: &str) -> f32 {
         snapshot.rows.iter().find(|row| row.key == key).unwrap().y - snapshot.metrics.translation
+    }
+
+    #[test]
+    fn visible_thread_reports_follow_actual_rows_and_focus_without_timers() {
+        let mut harness = Harness::new();
+        let mut rows: Vec<_> = (0..6).map(|index| format!("reply-{index}")).collect();
+        let frame = |harness: &mut Harness, rows: &[String], enabled: bool, offset: Option<f32>| {
+            let content =
+                column(rows.iter().enumerate().map(|(index, _)| {
+                    Element::from(container(space().height(40)).id(row_id(index)))
+                }));
+            let mut view = thread_history_view(
+                7,
+                rows.iter().cloned().map(Some).collect(),
+                scrollable(content)
+                    .id("thread-timeline")
+                    .anchor_bottom()
+                    .height(Length::Fill)
+                    .into(),
+                1,
+                true,
+                enabled,
+            );
+            harness.tree.diff(view.as_widget());
+            let node = view.as_widget_mut().layout(
+                &mut harness.tree,
+                &harness.renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(300.0, 80.0)),
+            );
+            if let Some(offset) = offset {
+                view.as_widget_mut().operate(
+                    &mut harness.tree,
+                    Layout::new(&node),
+                    &harness.renderer,
+                    &mut widget::operation::scrollable::scroll_to::<()>(
+                        "thread-timeline".into(),
+                        iced::widget::operation::AbsoluteOffset {
+                            x: None,
+                            y: Some(offset),
+                        },
+                    ),
+                );
+            }
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut harness.tree,
+                &Event::Window(iced::window::Event::RedrawRequested(
+                    iced::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &harness.renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+                &Rectangle::with_size(Size::new(300.0, 80.0)),
+            );
+            assert!(!matches!(
+                shell.redraw_request(),
+                iced::window::RedrawRequest::At(_)
+            ));
+            messages
+                .into_iter()
+                .filter_map(|message| match message {
+                    Message::ThreadVisible {
+                        generation: 7,
+                        keys,
+                        ..
+                    } => Some(keys),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            frame(&mut harness, &rows, true, None),
+            vec![vec!["reply-4", "reply-5"]]
+        );
+        assert!(frame(&mut harness, &rows, true, None).is_empty());
+        assert!(frame(&mut harness, &rows, false, None).is_empty());
+        assert_eq!(
+            frame(&mut harness, &rows, true, None),
+            vec![vec!["reply-4", "reply-5"]]
+        );
+        rows[5] = "new-reply".into();
+        assert_eq!(
+            frame(&mut harness, &rows, true, None),
+            vec![vec!["reply-4", "new-reply"]],
+            "same geometry still reports new visible IDs"
+        );
+        assert_eq!(
+            frame(&mut harness, &rows, true, Some(80.0)),
+            vec![vec!["reply-2", "reply-3"]]
+        );
+        assert!(frame(&mut harness, &rows, true, None).is_empty());
+    }
+
+    #[test]
+    fn moving_thread_summary_keeps_nearest_surviving_reading_anchor() {
+        let mut harness = Harness::new();
+        let mut rows: Vec<_> = (0..10)
+            .map(|index| (format!("event-{index}"), 40.0))
+            .collect();
+        rows.insert(2, ("thread:$root:$old-reply".into(), 40.0));
+        let before = harness.render(&rows, 1, 200.0, Some(160.0));
+        assert_near(screen_y(&before, "thread:$root:$old-reply"), 0.0);
+        let successor = screen_y(&before, "event-2");
+        rows.remove(2);
+        rows.push(("thread:$root:$new-reply".into(), 40.0));
+        let after = harness.render(&rows, 1, 200.0, None);
+        assert_near(screen_y(&after, "event-2"), successor);
+        assert!(after.metrics.distance_from_bottom() > 1.0);
     }
     fn assert_near(actual: f32, expected: f32) {
         assert!((actual - expected).abs() <= 1.0, "{actual} != {expected}");

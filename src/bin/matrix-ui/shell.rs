@@ -9,7 +9,7 @@ use std::collections::HashSet;
 
 pub const INK: Color = Color::from_rgb8(39, 46, 56);
 pub const MUTED: Color = Color::from_rgb8(112, 121, 134);
-const ACCENT: Color = Color::from_rgb8(66, 99, 157);
+pub const ACCENT: Color = Color::from_rgb8(66, 99, 157);
 const SIDEBAR: Color = Color::from_rgb8(246, 247, 249);
 const RAIL: Color = Color::from_rgb8(237, 240, 244);
 const LINE: Color = Color::from_rgb8(228, 232, 237);

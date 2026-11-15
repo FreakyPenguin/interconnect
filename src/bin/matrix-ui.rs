@@ -9,6 +9,8 @@ mod selectable;
 mod selection;
 #[path = "matrix-ui/shell.rs"]
 mod shell;
+#[path = "matrix-ui/thread_activity.rs"]
+mod thread_activity;
 #[path = "matrix-ui/timeline.rs"]
 mod timeline;
 
@@ -57,6 +59,9 @@ struct App {
     scroll_positions: HashMap<DraftKey, f32>,
     pending_scroll: [Option<f32>; 2],
     timeline_metrics: [Option<(u64, u64, timeline::Metrics)>; 2],
+    thread_activity: thread_activity::State,
+    window_focused: bool,
+    thread_scroll_target: Option<(u64, f32)>,
 }
 #[derive(Clone, Debug)]
 enum Message {
@@ -75,6 +80,14 @@ enum Message {
     Stopped(Result<(), String>),
     Room(String),
     Thread(String),
+    OpenThreadLatest(String),
+    DemoThreadReply,
+    WindowFocused(bool),
+    ThreadVisible {
+        generation: u64,
+        keys: Vec<String>,
+        metrics: timeline::Metrics,
+    },
     CloseThread,
     JumpToNewest {
         thread: bool,
@@ -129,6 +142,9 @@ impl App {
             scroll_positions: HashMap::new(),
             pending_scroll: [None, None],
             timeline_metrics: [None, None],
+            thread_activity: thread_activity::State::default(),
+            window_focused: false,
+            thread_scroll_target: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -153,7 +169,67 @@ impl App {
             &message,
             Message::Room(_) | Message::Thread(_) | Message::CloseThread
         );
+        let observe_threads =
+            navigation || matches!(&message, Message::State(_) | Message::DemoThreadReply);
         match message {
+            Message::WindowFocused(focused) => self.window_focused = focused,
+            Message::ThreadVisible {
+                generation,
+                keys,
+                metrics,
+            } => {
+                if self.window_focused
+                    && self.pending_scroll[1].is_none()
+                    && let Some((current, root)) = &self.selection.thread
+                    && *current == generation
+                    && let Some(pane) = current_pane(&self.model.thread, generation)
+                    && pane.error.is_none()
+                    && !matches!(pane.history, History::Loading)
+                    && let Some((_, room)) = &self.selection.room
+                {
+                    if let Some((view, target)) = self.thread_scroll_target {
+                        let offset = metrics.maximum() - metrics.translation;
+                        if view != generation
+                            || (offset - target.min(metrics.maximum())).abs() > 1.0
+                        {
+                            return Task::none();
+                        }
+                        self.thread_scroll_target = None;
+                    }
+                    let keys: Vec<_> = keys
+                        .into_iter()
+                        .filter(|key| {
+                            pane.rows.iter().any(|row| {
+                                row.key == *key && row.thread_root.as_deref() == Some(root)
+                            })
+                        })
+                        .collect();
+                    self.thread_activity.viewed(room, root, &keys);
+                }
+            }
+            Message::OpenThreadLatest(root) if !self.closing && !self.stopped => {
+                if let Some((_, room)) = &self.selection.room {
+                    self.scroll_positions.insert(
+                        DraftKey {
+                            room: room.clone(),
+                            root: Some(root.clone()),
+                        },
+                        0.0,
+                    );
+                    if let Some((generation, current)) = &self.selection.thread
+                        && *current == root
+                    {
+                        self.pending_scroll[1] = None;
+                        self.thread_scroll_target = Some((*generation, 0.0));
+                        return jump_to_newest(true);
+                    }
+                    return self.update(Message::Thread(root));
+                }
+            }
+            Message::DemoThreadReply if self.demo.is_some() => {
+                self.demo.as_mut().unwrap().incoming();
+                self.refresh_demo();
+            }
             Message::TimelineMeasured {
                 thread,
                 generation,
@@ -204,6 +280,9 @@ impl App {
                     .is_some_and(|(current, _)| *current == generation)
                 {
                     self.pending_scroll[usize::from(thread)] = None;
+                    if thread {
+                        self.thread_scroll_target = Some((generation, 0.0));
+                    }
                     if let Some(key) = self.draft_key(thread) {
                         self.scroll_positions.insert(key, 0.0);
                     }
@@ -229,6 +308,9 @@ impl App {
                     && let Some(key) = self.draft_key(thread)
                 {
                     self.scroll_positions.insert(key, offset.max(0.0));
+                    if thread {
+                        self.thread_scroll_target = None;
+                    }
                 }
             }
             Message::Space(space) if !self.closing && !self.stopped => {
@@ -267,12 +349,16 @@ impl App {
                 }
             }
             Message::OpenLastThread => {
-                if let Some(root) = self
-                    .model
-                    .room
-                    .as_ref()
-                    .and_then(|p| p.rows.iter().rev().find(|row| row.kind == RowKind::Message))
-                    .and_then(|r| r.event_id.clone())
+                if let Some(root) =
+                    self.model
+                        .room
+                        .as_ref()
+                        .and_then(|p| {
+                            p.rows.iter().rev().find(|row| {
+                                row.kind == RowKind::Message && row.thread_root.is_none()
+                            })
+                        })
+                        .and_then(|r| r.event_id.clone())
                 {
                     let task = self.update(Message::Thread(root));
                     return task.chain(iced::widget::operation::focus("thread-composer"));
@@ -479,6 +565,13 @@ impl App {
         if navigation {
             self.refresh_demo();
         }
+        if observe_threads
+            && let Some((generation, room)) = &self.selection.room
+            && let Some(pane) = current_pane(&self.model.room, *generation)
+        {
+            self.thread_activity
+                .observe(room, &pane.rows, &pane.history);
+        }
         if self.closing && self.pending_ops == 0 {
             if self.stopped {
                 return iced::exit();
@@ -542,6 +635,9 @@ impl App {
                     }))
             {
                 self.pending_scroll[index] = None;
+                if thread {
+                    self.thread_scroll_target = Some((*generation, offset));
+                }
                 tasks.push(iced::widget::operation::scroll_to(
                     if thread {
                         "thread-timeline"
@@ -635,6 +731,15 @@ impl App {
                 })
             },
             iced::window::close_requests().map(|_| Message::Close),
+            iced::event::listen_with(|event, _, _| match event {
+                iced::Event::Window(iced::window::Event::Focused) => {
+                    Some(Message::WindowFocused(true))
+                }
+                iced::Event::Window(iced::window::Event::Unfocused) => {
+                    Some(Message::WindowFocused(false))
+                }
+                _ => None,
+            }),
             if chatclient::diagnostics::enabled() {
                 iced::event::listen_raw(|event, _, _| {
                     if matches!(
@@ -700,6 +805,81 @@ impl App {
                     .iter()
                     .find(|row| row.event_id.as_ref() == Some(root))
             })
+    }
+
+    fn thread_activity_view<'a>(
+        &self,
+        root: &str,
+        latest: &'a MessageRow,
+        original: Option<&MessageRow>,
+        replies: usize,
+    ) -> Element<'a, Message> {
+        let replies = original.map_or(replies, |row| replies.max(row.thread_replies as usize));
+        let unread = self
+            .selection
+            .room
+            .as_ref()
+            .map_or(0, |(_, room)| self.thread_activity.unread(room, root));
+        let topic = original
+            .map(|row| thread_activity::excerpt(&row.body, 64))
+            .filter(|text| !text.is_empty())
+            .map_or_else(|| "a thread".into(), |text| format!("“{text}”"));
+        let author = if latest.is_own {
+            "You"
+        } else {
+            &latest.display_name
+        };
+        let mut heading = row![
+            text(format!("{author} replied to {topic}"))
+                .size(12)
+                .color(shell::MUTED)
+                .width(Length::Fill),
+            text(format!(
+                "{replies} {}",
+                if replies == 1 { "reply" } else { "replies" }
+            ))
+            .size(11)
+            .color(shell::MUTED),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+        if unread > 0 {
+            heading = heading.push(
+                text(format!("• {unread} new"))
+                    .size(11)
+                    .color(shell::ACCENT),
+            );
+        }
+        let mut details = column![
+            heading,
+            text(thread_activity::excerpt(&latest.body, 120))
+                .size(12)
+                .color(shell::MUTED)
+        ]
+        .spacing(3);
+        if !latest.send_state.is_empty() && latest.send_state != "Sent" {
+            details = details.push(text(latest.send_state.clone()).size(11).color(shell::MUTED));
+        }
+        let mut open = button(
+            row![
+                container(text("↳").size(16).color(shell::MUTED)).center_x(32),
+                details.width(Length::Fill),
+                text("›").size(15).color(shell::MUTED)
+            ]
+            .spacing(12),
+        )
+        .padding([6, 0])
+        .width(Length::Fill)
+        .style(shell::quiet_button);
+        if !self.closing && !self.stopped {
+            open = open.on_press(Message::OpenThreadLatest(root.to_owned()));
+        }
+        iced::widget::tooltip(
+            open,
+            text(presentation::time_detail(latest)).size(12),
+            iced::widget::tooltip::Position::Top,
+        )
+        .into()
     }
 
     fn thread_original_view(&self) -> Element<'_, Message> {
@@ -813,6 +993,13 @@ impl App {
             iced::widget::space().width(Length::Fill)
         ]
         .align_y(iced::Alignment::Center);
+        if !thread && self.demo.is_some() && selected_id == "threads" {
+            header = header.push(
+                button(text("New sample reply").size(12))
+                    .style(shell::quiet_button)
+                    .on_press(Message::DemoThreadReply),
+            );
+        }
         if thread {
             header = header.push(iced::widget::tooltip(
                 button(container(text("×").size(18)).center_x(28).center_y(28))
@@ -899,18 +1086,47 @@ impl App {
             }
             History::Ready | History::End => {}
         }
-        let rows: Vec<_> = pane
-            .rows
-            .iter()
-            .filter(|message| !thread || message.event_id.as_ref() != Some(selected_id))
-            .collect();
+        let rows = thread_activity::project(&pane.rows, thread.then_some(selected_id.as_str()));
         let mut messages = column![history_controls].spacing(0).padding([16, 24]);
-        for (index, message) in rows.iter().copied().enumerate() {
-            let previous = index.checked_sub(1).map(|i| rows[i]);
+        for (index, projected) in rows.iter().copied().enumerate() {
+            let message = projected.message();
+            let previous_row = index.checked_sub(1).map(|i| rows[i]);
+            let previous = previous_row.and_then(|row| match row {
+                thread_activity::Row::Event(event) => Some(event),
+                _ => None,
+            });
             let activity = message.kind == RowKind::Activity;
             let grouped = presentation::grouped(previous, message);
-            let new_date = presentation::date(message)
-                .filter(|date| previous.and_then(presentation::date).as_ref() != Some(date));
+            let new_date = presentation::date(message).filter(|date| {
+                previous_row
+                    .and_then(|row| presentation::date(row.message()))
+                    .as_ref()
+                    != Some(date)
+            });
+            let mut message_row = column![];
+            if let Some(date) = new_date {
+                message_row = message_row.push(
+                    container(
+                        text(date.format("%A, %d %B %Y").to_string())
+                            .size(11)
+                            .color(shell::MUTED),
+                    )
+                    .center_x(Length::Fill)
+                    .padding([12, 0]),
+                );
+            }
+            if let thread_activity::Row::Thread {
+                root,
+                latest,
+                original,
+                replies,
+            } = projected
+            {
+                message_row =
+                    message_row.push(self.thread_activity_view(root, latest, original, replies));
+                messages = messages.push(container(message_row).id(timeline::row_id(index)));
+                continue;
+            }
             let timestamp = iced::widget::tooltip(
                 text(presentation::time_label(message))
                     .size(11)
@@ -976,11 +1192,19 @@ impl App {
                 && message.thread_replies > 0
                 && let Some(id) = &message.event_id
             {
-                let label = if message.thread_replies == 1 {
+                let mut label = if message.thread_replies == 1 {
                     "1 reply  ›".into()
                 } else {
                     format!("{} replies  ›", message.thread_replies)
                 };
+                let unread = self
+                    .selection
+                    .room
+                    .as_ref()
+                    .map_or(0, |(_, room)| self.thread_activity.unread(room, id));
+                if unread > 0 {
+                    label = format!("• {label} · {unread} new");
+                }
                 let mut replies = button(text(label).size(12))
                     .style(shell::quiet_button)
                     .padding([4, 0]);
@@ -998,18 +1222,6 @@ impl App {
             } else {
                 shell::avatar(&message.display_name)
             };
-            let mut message_row = column![];
-            if let Some(date) = new_date {
-                message_row = message_row.push(
-                    container(
-                        text(date.format("%A, %d %B %Y").to_string())
-                            .size(11)
-                            .color(shell::MUTED),
-                    )
-                    .center_x(Length::Fill)
-                    .padding([12, 0]),
-                );
-            }
             let body = container(row![avatar, entry.width(Length::Fill)].spacing(12)).padding(
                 iced::Padding {
                     top: if activity {
@@ -1067,14 +1279,29 @@ impl App {
             .height(Length::Fill);
         // New view identity resets the scroll state; async rows retain that
         // state and a zero distance from the bottom follows loaded history.
-        let mut message_area = iced::widget::stack![timeline::history_view(
-            *generation,
-            rows.iter().map(|row| row.event_id.clone()).collect(),
-            timeline.into(),
-            thread,
-            pane.history_revision,
-            matches!(pane.history, History::Ready),
-        )];
+        let keys = rows.iter().map(|row| Some(row.key())).collect();
+        let observed = if thread {
+            timeline::thread_history_view(
+                *generation,
+                keys,
+                timeline.into(),
+                pane.history_revision,
+                matches!(pane.history, History::Ready),
+                self.window_focused
+                    && self.pending_scroll[1].is_none()
+                    && !matches!(pane.history, History::Loading),
+            )
+        } else {
+            timeline::history_view(
+                *generation,
+                keys,
+                timeline.into(),
+                false,
+                pane.history_revision,
+                matches!(pane.history, History::Ready),
+            )
+        };
+        let mut message_area = iced::widget::stack![observed];
         // Keep the timeline in the same widget slot as this overlay appears and
         // disappears. The one-pixel tolerance accounts for layout rounding.
         if self.pending_scroll[usize::from(thread)].is_none() && self.saved_scroll(thread) > 1.0 {
@@ -1390,6 +1617,96 @@ mod tests {
             "a local reply"
         );
         assert_eq!(app.drafts[&room_key].content.text().trim(), "room draft");
+    }
+
+    #[test]
+    fn thread_activity_unread_requires_a_focused_current_visible_thread() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("threads".into()));
+        let _ = app.update(Message::DemoThreadReply);
+        let _ = app.update(Message::DemoThreadReply);
+        assert_eq!(app.thread_activity.unread("threads", "thread-plan"), 2);
+        let _ = app.update(Message::Room("home".into()));
+        let _ = app.update(Message::Room("threads".into()));
+        assert_eq!(app.thread_activity.unread("threads", "thread-plan"), 2);
+        let _ = app.update(Message::OpenThreadLatest("thread-plan".into()));
+        let generation = app.selection.thread.as_ref().unwrap().0;
+        let visible = |generation, key: &str| Message::ThreadVisible {
+            generation,
+            keys: vec![key.into()],
+            metrics: timeline::Metrics {
+                height: 100.0,
+                content_height: 600.0,
+                translation: 500.0,
+            },
+        };
+        let _ = app.update(visible(generation, "incoming-1"));
+        assert_eq!(
+            app.thread_activity.unread("threads", "thread-plan"),
+            2,
+            "unfocused windows do not mark replies viewed"
+        );
+        let _ = app.update(Message::WindowFocused(true));
+        let _ = app.update(visible(generation - 1, "incoming-1"));
+        assert_eq!(app.thread_activity.unread("threads", "thread-plan"), 2);
+        app.thread_scroll_target = Some((generation, 200.0));
+        let _ = app.update(visible(generation, "incoming-1"));
+        assert_eq!(
+            app.thread_activity.unread("threads", "thread-plan"),
+            2,
+            "wait for saved reading position before acknowledging a transient bottom layout"
+        );
+        app.thread_scroll_target = Some((generation, 0.0));
+        let _ = app.update(visible(generation, "incoming-1"));
+        assert_eq!(app.thread_activity.unread("threads", "thread-plan"), 1);
+        app.pending_scroll[1] = Some(0.0);
+        let _ = app.update(visible(generation, "incoming-2"));
+        assert_eq!(app.thread_activity.unread("threads", "thread-plan"), 1);
+        let _ = app.update(visible(generation, "incoming-2"));
+        assert_eq!(app.thread_activity.unread("threads", "thread-plan"), 0);
+        let _ = app.update(Message::DemoThreadReply);
+        assert_eq!(
+            app.thread_activity.unread("threads", "thread-plan"),
+            1,
+            "an open thread alone does not acknowledge an arrival"
+        );
+    }
+
+    #[test]
+    fn activity_click_targets_latest_and_keeps_drafts_and_room_scroll() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("threads".into()));
+        let room = app.draft_key(false).unwrap();
+        app.scroll_positions.insert(room.clone(), 250.0);
+        app.drafts.get_mut(&room).unwrap().content = text_editor::Content::with_text("room draft");
+        let _ = app.update(Message::Thread("thread-plan".into()));
+        let thread = app.draft_key(true).unwrap();
+        app.scroll_positions.insert(thread.clone(), 120.0);
+        app.drafts.get_mut(&thread).unwrap().content =
+            text_editor::Content::with_text("thread draft");
+        let generation = app.selection.thread.as_ref().unwrap().0;
+        let _ = app.update(Message::OpenThreadLatest("thread-plan".into()));
+        assert_eq!(
+            app.selection.thread.as_ref().unwrap().0,
+            generation,
+            "an already open thread is not restarted"
+        );
+        assert_eq!(app.saved_scroll(true), 0.0);
+        assert_eq!(app.saved_scroll(false), 250.0);
+        assert_eq!(app.drafts[&thread].content.text().trim(), "thread draft");
+        assert_eq!(app.drafts[&room].content.text().trim(), "room draft");
+        let _ = app.update(Message::CloseThread);
+        let _ = app.update(Message::OpenThreadLatest("older-thread".into()));
+        assert_eq!(app.selection.thread.as_ref().unwrap().1, "older-thread");
+        assert!(
+            app.model
+                .thread
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row.key == "old-root-reply")
+        );
     }
 
     #[test]

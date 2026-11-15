@@ -65,6 +65,62 @@ removed messages retain the message layout too. Room and thread panes use the
 same activity presentation and selection behavior; stable event IDs still anchor
 scrolling. See [the demo checks](design-preview.md) for the mixed activity fixture.
 
+## Recent thread activity — 2026-11-15
+
+The room timeline retains SDK thread replies and projects one compact activity
+row per thread at its most recent loaded reply's position. Interleaved room
+messages keep their order; older activity rows for the same thread are
+coalesced into the latest one. Each row shows the latest author, original-message
+excerpt when loaded, latest-reply preview, and reply count. The count uses the
+SDK total when available, otherwise the number of loaded replies. A thread with
+an original outside loaded history uses “a thread”; displaying its activity
+does not fetch that original or open another SDK timeline.
+
+Click an activity row to open its thread at the newest replies. Clicking again
+on an already open thread jumps to newest without replacing that SDK view.
+Ordinary reply links still restore the thread's remembered reading position.
+Drafts and the room's reading position are preserved. When a summary moves,
+scroll anchoring uses a surviving message rather than following the summary
+down the history. Inside threads, replies retain their full message layout.
+
+Blue new-reply counts appear on activity rows and their loaded originals' reply
+links. These are **local session indicators** for incoming sync replies observed
+while the room view is active, after its initial snapshot. Initial history,
+pagination, edits, and own replies do not create new counts. Decryption can
+resolve an incoming placeholder into a thread reply without duplicating it.
+Changing rooms or spaces preserves existing counts during the process lifetime;
+activity received while a room is not being watched is not counted as new on
+return. Counts are not persisted or synchronized with other clients.
+
+Room activity does not acknowledge a thread. Only actual reply rows visible in
+the focused thread pane clear their local new indicators. Opening a thread,
+loading history, restoring a scroll offset, and background/unfocused windows
+alone do not clear them. Geometry and visible-ID changes trigger reports; there
+is no polling or idle timer. This does not send Matrix receipts or mark rooms
+read. SDK work retains the existing view cancellation, timeouts, and runtime
+ownership rules.
+
+Automated checks cover coalescing across interleaved threads, latest previews,
+edits/removals, unavailable originals, Unicode excerpts, historical/own/duplicate
+events, decryption and delivery ordering, per-room state, focus and stale-view
+rejection, visible-only acknowledgement, scroll restoration, moving-summary
+anchors, and repeated geometry reports without timers. An SDK/mock-server test
+receives a live reply with no loaded root, verifies that presenting it does not
+fetch the root, then loads the original through the thread timeline. Existing
+pagination tests verify that historical thread replies carry non-live metadata.
+
+Live-account acceptance remains pending: receive two replies in one thread and
+one in another from a second client, confirm summaries and latest previews, then
+open one thread. Scroll away from newest and receive another reply; its count
+should remain until that reply is visible. Repeat with the app unfocused and
+with an original outside the room's loaded history. Automated fixtures and the
+demo send no real Matrix messages.
+
+Validation passed: formatting, workspace Clippy with warnings denied, 76 regular
+workspace tests (43 GUI tests), and the locked GUI build. Native demo visual
+observations and remaining desktop checks are recorded in the
+[design preview guide](design-preview.md#local-validation--2026-11-15).
+
 ## Connected navigation — 2026-11-15
 
 The visual shell now projects joined spaces and rooms from SDK metadata. The
@@ -183,7 +239,7 @@ send messages or restart the user's connected app.
    decryption in the room timeline. Scroll upward to request additional history;
    there is no **Load older** link. The app keeps three viewport heights of older
    content buffered, with a 1,200-pixel minimum, and continues through pages that
-   contain only hidden thread replies. At the start it shows **Beginning of
+   contain only thread replies, coalescing them into recent activity. At the start it shows **Beginning of
    conversation**. Failures preserve loaded messages and offer **Retry loading
    history** at the top of the loaded history.
    Missing keys should appear as decryption

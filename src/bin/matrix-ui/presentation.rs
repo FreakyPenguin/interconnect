@@ -37,12 +37,16 @@ mod tests {
     use super::*;
     fn message(sender: &str, timestamp_ms: Option<i64>) -> MessageRow {
         MessageRow {
+            key: "fixture".into(),
             kind: RowKind::Message,
             event_id: None,
             sender: sender.into(),
             display_name: "Same name".into(),
             timestamp_ms,
             thread_replies: 0,
+            thread_root: None,
+            is_own: false,
+            is_live: false,
             body: String::new(),
             send_state: String::new(),
             retry: None,

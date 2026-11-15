@@ -7,7 +7,10 @@ use matrix_sdk::Client;
 use matrix_sdk_ui::{
     room_list_service::State as RoomState,
     sync_service::{State, SyncService},
-    timeline::{EventSendState, Timeline, TimelineBuilder, TimelineFocus, TimelineItemContent},
+    timeline::{
+        EventItemOrigin, EventSendState, Timeline, TimelineBuilder, TimelineEventItemId,
+        TimelineFocus, TimelineItemContent,
+    },
 };
 use tokio::sync::{mpsc, watch};
 
@@ -42,12 +45,16 @@ impl RowKind {
 
 #[derive(Clone, Debug)]
 pub struct MessageRow {
+    pub key: String,
     pub kind: RowKind,
     pub event_id: Option<String>,
     pub sender: String,
     pub display_name: String,
     pub timestamp_ms: Option<i64>,
     pub thread_replies: u32,
+    pub thread_root: Option<String>,
+    pub is_own: bool,
+    pub is_live: bool,
     pub body: String,
     pub send_state: String,
     pub retry: Option<RetrySend>,
@@ -421,7 +428,9 @@ async fn view(
                     root_event_id: root.parse()?,
                 },
                 None => TimelineFocus::Live {
-                    hide_threaded_events: true,
+                    // The UI coalesces replies at their latest position. Keep
+                    // them even when their root is outside the loaded history.
+                    hide_threaded_events: false,
                 },
             };
             Ok::<_, anyhow::Error>(
@@ -550,6 +559,10 @@ async fn publish(
         .map(|event| {
             let content = event.content();
             MessageRow {
+                key: match event.identifier() {
+                    TimelineEventItemId::EventId(id) => id.to_string(),
+                    TimelineEventItemId::TransactionId(id) => format!("local:{id}"),
+                },
                 kind: RowKind::from_content(content),
                 event_id: event.event_id().map(ToString::to_string),
                 sender: event.sender().to_string(),
@@ -572,6 +585,9 @@ async fn publish(
                 thread_replies: content
                     .thread_summary()
                     .map_or(0, |summary| summary.num_replies),
+                thread_root: content.thread_root().map(|id| id.to_string()),
+                is_own: event.is_own(),
+                is_live: matches!(event.origin(), Some(EventItemOrigin::Sync)),
                 body: crate::event_text::body(content, event.sender()),
                 send_state: match event.send_state() {
                     Some(EventSendState::NotSentYet { .. }) => "Pending".into(),
@@ -671,6 +687,139 @@ mod tests {
         assert!(tokio::runtime::Handle::try_current().is_err());
         drop(client);
         crate::shutdown_runtime(runtime, Duration::from_secs(5)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn live_thread_reply_is_projected_without_a_loaded_root_and_can_open_its_thread() {
+        use matrix_sdk::{config::SyncSettings, ruma::event_id};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
+            .mount(&server)
+            .await;
+        let response = Arc::new(std::sync::Mutex::new(
+            json!({"next_batch":"one", "rooms":{"join":{"!room:example.org":{
+                "state":{"events":[
+                    {"type":"m.room.member","state_key":"@test:example.org","sender":"@test:example.org","event_id":"$member","origin_server_ts":1,"content":{"membership":"join"}},
+                    {"type":"m.room.encryption","state_key":"","sender":"@test:example.org","event_id":"$encryption","origin_server_ts":1,"content":{"algorithm":"m.megolm.v1.aes-sha2"}}
+                ]}, "timeline":{"events":[],"limited":false}
+            }}}}),
+        ));
+        let body = response.clone();
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/v3/sync"))
+            .respond_with(move |_: &wiremock::Request| {
+                ResponseTemplate::new(200).set_body_json(body.lock().unwrap().clone())
+            })
+            .mount(&server)
+            .await;
+        let root = json!({"type":"m.room.message","event_id":"$outside","room_id":"!room:example.org","sender":"@other:example.org","origin_server_ts":1,"content":{"msgtype":"m.text","body":"Older thread original"}});
+        Mock::given(method("GET"))
+            .and(path_regex(".*/event/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(root))
+            .mount(&server)
+            .await;
+        let client = Client::builder()
+            .homeserver_url(server.uri())
+            .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
+            .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
+                with_subscriptions: false,
+            })
+            .build()
+            .await
+            .unwrap();
+        client
+            .matrix_auth()
+            .restore_session(
+                serde_json::from_value::<MatrixSession>(
+                    json!({"user_id":"@test:example.org","device_id":"TEST","access_token":"fake"}),
+                )
+                .unwrap(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        let room = client
+            .get_room(matrix_sdk::ruma::room_id!("!room:example.org"))
+            .unwrap();
+        let timeline = Arc::new(
+            TimelineBuilder::new(&room)
+                .with_focus(TimelineFocus::Live {
+                    hide_threaded_events: false,
+                })
+                .build()
+                .await
+                .unwrap(),
+        );
+        let (_, updates) = timeline.subscribe().await;
+        tokio::pin!(updates);
+        let reply = json!({"type":"m.room.message","event_id":"$reply","sender":"@other:example.org","origin_server_ts":2,
+            "content":{"msgtype":"m.text","body":"Fresh thread reply","m.relates_to":{"rel_type":"m.thread","event_id":"$outside","is_falling_back":false}}});
+        Mock::given(method("GET"))
+            .and(path_regex(".*/relations/.*"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"chunk":[reply.clone()]})),
+            )
+            .mount(&server)
+            .await;
+        *response.lock().unwrap() = json!({"next_batch":"two", "rooms":{"join":{"!room:example.org":{"timeline":{"events":[reply],"limited":false}}}}});
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if timeline.items().await.iter().any(|item| {
+                    item.as_event()
+                        .is_some_and(|event| event.event_id() == Some(event_id!("$reply")))
+                }) {
+                    break;
+                }
+                updates.next().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        let (state, snapshots) = watch::channel(Model::default());
+        let (older, _) = mpsc::channel(1);
+        publish(&timeline, 1, false, 1, &History::Ready, &state, &older).await;
+        let pane = snapshots.borrow().room.clone().unwrap();
+        assert!(
+            !pane
+                .rows
+                .iter()
+                .any(|row| row.event_id.as_deref() == Some("$outside"))
+        );
+        let reply = pane.rows.iter().find(|row| row.key == "$reply").unwrap();
+        assert_eq!(reply.thread_root.as_deref(), Some("$outside"));
+        assert!(reply.is_live && !reply.is_own);
+        assert_eq!(reply.body, "Fresh thread reply");
+        assert!(
+            !server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|request| request.url.path().contains("/event/")),
+            "projecting activity must not fetch the old original"
+        );
+        let thread = TimelineBuilder::new(&room)
+            .with_focus(TimelineFocus::Thread {
+                root_event_id: event_id!("$outside").to_owned(),
+            })
+            .build()
+            .await
+            .unwrap();
+        thread.paginate_backwards(20).await.unwrap();
+        assert!(thread.items().await.iter().any(|item| {
+            item.as_event()
+                .is_some_and(|event| event.event_id() == Some(event_id!("$outside")))
+        }));
     }
 
     #[tokio::test]
@@ -1134,10 +1283,13 @@ mod tests {
             if generation == 1 {
                 let page = request_page(&mut snapshots, false).await;
                 assert!(matches!(page.history, History::Ready));
-                assert!(!page.rows.iter().any(|r| r.body == "hidden reply"));
+                let reply = page.rows.iter().find(|r| r.body == "hidden reply").unwrap();
+                assert_eq!(reply.thread_root.as_deref(), Some("$root"));
+                assert!(!reply.is_live, "paginated replies must not count as new");
+                assert!(reply.is_own);
                 assert!(
                     page.load_older.is_some(),
-                    "a hidden-only page must allow further pagination"
+                    "a reply-only page must allow further pagination"
                 );
                 let page = request_page(&mut snapshots, false).await;
                 assert!(page.rows.iter().any(|r| r.body == "older visible message"));

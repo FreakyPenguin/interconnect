@@ -61,6 +61,13 @@ pub const ROOMS: &[Room] = &[
         unread: 0,
     },
     Room {
+        id: "threads",
+        name: "Thread activity",
+        space: 1,
+        section: "Rooms",
+        unread: 0,
+    },
+    Room {
         id: "maya",
         name: "Maya Chen",
         space: 1,
@@ -149,12 +156,16 @@ pub struct Demo {
 }
 fn message(id: &str, sender: &str, body: &str) -> MessageRow {
     MessageRow {
+        key: id.into(),
         kind: RowKind::Message,
         event_id: Some(id.into()),
         sender: sender.into(),
         display_name: sender.into(),
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         thread_replies: if id == "review" { 2 } else { 0 },
+        thread_root: None,
+        is_own: false,
+        is_live: false,
         body: body.into(),
         send_state: String::new(),
         retry: None,
@@ -163,6 +174,18 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
 fn activity(id: &str, sender: &str, body: &str) -> MessageRow {
     MessageRow {
         kind: RowKind::Activity,
+        ..message(id, sender, body)
+    }
+}
+fn reply(id: &str, root: &str, sender: &str, body: &str) -> MessageRow {
+    MessageRow {
+        thread_root: Some(root.into()),
+        ..message(id, sender, body)
+    }
+}
+fn root(id: &str, sender: &str, body: &str, replies: u32) -> MessageRow {
+    MessageRow {
+        thread_replies: replies,
         ..message(id, sender, body)
     }
 }
@@ -178,17 +201,33 @@ impl Demo {
                 .and_then(|rows| rows.iter().find(|r| r.event_id.as_ref() == Some(root)))
                 .cloned();
             let reply_count = source.as_ref().map_or(0, |row| row.thread_replies);
+            let replies: Vec<_> = self
+                .conversations
+                .get(&DraftKey {
+                    room: key.room.clone(),
+                    root: None,
+                })
+                .into_iter()
+                .flatten()
+                .filter(|row| row.thread_root.as_ref() == Some(root))
+                .cloned()
+                .collect();
+            if !replies.is_empty() {
+                return source.into_iter().chain(replies).collect();
+            }
             return source
                 .into_iter()
                 .chain(
                     [
-                        message(
+                        reply(
                             "reply-1",
+                            root,
                             "Alex Rivera",
                             "Yes — a little more breathing room makes a big difference.",
                         ),
-                        message(
+                        reply(
                             "reply-2",
+                            root,
                             "Maya Chen",
                             "Agreed. Let’s keep the details quiet and the conversation in focus.",
                         ),
@@ -207,6 +246,8 @@ impl Demo {
                 message("proposal", "Jamie Davis", "A small proposal for the first pass:\n\n• Keep the room list compact, but comfortable.\n• Let typography do most of the work.\n• Use color only where it helps you find your way."),
                 message("proposal-followup", "Jamie Davis", "I’d also keep the timestamps quiet, but easy to find."),
                 message("review", "Alex Rivera", "That sounds right. Try opening a thread here — we can work through the details together."),
+                reply("review-reply-1", "review", "Maya Chen", "Yes — a little more breathing room makes a big difference."),
+                reply("review-reply-2", "review", "Jamie Davis", "Agreed. Let’s keep the details quiet and the conversation in focus."),
             ],
             "long" => vec![message("long-body", "Maya Chen", &format!("Some deliberately difficult content to try at narrow widths.\n\n{}\n\nhttps://example.org/a/very/long/reference/with-many-details-and-a-descriptive-name\n\n日本語のメッセージ · Bonjour · Grüß dich", "Good reading rhythm depends on line length, spacing, and a stable layout. ".repeat(12)))],
             "activity" => vec![
@@ -219,6 +260,17 @@ impl Demo {
                 message("activity-followup", "Jamie Davis", "The latest notes are ready to review."),
                 activity("activity-leave", "Alex Rivera", "Left the room"),
             ],
+            "threads" => vec![
+                root("thread-plan", "Alex Rivera", "Release checklist: what should we finish before the next preview?", 3),
+                root("thread-design", "Maya Chen", "A few thoughts on the sidebar spacing and navigation.", 2),
+                reply("plan-1", "thread-plan", "Maya Chen", "The thread activity should be easy to find."),
+                message("thread-room-note", "Jamie Davis", "I’ve put the notes in the shared folder."),
+                reply("design-1", "thread-design", "Alex Rivera", "I like the compact spacing."),
+                reply("plan-2", "thread-plan", "Jamie Davis", "Let’s keep one summary at the latest reply."),
+                reply("plan-3", "thread-plan", "Maya Chen", "And make it easy to jump straight into the conversation."),
+                reply("design-2", "thread-design", "Jamie Davis", "The new layout leaves more room for the conversation."),
+                reply("old-root-reply", "older-thread", "Alex Rivera", "A reply to an older thread whose original is outside this loaded history."),
+            ],
             "busy" => (0..150).map(|i| message(&format!("busy-{i}"), ["Maya Chen", "Alex Rivera", "Jamie Davis"][i % 3], &format!("Conversation note {}. A longer history to exercise scrolling, selection, and opening threads.", i + 1))).collect(),
             "home" => vec![message("weekend", "Alex Rivera", "A slow Saturday? Coffee, a walk, and somewhere good for lunch."), message("coffee", "Jamie Davis", "Perfect. I’ll bring the camera.")],
             "release" => vec![message("release", "Maya Chen", "The new preview is ready to explore. Room navigation, a quieter timeline, and space for threads."), message("release2", "Alex Rivera", "I’ll try it with a longer conversation this afternoon.")],
@@ -229,8 +281,11 @@ impl Demo {
         if !self.conversations.contains_key(&key) {
             let mut rows = self.seed(&key);
             let start = chrono::Local::now().timestamp_millis() - rows.len() as i64 * 60_000;
-            for (index, row) in rows.iter_mut().enumerate() {
-                row.timestamp_ms = Some(start + index as i64 * 60_000);
+            // Thread fixtures reuse the original room events and timestamps.
+            if key.root.is_none() {
+                for (index, row) in rows.iter_mut().enumerate() {
+                    row.timestamp_ms = Some(start + index as i64 * 60_000);
+                }
             }
             self.conversations.insert(key.clone(), rows);
         }
@@ -266,13 +321,58 @@ impl Demo {
             row.thread_replies += 1;
         }
         self.next_message += 1;
+        let mut outgoing = message(
+            &format!("local-{}", self.next_message),
+            "Jamie Davis",
+            &body,
+        );
+        outgoing.is_own = true;
+        outgoing.thread_root = key.root.clone();
+        if key.root.is_some() {
+            self.conversations
+                .entry(DraftKey {
+                    room: key.room.clone(),
+                    root: None,
+                })
+                .or_default()
+                .push(outgoing.clone());
+        }
         self.conversations
             .entry(key.clone())
             .or_default()
-            .push(message(
-                &format!("local-{}", self.next_message),
-                "Jamie Davis",
-                &body,
-            ));
+            .push(outgoing);
+    }
+    pub fn incoming(&mut self) {
+        self.next_message += 1;
+        let mut incoming = reply(
+            &format!("incoming-{}", self.next_message),
+            "thread-plan",
+            "Maya Chen",
+            &format!(
+                "New reply {}: the latest update stays in one compact thread summary.",
+                self.next_message
+            ),
+        );
+        incoming.is_live = true;
+        let room = self
+            .conversations
+            .entry(DraftKey {
+                room: "threads".into(),
+                root: None,
+            })
+            .or_default();
+        if let Some(root) = room
+            .iter_mut()
+            .find(|row| row.event_id.as_deref() == Some("thread-plan"))
+        {
+            root.thread_replies += 1;
+        }
+        room.push(incoming.clone());
+        if let Some(thread) = self.conversations.get_mut(&DraftKey {
+            room: "threads".into(),
+            root: Some("thread-plan".into()),
+        }) {
+            thread.push(incoming);
+        }
     }
 }

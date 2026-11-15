@@ -61,6 +61,14 @@ Studio → Room activity mixes activity and messages, including a long topic cha
 for wrapping checks. Inspect it with the sidebar visible and hidden, then open
 a message's thread. These fixtures use no account data or network requests.
 
+Studio → Thread activity contains interleaved replies to two threads plus a reply
+whose original is outside the fixture. Only the latest activity row for each
+thread appears in the room. **New sample reply** adds an incoming fixture reply,
+updating one summary's author/preview and blue new count. Click that summary to
+open the latest replies; visible replies clear their new indicators while the
+window is focused. Own demo replies also update the room summary. These
+indicators are held in memory and do not send read receipts.
+
 Thread panels keep the original message beneath the header, above the scrolling
 replies. Its author, timestamp, and selectable text stay visible when opening a
 busy thread at the newest reply. Long originals scroll independently within a
@@ -130,6 +138,13 @@ Shortcuts:
     Select/copy across messages and the wrapped topic event in both directions.
     Verify the sender appears once in each copied activity, and Alt+T skips the
     final leave event. Repeat with the sidebar hidden at a narrow width.
+11. In Studio → Thread activity, click **New sample reply** twice. Confirm the
+    Release checklist thread has one summary at its newest reply, with the last
+    preview and **2 new**. Change spaces/rooms and return; the count should stay.
+    Open the summary and confirm the latest replies are visible and the count
+    clears. Type a thread draft, scroll upward, and add another sample reply;
+    viewing room activity alone should leave it new. Jump to newest to clear it.
+    Check the “a thread” fallback and summary wrapping with the sidebar hidden.
 
 ## Feasibility findings and scope
 
@@ -213,3 +228,18 @@ Formatting, workspace Clippy with warnings denied, all 67 regular workspace
 tests (35 GUI tests), and the locked GUI build passed. The existing opt-in
 lifecycle stress test was not repeated. Idle resource measurements were not
 repeated for this presentation change.
+
+For recent thread activity, formatting, workspace Clippy with warnings denied,
+all 76 regular workspace tests (43 GUI tests), and the locked GUI build passed.
+The existing opt-in lifecycle stress test and idle-resource measurements were
+not repeated. Native Wayland demo captures show two sample arrivals coalesced
+into one latest-preview row with **2 new**, plus an unrelated thread and a
+missing-original fallback. The focused thread capture shows the new count
+cleared after its replies became visible. Wide captures are 1920×1200; the
+sidebar-hidden capture is 476×1162 (the compositor tiled below the requested
+minimum width). Temporary capture hooks were removed, and the ordinary binary
+was rebuilt. Captures and the script are in ignored `artifacts/thread-activity/`.
+All demo runs exited normally. No real messages were sent and the user's
+connected client was not restarted. Native pointer/wheel interaction and
+live-account acceptance remain pending; automated widget tests exercise the
+same open/jump commands, focus gates, actual viewport IDs, and reading anchors.
