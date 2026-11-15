@@ -396,3 +396,21 @@ Each host must also namespace picker events by its form generation when replacin
 one form with another. `invite.rs` hosts the picker for room invitations, owns
 permissions/send feedback, and keeps server writes separate from selection.
 See [invitation validation](validation/connected-ui.md#room-invitations-and-directory-search--2026-11-15).
+
+## Room creation
+
+`src/room_creation.rs` owns validated creation options and retryable space
+linking. `Directory::create_room` uses the authenticated model's runtime-safe
+account handle, independently of the selected room. Public joining uses the
+public preset; public-directory visibility is an independent opt-in. Encryption
+and history visibility are explicit initial state. Space permissions are checked
+before creation, the parent link is in the creation request, and the child link
+is sent afterward. A partial result retains the created room for link retry.
+
+`src/bin/interconnect/create_room.rs` hosts Ctrl+Shift+N, the form, account/form
+generations, single-flight creation and partial-success actions. Submitted writes
+participate in ordinary pending-operation shutdown; dismissal does not abort a
+server mutation or let a late completion navigate another form/account. New room
+and space-link entries survive older navigation snapshots while the event-driven
+backend refresh arrives. Demo only creates empty in-memory rooms and updates
+fixture space membership. See [room creation validation](validation/connected-ui.md#create-room-dialog--2026-11-15).

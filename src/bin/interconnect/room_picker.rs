@@ -98,7 +98,8 @@ impl App {
     pub(super) fn quick_room_event(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::Open => {
-                if self.new_chat.is_some()
+                if self.create_room.is_some()
+                    || self.new_chat.is_some()
                     || self.closing
                     || self.stopped
                     || self.settings.draft.is_some()

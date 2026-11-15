@@ -11,6 +11,7 @@ pub mod navigation;
 pub mod navigation_preferences;
 pub mod notifications;
 pub mod people;
+pub mod room_creation;
 pub mod session;
 pub mod settings;
 pub mod sso;

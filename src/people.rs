@@ -88,6 +88,24 @@ impl Directory {
             ..Default::default()
         })
     }
+    pub async fn create_room(
+        self,
+        options: crate::room_creation::Options,
+    ) -> Result<crate::room_creation::Created, String> {
+        let result = crate::room_creation::create(&self.0, options).await;
+        if result.is_ok() {
+            let _ = self.1.send(());
+        }
+        result
+    }
+    pub async fn link_created_room(
+        self,
+        created: crate::room_creation::Created,
+    ) -> crate::room_creation::Created {
+        let result = crate::room_creation::link(&self.0, created).await;
+        let _ = self.1.send(());
+        result
+    }
     pub async fn search(self, query: String) -> Result<SearchResults, String> {
         let query = query.trim();
         if query.is_empty() {

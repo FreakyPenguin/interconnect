@@ -3,6 +3,8 @@
 mod attachments;
 #[path = "interconnect/composer_picker.rs"]
 mod composer_picker;
+#[path = "interconnect/create_room.rs"]
+mod create_room;
 #[path = "interconnect/demo.rs"]
 mod demo;
 #[path = "interconnect/emoji.rs"]
@@ -129,13 +131,17 @@ struct App {
     pin_error: Option<(reaction_picker::Target, String)>,
     room_picker: Option<room_picker::State>,
     new_chat: Option<new_chat::State>,
+    create_room: Option<create_room::State>,
+    create_room_request: Option<u64>,
+    pending_created_space: Option<(String, String)>,
     direct_request: Option<u64>,
-    pending_direct_room: Option<interconnect::navigation::RoomEntry>,
+    pending_created_room: Option<interconnect::navigation::RoomEntry>,
 }
 #[derive(Clone, Debug)]
 enum Message {
     QuickRoom(room_picker::Event),
     NewChat(new_chat::Event),
+    CreateRoom(create_room::Event),
     Pin(pin_action::Event),
     Topic(topic::Event),
     Members(members::Event),
@@ -254,8 +260,11 @@ impl App {
             pin_error: None,
             room_picker: None,
             new_chat: None,
+            create_room: None,
+            create_room_request: None,
+            pending_created_space: None,
             direct_request: None,
-            pending_direct_room: None,
+            pending_created_room: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.model.authentication = None;
@@ -276,13 +285,16 @@ impl App {
             self.publish_notification_context();
             return task;
         }
+        if self.create_room.is_some() && matches!(message, Message::Escape) {
+            return self.update(Message::CreateRoom(create_room::Event::Close));
+        }
         if self.new_chat.is_some() && matches!(message, Message::Escape) {
             return self.update(Message::NewChat(new_chat::Event::Close));
         }
         if self.room_picker.is_some() && matches!(message, Message::Escape) {
             return self.update(Message::QuickRoom(room_picker::Event::Close));
         }
-        if (self.room_picker.is_some() || self.new_chat.is_some())
+        if (self.room_picker.is_some() || self.new_chat.is_some() || self.create_room.is_some())
             && matches!(
                 message,
                 Message::Settings(settings::Event::Open)
@@ -366,7 +378,8 @@ impl App {
         {
             return self.update(dismiss);
         }
-        if self.new_chat.is_some()
+        if self.create_room.is_some()
+            || self.new_chat.is_some()
             || self.room_picker.is_some()
             || self.settings.draft.is_some()
             || self.verification.open
@@ -464,6 +477,7 @@ impl App {
             );
         let mut action_task = Task::none();
         match message {
+            Message::CreateRoom(event) => action_task = self.create_room_event(event),
             Message::NewChat(event) => action_task = self.new_chat_event(event),
             Message::Pin(event) => action_task = self.pin_event(event),
             Message::Topic(event) => action_task = self.topic_event(event),
@@ -842,13 +856,29 @@ impl App {
                     && (state.authentication.is_some() || state.account_id != self.account_id)
                 {
                     self.new_chat = None;
-                    self.pending_direct_room = None;
+                    self.create_room = None;
+                    self.pending_created_space = None;
+                    self.pending_created_room = None;
                 }
-                if let Some(room) = &self.pending_direct_room {
+                if let Some(room) = &self.pending_created_room {
                     if state.rooms.iter().any(|r| r.id == room.id) {
-                        self.pending_direct_room = None;
+                        self.pending_created_room = None;
                     } else {
                         std::sync::Arc::make_mut(&mut state.rooms).push(room.clone());
+                    }
+                }
+                if let Some((room, parent)) = &self.pending_created_space {
+                    if let Some(space) = std::sync::Arc::make_mut(&mut state.spaces)
+                        .iter_mut()
+                        .find(|s| &s.id == parent)
+                    {
+                        if space.children.contains(room) {
+                            self.pending_created_space = None;
+                        } else {
+                            space.children.push(room.clone());
+                        }
+                    } else {
+                        self.pending_created_space = None;
                     }
                 }
                 if let Some(account_id) = &state.account_id {
@@ -1253,7 +1283,9 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.new_chat.is_some() && !self.composing {
+            if self.create_room.is_some() && !self.composing {
+                iced::event::listen_with(create_room::shortcut)
+            } else if self.new_chat.is_some() && !self.composing {
                 iced::event::listen_with(new_chat::shortcut)
             } else if self.room_picker.is_some() {
                 iced::event::listen_with(room_picker::shortcut)
@@ -1332,6 +1364,9 @@ impl App {
             return self.login_view(authentication);
         }
         let mut layers = iced::widget::stack![self.shell_view()];
+        if self.create_room.is_some() {
+            layers = layers.push(self.create_room_view());
+        }
         if self.new_chat.is_some() {
             layers = layers.push(self.new_chat_view());
         }
@@ -2183,6 +2218,9 @@ fn shell_shortcut(
     modifiers: iced::keyboard::Modifiers,
 ) -> Option<Message> {
     use iced::keyboard::{Key, key::Named};
+    if create_room::is_shortcut(key, modifiers) {
+        return Some(Message::CreateRoom(create_room::Event::Open));
+    }
     if new_chat::is_shortcut(key, modifiers) {
         return Some(Message::NewChat(new_chat::Event::Open));
     }

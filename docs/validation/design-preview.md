@@ -75,6 +75,14 @@ menu button toggles the room list. At narrower widths, an open thread replaces
 the room timeline; at wider widths it sits beside it. Thread and room drafts
 remain separate across these transitions and navigation.
 
+**Ctrl+Shift+N** (**Cmd+Shift+N** on macOS) opens the room-creation dialog.
+Name is required; topic is optional. The selected space is preselected, with
+No space available. Public/private joining, optional directory listing,
+encryption and history visibility are configurable. Create with the button or
+Ctrl+Enter; Escape cancels. Demo creates an empty, local room and adds it to the
+chosen fixture space. The form scrolls at narrow heights while its action
+buttons stay visible. See [room creation validation](connected-ui.md#create-room-dialog--2026-11-15).
+
 The room list uses compact spacing: single-line room rows are about 31 pixels
 apart (previously about 44), with the same 13-pixel room labels. Section headings,
 child-space buttons, and search padding are tighter too. The sidebar heading has

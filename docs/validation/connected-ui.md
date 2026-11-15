@@ -2250,3 +2250,91 @@ Manual acceptance:
 4. Explicitly select a person without a DM. Check the new room and invitation
    from a second client, including encryption. Check dismissal during creation
    does not unexpectedly navigate, and close waits for submitted work.
+
+## Create room dialog — 2026-11-15
+
+**Ctrl+Shift+N** (**Cmd+Shift+N** on macOS) opens a room-creation dialog, distinct
+from the Ctrl+N direct-chat picker. Name is required; topic is optional. The
+space defaults to the selected sidebar space, or **No space** in All rooms/DMs.
+Choose another joined space or No space. A private, encrypted room with history
+visible from joining is the default.
+
+Room type controls joining: **Private** requires invitations, **Public** allows
+anyone to join. **List in the homeserver's public room directory** is a separate,
+optional setting, available only for public rooms and off by default. Selecting
+a space adds a room to that space; it does not automatically grant space members
+access to a private room. There is no automatic invitation or message send.
+
+History options are **From when members join**, **From when members are invited**,
+and **All history for members**. Public, unencrypted rooms also offer **Anyone,
+including non-members**. Turning encryption on or switching to Private resets
+that last option to joining-only history. The dialog explains that older
+encrypted messages require their encryption keys; history visibility alone does
+not supply keys to new members. Encryption, once enabled, cannot be disabled.
+
+**Create room**, or **Ctrl+Enter** (**Cmd+Enter** on macOS), submits. Enter in a
+text field alone does not create a room. Tab/Shift+Tab cycle through name and
+topic within the dialog. Escape and Cancel dismiss it; an open dropdown consumes
+Escape before the dialog. The backdrop captures input without dismissing the
+form. At 640×480 the form scrolls and action buttons remain visible.
+
+The backend validates options and checks that the selected space is still joined
+and permits sending `m.space.child` before creating a room. It creates the room
+with explicit history/encryption state and an initial `m.space.parent` link, then
+adds the reciprocal `m.space.child` link. A failed space link leaves the created
+room intact and shows **Retry adding to space** and **Open room**. Retry only
+sends the space link; it never repeats creation. Creation errors retain inputs
+and advise checking the room list before retrying an uncertain response.
+
+Success opens the room and focuses its composer; sidebar scope, query and
+collapsed sections stay unchanged. Drafts and saved scroll positions keep their
+ordinary lifetimes. Dismissal preserves the original room/thread. Submitted
+writes continue against their captured account after dismissal, and shutdown
+waits for them. Late completion cannot navigate a new form or another account.
+Direct-chat and room creation share a single-write limit. Room and space entries
+are retained across older queued navigation snapshots until observed in the
+backend snapshot. Navigation refresh is event-driven; there is no polling or
+caret timer. Other dialogs/pickers take precedence. IME composition suppresses
+submission shortcuts, and obscured conversation panes reject file drops.
+
+Automated coverage includes default/current/no-space selection, option
+consistency, shortcut separation, required-name validation, demo space linking,
+draft/scroll preservation, partial-success recovery without duplicates,
+cancellation, account/form isolation, shutdown, stale navigation snapshots,
+minimum-size layout, scoped focus, backdrop capture and static-caret behavior.
+Mocked homeserver tests check request presets, encryption and history state,
+public-directory visibility, reciprocal space links, permission denial before
+creation, server refusal and retrying a failed child link without recreating.
+
+Manual acceptance:
+
+1. Run `cargo run --locked --bin interconnect -- --demo`. Open Ctrl+Shift+N
+   from a selected space. Check defaults, enter name/topic using Tab, then
+   create using the button or Ctrl+Enter. Verify the new empty room appears
+   in that space and opens without changing the sidebar filter.
+2. Repeat from All rooms/DMs; check No space. Change the selected space, public/
+   private type, encryption, directory listing and each history setting. Check
+   world-readable history is only available for public, unencrypted rooms.
+3. Open a thread, type separate room/thread drafts and scroll each timeline.
+   Open and cancel the form with Escape and Cancel. Check drafts, reading
+   position and thread survive. Repeat at 640×480 and inspect dropdowns.
+4. In an independently authorized connected session, create a room with and
+   without a space. Compare encryption, join rules, history visibility, topic,
+   directory listing and reciprocal space membership in another client.
+   Verify a space without write permission fails before creating a room.
+5. Exercise a failed child-link request: check the room exists, retry adds
+   that same room, and Open room works without linking. Dismiss during a write,
+   reopen another form, and close while pending; check no unexpected navigation
+   or duplicate room appears.
+
+Validation passed: formatting, locked workspace Clippy with warnings denied,
+locked workspace tests (95 library and 169 desktop tests passed; two existing
+opt-in library tests ignored), and the locked desktop build. Native demo checks
+covered Ctrl+Shift+N, name/topic entry using Tab, Ctrl+Enter creation, Escape,
+space membership, and 1000×720/640×480 layout.
+
+Native demo checks use an isolated headless Wayland/tiny-skia compositor and no
+saved account or network. Captures/logs stay ignored under
+`artifacts/create-room-2026-11-15/`. Demo rooms are empty, in memory only, and the
+explicit config path stays absent. Native macOS, real-account acceptance,
+server-enforced policy behavior and measured idle-resource checks remain pending.

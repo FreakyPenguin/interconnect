@@ -53,6 +53,7 @@ impl App {
             && self.settings.draft.is_none()
             && self.room_picker.is_none()
             && self.new_chat.is_none()
+            && self.create_room.is_none()
             && !self.verification.open
             && self.image_view.is_none()
             && self.reaction_picker.is_none()

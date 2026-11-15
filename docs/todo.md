@@ -1,18 +1,18 @@
 # Rooms
 - formatting
+- add member invite link?
   
 
 # Management tasks
 - logout / account switching UI
-- room creation?
 - unread clearing, mark unread
 - sections
 
 
 # Infrastructure
-- keyboard bindings? (ctrl + p, ctrl + n)
 - context menu
 - github action build
+- OS x build
 
 
 # Miscelaneous
@@ -22,7 +22,3 @@
 - math
 - search in room (ctrl + f)
 - search across rooms (ctrl + shift + f)
-
-
-# Project management
-- OS x build?

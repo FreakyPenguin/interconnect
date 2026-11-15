@@ -55,7 +55,8 @@ impl App {
     pub(super) fn new_chat_event(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::Open => {
-                if self.closing
+                if self.create_room.is_some()
+                    || self.closing
                     || self.stopped
                     || self.room_picker.is_some()
                     || self.settings.draft.is_some()
@@ -130,6 +131,7 @@ impl App {
                     || self.stopped
                     || self.composing
                     || self.direct_request.is_some()
+                    || self.create_room_request.is_some()
                     || self.pending_ops >= MAX_PENDING_OPERATIONS
                 {
                     return Task::none();
@@ -221,7 +223,7 @@ impl App {
                         if !self.model.rooms.iter().any(|r| r.id == room.id) {
                             std::sync::Arc::make_mut(&mut self.model.rooms).push(room.clone());
                             if self.demo.is_none() {
-                                self.pending_direct_room = Some(room.clone());
+                                self.pending_created_room = Some(room.clone());
                             }
                         }
                         if visible {
@@ -259,7 +261,7 @@ impl App {
     pub(super) fn new_chat_view(&self) -> Element<'_, Message> {
         let state = self.new_chat.as_ref().unwrap();
         let request = state.request;
-        let busy = self.direct_request.is_some();
+        let busy = self.direct_request.is_some() || self.create_room_request.is_some();
         let mut content = column![
             state
                 .picker
@@ -487,7 +489,7 @@ mod tests {
                 ..Default::default()
             }),
         )));
-        assert!(app.pending_direct_room.is_some());
+        assert!(app.pending_created_room.is_some());
         let selected = app.selection.room.clone();
         let _ = app.update(Message::State(Box::new(stale)));
         assert_eq!(app.selection.room, selected);
@@ -499,7 +501,7 @@ mod tests {
         );
         let confirmed = app.model.clone();
         let _ = app.update(Message::State(Box::new(confirmed)));
-        assert!(app.pending_direct_room.is_none());
+        assert!(app.pending_created_room.is_none());
     }
 
     #[test]
