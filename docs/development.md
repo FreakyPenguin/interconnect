@@ -34,7 +34,9 @@ Run `cargo run --locked --bin interconnect -- --demo` for a memory-only workspac
 with spaces, sectioned room navigation, and room/thread conversations. It uses
 no saved session and sends no Matrix messages. See the [design preview guide](validation/design-preview.md)
 for shortcuts, fixtures, and known interaction gaps. Normal `interconnect` launches
-use the same visual shell with the saved Matrix session.
+use the same visual shell with the saved Matrix session, or show the login form
+for a new or signed-out profile. The desktop supports password and browser SSO
+sign-in; see [desktop login validation](validation/connected-ui.md#desktop-login--2026-11-15).
 
 ## Emoji picker
 

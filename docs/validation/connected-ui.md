@@ -3,8 +3,8 @@
 Desktop notification setup, behavior, test evidence, and native acceptance steps
 are documented in [notification validation](notifications.md).
 
-The `interconnect` binary connects Iced to the existing persistent session. It restores
-credentials without browser login, lists joined rooms, and displays SDK room and
+The `interconnect` binary restores an existing persistent session or offers login
+when the profile is missing or signed out. It lists joined rooms and displays SDK room and
 thread timelines in encrypted and unencrypted rooms. History loads automatically
 in 50-event batches, filling the viewport and an older-message buffer while
 continuing to display live updates.
@@ -26,8 +26,9 @@ An optional profile-directory argument follows the binary name. The default is
 `~/.local/share/interconnect/profiles/default` when XDG_DATA_HOME is unset or
 relative. See [account profiles](../settings.md#account-profiles) to move an
 existing `.matrix-spike` profile while retaining its keyring identity. This
-command does not create a new session, replace a device, or log out. Room names
-and decrypted messages appear in the window.
+command restores a saved account without creating a device. When no login is
+available, the window offers password or browser sign-in; completing sign-in
+creates a new device. Room names and decrypted messages appear in the window.
 
 The package and GUI binary are now named `interconnect`, with application settings
 under the `interconnect` configuration directory; see [settings](../settings.md)
@@ -57,6 +58,73 @@ store/navigation fixtures with unset, empty, relative, and absolute XDG_DATA_HOM
 plus existing-directory and dangling-symlink destination refusal. No real account
 was moved, no connected client was restarted, and live keyring restoration and
 macOS behavior remain untested for this change.
+
+## Desktop login — 2026-11-15
+
+A missing profile opens a login form without contacting the network or system
+keyring. Enter the homeserver URL, username/Matrix ID, and password, then select
+**Sign in**. For SSO, enter the homeserver and select **Continue in browser**,
+then **Open browser** (or **Copy sign-in link**). The homeserver must support
+native sliding sync; browser login also requires Matrix SSO. Registration,
+OAuth/OIDC-native login, device verification, and key recovery are not provided.
+
+The callback listens on localhost port 8765. In a development container, forward
+that port to the same port on the browser's host. The sign-in attempt has a
+three-minute deadline; a failed attempt returns to the form for retry. Closing
+the window cancels pending login or restoration. Browser launch runs away from
+the UI thread; if desktop integration is unavailable, copy the link instead.
+
+Tokens and store encryption keys are saved in Secret Service. Password inputs
+are masked, cleared after submission, held in zeroizing application values, and
+redacted in message/request Debug output. Passwords are not saved. A successful
+login writes a complete session and local device fingerprint before starting
+sync, then opens conversations in the same window. Restart restores the same
+device locally, including when offline. Keyring, profile-lock, and damaged-store
+errors are shown explicitly; they do not automatically replace a saved device.
+
+Missing credentials, logged-out records, and interrupted pre-session attempts
+allow a fresh login. A revoked token stops the existing sync service before
+returning to the form; no replacement device is created until sign-in is
+submitted. Each attempt uses a new `store-<random id>` directory. Earlier stores
+remain on disk, and their encryption keys remain in the keyring record's
+`retained_store_keys`; these are retained artifacts, with no recovery/import UI.
+Legacy records continue to use `store`. Explicit CLI logout deletes the profile's
+keyring record, including retained keys. If an attempt fails after browser
+approval or password acceptance, remove its abandoned Interconnect device in
+another client before retrying. New devices need separate verification/recovery
+for historical encrypted messages.
+
+Per-conversation drafts and scroll positions survive reauthentication as the
+same account. Signing in as a different account clears those in-memory drafts
+and positions. Demo mode bypasses profile restoration and authentication, and
+continues to use only local sample conversations.
+
+Automated checks cover the missing-profile form and shutdown without network or
+keyring access, password login against a mock homeserver without starting sync,
+redacted credential diagnostics, single-flight submission, retry and close,
+stale browser results, minimum-window layout, account isolation, legacy/new store
+records, store path validation, offline device restoration, and revoked-token
+classification. Live password/SSO login, system keyring writes, browser opening,
+callback forwarding, relaunch after login, idle-resource measurement, and macOS
+acceptance remain manual checks. No connected client was launched or restarted.
+
+Validation passed: `cargo fmt --all -- --check`,
+`cargo clippy --locked --workspace --all-targets -- -D warnings`,
+`cargo test --locked --workspace` (67 library and 108 GUI tests passed; one
+existing stress test ignored), and `cargo build --locked --bin interconnect`.
+
+Manual acceptance with a dedicated test profile:
+
+1. Launch `interconnect /path/to/new-test-profile` and confirm the form appears.
+2. Test password sign-in or browser SSO. Confirm the account opens in the same
+   window, then close and relaunch to check same-device restoration.
+3. With another fresh test profile, test invalid credentials, an unavailable
+   homeserver, browser timeout, and closing during sign-in. Retry where offered.
+4. Revoke the test device from another client. Confirm sign-in returns after
+   sync stops; complete login and check that old stores were retained.
+5. Check long errors and keyboard navigation at 640×480, and compare idle
+   wakeups with the existing resource-validation procedure. No test messages
+   are needed.
 
 ## Account avatar in the space rail — 2026-11-15
 

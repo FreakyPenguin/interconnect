@@ -327,8 +327,37 @@ pub struct Pane {
     pub composer: Option<Composer>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Authentication {
+    Checking,
+    SignIn { error: Option<String> },
+    Waiting { url: Option<String> },
+    Failed(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum LoginRequest {
+    SignIn {
+        homeserver: String,
+        method: crate::session::LoginMethod,
+    },
+}
+
+#[derive(Debug)]
+struct SignInRequired;
+impl std::fmt::Display for SignInRequired {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "The server rejected this session. Sign-in is required; saved credentials retained.",
+        )
+    }
+}
+impl std::error::Error for SignInRequired {}
+
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub authentication: Option<Authentication>,
+    pub account_id: Option<String>,
     pub diagnostics: Arc<crate::diagnostics::Diagnostics>,
     pub status: String,
     pub rooms: Arc<Vec<RoomEntry>>,
@@ -348,6 +377,8 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            authentication: Some(Authentication::Checking),
+            account_id: None,
             diagnostics: Arc::default(),
             status: "Restoring saved session…".into(),
             rooms: Arc::default(),
@@ -378,11 +409,82 @@ pub async fn run(
     profile: String,
     mut selection: watch::Receiver<Selection>,
     state: watch::Sender<Model>,
+    mut login: mpsc::Receiver<LoginRequest>,
 ) -> anyhow::Result<()> {
-    let restored = tokio::select! {
-        result = tokio::time::timeout(Duration::from_secs(90), crate::session::restore(&profile)) => result.context("session restoration timed out")??,
+    let opened = tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(90), crate::session::DesktopSession::open(&profile)) => result.context("session restoration timed out").and_then(|r| r),
         _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
     };
+    let mut desktop = match opened {
+        Ok(desktop) => desktop,
+        Err(error) => {
+            state.send_modify(|s| {
+                s.authentication = Some(Authentication::Failed(format!("{error:#}")))
+            });
+            return Err(error);
+        }
+    };
+    loop {
+        if desktop.client.is_none() {
+            if !matches!(
+                state.borrow().authentication,
+                Some(Authentication::SignIn { .. })
+            ) {
+                state.send_modify(|s| {
+                    s.authentication = Some(Authentication::SignIn { error: None })
+                });
+            }
+            loop {
+                let (homeserver, method) = tokio::select! {
+                    request = login.recv() => match request { Some(LoginRequest::SignIn { homeserver, method }) => (homeserver, method), None => return Ok(()) },
+                    _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
+                };
+                state.send_modify(|s| {
+                    s.authentication = Some(Authentication::Waiting { url: None })
+                });
+                let result = tokio::select! {
+                    result = tokio::time::timeout(Duration::from_secs(180), desktop.sign_in(&homeserver, method, |url| {
+                        state.send_modify(|s| s.authentication = Some(Authentication::Waiting { url: Some(url) }));
+                    })) => result.context("Sign-in timed out after three minutes").and_then(|r| r),
+                    _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
+
+                };
+                // Discard duplicate submissions from an older UI snapshot.
+                while login.try_recv().is_ok() {}
+                match result {
+                    Ok(()) => break,
+                    Err(_) => state.send_modify(|s| s.authentication = Some(Authentication::SignIn {
+                        error: Some("Sign-in could not finish. Check your credentials, homeserver, and system keyring, then try again. For browser sign-in, check the callback connection. If you approved a device, remove the abandoned Interconnect device in another client.".into()),
+                    })),
+                }
+            }
+        }
+        let client = desktop.client.as_ref().expect("authenticated");
+        state.send_modify(|s| {
+            s.authentication = None;
+            s.account_id = client.user_id().map(ToString::to_string);
+            s.status = "Loading conversations…".into();
+        });
+        let result = run_authenticated(&profile, client, selection.clone(), state.clone()).await;
+        if result.as_ref().is_err_and(|e| e.is::<SignInRequired>()) && !selection.borrow().shutdown
+        {
+            desktop.client = None;
+            state.send_replace(Model { authentication: Some(Authentication::SignIn {
+                error: Some("Your session has expired. Sign in to continue. This creates a new device; previous encrypted stores are retained.".into()),
+            }), ..Model::default() });
+            // Wait for an explicit sign-in; do not replace a device automatically.
+            continue;
+        }
+        return result;
+    }
+}
+
+async fn run_authenticated(
+    profile: &str,
+    client: &Client,
+    mut selection: watch::Receiver<Selection>,
+    state: watch::Sender<Model>,
+) -> anyhow::Result<()> {
     let directory = std::path::PathBuf::from(&profile);
     let load_directory = directory.clone();
     let loaded = tokio::task::spawn_blocking(move || {
@@ -400,7 +502,7 @@ pub async fn run(
         }
     };
     state.send_modify(|s| s.saved_navigation = Some(preferences.clone()));
-    let sync = build_sync(restored.client.clone()).await?;
+    let sync = build_sync(client.clone()).await?;
     let stop_preferences = tokio_util::sync::CancellationToken::new();
     let persistence = crate::navigation_preferences::persist(
         directory,
@@ -412,11 +514,10 @@ pub async fn run(
     // Register before starting sync. Delivery runs independently of UI snapshots
     // and never holds up SDK sync processing on a desktop service.
     let notifications =
-        crate::notifications::Service::install(&restored.client, selection.clone(), state.clone())
-            .await;
+        crate::notifications::Service::install(client, selection.clone(), state.clone()).await;
     let connection = async {
         tokio::select! {
-            result = connected(&restored.client, &sync, &mut selection, &state) => result,
+            result = connected(client, &sync, &mut selection, &state) => result,
             _ = notifications.run() => anyhow::bail!("Notification worker ended"),
         }
     };
@@ -437,7 +538,6 @@ pub async fn run(
     let stopped = crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(15)).await;
     // Keep the profile guard alive until SDK stop has completed or failed.
     drop(sync);
-    drop(restored);
     outcome.and(stopped)
 }
 
@@ -579,7 +679,7 @@ async fn connected(
 
                 }
                 event = session_changes.recv() => match event {
-                    Ok(matrix_sdk::SessionChange::UnknownToken(_)) => anyhow::bail!("The server rejected this session. Sign-in is required; saved credentials retained."),
+                    Ok(matrix_sdk::SessionChange::UnknownToken(_)) => return Err(SignInRequired.into()),
                     Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {},
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => anyhow::bail!("Session notification stream ended"),
                 },
@@ -2053,6 +2153,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn missing_profile_offers_login_without_network_and_can_close() {
+        let parent = tempfile::tempdir().unwrap();
+        let directory = parent.path().join("new-profile");
+        let (control, selection) = watch::channel(Selection::default());
+        let (state, mut snapshots) = watch::channel(Model::default());
+        let (_requests, login) = mpsc::channel(1);
+        let path = directory.to_str().unwrap().to_owned();
+        let worker = tokio::spawn(run(path, selection, state, login));
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                snapshots.changed().await.unwrap();
+                if matches!(
+                    snapshots.borrow().authentication,
+                    Some(Authentication::SignIn { .. })
+                ) {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!directory.join("store").exists());
+        control.send_modify(|s| s.shutdown = true);
+        tokio::time::timeout(Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(snapshots.borrow().rooms.is_empty());
+    }
+
+    #[tokio::test]
     async fn revoked_session_is_not_treated_as_a_network_outage() {
         let server = MockServer::start().await;
         Mock::given(method("GET")).and(path("/_matrix/client/versions"))
@@ -2100,6 +2232,7 @@ mod tests {
             .await
             .unwrap();
         assert!(error.to_string().contains("Sign-in is required"));
+        assert!(error.is::<SignInRequired>());
     }
 
     async fn request_page(snapshots: &mut watch::Receiver<Model>, thread: bool) -> Pane {

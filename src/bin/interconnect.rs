@@ -11,6 +11,8 @@ mod emoji_completion;
 mod emoji_picker;
 #[path = "interconnect/images.rs"]
 mod images;
+#[path = "interconnect/login.rs"]
+mod login;
 #[path = "interconnect/popover.rs"]
 mod popover;
 #[path = "interconnect/presentation.rs"]
@@ -59,7 +61,9 @@ const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
     settings: settings::State,
+    login: login::State,
     profile: String,
+    account_id: Option<String>,
     model: Model,
     selection: Selection,
     control: Option<watch::Sender<Selection>>,
@@ -92,6 +96,7 @@ struct App {
 }
 #[derive(Clone, Debug)]
 enum Message {
+    Login(login::Event),
     Settings(settings::Event),
     Image(images::Event),
     Reaction(reaction_picker::Event),
@@ -160,7 +165,9 @@ impl App {
     fn new() -> Self {
         let mut app = Self {
             settings: settings::State::default(),
+            login: login::State::default(),
             profile: String::new(),
+            account_id: None,
             model: Model::default(),
             selection: Selection::default(),
             control: None,
@@ -192,6 +199,7 @@ impl App {
             emoji_completion: emoji_completion::State::default(),
         };
         if std::env::args().any(|arg| arg == "--demo") {
+            app.model.authentication = None;
             app.demo = Some(demo::Demo::default());
             app.model.rooms = demo::rooms().into();
             app.model.spaces = demo::spaces().into();
@@ -204,6 +212,9 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if let Message::Login(event) = message {
+            return self.login_update(event);
+        }
         if let Message::Settings(event) = message {
             if self.image_view.is_some() && matches!(event, settings::Event::Open) {
                 return Task::none();
@@ -647,11 +658,28 @@ impl App {
                     self.retry_errors.insert(id, error);
                 }
             }
+            Message::Login(_) => unreachable!(),
             Message::Control(sender) => {
                 sender.send_replace(self.selection.clone());
                 self.control = Some(sender);
             }
             Message::State(state) => {
+                if let Some(account_id) = &state.account_id {
+                    if self
+                        .account_id
+                        .as_ref()
+                        .is_some_and(|previous| previous != account_id)
+                    {
+                        self.drafts.clear();
+                        self.scroll_positions.clear();
+                        self.pending_scroll = [None, None];
+                        self.selection.room = None;
+                        self.selection.thread = None;
+                        self.preferences_ready = false;
+                        self.pending_navigation = None;
+                    }
+                    self.account_id = Some(account_id.clone());
+                }
                 self.model = *state;
                 if let Some(room) = self.restore_navigation() {
                     return self.update(Message::Room(room));
@@ -992,7 +1020,11 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.composing || self.reaction_picker.is_some() || self.composer_picker.is_some() {
+            if (self.demo.is_none() && self.model.authentication.is_some())
+                || self.composing
+                || self.reaction_picker.is_some()
+                || self.composer_picker.is_some()
+            {
                 Subscription::none()
             } else if self.emoji_completion.is_active() {
                 iced::event::listen_with(emoji_completion::shortcut)
@@ -1049,6 +1081,11 @@ impl App {
         ])
     }
     fn view(&self) -> Element<'_, Message> {
+        if self.demo.is_none()
+            && let Some(authentication) = &self.model.authentication
+        {
+            return self.login_view(authentication);
+        }
         let mut layers = iced::widget::stack![self.shell_view()];
         if self.settings.draft.is_some() {
             layers = layers.push(self.settings_view());
@@ -1849,8 +1886,16 @@ fn connection(profile: &str) -> impl iced::futures::Stream<Item = Message> + use
         if output.send(Message::Control(control)).await.is_err() {
             return;
         }
+        let (login_sender, login) = tokio::sync::mpsc::channel(1);
+        if output
+            .send(Message::Login(login::Event::Ready(login_sender)))
+            .await
+            .is_err()
+        {
+            return;
+        }
         let diagnostics = state.borrow().diagnostics.clone();
-        let backend = interconnect::connected::run(profile, selection, state);
+        let backend = interconnect::connected::run(profile, selection, state, login);
         let result = {
             let forward = async {
                 while updates.changed().await.is_ok() {

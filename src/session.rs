@@ -59,9 +59,17 @@ struct SavedSession {
     version: u32,
     homeserver: String,
     store_key: String,
+    #[serde(default = "legacy_store_directory")]
+    store_directory: String,
+    #[serde(default)]
+    retained_store_keys: HashMap<String, String>,
     session: Option<MatrixSession>,
     logged_out: bool,
     device_key: Option<String>,
+}
+
+fn legacy_store_directory() -> String {
+    "store".into()
 }
 
 impl SavedSession {
@@ -72,6 +80,15 @@ impl SavedSession {
         ensure!(
             !saved.store_key.is_empty(),
             "session record lacks its store key"
+        );
+        ensure!(
+            saved.store_directory == "store"
+                || (saved.store_directory.starts_with("store-")
+                    && saved.store_directory[6..].len() == 32
+                    && saved.store_directory[6..]
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit())),
+            "invalid SDK store directory"
         );
         Ok(saved)
     }
@@ -234,7 +251,10 @@ async fn client(profile: &Profile, saved: &SavedSession) -> anyhow::Result<Clien
         .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
             with_subscriptions: false,
         })
-        .sqlite_store(profile.directory.join("store"), Some(&saved.store_key))
+        .sqlite_store(
+            profile.directory.join(&saved.store_directory),
+            Some(&saved.store_key),
+        )
         .build()
         .await?)
 }
@@ -262,6 +282,8 @@ pub async fn login(homeserver: &str, directory: &str) -> anyhow::Result<()> {
         version: 1,
         homeserver: homeserver.to_owned(),
         store_key,
+        store_directory: legacy_store_directory(),
+        retained_store_keys: HashMap::new(),
         session: None,
         logged_out: false,
         device_key: None,
@@ -325,7 +347,7 @@ async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Resu
     }
     let session = saved.session.clone().context("login was interrupted before session persistence; use a new profile and remove any abandoned interconnect device in the other client")?;
     ensure!(
-        profile.directory.join("store").is_dir(),
+        profile.directory.join(&saved.store_directory).is_dir(),
         "SDK store missing; refusing to restore a device without its local crypto store"
     );
     let client = client(&profile, &saved).await?;
@@ -389,6 +411,137 @@ pub async fn restore(directory: &str) -> anyhow::Result<RestoredSession> {
     })
 }
 
+/// Authentication input has a redacted Debug implementation because UI messages
+/// and asynchronous requests must never expose passwords through diagnostics.
+#[derive(Clone)]
+pub enum LoginMethod {
+    Browser,
+    Password {
+        username: String,
+        password: Zeroizing<String>,
+    },
+}
+impl std::fmt::Debug for LoginMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Browser => f.write_str("Browser"),
+            Self::Password { .. } => f.write_str("Password(<redacted>)"),
+        }
+    }
+}
+
+/// Owns the profile throughout restoration and all login attempts.
+/// Failed attempts retain their encrypted stores; a retry always uses fresh keys.
+pub struct DesktopSession {
+    profile: Profile,
+    service: Option<SecretService<'static>>,
+    pub client: Option<Client>,
+}
+
+impl DesktopSession {
+    pub async fn open(directory: &str) -> anyhow::Result<Self> {
+        let exists = Path::new(directory).try_exists()?;
+        let profile = Profile::open(Path::new(directory), true)?;
+        // A new profile can show the form without a network or keyring request.
+        if !exists {
+            return Ok(Self {
+                profile,
+                service: None,
+                client: None,
+            });
+        }
+        let service = connect().await?;
+        let saved = profile.read(&service).await?;
+        let client = match saved.filter(|s| !s.logged_out && s.session.is_some()) {
+            Some(saved) => Some(restore_client(&profile, &saved).await?),
+            None => None,
+        };
+        Ok(Self {
+            profile,
+            service: Some(service),
+            client,
+        })
+    }
+
+    pub async fn sign_in(
+        &mut self,
+        homeserver: &str,
+        method: LoginMethod,
+        browser_url: impl FnOnce(String) + Send,
+    ) -> anyhow::Result<()> {
+        // Discover before reserving keys or creating a device.
+        let discovered = Client::builder()
+            .homeserver_url(homeserver)
+            .sliding_sync_version_builder(VersionBuilder::DiscoverNative)
+            .build()
+            .await?;
+        if self.service.is_none() {
+            self.service = Some(connect().await?);
+        }
+        let service = self.service.as_ref().expect("keyring connected");
+        let key: [u8; 32] = rand::random();
+        let mut retained_store_keys = HashMap::new();
+        if let Some(previous) = self.profile.read(service).await? {
+            retained_store_keys = previous.retained_store_keys;
+            retained_store_keys.insert(previous.store_directory, previous.store_key);
+        }
+        let mut saved = SavedSession {
+            version: 1,
+            homeserver: discovered.homeserver().to_string(),
+            store_key: key.iter().map(|b| format!("{b:02x}")).collect(),
+            store_directory: format!("store-{:032x}", rand::random::<u128>()),
+            retained_store_keys,
+            session: None,
+            logged_out: false,
+            device_key: None,
+        };
+        // Persist the encryption key before opening SQLite or browser login.
+        // Never reuse a retained store for a new device.
+        self.profile.save(service, &saved).await?;
+        let client = client(&self.profile, &saved).await?;
+        authenticate(&client, method, browser_url).await?;
+        let auth = client.matrix_auth();
+        saved.device_key = Some(device_key(&client).await?);
+        saved.session = Some(auth.session().context("SDK did not return a session")?);
+        // Publish a complete restorable record atomically, before starting sync.
+        self.profile.save(service, &saved).await
+            .context("Could not save login; remove the Interconnect device in another client before retrying")?;
+        self.client = Some(client);
+        Ok(())
+    }
+}
+
+async fn authenticate(
+    client: &Client,
+    method: LoginMethod,
+    browser_url: impl FnOnce(String) + Send,
+) -> anyhow::Result<()> {
+    let auth = client.matrix_auth();
+    match method {
+        LoginMethod::Browser => {
+            auth.login_sso(|url| async move {
+                browser_url(url);
+                Ok(())
+            })
+            .server_builder(
+                LocalServerBuilder::new()
+                    .port_range(8765..8766)
+                    .bind_tries(1),
+            )
+            .initial_device_display_name("Interconnect")
+            .send()
+            .await?;
+        }
+        LoginMethod::Password { username, password } => {
+            auth.login_username(&username, password.as_str())
+                .initial_device_display_name("Interconnect")
+                .send()
+                .await?;
+        }
+    }
+    Ok(())
+}
+
 async fn restore_client(profile: &Profile, saved: &SavedSession) -> anyhow::Result<Client> {
     ensure!(
         !saved.logged_out,
@@ -396,7 +549,7 @@ async fn restore_client(profile: &Profile, saved: &SavedSession) -> anyhow::Resu
     );
     let session = saved.session.clone().context("saved login is incomplete")?;
     ensure!(
-        profile.directory.join("store").is_dir(),
+        profile.directory.join(&saved.store_directory).is_dir(),
         "SDK store missing; refusing replacement crypto state"
     );
     let client = client(profile, saved).await?;
@@ -611,6 +764,8 @@ mod tests {
                 version: 1,
                 homeserver: "http://127.0.0.1:1".into(),
                 store_key: "test-only-key".into(),
+                store_directory: legacy_store_directory(),
+                retained_store_keys: HashMap::new(),
                 session: None,
                 logged_out: false,
                 device_key: None,
@@ -712,10 +867,19 @@ mod tests {
             version: 1,
             homeserver: "http://127.0.0.1:1".into(),
             store_key: "test-only-store-passphrase".into(),
+            store_directory: legacy_store_directory(),
+            retained_store_keys: HashMap::new(),
             session: Some(session.clone()),
             logged_out: false,
             device_key: None,
         };
+        saved.store_directory = "store-0123456789abcdef0123456789abcdef".into();
+        fs::create_dir(profile.directory.join("store")).unwrap();
+        fs::write(
+            profile.directory.join("store/retained-fixture"),
+            b"retained",
+        )
+        .unwrap();
         let first = client(&profile, &saved).await.unwrap();
         first
             .matrix_auth()
@@ -773,7 +937,99 @@ mod tests {
         saved.logged_out = false;
         let empty = Profile::open(&parent.path().join("empty"), true).unwrap();
         assert!(restore_client(&empty, &saved).await.is_err());
-        assert!(!empty.directory.join("store").exists());
+        assert!(!empty.directory.join(&saved.store_directory).exists());
+        assert_eq!(
+            fs::read(profile.directory.join("store/retained-fixture")).unwrap(),
+            b"retained"
+        );
+    }
+
+    #[tokio::test]
+    async fn password_sign_in_installs_session_without_browser_or_sync() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{body_partial_json, method, path},
+        };
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "versions": ["v1.11"], "unstable_features": {"org.matrix.simplified_msc3575": true},
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST")).and(path("/_matrix/client/v3/login"))
+            .and(body_partial_json(serde_json::json!({
+                "type": "m.login.password", "identifier": {"type":"m.id.user", "user":"fixture"},
+                "password":"fixture-password", "initial_device_display_name":"Interconnect",
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "user_id":"@fixture:example.org", "device_id":"FIXTURE", "access_token":"fixture-token",
+            }))).expect(1).mount(&server).await;
+        let client = Client::builder()
+            .homeserver_url(server.uri())
+            .sliding_sync_version_builder(VersionBuilder::Native)
+            .build()
+            .await
+            .unwrap();
+        authenticate(
+            &client,
+            LoginMethod::Password {
+                username: "fixture".into(),
+                password: Zeroizing::new("fixture-password".into()),
+            },
+            |_| panic!("password login must not open a browser"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(client.user_id().unwrap().as_str(), "@fixture:example.org");
+        assert_eq!(client.device_id().unwrap().as_str(), "FIXTURE");
+        let requests = server.received_requests().await.unwrap();
+        assert!(!requests.iter().any(|r| r.url.path().ends_with("/sync")));
+    }
+
+    #[test]
+    fn password_request_debug_is_redacted() {
+        let method = LoginMethod::Password {
+            username: "private-user".into(),
+            password: Zeroizing::new("private-password".into()),
+        };
+        let debug = format!("{method:?}");
+        assert!(!debug.contains("private-user"));
+        assert!(!debug.contains("private-password"));
+    }
+
+    #[test]
+    fn session_records_keep_legacy_paths_and_reject_store_path_traversal() {
+        let mut record = serde_json::json!({
+            "version": 1, "homeserver": "https://matrix.example", "store_key": "fixture",
+            "session": null, "logged_out": false, "device_key": null,
+        });
+        let decode =
+            |value: &serde_json::Value| SavedSession::decode(&serde_json::to_vec(value).unwrap());
+        assert_eq!(decode(&record).unwrap().store_directory, "store");
+        assert!(decode(&record).unwrap().retained_store_keys.is_empty());
+        for path in [
+            "../store",
+            "/tmp/store",
+            "store-../outside",
+            "store-",
+            "store-é",
+        ] {
+            record["store_directory"] = path.into();
+            assert!(decode(&record).is_err(), "accepted {path}");
+        }
+        record["store_directory"] = "store-0123456789abcdef0123456789abcdef".into();
+        record["retained_store_keys"] = serde_json::json!({"store": "previous-fixture-key"});
+        let saved = decode(&record).unwrap();
+        assert_eq!(saved.retained_store_keys["store"], "previous-fixture-key");
+        assert_eq!(
+            decode(&serde_json::to_value(saved).unwrap())
+                .unwrap()
+                .retained_store_keys
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -783,6 +1039,8 @@ mod tests {
             version: 2,
             homeserver: "https://example.org".into(),
             store_key: "test-key".into(),
+            store_directory: legacy_store_directory(),
+            retained_store_keys: HashMap::new(),
             session: None,
             logged_out: false,
             device_key: None,

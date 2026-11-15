@@ -19,8 +19,12 @@ The GUI and `spike session-*` commands default to
 or relative. On macOS the path is
 `~/Library/Application Support/interconnect/profiles/default`; native account
 support remains unvalidated. An explicit profile-directory argument overrides
-the default. Login creates missing directories with mode 0700; restoring a
-missing profile fails without creating one. Demo mode never accesses a profile.
+the default. Desktop startup creates missing profile directories with mode 0700
+and offers password or browser login; signed-in profiles restore their saved
+device. Missing credentials and signed-out sessions also open the login form.
+See [desktop login](validation/connected-ui.md#desktop-login--2026-11-15) for
+keyring storage, retained stores, and SSO callback setup. CLI restoration still
+requires an existing profile. Demo mode never accesses a profile.
 
 Existing `.matrix-spike` profiles are not moved automatically. Close all clients
 and session commands using the profile before moving it. The keyring identifies
