@@ -661,9 +661,33 @@ impl App {
         if matches == 0 {
             rooms = rooms.push(container(text("No rooms found").size(13).color(MUTED)).padding(12));
         }
+        let mut new_chat = button(container(text("+").size(22)).center_x(24).center_y(24))
+            .padding(2)
+            .style(icon_button);
+        if !self.closing && !self.stopped {
+            new_chat = new_chat.on_press(Message::NewChat(super::new_chat::Event::Open));
+        }
+        let shortcut = if cfg!(target_os = "macos") {
+            "New chat (Cmd+N)"
+        } else {
+            "New chat (Ctrl+N)"
+        };
+        let new_chat = widget::tooltip(
+            new_chat,
+            container(text(shortcut).size(12))
+                .padding(8)
+                .style(container::rounded_box),
+            widget::tooltip::Position::Bottom,
+        );
         container(
             column![
-                container(title(name, 18)).padding([4, 4]),
+                row![
+                    container(title(name, 18))
+                        .padding([4, 4])
+                        .width(Length::Fill),
+                    new_chat,
+                ]
+                .align_y(Alignment::Center),
                 search,
                 scrollable(rooms.padding(iced::Padding {
                     right: 8.0,

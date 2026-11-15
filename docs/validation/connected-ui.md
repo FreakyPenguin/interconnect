@@ -2173,7 +2173,9 @@ Manual acceptance:
 ## New direct chat picker — 2026-11-15
 
 **Ctrl+N** (**Cmd+N** on macOS) opens a quick-open people picker with focus in
-search. Type at least two characters to search the authenticated homeserver's
+search. The **+** button beside the room-list heading opens the same picker;
+its tooltip shows **New chat** and the platform shortcut. The button is disabled
+while stopping or disconnected. Type at least two characters to search the authenticated homeserver's
 user directory after a 300 ms debounce. Results include names, Matrix IDs, and
 available avatars. Up/Down highlights a result, Enter opens it, and a click opens
 it directly. A full Matrix ID can be submitted without a directory result.
@@ -2224,13 +2226,20 @@ Down, Enter, Escape, and layout at 1000×720 and 640×480. Captures and logs sta
 ignored under `artifacts/new-chat-2026-11-15/`. The demo uses local people fixtures,
 creates only empty in-memory conversations, and leaves the explicit config path
 absent. No saved account, connected client, or real message was used.
+The room-list **+** button was also clicked in the isolated demo and opened the
+same focused picker; its tooltip and header placement were inspected. This
+addition passed formatting, locked workspace Clippy, all 161 desktop tests, and
+the locked desktop build. Captures stay ignored under
+`artifacts/new-chat-button-2026-11-15/`.
+
 Native macOS, real-account invitation/encryption acceptance, and measured idle
 resources remain pending.
 
 Manual acceptance:
 
 1. Run `cargo run --locked --bin interconnect -- --demo`. Press Ctrl+N from room
-   and thread composers. Search `Taylor`; use Enter or a click. Check the empty
+   and thread composers, then repeat using the **+** button in the room-list
+   heading. Search `Taylor`; use Enter or a click. Check the empty
    chat opens, then repeat and check it reuses the same conversation.
 2. Create separate drafts and reading positions in a room and thread. Open the
    picker, type, then cancel using Escape and a backdrop click. Check the

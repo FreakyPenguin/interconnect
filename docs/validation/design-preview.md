@@ -67,7 +67,8 @@ room composer. **Ctrl+P** opens the quick room switcher across all rooms and dir
 messages. Type a name or fuzzy abbreviation, use Up/Down, and Enter to open;
 Escape dismisses it. **Cmd+P** is also supported on macOS. The sidebar space and
 filter remain unchanged. **Ctrl+N** opens a people picker for a new direct chat
-(**Cmd+N** on macOS). Type `Taylor`, then Enter or click the result to open an
+(**Cmd+N** on macOS), also available from the **+** button beside the room-list
+heading. Hover the button for its name and shortcut. Type `Taylor`, then Enter or click the result to open an
 empty, in-memory conversation. Escape cancels. Repeating the selection reuses
 the chat. Demo search uses local fixtures and never accesses a homeserver. See [quick-switch validation](connected-ui.md#quick-room-switcher--2026-11-15). Search temporarily expands matching sections. The rail's bottom
 menu button toggles the room list. At narrower widths, an open thread replaces
