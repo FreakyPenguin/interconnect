@@ -17,6 +17,8 @@ pub enum Scope {
 pub struct RoomEntry {
     pub id: String,
     pub name: String,
+    pub topic: String,
+    pub can_edit_topic: bool,
     pub favorite: bool,
     pub direct: bool,
     pub unread: bool,
@@ -100,6 +102,14 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<(Vec<RoomEntry>, Vec<Sp
             rooms.push(RoomEntry {
                 id,
                 name,
+                topic: room.topic().unwrap_or_default(),
+                // Incomplete cached room state must not hide the conversation.
+                can_edit_topic: room.power_levels().await.is_ok_and(|levels| {
+                    levels.user_can_send_state(
+                        room.own_user_id(),
+                        matrix_sdk::ruma::events::StateEventType::RoomTopic,
+                    )
+                }),
                 favorite: room.is_favourite(),
                 direct: room.is_direct().await?,
                 unread: room.is_marked_unread()

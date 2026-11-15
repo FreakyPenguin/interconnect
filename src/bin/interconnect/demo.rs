@@ -139,6 +139,12 @@ pub fn rooms() -> Vec<RoomEntry> {
         .map(|r| RoomEntry {
             id: r.id.into(),
             name: r.name.into(),
+            topic: if r.id == "studio" {
+                "A place for design notes and plans".into()
+            } else {
+                String::new()
+            },
+            can_edit_topic: r.section != "Direct messages" && r.id != "release",
             favorite: r.section == "Favorites",
             direct: r.section == "Direct messages",
             unread: r.unread > 0,

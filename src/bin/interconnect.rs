@@ -33,6 +33,8 @@ mod shell;
 mod thread_activity;
 #[path = "interconnect/timeline.rs"]
 mod timeline;
+#[path = "interconnect/topic.rs"]
+mod topic;
 #[path = "interconnect/verification.rs"]
 mod verification;
 
@@ -96,9 +98,11 @@ struct App {
     reaction_error: Option<(reaction_picker::Target, String)>,
     composer_picker: Option<composer_picker::State>,
     emoji_completion: emoji_completion::State,
+    topic_editor: Option<topic::State>,
 }
 #[derive(Clone, Debug)]
 enum Message {
+    Topic(topic::Event),
     Login(login::Event),
     Verification(verification::Event),
     Settings(settings::Event),
@@ -202,6 +206,7 @@ impl App {
             reaction_error: None,
             composer_picker: None,
             emoji_completion: emoji_completion::State::default(),
+            topic_editor: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.model.authentication = None;
@@ -316,6 +321,9 @@ impl App {
                 return Task::none();
             }
         }
+        if matches!(message, Message::Escape) && self.topic_editor.is_some() {
+            return self.update(Message::Topic(topic::Event::Cancel));
+        }
         if matches!(
             &message,
             Message::Space(_) | Message::Room(_) | Message::Section(_)
@@ -344,6 +352,7 @@ impl App {
             );
         let mut action_task = Task::none();
         match message {
+            Message::Topic(event) => action_task = self.topic_event(event),
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
             Message::EmojiCompletion(event) => action_task = self.emoji_completion_event(event),
@@ -809,6 +818,7 @@ impl App {
             self.thread_activity
                 .observe(room, &pane.rows, &pane.history);
         }
+        self.validate_topic_editor();
         self.validate_reaction_picker();
         self.validate_composer_picker();
         self.validate_emoji_completion();
@@ -1381,19 +1391,18 @@ impl App {
             .map(|r| r.name.as_str())
             .unwrap_or("Conversation");
         let heading = if thread { "Thread" } else { name };
-        let mut header = row![
-            column![
-                shell::title(heading, 18),
-                text(if thread {
-                    "A focused conversation"
-                } else {
-                    "Messages"
-                })
+        let subtitle = if thread {
+            text("A focused conversation")
                 .size(12)
                 .color(shell::MUTED)
-            ]
-            .spacing(5),
-            iced::widget::space().width(Length::Fill)
+                .into()
+        } else {
+            self.topic_view(*generation, selected_id)
+        };
+        let mut header = row![
+            column![shell::title(heading, 18), subtitle]
+                .spacing(5)
+                .width(Length::Fill),
         ]
         .align_y(iced::Alignment::Center);
         if !thread && self.demo.is_some() && selected_id == "threads" {

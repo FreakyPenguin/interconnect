@@ -1516,3 +1516,32 @@ middle, typing times/URLs, and changing rooms/spaces or opening the full picker.
 Verify Enter never sends while accepting a suggestion and subsequent typing
 stays in the intended draft. No connected client was restarted or real Matrix
 events sent.
+
+## Room topics — 2026-11-15
+
+Room headers show the synced topic in a single line, with the full topic in a
+hover tooltip. Empty topics show **No topic**. A pencil opens an inline multiline
+editor when the current user's SDK power levels permit `m.room.topic` state
+changes. **Save** can also clear the topic; **Cancel** or Escape discards edits.
+The thread subtitle is unchanged.
+
+Topic and permission changes use the existing room metadata subscription. Missing
+cached permission data disables editing without hiding the room. Saving uses a
+captured, runtime-owned room target, checks current membership and permissions,
+and has a 30-second timeout. Errors retain the editor text. Duplicate saves are
+disabled while pending; room changes or lost permissions dismiss the editor, and
+late results cannot change a newer editor. Closing waits for pending operations
+through the existing shutdown path. The editor uses a static caret.
+
+Automated coverage includes SDK topic/permission updates, an actual state PUT to
+a local mock server, refusal after permission revocation, demo save/clear/cancel,
+read-only rooms, stale completions, draft/scroll preservation, and a long topic's
+edit button fitting inside a 240-pixel header. Demo changes are memory-only.
+
+Native visual and connected-account acceptance remain untested. For manual
+acceptance, use `cargo run --locked --bin interconnect -- --demo`: edit **Design
+studio**, clear its topic, cancel another edit, and check **Release notes** has
+no pencil. Check a long and multiline topic at narrow window widths. In an
+authorized test room, confirm another client's topic/permission changes update
+the header, saving reaches that client, and denied/offline saves retain the
+editor text. Do not change a real room topic without authorization.

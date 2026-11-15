@@ -134,6 +134,34 @@ impl std::fmt::Debug for Composer {
     }
 }
 impl Composer {
+    /// Use the captured room, rechecking current state permissions before sending.
+    pub async fn set_topic(self, topic: String) -> Result<(), String> {
+        let update = async {
+            let room = self.0.room();
+            let levels = room
+                .power_levels()
+                .await
+                .map_err(|error| error.to_string())?;
+            if room.state() != matrix_sdk::RoomState::Joined
+                || !levels.user_can_send_state(
+                    room.own_user_id(),
+                    matrix_sdk::ruma::events::StateEventType::RoomTopic,
+                )
+            {
+                return Err("You no longer have permission to edit this room topic.".into());
+            }
+            room.set_room_topic(&topic)
+                .await
+                .map_err(|error| error.to_string())?;
+            Ok(())
+        };
+        tokio::time::timeout(Duration::from_secs(30), update)
+            .await
+            .map_err(|_| {
+                "Saving topic timed out. Check the room topic before retrying.".to_owned()
+            })?
+    }
+
     /// Set the state shown by a chip, so repeated/stale clicks cannot invert it.
     pub async fn set_reaction(
         self,
@@ -1748,7 +1776,18 @@ mod tests {
             ]);
             json!({"state":{"events":extra},"timeline":{"events":[],"limited":false},"account_data":{"events":[]}})
         };
-        let mut conversation = room("Conversation", false, vec![]);
+        let mut conversation = room(
+            "Conversation",
+            false,
+            vec![
+                event("m.room.topic", "", json!({"topic":"Initial topic"})),
+                event(
+                    "m.room.power_levels",
+                    "",
+                    json!({"users":{"@test:example.org":50},"state_default":100,"events":{"m.room.topic":50}}),
+                ),
+            ],
+        );
         conversation["account_data"] = json!({"events":[{"type":"m.tag","content":{"tags":{"m.favourite":{}}}},{"type":"m.marked_unread","content":{"unread":true}}]});
         let first = json!({"next_batch":"one","rooms":{"join":{
             "!space:example.org": room("Space",true,vec![event("m.space.child","!nested:example.org",json!({"via":["example.org"]}))]),
@@ -1777,6 +1816,8 @@ mod tests {
             snapshots.wait_for(|s| {
                 s.spaces.len() == 3
                     && s.rooms.len() == 1
+                    && s.rooms[0].topic == "Initial topic"
+                    && s.rooms[0].can_edit_topic
                     && s.rooms[0].favorite
                     && s.rooms[0].direct
                     && s.rooms[0].unread
@@ -1793,9 +1834,30 @@ mod tests {
         .unwrap();
         assert!(members.contains("!room:example.org"));
         assert!(first.room.is_none() && first.thread.is_none());
+        client.event_cache().subscribe().unwrap();
+        let room = client
+            .get_room(matrix_sdk::ruma::room_id!("!room:example.org"))
+            .unwrap();
+        let composer = Composer(RuntimeOwned::new(Arc::new(
+            TimelineBuilder::new(&room).build().await.unwrap(),
+        )));
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/state/m.room.topic/?"))
+            .and(wiremock::matchers::body_partial_json(
+                json!({"topic":"Saved topic"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id":"$topic"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        composer
+            .clone()
+            .set_topic("Saved topic".into())
+            .await
+            .unwrap();
         // Global and room account-data updates must work without a room-list lifecycle transition.
         *response.lock().unwrap() = json!({"next_batch":"two","account_data":{"events":[{"type":"m.direct","content":{}}]},"rooms":{"join":{
-            "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
+            "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"})), event("m.room.topic","",json!({"topic":""})), event("m.room.power_levels","",json!({"users":{"@test:example.org":50},"state_default":50,"events":{"m.room.topic":100}}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
             "!nested:example.org":{"state":{"events":[event("m.space.child","!room:example.org",json!({}))]}}
         }}});
         client
@@ -1806,6 +1868,8 @@ mod tests {
             Duration::from_secs(5),
             snapshots.wait_for(|s| {
                 s.rooms.len() == 1
+                    && s.rooms[0].topic.is_empty()
+                    && !s.rooms[0].can_edit_topic
                     && s.rooms[0].name == "Renamed"
                     && !s.rooms[0].favorite
                     && !s.rooms[0].direct
@@ -1819,6 +1883,13 @@ mod tests {
         .unwrap()
         .unwrap()
         .clone();
+        assert!(
+            composer
+                .set_topic("Must not be sent".into())
+                .await
+                .unwrap_err()
+                .contains("permission")
+        );
         assert!(
             !crate::navigation::members(
                 &crate::navigation::Scope::Space("!space:example.org".into()),
