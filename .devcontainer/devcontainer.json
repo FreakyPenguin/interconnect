@@ -22,5 +22,10 @@
   ],
   "containerEnv": {
     "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/host-session-bus"
-  }
+  },
+  "runArgs": [
+    "--device=/dev/dri:/dev/dri",
+    "--group-add=106",
+    "--group-add=44"
+  ]
 }
