@@ -32,7 +32,7 @@ all traffic in this test goes to the local mock server.
 ## Opt-in live diagnostics
 
 ```sh
-INTERCONNECT_METRICS=1 RUST_LOG=off target/debug/interconnect .matrix-spike
+INTERCONNECT_METRICS=1 RUST_LOG=off target/debug/interconnect
 ```
 
 Once the initial `{"metrics":true,...}` JSON report appears on stderr, send

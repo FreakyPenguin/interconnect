@@ -160,7 +160,7 @@ impl App {
     fn new() -> Self {
         let mut app = Self {
             settings: settings::State::default(),
-            profile: profile_argument(std::env::args().skip(1)),
+            profile: String::new(),
             model: Model::default(),
             selection: Selection::default(),
             control: None,
@@ -1909,16 +1909,16 @@ fn run_ui(run: impl FnOnce() -> iced::Result) -> anyhow::Result<()> {
     cleanup
 }
 
-fn profile_argument(arguments: impl Iterator<Item = String>) -> String {
+fn profile_argument(arguments: impl Iterator<Item = String>) -> anyhow::Result<String> {
     let mut arguments = arguments;
     while let Some(argument) = arguments.next() {
         if argument == "--config" {
             arguments.next();
         } else if !argument.starts_with("--") {
-            return argument;
+            return Ok(argument);
         }
     }
-    ".matrix-spike".into()
+    interconnect::session::default_profile_directory()
 }
 
 fn main() -> anyhow::Result<()> {
@@ -1932,28 +1932,39 @@ fn main() -> anyhow::Result<()> {
                 )?));
         }
     }
-    let startup = settings::Startup::load(
-        config,
-        std::env::args().any(|argument| argument == "--demo"),
-    );
+    let demo = std::env::args().any(|argument| argument == "--demo");
+    let profile = if demo {
+        String::new()
+    } else {
+        profile_argument(std::env::args().skip(1))?
+    };
+    let startup = settings::Startup::load(config, demo);
     configure_graphics_environment(&startup.graphics())?;
     interconnect::init_tracing();
     run_ui(|| {
-        iced::application(move || App::boot(startup.clone()), App::update, App::view)
-            .title("Interconnect")
-            .theme(shell::theme())
-            .default_font(iced::Font::with_name("Inter"))
-            .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())
-            .font(include_bytes!("../../assets/fonts/Inter-SemiBold.otf").as_slice())
-            .window(iced::window::Settings {
-                size: iced::Size::new(1240.0, 820.0),
-                min_size: Some(iced::Size::new(640.0, 480.0)),
-                ..Default::default()
-            })
-            .executor::<UiExecutor>()
-            .subscription(App::subscription)
-            .exit_on_close_request(false)
-            .run()
+        iced::application(
+            move || {
+                let (mut app, task) = App::boot(startup.clone());
+                app.profile = profile.clone();
+                (app, task)
+            },
+            App::update,
+            App::view,
+        )
+        .title("Interconnect")
+        .theme(shell::theme())
+        .default_font(iced::Font::with_name("Inter"))
+        .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())
+        .font(include_bytes!("../../assets/fonts/Inter-SemiBold.otf").as_slice())
+        .window(iced::window::Settings {
+            size: iced::Size::new(1240.0, 820.0),
+            min_size: Some(iced::Size::new(640.0, 480.0)),
+            ..Default::default()
+        })
+        .executor::<UiExecutor>()
+        .subscription(App::subscription)
+        .exit_on_close_request(false)
+        .run()
     })
 }
 
@@ -1998,6 +2009,24 @@ fn test_renderer(font: iced::Font, size: iced::Pixels) -> iced::Renderer {
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn profile_argument_preserves_explicit_paths_and_skips_config_values() {
+        for args in [
+            vec!["/custom/profile"],
+            vec!["--config", "/settings.toml", "/custom/profile"],
+            vec!["/custom/profile", "--config", "/settings.toml"],
+        ] {
+            assert_eq!(
+                profile_argument(args.into_iter().map(String::from)).unwrap(),
+                "/custom/profile"
+            );
+        }
+        assert_eq!(
+            profile_argument(["--config", "/settings.toml"].into_iter().map(String::from)).unwrap(),
+            interconnect::session::default_profile_directory().unwrap()
+        );
+    }
 
     #[test]
     fn graphics_environment_child() {

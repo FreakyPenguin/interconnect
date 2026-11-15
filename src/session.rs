@@ -20,6 +20,39 @@ use zeroize::Zeroizing;
 // Keep the original keyring namespace so existing saved accounts remain readable.
 const APPLICATION: &str = "chatclient-milestone-0";
 
+/// Resolve the default account directory without accessing the filesystem.
+pub fn default_profile_directory() -> anyhow::Result<String> {
+    default_profile_path_from(
+        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from),
+    )?
+    .into_os_string()
+    .into_string()
+    .map_err(|_| anyhow::anyhow!("profile path must be UTF-8"))
+}
+
+fn default_profile_path_from(
+    xdg: Option<PathBuf>,
+    home: Option<PathBuf>,
+) -> anyhow::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    let root = home
+        .filter(|path| path.is_absolute())
+        .context("HOME is unavailable; supply a profile-directory argument")?
+        .join("Library/Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let root = xdg
+        .filter(|path| path.is_absolute())
+        .or_else(|| {
+            home.filter(|path| path.is_absolute())
+                .map(|path| path.join(".local/share"))
+        })
+        .context("No data directory is available; supply a profile-directory argument")?;
+    #[cfg(target_os = "macos")]
+    let _ = xdg;
+    Ok(root.join("interconnect/profiles/default"))
+}
+
 // Never derive Debug: this object contains bearer tokens and an encryption key.
 #[derive(Serialize, Deserialize)]
 struct SavedSession {
@@ -55,8 +88,9 @@ impl Profile {
         if create && !path.exists() {
             fs::DirBuilder::new()
                 .mode(0o700)
+                .recursive(true)
                 .create(path)
-                .context("create profile directory (parent must already exist)")?;
+                .context("create profile directory")?;
         }
         let meta = fs::symlink_metadata(path).context("profile directory does not exist")?;
         ensure!(
@@ -84,10 +118,29 @@ impl Profile {
             .open(lock_path)?;
         lock.try_lock()
             .context("profile is already in use by another process")?;
-        let id = directory
-            .to_str()
-            .context("profile path must be UTF-8")?
-            .to_owned();
+        let id_path = directory.join("keyring-profile");
+        let id = match fs::symlink_metadata(&id_path) {
+            Ok(meta) => {
+                ensure!(
+                    meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= 65_536,
+                    "invalid keyring-profile identity file"
+                );
+                let id = fs::read_to_string(id_path).context("read keyring-profile identity")?;
+                ensure!(
+                    Path::new(&id).is_absolute()
+                        && !id.contains('\0')
+                        && !id.ends_with('\n')
+                        && !id.ends_with('\r'),
+                    "keyring-profile must contain the original absolute profile path without a trailing newline"
+                );
+                id
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => directory
+                .to_str()
+                .context("profile path must be UTF-8")?
+                .to_owned(),
+            Err(error) => return Err(error.into()),
+        };
         Ok(Self {
             directory,
             id,
@@ -408,6 +461,132 @@ async fn verify_identity(client: &Client, saved: &MatrixSession) -> anyhow::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn default_profile_uses_xdg_data_and_absolute_home_fallback() {
+        for (xdg, home, expected) in [
+            (Some("/data"), None, "/data/interconnect/profiles/default"),
+            (
+                None,
+                Some("/users/me"),
+                "/users/me/.local/share/interconnect/profiles/default",
+            ),
+            (
+                Some(""),
+                Some("/users/me"),
+                "/users/me/.local/share/interconnect/profiles/default",
+            ),
+            (
+                Some("relative"),
+                Some("/users/me"),
+                "/users/me/.local/share/interconnect/profiles/default",
+            ),
+        ] {
+            assert_eq!(
+                default_profile_path_from(xdg.map(PathBuf::from), home.map(PathBuf::from)).unwrap(),
+                PathBuf::from(expected)
+            );
+        }
+        assert!(default_profile_path_from(None, None).is_err());
+        assert!(
+            default_profile_path_from(Some("relative".into()), Some("relative".into())).is_err()
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn default_profile_uses_application_support_on_macos() {
+        assert_eq!(
+            default_profile_path_from(Some("/ignored".into()), Some("/users/me".into())).unwrap(),
+            PathBuf::from("/users/me/Library/Application Support/interconnect/profiles/default")
+        );
+        assert!(default_profile_path_from(Some("/ignored".into()), None).is_err());
+    }
+
+    #[test]
+    fn login_creates_nested_private_profile_directories() {
+        let parent = tempfile::tempdir().unwrap();
+        let path = parent.path().join("interconnect/profiles/default");
+        assert!(Profile::open(&path, false).is_err());
+        assert!(!parent.path().join("interconnect").exists());
+        let profile = Profile::open(&path, true).unwrap();
+        for directory in [
+            "interconnect",
+            "interconnect/profiles",
+            "interconnect/profiles/default",
+        ] {
+            assert_eq!(
+                fs::metadata(parent.path().join(directory))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700
+            );
+        }
+        assert!(Profile::open(&path, false).is_err());
+        drop(profile);
+        assert!(Profile::open(&path, false).is_ok());
+    }
+
+    #[test]
+    fn moved_profile_keeps_keyring_identity_navigation_and_exclusive_lock() {
+        let parent = tempfile::tempdir().unwrap();
+        let old = parent.path().join(".matrix-spike");
+        let profile = Profile::open(&old, true).unwrap();
+        let id = profile.id.clone();
+        fs::create_dir(old.join("store")).unwrap();
+        fs::write(old.join("store/fixture"), b"test store").unwrap();
+        fs::write(old.join("navigation.json"), b"test navigation").unwrap();
+        fs::write(old.join("keyring-profile"), &id).unwrap();
+        drop(profile);
+        let moved = parent.path().join("default");
+        fs::rename(&old, &moved).unwrap();
+        let profile = Profile::open(&moved, false).unwrap();
+        assert_eq!(profile.directory, moved.canonicalize().unwrap());
+        assert_eq!(profile.attributes()["profile"], id);
+        assert_eq!(profile.attributes()["application"], APPLICATION);
+        assert_eq!(
+            fs::read(moved.join("store/fixture")).unwrap(),
+            b"test store"
+        );
+        assert_eq!(
+            fs::read(moved.join("navigation.json")).unwrap(),
+            b"test navigation"
+        );
+        assert!(Profile::open(&moved, false).is_err());
+        drop(profile);
+        assert!(Profile::open(&moved, false).is_ok());
+        assert!(!old.exists());
+    }
+
+    #[test]
+    fn malformed_or_symlinked_keyring_identity_is_rejected_without_fallback() {
+        let parent = tempfile::tempdir().unwrap();
+        let directory = parent.path().join("profile");
+        drop(Profile::open(&directory, true).unwrap());
+        let identity = directory.join("keyring-profile");
+        for invalid in [
+            "",
+            "relative",
+            "/old/profile\n",
+            "/old/profile\r",
+            "/old/\0profile",
+        ] {
+            fs::write(&identity, invalid).unwrap();
+            assert!(Profile::open(&directory, false).is_err());
+        }
+        fs::write(&identity, vec![b'/'; 65_537]).unwrap();
+        assert!(Profile::open(&directory, false).is_err());
+        fs::remove_file(&identity).unwrap();
+        std::os::unix::fs::symlink("/missing", &identity).unwrap();
+        assert!(Profile::open(&directory, false).is_err());
+        fs::remove_file(&identity).unwrap();
+        fs::create_dir(&identity).unwrap();
+        assert!(Profile::open(&directory, false).is_err());
+    }
+
     #[test]
     fn profile_lock_excludes_concurrent_processes_and_releases() {
         let parent = tempfile::tempdir().unwrap();

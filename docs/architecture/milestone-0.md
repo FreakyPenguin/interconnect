@@ -101,15 +101,21 @@ as described in development.md.
 
 One keyring item stores a versioned bundle of homeserver, Matrix session tokens,
 a random 256-bit SDK store passphrase, and the local device signing-key
-fingerprint. Attributes identify the application and canonical profile-directory
-path; attributes are not secret. The bundle is never written to a local JSON
+fingerprint. Attributes identify the application and profile-directory identity;
+attributes are not secret. The bundle is never written to a local JSON
 file. SDK store encryption is enabled via its passphrase API; this is not a claim
 that every SQLite header/metadata byte or every local cache is encrypted.
 
 A private (0700) profile directory contains the SDK store and a process lock.
-Concurrent use of the same profile fails. Profile identity currently depends on
-its canonical path: keep that path stable across container rebuilds. The default
-`.matrix-spike` is ignored by git. Other profile paths must also stay out of git.
+Concurrent use of the same profile fails. Profile identity defaults to its
+canonical path. A moved profile can retain its original keyring identity through
+the optional `keyring-profile` file; malformed or symlinked identity files are
+rejected without falling back to a different keyring record. See
+[account profiles](../settings.md#account-profiles) for the migration procedure.
+The default is `$XDG_DATA_HOME/interconnect/profiles/default`, falling back to
+`~/.local/share/interconnect/profiles/default`. Keep its contents on persistent
+storage across container rebuilds. Legacy `.matrix-spike` is still ignored by
+git; other profile paths inside the repository must also stay out of git.
 
 Login checks keyring availability and persists the random store key before
 opening SSO. It saves the session immediately after login and before sync.

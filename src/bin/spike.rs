@@ -47,19 +47,19 @@ async fn run() -> anyhow::Result<()> {
             println!("100 open/deliver/close cycles passed");
         }
         Some("session-live") => {
-            let profile = args.get(1).map(String::as_str).unwrap_or(".matrix-spike");
-            interconnect::session::live(profile).await?;
+            let profile = profile_directory(args.get(1))?;
+            interconnect::session::live(&profile).await?;
         }
         Some("session-login") => {
             let url = args
                 .get(1)
                 .context("usage: spike session-login <homeserver> [profile-directory]")?;
-            let profile = args.get(2).map(String::as_str).unwrap_or(".matrix-spike");
-            interconnect::session::login(url, profile).await?;
+            let profile = profile_directory(args.get(2))?;
+            interconnect::session::login(url, &profile).await?;
         }
         Some("session-resume") | Some("session-logout") => {
-            let profile = args.get(1).map(String::as_str).unwrap_or(".matrix-spike");
-            interconnect::session::resume(profile, args[0] == "session-logout").await?;
+            let profile = profile_directory(args.get(1))?;
+            interconnect::session::resume(&profile, args[0] == "session-logout").await?;
         }
         Some("sso") => {
             let url = args.get(1).context("usage: spike sso https://homeserver")?;
@@ -91,4 +91,11 @@ async fn run() -> anyhow::Result<()> {
         ),
     }
     Ok(())
+}
+
+fn profile_directory(argument: Option<&String>) -> anyhow::Result<String> {
+    argument
+        .cloned()
+        .map(Ok)
+        .unwrap_or_else(interconnect::session::default_profile_directory)
 }

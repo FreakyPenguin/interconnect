@@ -11,6 +11,62 @@ and the profile's `navigation.json` (selected space/room and collapsed sections)
 Demo mode uses defaults and keeps settings changes in memory, without reading
 or writing a config file, even when `--config` is supplied.
 
+## Account profiles
+
+The GUI and `spike session-*` commands default to
+`$XDG_DATA_HOME/interconnect/profiles/default`, falling back to
+`~/.local/share/interconnect/profiles/default` when XDG_DATA_HOME is unset, empty,
+or relative. On macOS the path is
+`~/Library/Application Support/interconnect/profiles/default`; native account
+support remains unvalidated. An explicit profile-directory argument overrides
+the default. Login creates missing directories with mode 0700; restoring a
+missing profile fails without creating one. Demo mode never accesses a profile.
+
+Existing `.matrix-spike` profiles are not moved automatically. Close all clients
+and session commands using the profile before moving it. The keyring identifies
+an existing account by its original canonical profile path. Preserve that path
+in a `keyring-profile` file inside the profile **before moving it**; the updated
+client uses that identity for keyring reads, saves, and logout. This file contains
+only a path, with no trailing newline; credentials remain in Secret Service.
+Keep it with the profile on subsequent moves. Profiles without the file continue
+to use their current canonical path.
+
+On Linux, from the repository directory containing the old `.matrix-spike`, run
+the following after closing the client. Substitute the old directory if yours
+has a different location. Use the same user and XDG_DATA_HOME environment as
+your normal client launch:
+
+```sh
+(
+    set -eu
+    profile_old="$(realpath -- .matrix-spike)"
+    case "${XDG_DATA_HOME:-}" in
+        /*) profile_data_root="$XDG_DATA_HOME" ;;
+        *) profile_data_root="$HOME/.local/share" ;;
+    esac
+    profile_new="$profile_data_root/interconnect/profiles/default"
+    test -d "$profile_old"
+    test ! -e "$profile_new"
+    test ! -L "$profile_new"
+    umask 077
+    mkdir -p -- "$(dirname -- "$profile_new")"
+    if [ ! -e "$profile_old/keyring-profile" ]; then
+        printf '%s' "$profile_old" > "$profile_old/keyring-profile"
+    fi
+    mv -T --no-clobber -- "$profile_old" "$profile_new"
+    test ! -e "$profile_old"
+    printf 'Profile moved to %s\n' "$profile_new"
+)
+```
+
+This moves the complete SDK store and navigation preferences, retaining their
+permissions, and refuses to overwrite an existing default profile. Then launch
+the updated client with `cargo run --locked --bin interconnect`. No keyring edit
+or new login is needed. Until moving, use
+`cargo run --locked --bin interconnect -- .matrix-spike` to open the old location.
+Do not copy credentials into a new SDK store. In a development container, keep
+the data directory on persistent storage across container rebuilds.
+
 ## File location and format
 
 On Linux the default is `$XDG_CONFIG_HOME/interconnect/settings.toml`, or

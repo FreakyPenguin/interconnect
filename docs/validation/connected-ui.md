@@ -22,15 +22,19 @@ cargo run --locked --bin interconnect
 ```
 
 An optional profile-directory argument follows the binary name. The default is
-`.matrix-spike`; keep its canonical path unchanged from login. This command does
-not create a new session, replace a device, or log out. Room names and decrypted
-messages appear in the window.
+`$XDG_DATA_HOME/interconnect/profiles/default`, or
+`~/.local/share/interconnect/profiles/default` when XDG_DATA_HOME is unset or
+relative. See [account profiles](../settings.md#account-profiles) to move an
+existing `.matrix-spike` profile while retaining its keyring identity. This
+command does not create a new session, replace a device, or log out. Room names
+and decrypted messages appear in the window.
 
 The package and GUI binary are now named `interconnect`, with application settings
 under the `interconnect` configuration directory; see [settings](../settings.md)
-for reusing an existing settings file. The account profile directory and legacy
-Secret Service application attribute (`chatclient-milestone-0`) are retained for
-saved-login compatibility. Existing profiles do not need a new login or a move.
+for reusing an existing settings file. The legacy Secret Service application
+attribute (`chatclient-milestone-0`) is retained for saved-login compatibility.
+Existing profiles can be used at an explicit path or moved using the instructions
+above without a new login.
 The window, notification app name, and macOS bundle are branded **Interconnect**.
 The macOS bundle identifier is now `io.github.interconnect.desktop`; check its
 notification permission on the native host after rebuilding the bundle.
@@ -42,6 +46,17 @@ passed. Locked Cargo metadata resolves the renamed library and GUI binary;
 dependency versions are unchanged. Bundle plist structure, bundle script syntax,
 and container JSON syntax also passed checks. Desktop appearance, macOS execution,
 and live saved-session restoration were not exercised for this rename.
+
+XDG profile validation on Linux (2026-11-15): formatting, workspace Clippy with
+warnings denied, workspace tests (62 library and 101 GUI tests passed; one
+existing stress test ignored), and the locked GUI build passed. Tests cover
+XDG/HOME resolution, explicit profile arguments, nested private-directory
+creation, moved-profile keyring attributes and locking, and invalid identity
+file rejection. The documented move commands were exercised against temporary
+store/navigation fixtures with unset, empty, relative, and absolute XDG_DATA_HOME,
+plus existing-directory and dangling-symlink destination refusal. No real account
+was moved, no connected client was restarted, and live keyring restoration and
+macOS behavior remain untested for this change.
 
 ## GPU passthrough startup stall — 2026-11-15
 

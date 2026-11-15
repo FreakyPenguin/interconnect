@@ -192,7 +192,8 @@ cargo run --locked --bin spike -- session-resume
 ```
 
 Keep localhost:8765 forwarded for the first command. Login creates the private
-`.matrix-spike` directory, stores credentials and the SDK store key in the host
+`$XDG_DATA_HOME/interconnect/profiles/default` directory (falling back to
+`~/.local/share/interconnect/profiles/default`), stores credentials and the SDK store key in the host
 keyring, synchronizes, and exits **without logout**. The second command must
 restore without opening a browser and print the same authenticated device ID.
 It also checks the local device signing key before using the restored account.
@@ -200,7 +201,9 @@ Device trust and access to historical keys are still separate checks.
 
 Repeat `session-resume` after restarting the container, retaining the same profile
 path, volume contents, and host keyring. An optional profile directory can be
-passed as the final argument to each command; its parent must already exist.
+passed as the final argument to each command; login creates missing parents.
+For old `.matrix-spike` profiles, supply that path explicitly or follow the
+[profile move instructions](../settings.md#account-profiles) before using the default.
 Never copy just the session token into a fresh store as a substitute for restore.
 
 When finished with a test device, explicitly run:
