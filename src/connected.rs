@@ -14,6 +14,9 @@ use matrix_sdk_ui::{
 };
 use tokio::sync::{mpsc, watch};
 
+mod pinned;
+pub use pinned::Pinned;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     pub room: Option<(u64, String)>,
@@ -402,6 +405,7 @@ pub struct Model {
     pub notification_error: Option<String>,
     pub room: Option<Pane>,
     pub thread: Option<Pane>,
+    pub pinned: Option<Pinned>,
 }
 impl Default for Model {
     fn default() -> Self {
@@ -424,6 +428,7 @@ impl Default for Model {
             notification_error: None,
             room: None,
             thread: None,
+            pinned: None,
         }
     }
 }
@@ -644,6 +649,7 @@ async fn connected(
     }
     let mut active = Selection::default();
     let mut room_view = inactive();
+    let mut pinned_view = inactive();
     let mut thread_view = inactive();
     let result = async {
         loop {
@@ -664,12 +670,13 @@ async fn connected(
             if active.room != next.room {
                 // Drop the old subscriptions before constructing replacements.
                 room_view = inactive();
+                pinned_view = inactive();
                 thread_view = inactive();
                 if let Some((_, id)) = &active.room {
                     let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
                     sync.room_list_service().remove_room_subscriptions(&[&id]);
                 }
-                state.send_modify(|s| { s.room = None; s.thread = None; });
+                state.send_modify(|s| { s.room = None; s.thread = None; s.pinned = None; });
                 if let Some((generation, id)) = &next.room {
                     let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
                     // Sync subscription setup is cancelled by a newer navigation request.
@@ -680,6 +687,7 @@ async fn connected(
                         changed = selection.changed() => { changed.context("UI closed")?; sync.room_list_service().remove_room_subscriptions(&[&id]); active = Selection::default(); continue; }
                     }
                     room_view = Box::pin(view(client.clone(), id.to_string(), None, *generation, state.clone()));
+                    pinned_view = Box::pin(pinned::view(client.clone(), id.to_string(), *generation, state.clone()));
                 }
             }
             if active.thread != next.thread || active.room != next.room {
@@ -719,6 +727,7 @@ async fn connected(
                 _ = &mut profile => {},
                 _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
                 _ = &mut room_view => room_view = inactive(),
+                _ = &mut pinned_view => pinned_view = inactive(),
                 _ = &mut thread_view => thread_view = inactive(),
                 event = room_states.next() => {
                     if event.is_none() { anyhow::bail!("room-list stream ended"); }
@@ -740,6 +749,7 @@ async fn connected(
         Ok(())
     }.await;
     drop(room_view);
+    drop(pinned_view);
     drop(thread_view);
     if let Some((_, id)) = active.room {
         let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
@@ -976,8 +986,25 @@ async fn publish(
     state: &watch::Sender<Model>,
     load_older: &mpsc::Sender<u64>,
 ) {
+    let rows = timeline_rows(timeline).await;
+    state.send_modify(|s| {
+        let pane = if thread { &mut s.thread } else { &mut s.room };
+        *pane = Some(Pane {
+            generation,
+            rows: Arc::new(rows),
+            error: None,
+            history: history.clone(),
+            history_revision: revision,
+            composer: Some(Composer(RuntimeOwned::new(timeline.clone()))),
+            load_older: matches!(history, History::Ready | History::Failed(_))
+                .then(|| load_older.clone()),
+        });
+    });
+}
+
+async fn timeline_rows(timeline: &Timeline) -> Vec<MessageRow> {
     let items = timeline.items().await;
-    let rows = items
+    items
         .iter()
         .filter_map(|item| item.as_event())
         .map(|event| {
@@ -1048,20 +1075,7 @@ async fn publish(
                 },
             }
         })
-        .collect();
-    state.send_modify(|s| {
-        let pane = if thread { &mut s.thread } else { &mut s.room };
-        *pane = Some(Pane {
-            generation,
-            rows: Arc::new(rows),
-            error: None,
-            history: history.clone(),
-            history_revision: revision,
-            composer: Some(Composer(RuntimeOwned::new(timeline.clone()))),
-            load_older: matches!(history, History::Ready | History::Failed(_))
-                .then(|| load_older.clone()),
-        });
-    });
+        .collect()
 }
 
 #[cfg(test)]

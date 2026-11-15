@@ -1545,3 +1545,51 @@ no pencil. Check a long and multiline topic at narrow window widths. In an
 authorized test room, confirm another client's topic/permission changes update
 the header, saving reaches that client, and denied/offline saves retain the
 editor text. Do not change a real room topic without authorization.
+
+## Pinned messages — 2026-11-15
+
+Rooms with pins show a strip directly below the topic and above the message
+history, without a section title or count. Each message has a pin icon on its
+left, followed by author, timestamp (with the existing full-time tooltip), and
+message text, including multiline text and emoji. Media
+uses the existing textual event description in this first display-only pass.
+The section has its own scroll area capped at 144 pixels; it stays above the
+conversation as history scrolls. Rooms without pins reserve no space. Thread
+panes keep their original-message section and do not duplicate the room's pins.
+There are no pin/unpin, jump, media-opening, or manual-reload controls yet.
+
+The selected room owns an asynchronous pins presentation using the SDK's
+`TimelineFocus::PinnedEvents`. This loads pins outside the visible history,
+uses SDK decryption/edit/redaction handling, and subscribes to changes. Pins
+never cause room-history pagination. Empty rooms wait for metadata changes
+without constructing an extra timeline. Room changes and shutdown drop the
+application's pins setup/subscription future; generation checks reject stale
+snapshots. SDK event-cache tasks and cached data retain the SDK's session-owned
+lifecycle. No SDK client or timeline handle is placed in a pins UI snapshot.
+
+Loading has a one-shot 30-second deadline, with an unavailable status if entries
+are still missing; later SDK updates can still populate them. There is no polling
+or animation timer. The SDK currently loads at most 128 pins per room with up to
+eight requests in parallel. Missing/inaccessible events show a partial-result
+status. SDK 0.19.1 can fail to populate a malformed pin list containing duplicate
+event IDs; that also reaches the unavailable status. This change does not patch
+the SDK or attempt to rewrite room state.
+
+Automated coverage uses a local Matrix mock server to fetch pinned events absent
+from room history, follow additions/removals and redaction, hide the section when
+all pins are removed, and reject publication after cancellation. The test makes
+no message/state PUTs or history requests. Headless UI tests cover stale
+selection generations, preservation of room pins across space/thread changes,
+message drafts and saved scroll positions, live timeline reading-position
+preservation when pins arrive/disappear, and scrolling long pins within a
+bounded strip. Existing workspace tests cover shared message projection.
+
+Native visual and connected-account acceptance, including encrypted pins and
+edits made by another client, remain untested. For a network-free visual check,
+run `cargo run --locked --bin interconnect -- --demo`: **Design studio** has two
+sample pins, including a multiline note; **General** has none. Check narrow
+window sizes and scrolling the pin strip independently of the conversation.
+For an authorized connected test, use a room with an older pinned event outside
+the loaded history and compare the display to another Matrix client. Check live
+pin/unpin, edit, redaction, and encrypted-key availability changes there. Do not
+modify a real room's pins without authorization.

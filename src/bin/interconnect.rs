@@ -13,6 +13,8 @@ mod emoji_picker;
 mod images;
 #[path = "interconnect/login.rs"]
 mod login;
+#[path = "interconnect/pinned.rs"]
+mod pinned;
 #[path = "interconnect/popover.rs"]
 mod popover;
 #[path = "interconnect/presentation.rs"]
@@ -1148,6 +1150,27 @@ impl App {
                     *generation,
                 )
             });
+            self.model.pinned = self.selection.room.as_ref().and_then(|(generation, room)| {
+                if room != "studio" {
+                    return None;
+                }
+                let rows: Vec<_> = self
+                    .model
+                    .room
+                    .as_ref()?
+                    .rows
+                    .iter()
+                    .filter(|row| row.key == "direction" || row.key == "proposal")
+                    .cloned()
+                    .collect();
+                Some(interconnect::connected::Pinned {
+                    generation: *generation,
+                    total: rows.len(),
+                    rows: rows.into(),
+                    loading: false,
+                    error: None,
+                })
+            });
             self.model.thread = self.selection.thread.as_ref().map(|(generation, root)| {
                 demo.pane(
                     DraftKey {
@@ -1429,6 +1452,13 @@ impl App {
             iced::widget::rule::horizontal(1)
         ]
         .spacing(0);
+        if !thread {
+            // Keep the timeline's sibling index stable as pins arrive or disappear.
+            let pins = self
+                .pinned_view(*generation)
+                .unwrap_or_else(|| iced::widget::space().height(0).into());
+            content = content.push(iced::widget::keyed_column([(*generation, pins)]));
+        }
         if thread {
             // Reset the original's own scroll/selection state on thread changes.
             content = content.push(iced::widget::keyed_column([(

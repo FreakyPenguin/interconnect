@@ -52,7 +52,9 @@ IDs, account IDs or message contents. Array order is `[room, thread]`.
 
 - `view_starts`, `view_stops`, `active_views`, `peak_views`: presentation futures.
 - `live_timelines`: surviving registered SDK timeline objects, including those
-  retained by UI snapshots or pending sends after the view future stops.
+  retained by UI snapshots or pending sends after the view future stops. A
+  selected room with pins can add one pinned-events timeline; this does not add
+  to the `[room, thread]` view counters. Rooms without pins add no timeline.
 - `redraws`: Iced redraw events delivered to its subscription system, not GPU
   presentations or compositor frame callbacks.
 - `ui_updates`: messages processed by the UI update function.

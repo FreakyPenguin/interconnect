@@ -1022,10 +1022,23 @@ mod tests {
             add: Option<iced::Rectangle>,
             reply: Option<iced::Rectangle>,
             choice: Option<iced::Rectangle>,
+            translation: iced::Vector,
         }
         impl widget::Operation for Probe {
             fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
                 operate(self);
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                _: iced::Rectangle,
+                _: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("room-timeline")) {
+                    self.translation = translation;
+                }
             }
             fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
                 for (name, destination) in [
@@ -1034,7 +1047,7 @@ mod tests {
                     ("emoji-choice:🔥", &mut self.choice),
                 ] {
                     if id == Some(&widget::Id::new(name)) {
-                        *destination = Some(bounds);
+                        *destination = Some(bounds - self.translation);
                     }
                 }
             }
