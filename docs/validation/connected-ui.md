@@ -1657,7 +1657,7 @@ then use the normal send button/shortcut. The staged filename/size and **×**
 remove action appear above the composer. Picking another file replaces it;
 cancelling preserves it. Drafts, including attachments, stay with each
 conversation. Clipboard files/images now use the normal paste shortcut (see the
-clipboard section below); drag/drop remains pending.
+clipboard section below); local files can also be dropped onto either pane.
 
 Automated coverage includes file validation and missing-file rechecks, image
 MIME detection/dimensions, room/thread draft isolation, picker cancellation,
@@ -1815,3 +1815,85 @@ passed when run explicitly on a separate headless Sway compositor, including
 native image alpha, file URI decoding, text and empty clipboard, and multiple-file
 refusal. The private compositor was terminated after the check. The user's
 clipboard and connected client were not changed; no account messages were sent.
+
+
+## File drops — 2026-11-15
+
+Dropping a local file onto the room or thread pane stages one attachment in that
+conversation. A blue outline identifies the hovered destination; multiple-file
+hover uses a red outline and drop shows **Drop one file at a time.**, keeping the
+existing attachment/caption. Dropping onto the sidebar or a disabled/hidden pane
+has no effect. A narrow thread view targets the thread. Nothing is uploaded or
+sent until the normal send action; attachment validation and retry behavior are
+shared with the picker. Raw image data, remote URLs and virtual/non-file drag
+formats are not imported by this path.
+
+GUI tests lay out both real room/thread panes side by side and verify only the
+pane under the pointer emits a drop action. Other cases cover multiple-file
+rejection, cancellation, outside/disabled targets, narrow hidden-room refusal,
+caption preservation, single-flight import, and stale validation after
+navigation. Hover is widget-local, adds no application messages, and schedules
+no timer. Existing scroll, draft, modal and clipboard tests remain applicable.
+
+Wayland requires the documented [pinned Winit fork](../architecture/winit-file-drops.md):
+upstream 0.30.13 emits no file-drop events there. The backend accepts copy-only
+local `text/uri-list` offers, reads URI metadata through the existing event loop's
+nonblocking FD source, and forwards drag coordinates before file events. It
+bounds metadata to 256 KiB/256 paths, rejects remote/query/fragment/NUL URIs, and
+cleans up offers/FD sources on leave, completion, replacement, seat removal and
+window close. No file content/stat work, worker thread or periodic wakeup is
+added to the native event loop. macOS forwards native content-view drag
+coordinates as well; that path is not native-host validated.
+
+A private headless Sway compositor, synthetic Wayland virtual pointer and GTK
+file-drag source exercise the real native path with `--demo`. The source offers
+fixture URI lists (including spaces and `#`) without using the user's clipboard.
+The local harness, screenshots and logs are under ignored
+`artifacts/drop-2026-11-15/`. Source and demo processes are closed before the
+private compositor is terminated. This is independent of saved accounts and
+never sends Matrix messages.
+
+Remaining native acceptance:
+
+1. Drop PNG/JPEG and generic files onto both panes, remove/replace them, and
+   retain distinct captions while switching rooms/spaces and resizing.
+2. Try directories, missing and oversized files, multiple-file drags, leaving
+   the target without dropping, and drops while Settings/verification/image
+   overlays, a picker, paste import or send are active. Existing drafts must
+   survive rejected input. Check reading positions while a chip appears.
+3. Check native macOS drag coordinates, cancellation and multiple files, plus
+   different Linux file-manager URI offerings and HiDPI output scaling.
+4. With explicit authorization in a dedicated room/thread, send a dropped image
+   and generic file and verify preview, caption and decryption in a peer.
+
+Live Matrix delivery from drop, native macOS, HiDPI and idle-resource measurements
+remain untested for this change.
+
+Validation result: formatting, locked workspace Clippy with warnings denied,
+`cargo test --locked --workspace` (83 library and 136 GUI tests passed; the
+existing stress and isolated clipboard fixtures ignored), and the locked desktop
+build passed. The real Wayland fixture confirmed room PNG staging, a two-file
+rejection preserving that attachment, independent PNG staging in the thread,
+and generic-file replacement in the visible thread at 640-pixel window width.
+Hover outlines and staged filename/size were inspected in the captured demo.
+Percent-encoded spaces and `#` decoded correctly. All four native drag gestures
+completed, and the demo exited normally (0). No saved account was opened, no
+Matrix messages were sent and the user's connected client was not restarted.
+
+### Winit fork source — 2026-11-15
+
+The drop backend now comes directly from the FreakyPenguin Winit fork at pinned
+commit `752d80adf83bca01e2992f7e2ff6c7baa78444a4`, on branch
+`interconnect/wayland-file-drop-0.30.13`. Cargo fetches it over public HTTPS;
+no submodule or `vendor/winit` copy is required. The patch record moved to
+[the dependency note](../architecture/winit-file-drops.md), with fork source links.
+The fork's runtime sources were compared byte for byte with the tested local
+copy before removal. All locked package versions are unchanged, including the
+registry `dpi` dependency; only Winit's source changes for this migration.
+
+Formatting, locked workspace Clippy with warnings denied, locked workspace tests
+(83 library and 136 GUI passed; the same two fixtures ignored), and the locked
+desktop build passed against the fetched Git revision. The pushed branch's
+remote SHA was verified. Native Wayland acceptance above exercised the identical
+runtime sources before the source migration; no additional desktop/account
+session was launched for this dependency-source change.

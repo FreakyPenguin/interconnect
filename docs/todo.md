@@ -1,7 +1,6 @@
 # Rooms
 - show room membersihp
 - attachments
-- add images (drop)
 - markdown
 
 

@@ -361,6 +361,7 @@ the filename/caption to its in-memory conversation; it neither reads file conten
 nor uploads anything. Picker cancellation preserves an existing staged file.
 Clipboard files and images can be pasted with Ctrl+V (Cmd+V on macOS) into
 either composer. Native image pixels remain in memory; demo sends still use only
-the filename/caption. Drop input is not yet supported. See
+the filename/caption. Local files can also be dropped onto either conversation pane; the hovered
+pane is outlined, and the file is staged without sending. See
 [attachment validation](connected-ui.md#sending-attachments--2026-11-15) for
 coverage and native-host limits.

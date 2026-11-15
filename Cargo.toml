@@ -59,3 +59,6 @@ opt-level = 2
 # Iced 0.14 has no public switch for the editor's blink timer.
 [patch.crates-io]
 iced_widget = { path = "vendor/iced_widget" }
+
+# Wayland file drops and pane hit-testing; see docs/architecture/winit-file-drops.md.
+winit = { git = "https://github.com/FreakyPenguin/winit.git", rev = "752d80adf83bca01e2992f7e2ff6c7baa78444a4" }

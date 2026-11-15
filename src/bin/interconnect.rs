@@ -11,6 +11,8 @@ mod emoji;
 mod emoji_completion;
 #[path = "interconnect/emoji_picker.rs"]
 mod emoji_picker;
+#[path = "interconnect/file_drop.rs"]
+mod file_drop;
 #[path = "interconnect/images.rs"]
 mod images;
 #[path = "interconnect/login.rs"]
@@ -1944,7 +1946,10 @@ impl App {
                 content = content.push(text(error));
             }
         }
-        content.into()
+        let target = self
+            .draft_key(thread)
+            .and_then(|key| self.attachment_drop_target(&key, *generation));
+        file_drop::view(content.into(), target)
     }
 }
 fn jump_to_newest(thread: bool) -> Task<Message> {

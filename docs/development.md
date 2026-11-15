@@ -271,7 +271,7 @@ paths and captions remain in memory with their room/thread draft across
 navigation; selection cancellation leaves an existing attachment intact. Files
 are read when **Send** is pressed, so later edits to a selected file are included.
 Clipboard files and images can also be pasted into a focused composer (see below).
-Drag/drop is not implemented.
+Files can also be dropped onto a conversation pane (see below).
 
 `src/attachment.rs` checks metadata and prepares bounded file bytes, image
 header metadata, and an optional static PNG thumbnail on blocking workers. Image
@@ -330,3 +330,35 @@ middle-button primary-selection behavior continue to use Iced's existing input.
 
 See [clipboard validation](validation/connected-ui.md#clipboard-files-and-images--2026-11-15)
 for automated evidence and native acceptance steps.
+
+
+## File drops
+
+Drop one local file onto a room or thread pane to stage it in that pane's draft.
+The destination receives a blue outline during hover; multiple files show a red
+outline and an inline error on drop, preserving the existing attachment and
+caption. The sidebar and obscured/disabled panes are not targets. In a narrow
+window with a thread open, only the visible thread accepts the drop. Dropping
+never sends a message; the existing send action, file limit, thumbnails,
+encryption, and retry path apply. Dropped images are files, rather than browser
+URLs or raw image MIME payloads; clipboard image paste remains available.
+
+`src/bin/interconnect/file_drop.rs` keeps drag hover/claim state in Iced's widget
+tree and forwards normal widget operations/overlays. It emits one attachment
+action for the pane under the pointer. Pointer motion adds no application
+messages or timers. The attachment adapter captures the account, draft and view
+generation before asynchronous file metadata validation; obsolete completions
+are discarded. Existing drafts and scroll state keep their normal lifetimes.
+
+The pinned Winit backend did not implement Wayland file drops. The documented
+[pinned Winit fork](architecture/winit-file-drops.md) adds native URI-list
+handling to the existing Wayland event loop and keeps native drag coordinates
+current for room/thread hit testing. File content and metadata IO remain outside
+the UI thread; the backend reads only bounded URI metadata from a nonblocking
+pipe. Cargo fetches the fork directly by commit over HTTPS; no Winit submodule or
+vendor copy is needed. No dependency versions were upgraded and vendored Iced
+is unchanged.
+The macOS coordinate path is included but requires native-host acceptance.
+
+See [drop validation](validation/connected-ui.md#file-drops--2026-11-15) for
+coverage, the private Wayland fixture, and remaining acceptance steps.

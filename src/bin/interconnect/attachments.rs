@@ -22,6 +22,8 @@ pub struct Paste {
 #[derive(Clone, Debug)]
 pub enum Event {
     Pick(Target),
+    Drop(Target, std::path::PathBuf),
+    DropRejected(Target),
     Paste(Target),
     Pasted(Target, Result<clipboard::Content, clipboard::Error>),
     Picked(Target, Result<Option<Attachment>, String>),
@@ -92,6 +94,27 @@ impl App {
                     },
                     |(target, result)| Message::Attachment(Event::Picked(target, result)),
                 );
+            }
+            Event::Drop(target, path)
+                if self
+                    .attachment_drop_target(&target.key, target.generation)
+                    .as_ref()
+                    == Some(&target) =>
+            {
+                self.attachment_picker = Some(target.clone());
+                self.emoji_completion.clear();
+                return Task::perform(Attachment::from_path(path), move |result| {
+                    Message::Attachment(Event::Picked(target.clone(), result.map(Some)))
+                });
+            }
+            Event::DropRejected(target)
+                if self
+                    .attachment_drop_target(&target.key, target.generation)
+                    .as_ref()
+                    == Some(&target) =>
+            {
+                self.drafts.get_mut(&target.key).unwrap().error =
+                    Some("Drop one file at a time.".into());
             }
             Event::Paste(target)
                 if self.attachment_picker.is_none()
@@ -238,6 +261,15 @@ impl App {
                 self.attachment_target(key, generation),
             )))
         })
+    }
+
+    pub(super) fn attachment_drop_target(&self, key: &DraftKey, generation: u64) -> Option<Target> {
+        let target = self.attachment_target(key, generation);
+        (!self.composing
+            && self.attachment_picker.is_none()
+            && self.clipboard_paste.is_none()
+            && self.attachment_target_valid(&target))
+        .then_some(target)
     }
 
     fn attachment_target(&self, key: &DraftKey, generation: u64) -> Target {
@@ -655,5 +687,49 @@ mod tests {
                     .is_some_and(|paste| paste.target == expected)
             );
         }
+    }
+    #[tokio::test]
+    async fn drops_stage_only_current_targets_and_preserve_caption_and_attachment_on_rejection() {
+        let (_dir, attachment) = fixture().await;
+        let mut app = demo_app();
+        let room = target(&app, false);
+        app.drafts.get_mut(&room.key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("caption");
+        let _ = app.update(Message::Attachment(Event::Drop(
+            room.clone(),
+            "/fixture".into(),
+        )));
+        assert!(app.attachment_picker.is_some());
+        let _ = app.update(Message::Attachment(Event::Picked(
+            room.clone(),
+            Ok(Some(attachment.clone())),
+        )));
+        assert!(app.drafts[&room.key].attachment.is_some());
+        let _ = app.update(Message::Attachment(Event::DropRejected(room.clone())));
+        assert_eq!(app.drafts[&room.key].content.text().trim(), "caption");
+        assert!(app.drafts[&room.key].attachment.is_some());
+        assert_eq!(
+            app.drafts[&room.key].error.as_deref(),
+            Some("Drop one file at a time.")
+        );
+        let _ = app.update(Message::Attachment(Event::Drop(
+            room.clone(),
+            "/fixture".into(),
+        )));
+        let _ = app.update(Message::Room("threads".into()));
+        let _ = app.update(Message::Attachment(Event::Picked(
+            room.clone(),
+            Ok(Some(attachment)),
+        )));
+        assert!(app.attachment_picker.is_none());
+        let current = app.draft_key(false).unwrap();
+        assert!(app.drafts[&current].attachment.is_none());
+        let _ = app.update(Message::Attachment(Event::Drop(room, "/stale".into())));
+        assert!(app.attachment_picker.is_none());
+        app.window_width = Some(640.0);
+        let _ = app.update(Message::Thread("$kickoff".into()));
+        let key = app.draft_key(false).unwrap();
+        let generation = app.selection.room.as_ref().unwrap().0;
+        assert!(app.attachment_drop_target(&key, generation).is_none());
     }
 }
