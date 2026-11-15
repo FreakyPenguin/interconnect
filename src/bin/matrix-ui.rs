@@ -118,7 +118,7 @@ impl App {
 
         let navigation = matches!(
             &message,
-            Message::Space(_) | Message::Room(_) | Message::Thread(_) | Message::CloseThread
+            Message::Room(_) | Message::Thread(_) | Message::CloseThread
         );
         let scroll_target = match &message {
             Message::Room(_) => Some("room-timeline"),
@@ -129,16 +129,6 @@ impl App {
             Message::Space(space) if !self.closing && !self.stopped => {
                 self.shell.space = space;
                 self.shell.query.clear();
-                let rooms = self.visible_rooms();
-                if !self
-                    .selection
-                    .room
-                    .as_ref()
-                    .is_some_and(|(_, id)| rooms.contains(id))
-                {
-                    self.selection.room = None;
-                    self.selection.thread = None;
-                }
             }
             Message::Section(section) => {
                 let section = self.section_key(&section);
@@ -300,14 +290,12 @@ impl App {
                     {
                         self.shell.space = Scope::All;
                     }
-                    let members =
-                        chatclient::navigation::members(&self.shell.space, &self.model.spaces);
-                    if self.selection.room.as_ref().is_some_and(|(_, id)| {
-                        !self.model.rooms.iter().any(|r| {
-                            &r.id == id
-                                && chatclient::navigation::includes(&self.shell.space, &members, r)
-                        })
-                    }) {
+                    if self
+                        .selection
+                        .room
+                        .as_ref()
+                        .is_some_and(|(_, id)| !self.model.rooms.iter().any(|r| &r.id == id))
+                    {
                         self.selection.room = None;
                         self.selection.thread = None;
                     }
@@ -421,16 +409,10 @@ impl App {
             return None;
         }
         self.shell.space = saved.scope.clone();
-        if let Some(id) = &saved.room {
-            let members = chatclient::navigation::members(&saved.scope, &self.model.spaces);
-            if !self
-                .model
-                .rooms
-                .iter()
-                .any(|r| &r.id == id && chatclient::navigation::includes(&saved.scope, &members, r))
-            {
-                return None;
-            }
+        if let Some(id) = &saved.room
+            && !self.model.rooms.iter().any(|r| &r.id == id)
+        {
+            return None;
         }
         self.pending_navigation.take().and_then(|saved| saved.room)
     }
@@ -946,9 +928,10 @@ mod tests {
         assert!(app.drafts[&thread_key].content.text().trim().is_empty());
         assert_eq!(app.drafts[&room_key].content.text().trim(), "room draft");
         let _ = app.update(Message::Space(Scope::Space("home-space".into())));
+        assert!(app.selection.thread.is_some());
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "studio");
+        let _ = app.update(Message::Room("home".into()));
         assert!(app.selection.thread.is_none());
-        assert!(app.selection.room.is_none());
-        assert!(app.model.room.is_none());
         let _ = app.update(Message::Space(Scope::Space("studio-space".into())));
         let _ = app.update(Message::Room("studio".into()));
         let _ = app.update(Message::Thread("proposal".into()));
@@ -972,7 +955,7 @@ mod tests {
         let mut app = App::new();
         let prefs = Preferences {
             scope: Scope::Space("home-space".into()),
-            room: Some("alex".into()),
+            room: Some("studio".into()),
             collapsed: vec!["saved-section".into()],
             ..Default::default()
         };
@@ -991,7 +974,7 @@ mod tests {
         model.spaces = demo::spaces().into();
         let _ = app.update(Message::State(Box::new(model)));
         assert_eq!(app.shell.space, prefs.scope);
-        assert_eq!(app.selection.room.as_ref().unwrap().1, "alex");
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "studio");
         assert!(app.selection.thread.is_none());
         assert!(app.shell.collapsed.contains("saved-section"));
         assert!(app.pending_navigation.is_none());
@@ -1050,28 +1033,33 @@ mod tests {
     }
 
     #[test]
-    fn space_clicks_filter_without_opening_rooms() {
+    fn space_clicks_preserve_conversation_through_metadata_updates() {
         let mut app = demo_app();
+        app.demo = None;
+        app.preferences_ready = true;
         let _ = app.update(Message::Thread("proposal".into()));
-        let selected = app.selection.clone();
-        let _ = app.update(Message::Space(Scope::All));
-        assert_eq!(
-            app.selection, selected,
-            "keep a conversation included in the new scope"
-        );
+        let room = app.selection.room.clone();
+        let thread = app.selection.thread.clone();
+        let key = app.draft_key(true).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            text_editor::Content::with_text("unfinished reply");
+        for scope in [Scope::Space("home-space".into()), Scope::Direct, Scope::All] {
+            let _ = app.update(Message::Space(scope.clone()));
+            let _ = app.update(Message::State(Box::new(app.model.clone())));
+            assert_eq!(app.shell.space, scope);
+            assert_eq!(app.selection.room, room);
+            assert_eq!(app.selection.thread, thread);
+            assert_eq!(app.drafts[&key].content.text().trim(), "unfinished reply");
+            assert_eq!(
+                app.selection.preferences.as_ref().unwrap().room.as_deref(),
+                Some("studio")
+            );
+        }
         let _ = app.update(Message::Space(Scope::Space("home-space".into())));
-        assert!(app.selection.room.is_none());
-        assert!(app.selection.thread.is_none());
-        assert!(!app.visible_rooms().is_empty());
-        let _ = app.update(Message::Thread("stale-thread".into()));
-        assert!(app.selection.thread.is_none());
-        let _ = app.update(Message::Space(Scope::Space("studio-space".into())));
-        assert!(
-            app.selection.room.is_none(),
-            "returning to a space must not open a room"
-        );
+        assert!(!app.visible_rooms().contains(&"studio".into()));
         let _ = app.update(Message::AdjacentRoom(false));
-        assert_eq!(app.selection.room.as_ref().unwrap().1, "studio");
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "home");
+        assert!(app.selection.thread.is_none());
     }
 
     #[test]

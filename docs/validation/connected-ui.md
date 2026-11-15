@@ -27,8 +27,8 @@ The visual shell now projects joined spaces and rooms from SDK metadata. The
 rail includes All rooms, Direct messages, and every joined space. A space shows
 its joined child spaces plus joined conversation rooms reachable through them.
 Clicking a space or Direct messages filters navigation without opening a room.
-The current room/thread stays open if included in the new context; otherwise the
-conversation clears until a room is explicitly selected.
+The current room, thread, and drafts stay open even when outside the selected
+space. Only an explicit room choice changes the conversation.
 Shared rooms can appear in multiple spaces; traversal deduplicates rooms and
 handles cycles. Removed/redacted child links are excluded. Unjoined spaces and
 rooms are not discovered or joined, so paths through unjoined spaces are not
@@ -47,8 +47,8 @@ is no polling timer and navigation does not open timelines. Names, membership,
 favorites, direct status, unread state, and child links update independently of
 room-list service lifecycle transitions. Store errors preserve the last good
 snapshot and show a navigation error until a later update succeeds. UI selection
-uses stable room IDs and clears an inaccessible conversation/thread on membership
-or space-link changes. Collapsed sections are scoped to each navigation context.
+uses stable room IDs and clears a conversation/thread when the room is no longer
+joined. Space-link or sidebar-filter changes do not close the conversation. Collapsed sections are scoped to each navigation context.
 
 Local SDK/mock-server tests cover nested and shared spaces, child-link removal,
 room rename, favorite/direct/unread account data, leaving a room, and metadata
@@ -72,7 +72,8 @@ There is no debounce/polling timer. A failure is shown in the navigation sidebar
 future navigation changes retry the write. A malformed/unknown-version file falls
 back to the default view and is replaced only after preferences actually change.
 
-Restoration waits for the saved scope and room to exist in SDK metadata. Until
+Restoration waits for the saved scope and room to exist in SDK metadata; the
+room does not have to belong to the saved sidebar scope. Until
 then, the ordinary navigation remains usable; any explicit space/room/section
 choice cancels pending restoration. Unavailable saved selections therefore cannot
 force a room open or overwrite a user's new choice. Threads, drafts, searches,
