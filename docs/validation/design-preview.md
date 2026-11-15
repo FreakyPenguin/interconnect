@@ -34,7 +34,8 @@ remain separate across these transitions and navigation.
 The room list uses compact spacing: single-line room rows are about 31 pixels
 apart (previously about 44), with the same 13-pixel room labels. Section headings,
 child-space buttons, and search padding are tighter too. The sidebar heading has
-no subtitle, leaving more height for rooms. Long room names can still wrap.
+no subtitle or workspace footer label, leaving more height for rooms. Long room
+names can still wrap.
 
 Room and thread composers share a compact 80-pixel frame, with a small send
 arrow at the bottom right. The bottom action row stays clear of editable text
@@ -91,6 +92,7 @@ Shortcuts:
 6. Check the compact room list in All rooms and Studio at both the default window
    size and the 640×480 minimum. Verify selected rows and unread badges remain
    legible, the long room name wraps, and section collapse/search still work.
+   Confirm there is no workspace label below the room list.
    This density-specific desktop check remains pending.
 7. In both room and thread composers, type a multiline draft and scroll within
    it. Text, caret, and selection should stay above the send arrow. Check the

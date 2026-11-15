@@ -524,13 +524,6 @@ impl App {
                 .direction(scrollbar())
                 .style(scroll_style)
                 .height(Length::Fill),
-                text(if self.demo.is_some() {
-                    "SAMPLE WORKSPACE"
-                } else {
-                    "MATRIX"
-                })
-                .size(9)
-                .color(MUTED),
             ]
             .spacing(10),
         )
