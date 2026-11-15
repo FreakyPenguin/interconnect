@@ -363,7 +363,7 @@ The macOS coordinate path is included but requires native-host acceptance.
 See [drop validation](validation/connected-ui.md#file-drops--2026-11-15) for
 coverage, the private Wayland fixture, and remaining acceptance steps.
 
-## People search and invitations
+## People search and direct chats
 
 `src/people.rs` exposes a room-independent `Directory`, `Person`, `SearchResults`,
 and `parse_user_id`. `Directory::new(client)` is constructed inside the client's
@@ -371,7 +371,22 @@ Tokio runtime; its SDK client has runtime-safe destruction. Existing room
 composers expose `people_directory()` using their originating runtime handle.
 The wrapper calls the SDK's authenticated homeserver user-directory endpoint,
 keeps ranking, bounds results, and applies a 15-second search deadline. It is
-usable by future direct-chat creation without depending on invitation logic.
+used by invitations and the Ctrl+N direct-chat picker. The authenticated model
+exposes it before a room is selected, so accounts with no joined rooms can start
+a conversation. Its client remains bound to its originating runtime.
+
+`src/bin/interconnect/new_chat.rs` hosts a quick-open picker: 300 ms debounced
+homeserver search after two characters, Up/Down, Enter/click to open, and Escape
+to cancel. Full Matrix IDs are accepted without directory results.
+`Directory::open_direct` reuses a joined one-to-one DM or calls the SDK
+`create_dm` helper (private, invited peer, encryption enabled). A serialized
+account-local cache also reuses rooms before their `m.direct` sync arrives. An
+event notifies navigation to refresh after creation; older snapshots cannot
+remove the newly opened room while that refresh arrives. Searches are abortable
+and namespaced by picker generation. Explicit creation continues after dismissal
+and counts toward shutdown; late completions cannot navigate a new picker or
+account. Demo creates only empty, in-memory chats. See
+[direct-chat validation](validation/connected-ui.md#new-direct-chat-picker--2026-11-15).
 
 `src/bin/interconnect/people_picker.rs` provides a reusable picker `State`,
 `Event`, and `view`. Its host supplies a directory handle, avatar cache, and demo

@@ -2169,3 +2169,75 @@ Manual acceptance:
 4. Verify Ctrl+P cannot obscure Settings, verification, image/emoji pickers,
    invitations, or the topic editor. Confirm no typing notification or message
    is sent by editing the quick-open search.
+
+## New direct chat picker — 2026-11-15
+
+**Ctrl+N** (**Cmd+N** on macOS) opens a quick-open people picker with focus in
+search. Type at least two characters to search the authenticated homeserver's
+user directory after a 300 ms debounce. Results include names, Matrix IDs, and
+available avatars. Up/Down highlights a result, Enter opens it, and a click opens
+it directly. A full Matrix ID can be submitted without a directory result.
+No confirmation dialog or separate creation button is used. Escape or a backdrop
+click dismisses the picker; Tab keeps focus in search. Other dialogs and pickers
+have priority, and IME composition suppresses global picker shortcuts.
+
+Selection reuses a joined one-to-one direct room when available, including a
+room whose peer has not accepted its invitation. Group DMs and left rooms are
+excluded. Otherwise, the SDK creates a private encrypted DM and invites the
+selected person. Searching and highlighting never create a room or send a
+message. Own-user IDs are rejected. The picker works without an open conversation
+or joined rooms. Directory failures expose Retry; creation failures remain in
+the picker. An uncertain creation error advises checking the room list before
+retrying. Directory result limits require refining the search.
+
+The existing room/thread, drafts, scroll positions, sidebar space, query and
+collapsed sections survive cancellation. Opening the chosen chat uses ordinary
+room navigation and focuses its composer. Selecting the already open room does
+not reset its generation or close its thread. The sidebar filter stays unchanged;
+use the DM scope or Ctrl+P to find a new chat outside the selected space.
+
+Searches cancel on edit/dismissal, and picker generations reject obsolete
+results. An explicitly submitted creation finishes against its captured account
+after dismissal; shutdown waits for it. Completion after dismissal or account
+change cannot switch the current conversation. Only one creation runs at once.
+Created rooms are cached for immediate reuse before sync; navigation refreshes
+on an event, and earlier queued snapshots cannot clear the new selection.
+The caret is static and there are no polling or animation timers. File drops do
+not target an obscured conversation.
+
+Automated coverage includes shortcut modifiers, keyboard/click selection,
+empty-account/raw-ID flow, self/invalid-ID rejection, generation isolation,
+late creation and account changes, shutdown waiting, error recovery, older
+navigation snapshots, draft/scroll preservation, picker priority, minimum-size
+layout, backdrop capture, single Enter submission, and idle caret behavior.
+Mocked homeserver tests assert the encrypted private-room invitation request,
+`m.direct` update, reuse before sync, existing joined DM reuse with an invited
+peer, group exclusion, and server refusal. Existing people-picker tests cover
+search bounds, debounce cancellation and stale results.
+
+Validation passed: formatting, locked workspace Clippy with warnings denied,
+locked workspace tests (92 library tests and 161 UI tests passed; two existing
+opt-in library tests ignored), and the locked desktop build.
+
+An isolated headless Wayland/tiny-skia demo exercised Ctrl+N, typed search,
+Down, Enter, Escape, and layout at 1000×720 and 640×480. Captures and logs stay
+ignored under `artifacts/new-chat-2026-11-15/`. The demo uses local people fixtures,
+creates only empty in-memory conversations, and leaves the explicit config path
+absent. No saved account, connected client, or real message was used.
+Native macOS, real-account invitation/encryption acceptance, and measured idle
+resources remain pending.
+
+Manual acceptance:
+
+1. Run `cargo run --locked --bin interconnect -- --demo`. Press Ctrl+N from room
+   and thread composers. Search `Taylor`; use Enter or a click. Check the empty
+   chat opens, then repeat and check it reuses the same conversation.
+2. Create separate drafts and reading positions in a room and thread. Open the
+   picker, type, then cancel using Escape and a backdrop click. Check the
+   conversation, drafts and scroll positions stay intact. Repeat at 640×480.
+3. In an independently authorized connected session, search a name and remote
+   full Matrix ID. Check errors/Retry, self-ID rejection, Up/Down wrap and scroll,
+   and fast query replacement. Confirm a joined existing DM is reused.
+4. Explicitly select a person without a DM. Check the new room and invitation
+   from a second client, including encryption. Check dismissal during creation
+   does not unexpectedly navigate, and close waits for submitted work.

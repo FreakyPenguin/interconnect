@@ -16,6 +16,7 @@ pub struct State {
     pub query: String,
     pub selected: Option<Person>,
     pub results: Vec<Person>,
+    pub highlighted: usize,
     loading: bool,
     error: Option<String>,
     limited: bool,
@@ -25,6 +26,7 @@ pub struct State {
 #[derive(Clone, Debug)]
 pub enum Event {
     Edit(String),
+    Move(bool),
     Select(String),
     Retry,
     Submit,
@@ -38,6 +40,7 @@ impl State {
     }
     pub fn clear(&mut self) {
         self.cancel_search();
+        self.highlighted = 0;
         self.query.clear();
         self.selected = None;
         self.results.clear();
@@ -52,6 +55,24 @@ impl State {
         demo: bool,
     ) -> Task<Event> {
         match event {
+            Event::Move(previous) => {
+                let count = self.results.len();
+                if count > 0 {
+                    let index = self.highlighted.min(count - 1);
+                    self.highlighted = if previous {
+                        (index + count - 1) % count
+                    } else {
+                        (index + 1) % count
+                    };
+                    return iced::widget::operation::snap_to(
+                        "people-search-results",
+                        iced::widget::operation::RelativeOffset {
+                            x: 0.0,
+                            y: self.highlighted as f32 / count.saturating_sub(1).max(1) as f32,
+                        },
+                    );
+                }
+            }
             Event::Select(id) => {
                 if let Some(person) = self.results.iter().find(|p| p.user_id == id).cloned() {
                     self.clear();
@@ -109,6 +130,17 @@ impl State {
         task
     }
     pub fn view<'a>(&'a self, images: &'a Images, enabled: bool) -> Element<'a, Event> {
+        self.view_inner(images, enabled, false)
+    }
+    pub fn quick_view<'a>(&'a self, images: &'a Images, enabled: bool) -> Element<'a, Event> {
+        self.view_inner(images, enabled, true)
+    }
+    fn view_inner<'a>(
+        &'a self,
+        images: &'a Images,
+        enabled: bool,
+        quick: bool,
+    ) -> Element<'a, Event> {
         let mut input = text_input("Name or @name:server", &self.query)
             .id(SEARCH_ID)
             .cursor_blinking(false)
@@ -143,7 +175,7 @@ impl State {
             );
         }
         let mut results = column![].spacing(2);
-        for person in &self.results {
+        for (index, person) in self.results.iter().enumerate() {
             let image = person.avatar_url.as_ref().and_then(|uri| images.get(uri));
             let label = column![
                 text(&person.name).size(13).wrapping(text::Wrapping::None),
@@ -161,7 +193,13 @@ impl State {
             )
             .width(Length::Fill)
             .padding(6)
-            .style(shell::quiet_button);
+            .style(move |theme, status| {
+                let mut style = shell::quiet_button(theme, status);
+                if quick && index == self.highlighted {
+                    style.background = Some(iced::Color::from_rgb8(226, 234, 247).into());
+                }
+                style
+            });
             if enabled {
                 select = select.on_press(Event::Select(person.user_id.clone()));
             }
@@ -175,7 +213,7 @@ impl State {
                         .direction(shell::scrollbar())
                         .style(shell::scroll_style),
                 )
-                .max_height(160),
+                .max_height(if quick { 240 } else { 160 }),
             );
         }
         if self.limited {

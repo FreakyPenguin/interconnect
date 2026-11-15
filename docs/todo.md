@@ -4,7 +4,7 @@
 
 # Management tasks
 - logout / account switching UI
-- room/chat creation?
+- room creation?
 - unread clearing, mark unread
 - sections
 

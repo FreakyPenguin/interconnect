@@ -21,6 +21,8 @@ mod invite;
 mod login;
 #[path = "interconnect/members.rs"]
 mod members;
+#[path = "interconnect/new_chat.rs"]
+mod new_chat;
 #[path = "interconnect/people_picker.rs"]
 mod people_picker;
 #[path = "interconnect/pin_action.rs"]
@@ -126,10 +128,14 @@ struct App {
     pinning: HashSet<reaction_picker::Target>,
     pin_error: Option<(reaction_picker::Target, String)>,
     room_picker: Option<room_picker::State>,
+    new_chat: Option<new_chat::State>,
+    direct_request: Option<u64>,
+    pending_direct_room: Option<interconnect::navigation::RoomEntry>,
 }
 #[derive(Clone, Debug)]
 enum Message {
     QuickRoom(room_picker::Event),
+    NewChat(new_chat::Event),
     Pin(pin_action::Event),
     Topic(topic::Event),
     Members(members::Event),
@@ -247,6 +253,9 @@ impl App {
             pinning: HashSet::new(),
             pin_error: None,
             room_picker: None,
+            new_chat: None,
+            direct_request: None,
+            pending_direct_room: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.model.authentication = None;
@@ -267,10 +276,13 @@ impl App {
             self.publish_notification_context();
             return task;
         }
+        if self.new_chat.is_some() && matches!(message, Message::Escape) {
+            return self.update(Message::NewChat(new_chat::Event::Close));
+        }
         if self.room_picker.is_some() && matches!(message, Message::Escape) {
             return self.update(Message::QuickRoom(room_picker::Event::Close));
         }
-        if self.room_picker.is_some()
+        if (self.room_picker.is_some() || self.new_chat.is_some())
             && matches!(
                 message,
                 Message::Settings(settings::Event::Open)
@@ -354,7 +366,8 @@ impl App {
         {
             return self.update(dismiss);
         }
-        if self.room_picker.is_some()
+        if self.new_chat.is_some()
+            || self.room_picker.is_some()
             || self.settings.draft.is_some()
             || self.verification.open
             || self.image_view.is_some()
@@ -435,8 +448,10 @@ impl App {
             navigation || matches!(&message, Message::State(_) | Message::DemoThreadReply);
         let opening_image = matches!(&message, Message::Image(images::Event::Open { .. }));
         let closing_image = matches!(&message, Message::Image(images::Event::Close));
-        let refresh_media = matches!(&message, Message::Members(_) | Message::Invite(_))
-            || navigation
+        let refresh_media = matches!(
+            &message,
+            Message::Members(_) | Message::Invite(_) | Message::NewChat(_)
+        ) || navigation
             || matches!(
                 &message,
                 Message::State(_)
@@ -449,6 +464,7 @@ impl App {
             );
         let mut action_task = Task::none();
         match message {
+            Message::NewChat(event) => action_task = self.new_chat_event(event),
             Message::Pin(event) => action_task = self.pin_event(event),
             Message::Topic(event) => action_task = self.topic_event(event),
             Message::Members(event) => action_task = self.members_event(event),
@@ -821,7 +837,20 @@ impl App {
                 sender.send_replace(self.selection.clone());
                 self.control = Some(sender);
             }
-            Message::State(state) => {
+            Message::State(mut state) => {
+                if self.demo.is_none()
+                    && (state.authentication.is_some() || state.account_id != self.account_id)
+                {
+                    self.new_chat = None;
+                    self.pending_direct_room = None;
+                }
+                if let Some(room) = &self.pending_direct_room {
+                    if state.rooms.iter().any(|r| r.id == room.id) {
+                        self.pending_direct_room = None;
+                    } else {
+                        std::sync::Arc::make_mut(&mut state.rooms).push(room.clone());
+                    }
+                }
                 if let Some(account_id) = &state.account_id {
                     if self
                         .account_id
@@ -1036,7 +1065,11 @@ impl App {
             self.selection.images.push(view.original.clone());
             return;
         }
-        for uri in self.invite_avatars() {
+        for uri in self
+            .invite_avatars()
+            .into_iter()
+            .chain(self.new_chat_avatars())
+        {
             if !self.selection.avatars.contains(&uri)
                 && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED
             {
@@ -1220,7 +1253,9 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.room_picker.is_some() {
+            if self.new_chat.is_some() && !self.composing {
+                iced::event::listen_with(new_chat::shortcut)
+            } else if self.room_picker.is_some() {
                 iced::event::listen_with(room_picker::shortcut)
             } else if self.verification.open {
                 iced::event::listen_with(|event, _, _| match event {
@@ -1297,6 +1332,9 @@ impl App {
             return self.login_view(authentication);
         }
         let mut layers = iced::widget::stack![self.shell_view()];
+        if self.new_chat.is_some() {
+            layers = layers.push(self.new_chat_view());
+        }
         if self.room_picker.is_some() {
             layers = layers.push(self.quick_room_view());
         }
@@ -2145,6 +2183,9 @@ fn shell_shortcut(
     modifiers: iced::keyboard::Modifiers,
 ) -> Option<Message> {
     use iced::keyboard::{Key, key::Named};
+    if new_chat::is_shortcut(key, modifiers) {
+        return Some(Message::NewChat(new_chat::Event::Open));
+    }
     if room_picker::is_shortcut(key, modifiers) {
         return Some(Message::QuickRoom(room_picker::Event::Open));
     }

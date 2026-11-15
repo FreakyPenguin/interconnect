@@ -533,6 +533,7 @@ impl std::error::Error for SignInRequired {}
 
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub people_directory: Option<crate::people::Directory>,
     pub typing: Option<Typing>,
     pub authentication: Option<Authentication>,
     pub account_id: Option<String>,
@@ -558,6 +559,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            people_directory: None,
             typing: None,
             authentication: Some(Authentication::Checking),
             account_id: None,
@@ -647,6 +649,7 @@ pub async fn run(
         let client = desktop.client.as_ref().expect("authenticated");
         state.send_modify(|s| {
             s.authentication = None;
+            s.people_directory = Some(crate::people::Directory::new(client.clone()));
             s.account_id = client.user_id().map(ToString::to_string);
             s.status = "Loading conversations…".into();
         });
@@ -978,6 +981,12 @@ async fn account_profile_updates(client: &Client, state: &watch::Sender<Model>) 
 }
 
 async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
+    // Explicit creation also refreshes navigation before its first sync arrives.
+    let mut refresh = state
+        .borrow()
+        .people_directory
+        .as_ref()
+        .map(|d| d.navigation_changes());
     // Subscribe before reading the cache so startup changes cannot be missed.
     let mut rooms = client.subscribe_to_all_room_updates();
     let mut metadata = client.room_info_notable_update_receiver();
@@ -1007,6 +1016,7 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
             }
         }
         tokio::select! {
+            _ = async { match &mut refresh { Some(receiver) => { if matches!(receiver.recv().await, Err(tokio::sync::broadcast::error::RecvError::Closed)) { pending::<()>().await; } }, None => pending::<()>().await } } => {},
             event = rooms.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
             event = metadata.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
         }
