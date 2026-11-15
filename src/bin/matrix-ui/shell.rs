@@ -143,8 +143,11 @@ pub fn message_actions<'a>(
     if reply.is_none() && reaction.is_none() && popup.is_none() {
         return body.into();
     }
+    let (content, dismiss) = popup.map_or((None, Message::Escape), |(content, dismiss)| {
+        (Some(content), dismiss)
+    });
     let mut controls = row![].spacing(2);
-    if reaction.is_some() || popup.is_some() {
+    if reaction.is_some() || content.is_some() {
         let add = container(
             button(container(text("☺+").size(16)).center_x(28).center_y(20))
                 .padding(0)
@@ -152,11 +155,8 @@ pub fn message_actions<'a>(
                 .on_press_maybe(reaction),
         )
         .id("add-reaction");
-        let (content, dismiss) = popup.map_or((None, Message::Escape), |(content, dismiss)| {
-            (Some(content), dismiss)
-        });
         controls = controls.push(widget::tooltip(
-            super::popover::view(add, content, dismiss),
+            add,
             container(text("Add reaction").size(12))
                 .padding(8)
                 .style(container::rounded_box),
@@ -192,11 +192,17 @@ pub fn message_actions<'a>(
         ..surface(Color::WHITE)
     });
     // Hover only paints the panel; the message keeps its full layout width.
-    widget::hover(
+    let message = widget::hover(
         body,
         container(actions)
             .align_right(Length::Fill)
             .align_top(Length::Fill),
+    );
+    super::popover::view(
+        message,
+        Some(widget::Id::new("add-reaction")),
+        content,
+        dismiss,
     )
 }
 fn search_style(theme: &Theme, status: text_input::Status) -> text_input::Style {

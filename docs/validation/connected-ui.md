@@ -1272,3 +1272,23 @@ chip, and intact drafts and reading position. In a separately authorized
 connected run, add/remove a shared reaction and verify another sender remains;
 check a denied/offline request and retry. No real messages or reactions were
 sent and no connected client was restarted during this change.
+
+## Immediate picker opening — 2026-11-15
+
+The thread original's timestamp tooltip overlapped the Add reaction button.
+Iced's hover wrapper preferred that body tooltip over the picker in its action
+panel, hiding the picker until the pointer left the timestamp. The popup host
+now surrounds the whole hover panel and gives the picker priority while it is
+open. An inner-container anchor keeps it positioned beside the action button,
+including scroll translation, without changing message layout or adding timers.
+
+A regression on the actual thread pane hovers/redraws the pinned original,
+clicks Add reaction, then checks that picker choices exist immediately with no
+mouse movement or synthetic leave event. It failed before the fix and passes
+afterward. A separate widget check verifies the inner anchor and scroll offset.
+Native desktop confirmation remains pending. No connected client was restarted
+or real Matrix events sent.
+
+Validation passed: formatting, locked workspace Clippy with warnings denied,
+all 88 GUI tests, and the locked GUI build. Backend behavior was unchanged;
+the library suite and opt-in lifecycle stress test were not repeated.

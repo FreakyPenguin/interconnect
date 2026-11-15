@@ -6,18 +6,21 @@ use iced::advanced::{
 use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector};
 
 pub fn view<'a, Message: Clone + 'a>(
-    anchor: impl Into<Element<'a, Message>>,
+    base: impl Into<Element<'a, Message>>,
+    anchor_id: Option<widget::Id>,
     content: Option<Element<'a, Message>>,
     dismiss: Message,
 ) -> Element<'a, Message> {
     Element::new(Popover {
-        anchor: anchor.into(),
+        base: base.into(),
+        anchor_id,
         content,
         dismiss,
     })
 }
 struct Popover<'a, Message> {
-    anchor: Element<'a, Message>,
+    base: Element<'a, Message>,
+    anchor_id: Option<widget::Id>,
     content: Option<Element<'a, Message>>,
     dismiss: Message,
 }
@@ -28,12 +31,12 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
     }
     fn children(&self) -> Vec<Tree> {
         vec![
-            Tree::new(&self.anchor),
+            Tree::new(&self.base),
             self.content.as_ref().map_or_else(Tree::empty, Tree::new),
         ]
     }
     fn diff(&self, tree: &mut Tree) {
-        tree.children[0].diff(self.anchor.as_widget());
+        tree.children[0].diff(self.base.as_widget());
         if let Some(content) = &self.content {
             tree.children[1].diff(content.as_widget());
         } else {
@@ -41,7 +44,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         }
     }
     fn size(&self) -> Size<Length> {
-        self.anchor.as_widget().size()
+        self.base.as_widget().size()
     }
     fn layout(
         &mut self,
@@ -49,7 +52,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        self.anchor
+        self.base
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
@@ -60,7 +63,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        self.anchor
+        self.base
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
@@ -75,7 +78,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        self.anchor.as_widget_mut().update(
+        self.base.as_widget_mut().update(
             &mut tree.children[0],
             event,
             layout,
@@ -96,7 +99,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.anchor.as_widget().draw(
+        self.base.as_widget().draw(
             &tree.children[0],
             renderer,
             theme,
@@ -114,7 +117,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.anchor.as_widget().mouse_interaction(
+        self.base.as_widget().mouse_interaction(
             &tree.children[0],
             layout,
             cursor,
@@ -131,14 +134,42 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
         if let Some(content) = &mut self.content {
+            // Host outside hover/tooltip wrappers so their overlays cannot
+            // mask the popup. Only measure its inner anchor while open.
+            struct FindAnchor<'a> {
+                id: &'a widget::Id,
+                bounds: Option<Rectangle>,
+            }
+            impl widget::Operation for FindAnchor<'_> {
+                fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                    operate(self);
+                }
+                fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+                    if id == Some(self.id) {
+                        self.bounds = Some(bounds);
+                    }
+                }
+            }
+            let bounds = if let Some(id) = &self.anchor_id {
+                let mut find = FindAnchor { id, bounds: None };
+                self.base.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    layout,
+                    renderer,
+                    &mut find,
+                );
+                find.bounds.unwrap_or(layout.bounds())
+            } else {
+                layout.bounds()
+            };
             Some(overlay::Element::new(Box::new(Popup {
                 content,
                 tree: &mut tree.children[1],
-                anchor: layout.bounds() + translation,
+                anchor: bounds + translation,
                 dismiss: self.dismiss.clone(),
             })))
         } else {
-            self.anchor.as_widget_mut().overlay(
+            self.base.as_widget_mut().overlay(
                 &mut tree.children[0],
                 layout,
                 renderer,
@@ -294,13 +325,56 @@ mod tests {
     use iced::widget::{button, container, space};
 
     #[test]
+    fn popup_uses_inner_anchor_and_scroll_translation_instead_of_the_message_bounds() {
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let base = iced::widget::column![
+            space().height(100),
+            container(button("+").on_press(false))
+                .width(28)
+                .height(20)
+                .id("inner-anchor"),
+            space().height(80),
+        ]
+        .width(300);
+        let content = container(space()).width(80).height(40).into();
+        let mut popup = view(
+            base,
+            Some(widget::Id::new("inner-anchor")),
+            Some(content),
+            true,
+        );
+        let mut tree = Tree::new(&popup);
+        let size = Size::new(640.0, 480.0);
+        let node = popup.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, size),
+        );
+        let mut overlay = popup
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &Rectangle::with_size(size),
+                Vector::new(100.0, 30.0),
+            )
+            .unwrap();
+        let node = overlay.as_overlay_mut().layout(&renderer, size);
+        assert_eq!(
+            node.children()[0].bounds(),
+            Rectangle::new(iced::Point::new(48.0, 154.0), Size::new(80.0, 40.0))
+        );
+    }
+
+    #[test]
     fn popup_escapes_pane_clamps_to_window_and_captures_outside_clicks_without_relayout() {
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         for size in [Size::new(640.0, 480.0), Size::new(280.0, 200.0)] {
             for open in [false, true] {
                 let content =
                     open.then(|| Element::from(container(space()).width(320).height(400)));
-                let mut popup = view(button("add").on_press(false), content, true);
+                let mut popup = view(button("add").on_press(false), None, content, true);
                 let mut tree = Tree::empty();
                 tree.diff(popup.as_widget());
                 let node = popup.as_widget_mut().layout(

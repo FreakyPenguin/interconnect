@@ -937,6 +937,96 @@ mod tests {
     }
 
     #[test]
+    fn picker_opens_over_thread_original_without_moving_off_the_action_button() {
+        use iced::advanced::{
+            Layout, Shell, layout, mouse,
+            widget::{self, Tree},
+        };
+        #[derive(Default)]
+        struct Probe {
+            add: Option<iced::Rectangle>,
+            choice: bool,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("add-reaction")) && self.add.is_none() {
+                    self.add = Some(bounds);
+                }
+                if id == Some(&widget::Id::new("emoji-choice:🔥")) {
+                    self.choice = true;
+                }
+            }
+        }
+        let mut app = crate::tests::demo_app();
+        let _ = app.update(Message::Thread("review".into()));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::empty();
+        let size = iced::Size::new(360.0, 640.0);
+        let mut view = app.pane(true);
+        tree.diff(view.as_widget());
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        let mut probe = Probe::default();
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+        // Hover before clicking: this also opens the timestamp tooltip beneath
+        // the pinned original's action panel at the same coordinates.
+        let position = probe.add.expect("pinned original action").center();
+        let cursor = mouse::Cursor::Available(position);
+        let mut messages = Vec::new();
+        for event in [
+            iced::Event::Mouse(mouse::Event::CursorMoved { position }),
+            iced::Event::Window(iced::window::Event::RedrawRequested(
+                iced::time::Instant::now(),
+            )),
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ] {
+            view.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                cursor,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &iced::Rectangle::with_size(size),
+            );
+        }
+        drop(view);
+        let open = messages.into_iter().find(|message| matches!(message, Message::Reaction(Event::Open(target)) if target.event == "review")).expect("click opens original's picker");
+        let _ = app.update(open);
+        let mut view = app.pane(true);
+        tree.diff(view.as_widget());
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        // No cursor motion or synthetic mouse-leave between click and overlay.
+        let mut overlay = view
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &iced::Rectangle::with_size(size),
+                iced::Vector::ZERO,
+            )
+            .expect("picker overlay");
+        let overlay = overlay.as_overlay_mut();
+        let node = overlay.layout(&renderer, size);
+        let mut probe = Probe::default();
+        overlay.operate(Layout::new(&node), &renderer, &mut probe);
+        assert!(
+            probe.choice,
+            "picker choices must be visible while the pointer stays on Add reaction"
+        );
+    }
+
+    #[test]
     fn hover_button_opens_an_interactive_popup_and_selects_into_its_message() {
         use iced::advanced::{
             Layout, Shell, layout, mouse,

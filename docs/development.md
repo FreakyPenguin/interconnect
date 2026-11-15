@@ -56,7 +56,11 @@ existing asynchronous media path. This change does not discover, upload, or
 render custom Matrix emoji.
 
 `popover.rs` hosts arbitrary generic content beside an anchor, clamps it to the
-window, and captures backdrop input. `reaction_picker.rs` alone owns Matrix
+window, and captures backdrop input. The host surrounds the complete message's
+hover/tooltip wrappers, while an optional inner container ID anchors the popup
+to its action button. This gives an open picker priority over underlying
+timestamp and action tooltips; anchor measurement runs only while open.
+`reaction_picker.rs` alone owns Matrix
 targets, pending sends, errors, and demo behavior. Reuse the picker directly in
 another surface, or pair it with the same popup host. Search uses a static caret;
 emoji-name tooltips use Iced's ordinary one-shot hover delay.
