@@ -161,6 +161,7 @@ mod tests {
             display_name: "Other".into(),
             avatar_url: None,
             image: None,
+            reactions: Vec::new(),
             timestamp_ms: Some(1),
             thread_replies: 0,
             thread_root: root.map(str::to_owned),

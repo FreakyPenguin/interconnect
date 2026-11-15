@@ -44,6 +44,7 @@ mod tests {
             display_name: "Same name".into(),
             avatar_url: None,
             image: None,
+            reactions: Vec::new(),
             timestamp_ms,
             thread_replies: 0,
             thread_root: None,

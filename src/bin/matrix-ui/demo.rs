@@ -1,6 +1,6 @@
 //! Deterministic, memory-only fixtures. Demo mode never creates an SDK client.
 use super::DraftKey;
-use chatclient::connected::{History, MessageRow, Pane, RoomEntry, RowKind, SpaceEntry};
+use chatclient::connected::{History, MessageRow, Pane, Reaction, RoomEntry, RowKind, SpaceEntry};
 use std::collections::HashMap;
 
 pub struct Room {
@@ -253,6 +253,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         display_name: sender.into(),
         avatar_url: None,
         image: None,
+        reactions: Vec::new(),
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         thread_replies: if id == "review" { 2 } else { 0 },
         thread_root: None,
@@ -280,6 +281,17 @@ fn root(id: &str, sender: &str, body: &str, replies: u32) -> MessageRow {
         thread_replies: replies,
         ..message(id, sender, body)
     }
+}
+fn reacted(mut message: MessageRow, reactions: &[(&str, usize, bool)]) -> MessageRow {
+    message.reactions = reactions
+        .iter()
+        .map(|(key, count, is_own)| Reaction {
+            key: (*key).into(),
+            count: *count,
+            is_own: *is_own,
+        })
+        .collect();
+    message
 }
 impl Demo {
     fn seed(&self, key: &DraftKey) -> Vec<MessageRow> {
@@ -343,13 +355,13 @@ impl Demo {
                 vec![sample, missing, gif]
             },
             "studio" => vec![
-                message("welcome", "Maya Chen", "Morning! I’ve been thinking about what makes a chat app feel calm. Less chrome, a little more space, and a clear place for everything."),
+                reacted(message("welcome", "Maya Chen", "Morning! I’ve been thinking about what makes a chat app feel calm. Less chrome, a little more space, and a clear place for everything."), &[("❤️", 3, true), ("👍🏽", 2, false)]),
                 message("direction", "Alex Rivera", "This is the direction I like. Spaces for the bigger picture, sections to keep each room list manageable."),
                 message("details", "Maya Chen", "And threads that feel like a conversation on the side. Easy to open, easy to return from."),
                 message("proposal", "Jamie Davis", "A small proposal for the first pass:\n\n• Keep the room list compact, but comfortable.\n• Let typography do most of the work.\n• Use color only where it helps you find your way."),
                 message("proposal-followup", "Jamie Davis", "I’d also keep the timestamps quiet, but easy to find."),
-                message("review", "Alex Rivera", "That sounds right. Try opening a thread here — we can work through the details together."),
-                reply("review-reply-1", "review", "Maya Chen", "Yes — a little more breathing room makes a big difference."),
+                reacted(message("review", "Alex Rivera", "That sounds right. Try opening a thread here — we can work through the details together."), &[("👩🏽‍💻", 2, false), ("👍", 1, true)]),
+                reacted(reply("review-reply-1", "review", "Maya Chen", "Yes — a little more breathing room makes a big difference."), &[("❤️", 1, false)]),
                 reply("review-reply-2", "review", "Jamie Davis", "Agreed. Let’s keep the details quiet and the conversation in focus."),
             ],
             "emoji" => vec![

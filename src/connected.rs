@@ -57,6 +57,7 @@ pub struct MessageRow {
     pub display_name: String,
     pub avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     pub image: Option<crate::image_media::Attachment>,
+    pub reactions: Vec<Reaction>,
     pub timestamp_ms: Option<i64>,
     pub thread_replies: u32,
     pub thread_root: Option<String>,
@@ -65,6 +66,30 @@ pub struct MessageRow {
     pub body: String,
     pub send_state: String,
     pub retry: Option<RetrySend>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Reaction {
+    pub key: String,
+    pub count: usize,
+    pub is_own: bool,
+}
+
+fn reactions(content: &TimelineItemContent, own_user: &matrix_sdk::ruma::UserId) -> Vec<Reaction> {
+    let mut reactions: Vec<_> = content
+        .reactions()
+        .into_iter()
+        .flat_map(|reactions| reactions.iter())
+        .filter(|(_, senders)| !senders.is_empty())
+        .map(|(key, senders)| Reaction {
+            key: key.clone(),
+            count: senders.len(),
+            is_own: senders.contains_key(own_user),
+        })
+        .collect();
+    // Redaction can reorder SDK entries. Keep remaining badges in place.
+    reactions.sort_unstable_by(|a, b| a.key.cmp(&b.key));
+    reactions
 }
 
 /// UI snapshots and messages can be destroyed on Iced's main thread, outside
@@ -657,6 +682,7 @@ async fn publish(
                     _ => None,
                 },
                 image: crate::image_media::Attachment::from_content(content),
+                reactions: reactions(content, timeline.room().own_user_id()),
                 timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
                 thread_replies: content
                     .thread_summary()
@@ -766,7 +792,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn live_thread_reply_is_projected_without_a_loaded_root_and_can_open_its_thread() {
+    async fn live_thread_reply_and_reactions_update_room_and_thread_snapshots() {
         use matrix_sdk::{config::SyncSettings, ruma::event_id};
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -794,7 +820,7 @@ mod tests {
         let root = json!({"type":"m.room.message","event_id":"$outside","room_id":"!room:example.org","sender":"@other:example.org","origin_server_ts":1,"content":{"msgtype":"m.text","body":"Older thread original"}});
         Mock::given(method("GET"))
             .and(path_regex(".*/event/.*"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(root))
+            .respond_with(ResponseTemplate::new(200).set_body_json(root.clone()))
             .mount(&server)
             .await;
         let client = Client::builder()
@@ -844,7 +870,9 @@ mod tests {
             )
             .mount(&server)
             .await;
-        *response.lock().unwrap() = json!({"next_batch":"two", "rooms":{"join":{"!room:example.org":{"timeline":{"events":[reply],"limited":false}}}}});
+        let initial_reaction = json!({"type":"m.reaction", "event_id":"$reaction-cached", "sender":"@other:example.org", "origin_server_ts":2,
+            "content":{"m.relates_to":{"rel_type":"m.annotation", "event_id":"$reply", "key":"📌"}}});
+        *response.lock().unwrap() = json!({"next_batch":"two", "rooms":{"join":{"!room:example.org":{"timeline":{"events":[reply, initial_reaction],"limited":false}}}}});
         client
             .sync_once(SyncSettings::default().timeout(Duration::ZERO))
             .await
@@ -876,6 +904,14 @@ mod tests {
         assert_eq!(reply.thread_root.as_deref(), Some("$outside"));
         assert!(reply.is_live && !reply.is_own);
         assert_eq!(reply.body, "Fresh thread reply");
+        assert_eq!(
+            reply.reactions,
+            vec![Reaction {
+                key: "📌".into(),
+                count: 1,
+                is_own: false
+            }]
+        );
         assert!(
             reply
                 .image
@@ -907,6 +943,154 @@ mod tests {
             item.as_event()
                 .is_some_and(|event| event.event_id() == Some(event_id!("$outside")))
         }));
+        let thread = Arc::new(thread);
+        let (_, thread_updates) = thread.subscribe().await;
+        tokio::pin!(thread_updates);
+
+        async fn expect_reactions(
+            timeline: &Arc<Timeline>,
+            updates: &mut (impl iced::futures::Stream + Unpin),
+            thread: bool,
+            expected: &[(&str, Vec<Reaction>)],
+        ) {
+            let (state, snapshots) = watch::channel(Model::default());
+            let (older, _) = mpsc::channel(1);
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    publish(timeline, 1, thread, 1, &History::Ready, &state, &older).await;
+                    let model = snapshots.borrow();
+                    let pane = if thread { &model.thread } else { &model.room };
+                    let rows = &pane.as_ref().unwrap().rows;
+                    // Reactions never become standalone message rows.
+                    assert!(rows.iter().all(|row| !row.key.starts_with("$reaction")));
+                    if expected.iter().all(|(id, reactions)| {
+                        rows.iter()
+                            .any(|row| row.key == *id && row.reactions == *reactions)
+                    }) {
+                        break;
+                    }
+                    drop(model);
+                    updates.next().await.unwrap();
+                }
+            })
+            .await
+            .unwrap_or_else(|_| {
+                let model = snapshots.borrow();
+                let pane = if thread { &model.thread } else { &model.room };
+                panic!("reaction update timed out (thread={thread}), expected {expected:?}, actual {:?}", pane.as_ref().unwrap().rows.iter().map(|row| (&row.key, &row.reactions)).collect::<Vec<_>>());
+            });
+        }
+
+        // Opening a thread retains reactions already known to the room cache.
+        expect_reactions(
+            &thread,
+            &mut thread_updates,
+            true,
+            &[(
+                "$reply",
+                vec![Reaction {
+                    key: "📌".into(),
+                    count: 1,
+                    is_own: false,
+                }],
+            )],
+        )
+        .await;
+
+        let reaction = |id: &str, target: &str, sender: &str, key: &str| {
+            json!({
+                "type":"m.reaction", "event_id":id, "sender":sender, "origin_server_ts":3,
+                "content":{"m.relates_to":{"rel_type":"m.annotation", "event_id":target, "key":key}}
+            })
+        };
+        let redaction = |id: &str, target: &str| {
+            json!({
+                "type":"m.room.redaction", "event_id":id, "sender":"@other:example.org", "origin_server_ts":4,
+                "redacts":target, "content":{"redacts":target}
+            })
+        };
+        // Both Unicode sequences and ordinary text annotation keys are valid.
+        // Load the original into the room too: the SDK routes its live reactions
+        // there, while reactions on replies also reach the thread timeline.
+        let batches = [
+            (
+                "three",
+                vec![
+                    root,
+                    reaction("$reaction-root", "$outside", "@other:example.org", "❤️"),
+                    reaction("$reaction-own", "$reply", "@test:example.org", "👍🏽"),
+                    reaction("$reaction-other", "$reply", "@other:example.org", "👍🏽"),
+                    reaction("$reaction-text", "$reply", "@other:example.org", "approved"),
+                ],
+                vec![
+                    Reaction {
+                        key: "approved".into(),
+                        count: 1,
+                        is_own: false,
+                    },
+                    Reaction {
+                        key: "👍🏽".into(),
+                        count: 2,
+                        is_own: true,
+                    },
+                    Reaction {
+                        key: "📌".into(),
+                        count: 1,
+                        is_own: false,
+                    },
+                ],
+                vec![Reaction {
+                    key: "❤️".into(),
+                    count: 1,
+                    is_own: false,
+                }],
+            ),
+            (
+                "four",
+                vec![
+                    redaction("$remove-root", "$reaction-root"),
+                    redaction("$remove-other", "$reaction-other"),
+                    redaction("$remove-text", "$reaction-text"),
+                    redaction("$remove-cached", "$reaction-cached"),
+                ],
+                vec![Reaction {
+                    key: "👍🏽".into(),
+                    count: 1,
+                    is_own: true,
+                }],
+                vec![],
+            ),
+            (
+                "five",
+                vec![redaction("$remove-own", "$reaction-own")],
+                vec![],
+                vec![],
+            ),
+        ];
+        for (batch, events, reply_reactions, root_reactions) in batches {
+            *response.lock().unwrap() = json!({"next_batch":batch, "rooms":{"join":{"!room:example.org":{"timeline":{"events":events,"limited":false}}}}});
+            client
+                .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+                .await
+                .unwrap();
+            expect_reactions(
+                &timeline,
+                &mut updates,
+                false,
+                &[
+                    ("$reply", reply_reactions.clone()),
+                    ("$outside", root_reactions),
+                ],
+            )
+            .await;
+            expect_reactions(
+                &thread,
+                &mut thread_updates,
+                true,
+                &[("$reply", reply_reactions)],
+            )
+            .await;
+        }
     }
 
     #[tokio::test]

@@ -1138,3 +1138,39 @@ temporary capture hooks are local validation artifacts, excluded from source.
 No connected session was opened or restarted. macOS/Windows rendering, connected
 desktop acceptance, interactive drag-selection with emoji, and new idle-resource
 measurements remain pending.
+
+## Message reactions — 2026-11-15
+
+Room messages, pinned thread originals, and thread replies display read-only
+reaction badges beneath their content. Each badge shows the exact annotation
+key and the SDK's unique-sender count; your own reactions use a blue tint.
+Badges wrap at narrow widths, support Unicode emoji sequences and ordinary text
+keys, and disappear when the last reaction is removed. They add no polling,
+animation subscription, or reaction-sending controls.
+
+The pinned original uses current-generation room reactions when its message is
+loaded there. The pinned SDK routes live root reactions to the room timeline,
+leaving the thread's copy stale. If the original is outside loaded room history,
+only reactions present in the SDK thread snapshot can be shown; live root
+reaction updates remain limited until that original is loaded into the room.
+Thread replies receive live reaction updates directly.
+
+Automated coverage uses a local mock Matrix server for cached reactions when
+opening a thread, live additions/removals in both timelines, exact Unicode/text
+keys, distinct sender counts, and own-reaction state. Real Iced widget checks
+cover room/original/reply placement, room-root updates overriding a stale thread
+snapshot, narrow wrapping, read-only clicks, and absence of scheduled redraws.
+Formatting, locked workspace Clippy with warnings denied, all 133 regular
+workspace tests (58 library and 75 GUI), and the locked GUI build passed. The
+existing opt-in lifecycle stress test was not run.
+Native desktop acceptance, live-account checks, and reaction-specific resource
+measurements remain pending. No connected client was restarted or real messages
+sent for this change.
+
+For manual acceptance, run `cargo run --locked --bin matrix-ui -- --demo`, open
+**Studio → Design studio**, and open the last message's thread. Check badges on
+the welcome message, thread original, and first reply, including blue own-reaction
+tints and color emoji. Resize and hide the sidebar to inspect wrapping. In a
+separately authorized connected run, observe another client's reaction additions
+and removals on a loaded room message and a thread reply; verify counts update
+while drafts and a scrolled reading position remain intact.

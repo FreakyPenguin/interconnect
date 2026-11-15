@@ -132,6 +132,12 @@ Shortcuts:
 
 ## Representative checks
 
+Reaction fixtures are in **Studio → Design studio**: the welcome message and
+the last message have multiple badges; opening the last message's thread shows
+badges on its pinned original and first reply. Check own-reaction blue tints,
+Unicode emoji, wrapping, and inert clicks. See
+[reaction validation and SDK limits](connected-ui.md#message-reactions--2026-11-15).
+
 1. In Studio, open Design studio and a message's thread. Type different drafts
    in each pane, change rooms/spaces, and return. Send a demo reply; verify it
    remains in that thread and does not enter another room or clear another draft.

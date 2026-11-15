@@ -7,6 +7,8 @@ mod emoji;
 mod images;
 #[path = "matrix-ui/presentation.rs"]
 mod presentation;
+#[path = "matrix-ui/reactions.rs"]
+mod reactions;
 #[path = "matrix-ui/selectable.rs"]
 mod selectable;
 #[path = "matrix-ui/selection.rs"]
@@ -992,13 +994,16 @@ impl App {
                     .iter()
                     .find(|row| row.event_id.as_ref() == Some(root))
             })
-            .or_else(|| {
-                let (generation, _) = self.selection.room.as_ref()?;
-                current_pane(&self.model.room, *generation)?
-                    .rows
-                    .iter()
-                    .find(|row| row.event_id.as_ref() == Some(root))
-            })
+            .or_else(|| self.thread_original_in_room())
+    }
+
+    fn thread_original_in_room(&self) -> Option<&MessageRow> {
+        let (_, root) = self.selection.thread.as_ref()?;
+        let (generation, _) = self.selection.room.as_ref()?;
+        current_pane(&self.model.room, *generation)?
+            .rows
+            .iter()
+            .find(|row| row.event_id.as_ref() == Some(root))
     }
 
     fn thread_activity_view<'a>(
@@ -1130,6 +1135,16 @@ impl App {
             .size(12)
             .color(shell::MUTED)
             .into()
+        };
+        // The SDK's thread cache routes root reactions to the room timeline.
+        let original = if let Some(badges) = self
+            .thread_original_in_room()
+            .or_else(|| self.thread_original())
+            .and_then(|message| reactions::view(&message.reactions))
+        {
+            column![original, badges].spacing(6).into()
+        } else {
+            original
         };
         let original =
             if let Some(message) = self.thread_original().filter(|row| row.image.is_some()) {
@@ -1382,6 +1397,9 @@ impl App {
             };
             if message.image.is_some() {
                 entry = entry.push(self.image_preview(message, thread, *generation));
+            }
+            if let Some(badges) = reactions::view(&message.reactions) {
+                entry = entry.push(badges);
             }
             if !message.send_state.is_empty() && message.send_state != "Sent" {
                 entry = entry.push(text(&message.send_state).size(12));
@@ -2266,6 +2284,79 @@ mod tests {
                 assert!(bounds.width > 0.0 && bounds.width < width);
                 assert_eq!(probe.rows.len(), 8, "one selectable body per event");
             }
+        }
+    }
+
+    #[test]
+    fn reaction_badges_appear_in_rooms_originals_and_replies_and_follow_root_updates() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Probe(usize);
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, _: iced::Rectangle) {
+                if id == Some(&widget::Id::new("message-reactions")) {
+                    self.0 += 1;
+                }
+            }
+        }
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut app = demo_app();
+        let _ = app.update(Message::Thread("review".into()));
+        for thread in [false, true] {
+            let mut tree = widget::Tree::empty();
+            for width in [300.0, 700.0] {
+                let mut view = app.pane(thread);
+                tree.diff(view.as_widget());
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(iced::Size::ZERO, iced::Size::new(width, 640.0)),
+                );
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                assert_eq!(
+                    probe.0, 2,
+                    "thread={thread}: badges appear on the original and reply, with no duplicates"
+                );
+            }
+        }
+        let mut tree = widget::Tree::empty();
+        // Leave the thread snapshot unchanged while the room removes reactions.
+        for (has_reactions, expected) in [(true, 2), (false, 1)] {
+            if !has_reactions {
+                Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows)
+                    .iter_mut()
+                    .find(|row| row.key == "review")
+                    .unwrap()
+                    .reactions
+                    .clear();
+            }
+            let mut view = app.pane(true);
+            tree.diff(view.as_widget());
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(iced::Size::ZERO, iced::Size::new(360.0, 640.0)),
+            );
+            let mut probe = Probe::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            assert_eq!(
+                probe.0, expected,
+                "room root updates reach the pinned original"
+            );
         }
     }
 
