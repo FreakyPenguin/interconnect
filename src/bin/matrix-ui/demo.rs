@@ -144,6 +144,8 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
     MessageRow {
         event_id: Some(id.into()),
         sender: sender.into(),
+        display_name: sender.into(),
+        timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         body: body.into(),
         send_state: String::new(),
         retry: None,
@@ -183,6 +185,7 @@ impl Demo {
                 message("direction", "Alex Rivera", "This is the direction I like. Spaces for the bigger picture, sections to keep each room list manageable."),
                 message("details", "Maya Chen", "And threads that feel like a conversation on the side. Easy to open, easy to return from."),
                 message("proposal", "Jamie Davis", "A small proposal for the first pass:\n\n• Keep the room list compact, but comfortable.\n• Let typography do most of the work.\n• Use color only where it helps you find your way."),
+                message("proposal-followup", "Jamie Davis", "I’d also keep the timestamps quiet, but easy to find."),
                 message("review", "Alex Rivera", "That sounds right. Try opening a thread here — we can work through the details together."),
             ],
             "long" => vec![message("long-body", "Maya Chen", &format!("Some deliberately difficult content to try at narrow widths.\n\n{}\n\nhttps://example.org/a/very/long/reference/with-many-details-and-a-descriptive-name\n\n日本語のメッセージ · Bonjour · Grüß dich", "Good reading rhythm depends on line length, spacing, and a stable layout. ".repeat(12)))],
@@ -194,7 +197,11 @@ impl Demo {
     }
     pub fn pane(&mut self, key: DraftKey, generation: u64) -> Pane {
         if !self.conversations.contains_key(&key) {
-            let rows = self.seed(&key);
+            let mut rows = self.seed(&key);
+            let start = chrono::Local::now().timestamp_millis() - rows.len() as i64 * 60_000;
+            for (index, row) in rows.iter_mut().enumerate() {
+                row.timestamp_ms = Some(start + index as i64 * 60_000);
+            }
             self.conversations.insert(key.clone(), rows);
         }
         Pane {

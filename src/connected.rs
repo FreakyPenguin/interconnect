@@ -25,6 +25,8 @@ pub use crate::navigation::{RoomEntry, SpaceEntry};
 pub struct MessageRow {
     pub event_id: Option<String>,
     pub sender: String,
+    pub display_name: String,
+    pub timestamp_ms: Option<i64>,
     pub body: String,
     pub send_state: String,
     pub retry: Option<RetrySend>,
@@ -502,6 +504,22 @@ async fn publish(
             MessageRow {
                 event_id: event.event_id().map(ToString::to_string),
                 sender: event.sender().to_string(),
+                display_name: match event.sender_profile() {
+                    matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => profile
+                        .display_name
+                        .as_ref()
+                        .filter(|name| !name.trim().is_empty())
+                        .map(|name| {
+                            if profile.display_name_ambiguous {
+                                format!("{name} ({})", event.sender())
+                            } else {
+                                name.clone()
+                            }
+                        })
+                        .unwrap_or_else(|| event.sender().to_string()),
+                    _ => event.sender().to_string(),
+                },
+                timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
                 body: if content.is_unable_to_decrypt() {
                     "Unable to decrypt — keys unavailable".into()
                 } else {

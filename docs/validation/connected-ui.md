@@ -515,3 +515,13 @@ one message; cross-message selection is not implemented. Selection resets when
 its widget slot changes identity or its body changes. The widget regression
 exercises partial selection/copy, rejected typing/cut/paste, identity reset, and
 idle redraw behavior. The demo scroll smoke still passes with selectable bodies.
+
+Message presentation (2026-11-15): sender headers use the SDK profile display
+name, falling back to the Matrix ID; ambiguous names include the ID and every
+sender header exposes it in a tooltip. Local timestamps have a full date/time
+and UTC-offset tooltip, with date separators in the timeline. Consecutive
+messages group only for the same sender ID and display name, on the same local
+date, with ordered timestamps at most five minutes apart. Unknown timestamps
+never group. Grouping retains each message's scroll-anchor ID. Demo data includes
+a consecutive-message group. UI regressions cover grouping boundaries and the
+existing real-layout scroll-follow/anchor behavior.

@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 #[path = "matrix-ui/demo.rs"]
 mod demo;
+#[path = "matrix-ui/presentation.rs"]
+mod presentation;
 #[path = "matrix-ui/selectable.rs"]
 mod selectable;
 #[path = "matrix-ui/shell.rs"]
@@ -716,16 +718,41 @@ impl App {
             history_controls = history_controls.push(control);
         }
         content = content.push(history_controls);
-        let mut messages = column![].spacing(20).padding([16, 24]);
+        let mut messages = column![].spacing(0).padding([16, 24]);
         for (index, message) in pane.rows.iter().enumerate() {
-            let mut entry = column![
-                shell::title(&message.sender, 13),
-                selectable::view(
-                    message.event_id.as_deref().unwrap_or(&message.body),
-                    &message.body
-                )
-            ]
-            .spacing(6);
+            let previous = index.checked_sub(1).and_then(|i| pane.rows.get(i));
+            let grouped = presentation::grouped(previous, message);
+            let new_date = presentation::date(message)
+                .filter(|date| previous.and_then(presentation::date).as_ref() != Some(date));
+            let timestamp = iced::widget::tooltip(
+                text(presentation::time_label(message))
+                    .size(11)
+                    .color(shell::MUTED),
+                text(presentation::time_detail(message)).size(12),
+                iced::widget::tooltip::Position::Top,
+            );
+            let body = selectable::view(
+                message.event_id.as_deref().unwrap_or(&message.body),
+                &message.body,
+            );
+            let mut entry = if grouped {
+                column![row![body, timestamp].spacing(12)]
+            } else {
+                column![
+                    row![
+                        iced::widget::tooltip(
+                            shell::title(&message.display_name, 13),
+                            text(&message.sender).size(12),
+                            iced::widget::tooltip::Position::Top
+                        ),
+                        iced::widget::space().width(Length::Fill),
+                        timestamp
+                    ]
+                    .spacing(12),
+                    body
+                ]
+                .spacing(6)
+            };
             if !message.send_state.is_empty() {
                 entry = entry.push(text(&message.send_state).size(12));
             }
@@ -755,12 +782,32 @@ impl App {
                         .on_press(Message::Thread(id.clone())),
                 );
             }
-            messages = messages.push(
-                container(
-                    row![shell::avatar(&message.sender), entry.width(Length::Fill)].spacing(12),
-                )
-                .id(timeline::row_id(index)),
+            let avatar: Element<'_, Message> = if grouped {
+                iced::widget::space().width(32).into()
+            } else {
+                shell::avatar(&message.display_name)
+            };
+            let mut message_row = column![];
+            if let Some(date) = new_date {
+                message_row = message_row.push(
+                    container(
+                        text(date.format("%A, %d %B %Y").to_string())
+                            .size(11)
+                            .color(shell::MUTED),
+                    )
+                    .center_x(Length::Fill)
+                    .padding([12, 0]),
+                );
+            }
+            message_row = message_row.push(
+                container(row![avatar, entry.width(Length::Fill)].spacing(12)).padding(
+                    iced::Padding {
+                        top: if grouped { 5.0 } else { 18.0 },
+                        ..iced::Padding::ZERO
+                    },
+                ),
             );
+            messages = messages.push(container(message_row).id(timeline::row_id(index)));
         }
         if pane.rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
             messages = messages.push(shell::empty_state(
