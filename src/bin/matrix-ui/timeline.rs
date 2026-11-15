@@ -98,7 +98,7 @@ impl Metrics {
         (self.height * 3.0).max(1200.0)
     }
 }
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 struct Row {
     key: String,
     y: f32,
@@ -115,6 +115,7 @@ struct Identity {
     snapshot: Option<Snapshot>,
     reported: Option<(Metrics, u64, bool)>,
     visible: Option<(Metrics, Vec<String>)>,
+    media_visible: Option<(Metrics, Vec<String>)>,
 }
 
 struct Measure<'a> {
@@ -213,6 +214,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             snapshot: None,
             reported: None,
             visible: None,
+            media_visible: None,
             selection: Default::default(),
         })
     }
@@ -226,6 +228,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             identity.snapshot = None;
             identity.reported = None;
             identity.visible = None;
+            identity.media_visible = None;
             identity.selection = Default::default();
             tree.children = self.children();
         } else {
@@ -284,6 +287,13 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             current.metrics.translation = (current.metrics.maximum() - offset).round();
         }
         let identity = tree.state.downcast_mut::<Identity>();
+        if identity
+            .snapshot
+            .as_ref()
+            .is_some_and(|previous| previous.rows != current.rows)
+        {
+            identity.media_visible = None;
+        }
         identity.snapshot = Some(current);
         identity.selection.restore(
             self.content.as_widget_mut(),
@@ -329,6 +339,41 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             self.generation,
         );
         self.remember_scroll(tree, layout, renderer);
+        if let Some((thread, _, _)) = self.history {
+            let identity = tree.state.downcast_mut::<Identity>();
+            if let Some(snapshot) = &identity.snapshot {
+                let metrics = snapshot.metrics;
+                if identity
+                    .media_visible
+                    .as_ref()
+                    .is_none_or(|(previous, _)| *previous != metrics)
+                {
+                    let keys: Vec<_> = snapshot
+                        .rows
+                        .iter()
+                        .filter(|row| {
+                            row.y + row.height > metrics.translation + 1.0
+                                && row.y < metrics.translation + metrics.height - 1.0
+                        })
+                        .map(|row| row.key.clone())
+                        .collect();
+                    if (identity.media_visible.is_some() || !keys.is_empty())
+                        && identity
+                            .media_visible
+                            .as_ref()
+                            .map(|(_, previous)| previous)
+                            != Some(&keys)
+                    {
+                        shell.publish(Message::RowsVisible {
+                            thread,
+                            generation: self.generation,
+                            keys: keys.clone(),
+                        });
+                    }
+                    identity.media_visible = Some((metrics, keys));
+                }
+            }
+        }
         if self.observe_visible && !matches!(event, Event::Window(iced::window::Event::Unfocused)) {
             let identity = tree.state.downcast_mut::<Identity>();
             if let Some(snapshot) = &identity.snapshot {
@@ -482,6 +527,91 @@ mod tests {
                 assert!(matches!(&messages[0], Message::TimelineMeasured {
                     thread: false, generation: 7, revision: current, metrics,
                 } if *current == revision && metrics.height == height));
+            }
+        }
+    }
+
+    #[test]
+    fn avatar_visibility_follows_room_and_thread_viewports_without_repeated_reports() {
+        use iced::widget::{column, container, scrollable, space};
+        for thread in [false, true] {
+            let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let mut tree = Tree::empty();
+            for (offset, expected) in [
+                (0.0, Some(vec!["b", "c"])),
+                (0.0, None),
+                (40.0, Some(vec!["a", "b"])),
+            ] {
+                let rows =
+                    column((0..3).map(|index| {
+                        Element::from(container(space().height(40)).id(row_id(index)))
+                    }));
+                let mut view = history_view(
+                    9,
+                    ["a", "b", "c"].map(|key| Some(key.to_owned())).into(),
+                    scrollable(rows)
+                        .id("avatar-viewport")
+                        .height(Length::Fill)
+                        .anchor_bottom()
+                        .into(),
+                    thread,
+                    1,
+                    true,
+                );
+                tree.diff(view.as_widget());
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, Size::new(300.0, 80.0)),
+                );
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &mut widget::operation::scrollable::scroll_to::<()>(
+                        "avatar-viewport".into(),
+                        iced::widget::operation::AbsoluteOffset {
+                            x: None,
+                            y: Some(offset),
+                        },
+                    ),
+                );
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &Event::Window(iced::window::Event::RedrawRequested(
+                        iced::time::Instant::now(),
+                    )),
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &Rectangle::with_size(Size::new(300.0, 80.0)),
+                );
+                assert!(!matches!(
+                    shell.redraw_request(),
+                    iced::window::RedrawRequest::At(_)
+                ));
+                let reports: Vec<_> = messages
+                    .into_iter()
+                    .filter_map(|message| match message {
+                        Message::RowsVisible {
+                            thread: current,
+                            generation: 9,
+                            keys,
+                        } if current == thread => Some(keys),
+                        _ => None,
+                    })
+                    .collect();
+                assert_eq!(
+                    reports,
+                    expected
+                        .map(|keys| keys.into_iter().map(str::to_owned).collect::<Vec<_>>())
+                        .into_iter()
+                        .collect::<Vec<_>>()
+                );
             }
         }
     }

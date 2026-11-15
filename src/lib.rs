@@ -3,6 +3,7 @@ pub mod connected;
 pub mod diagnostics;
 mod event_text;
 pub mod live;
+pub mod media;
 pub mod navigation;
 pub mod navigation_preferences;
 pub mod session;

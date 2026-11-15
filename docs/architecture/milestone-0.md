@@ -365,3 +365,26 @@ media path. These media and retention decisions are proposed, not implemented.
 
 See [cached-startup validation](../validation/connected-ui.md#cached-startup--2026-11-15)
 for local evidence and remaining desktop checks.
+
+## Avatar media service — 2026-11-15
+
+`src/media.rs` owns one asynchronous avatar service per connected account. The
+UI sends deduplicated current viewport demand through its existing selection
+watch channel. The service uses SDK media requests and SQLite caching, decodes
+on bounded blocking workers, and publishes replaceable image snapshots. The
+existing process profile lock and runtime teardown cover its SDK handles. No
+polling, animation timer, cross-account global cache, or new on-disk format is
+introduced.
+
+Room and thread view generations reject obsolete viewport reports. Media
+requests use the profile's SDK store and one shared static 64px thumbnail variant;
+new avatar URIs replace old demand. Cancelled job IDs cannot overwrite a newer
+request for the same URI. Decoders keep their concurrency permit after request
+cancellation until blocking work finishes. The 8 MiB decoded-pixel LRU is separate
+from SDK disk retention and renderer allocations. See [avatar validation](../validation/connected-ui.md#cached-avatars--2026-11-15)
+for limits, evidence, and pending host checks.
+
+Iced enables `image-without-codecs`; the `image` dependency enables only PNG,
+JPEG, WebP, and GIF. Existing dependency versions and vendored Iced code are
+unchanged. Attachments, custom emoji metadata, configurable budgets, and storage
+management remain subsequent work.

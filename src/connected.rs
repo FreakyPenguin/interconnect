@@ -20,6 +20,7 @@ pub struct Selection {
     pub thread: Option<(u64, String)>,
     pub shutdown: bool,
     pub preferences: Option<crate::navigation_preferences::Preferences>,
+    pub avatars: Vec<matrix_sdk::ruma::OwnedMxcUri>,
 }
 
 pub use crate::navigation::{RoomEntry, SpaceEntry};
@@ -50,6 +51,7 @@ pub struct MessageRow {
     pub event_id: Option<String>,
     pub sender: String,
     pub display_name: String,
+    pub avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     pub timestamp_ms: Option<i64>,
     pub thread_replies: u32,
     pub thread_root: Option<String>,
@@ -171,6 +173,8 @@ pub struct Model {
     pub navigation_error: Option<String>,
     pub saved_navigation: Option<crate::navigation_preferences::Preferences>,
     pub preferences_error: Option<String>,
+    pub avatars: Arc<crate::media::Images>,
+    pub media_error: Option<String>,
     pub room: Option<Pane>,
     pub thread: Option<Pane>,
 }
@@ -184,6 +188,8 @@ impl Default for Model {
             navigation_error: None,
             saved_navigation: None,
             preferences_error: None,
+            avatars: Arc::default(),
+            media_error: None,
             room: None,
             thread: None,
         }
@@ -285,6 +291,12 @@ async fn connected(
     selection: &mut watch::Receiver<Selection>,
     state: &watch::Sender<Model>,
 ) -> anyhow::Result<()> {
+    let (avatar_requests, requests) = watch::channel(crate::media::Demand::default());
+    let (images, mut avatar_updates) = watch::channel(Arc::default());
+    let media = crate::media::run(client.clone(), requests, images);
+    tokio::pin!(media);
+    let mut media_finished = false;
+    let mut retry_epoch = 0;
     let navigation = navigation_updates(client, state);
     tokio::pin!(navigation);
     let mut sync_states = sync.state();
@@ -300,6 +312,10 @@ async fn connected(
         loop {
             let next = selection.borrow_and_update().clone();
             if next.shutdown { break; }
+            let demand = crate::media::Demand { uris: next.avatars.clone(), retry_epoch };
+            avatar_requests.send_if_modified(|old| {
+                if *old == demand { false } else { *old = demand; true }
+            });
             let status = connection_status(&sync_states.get(), &room_states.get());
             state.send_if_modified(|s| {
                 if s.status == status { false } else { s.status = status.into(); true }
@@ -334,6 +350,18 @@ async fn connected(
             }
             active = next;
             tokio::select! {
+                result = &mut media, if !media_finished => {
+                    media_finished = true;
+                    if result.is_err() {
+                        state.send_modify(|s| s.media_error = Some("Could not initialize the avatar cache.".into()));
+                    }
+                }
+                changed = avatar_updates.changed(), if !media_finished => {
+                    if changed.is_ok() {
+                        let images = avatar_updates.borrow_and_update().clone();
+                        state.send_modify(|s| s.avatars = images);
+                    }
+                }
                 changed = selection.changed() => { if changed.is_err() { break; } }
                 _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
                 _ = &mut room_view => room_view = inactive(),
@@ -350,6 +378,7 @@ async fn connected(
                 event = sync_states.next() => match event {
                     Some(State::Error(error)) => anyhow::bail!("Synchronization service stopped: {error}. Session retained."),
                     None | Some(State::Terminated) => anyhow::bail!("Synchronization ended. Session retained."),
+                    Some(State::Running) => retry_epoch += 1,
                     _ => {},
                 }
             }
@@ -578,6 +607,12 @@ async fn publish(
                         .unwrap_or_else(|| event.sender().to_string()),
                     _ => event.sender().to_string(),
                 },
+                avatar_url: match event.sender_profile() {
+                    matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => {
+                        profile.avatar_url.clone()
+                    }
+                    _ => None,
+                },
                 timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
                 thread_replies: content
                     .thread_summary()
@@ -699,6 +734,7 @@ mod tests {
             json!({"next_batch":"one", "rooms":{"join":{"!room:example.org":{
                 "state":{"events":[
                     {"type":"m.room.member","state_key":"@test:example.org","sender":"@test:example.org","event_id":"$member","origin_server_ts":1,"content":{"membership":"join"}},
+                    {"type":"m.room.member","state_key":"@other:example.org","sender":"@other:example.org","event_id":"$other-member","origin_server_ts":1,"content":{"membership":"join","displayname":"Other","avatar_url":"mxc://example.org/avatar"}},
                     {"type":"m.room.encryption","state_key":"","sender":"@test:example.org","event_id":"$encryption","origin_server_ts":1,"content":{"algorithm":"m.megolm.v1.aes-sha2"}}
                 ]}, "timeline":{"events":[],"limited":false}
             }}}}),
@@ -796,6 +832,10 @@ mod tests {
         assert_eq!(reply.thread_root.as_deref(), Some("$outside"));
         assert!(reply.is_live && !reply.is_own);
         assert_eq!(reply.body, "Fresh thread reply");
+        assert_eq!(
+            reply.avatar_url.as_deref().map(|uri| uri.as_str()),
+            Some("mxc://example.org/avatar")
+        );
         assert!(
             !server
                 .received_requests()

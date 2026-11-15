@@ -65,6 +65,7 @@ struct App {
     thread_activity: thread_activity::State,
     window_focused: bool,
     thread_scroll_target: Option<(u64, f32)>,
+    visible_rows: [Vec<String>; 2],
 }
 #[derive(Clone, Debug)]
 enum Message {
@@ -81,6 +82,11 @@ enum Message {
     Escape,
     Control(watch::Sender<Selection>),
     State(Box<Model>),
+    RowsVisible {
+        thread: bool,
+        generation: u64,
+        keys: Vec<String>,
+    },
     Stopped(Result<(), String>),
     Room(String),
     Thread(String),
@@ -148,6 +154,7 @@ impl App {
             thread_activity: thread_activity::State::default(),
             window_focused: false,
             thread_scroll_target: None,
+            visible_rows: Default::default(),
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -209,7 +216,32 @@ impl App {
         );
         let observe_threads =
             navigation || matches!(&message, Message::State(_) | Message::DemoThreadReply);
+        let refresh_avatars = navigation
+            || matches!(
+                &message,
+                Message::State(_)
+                    | Message::RowsVisible { .. }
+                    | Message::Close
+                    | Message::Stopped(_)
+            );
         match message {
+            Message::RowsVisible {
+                thread,
+                generation,
+                keys,
+            } => {
+                let selected = if thread {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                };
+                if selected
+                    .as_ref()
+                    .is_some_and(|(current, _)| *current == generation)
+                {
+                    self.visible_rows[usize::from(thread)] = keys;
+                }
+            }
             Message::WindowFocused(focused) => self.window_focused = focused,
             Message::ThreadVisible {
                 generation,
@@ -551,6 +583,7 @@ impl App {
             }
             Message::Exit => return self.update(Message::Close),
             Message::Room(id) if !self.closing && !self.stopped => {
+                self.visible_rows = Default::default();
                 self.generation += 1;
                 self.selection.room = Some((self.generation, id));
                 self.selection.thread = None;
@@ -562,6 +595,7 @@ impl App {
             Message::Thread(id)
                 if !self.closing && !self.stopped && self.selection.room.is_some() =>
             {
+                self.visible_rows[1].clear();
                 self.generation += 1;
                 self.selection.thread = Some((self.generation, id));
                 self.pending_scroll[1] = Some(self.saved_scroll(true));
@@ -598,6 +632,7 @@ impl App {
                 }
             }
             Message::CloseThread => {
+                self.visible_rows[1].clear();
                 self.selection.thread = None;
                 self.pending_scroll[1] = None;
                 self.pending_scroll[0] = Some(self.saved_scroll(false));
@@ -630,6 +665,9 @@ impl App {
                 ..Default::default()
             });
         }
+        if refresh_avatars {
+            self.refresh_avatar_demand();
+        }
         if let Some(control) = &self.control {
             // Navigation represents desired state, so superseded selections can be replaced.
             control.send_if_modified(|s| {
@@ -642,6 +680,51 @@ impl App {
             });
         }
         self.restore_scroll()
+    }
+    fn refresh_avatar_demand(&mut self) {
+        self.selection.avatars.clear();
+        if self.demo.is_some() || self.closing || self.stopped {
+            return;
+        }
+        for (index, (selected, snapshot)) in [
+            (&self.selection.room, &self.model.room),
+            (&self.selection.thread, &self.model.thread),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let Some((generation, _)) = selected else {
+                continue;
+            };
+            let Some(pane) = current_pane(snapshot, *generation) else {
+                continue;
+            };
+            let rows = thread_activity::project(
+                &pane.rows,
+                (index == 1).then_some(selected.as_ref().unwrap().1.as_str()),
+            );
+            let visible: HashSet<_> = self.visible_rows[index]
+                .iter()
+                .map(String::as_str)
+                .collect();
+            for (position, projected) in rows.iter().copied().enumerate() {
+                let thread_activity::Row::Event(row) = projected else {
+                    continue;
+                };
+                let previous = position.checked_sub(1).and_then(|i| match rows[i] {
+                    thread_activity::Row::Event(row) => Some(row),
+                    _ => None,
+                });
+                if (row.kind == RowKind::Activity || !presentation::grouped(previous, row))
+                    && visible.contains(projected.key().as_str())
+                    && let Some(uri) = row.avatar_url.as_ref()
+                    && !self.selection.avatars.contains(uri)
+                    && self.selection.avatars.len() < chatclient::media::MAX_REQUESTED
+                {
+                    self.selection.avatars.push(uri.clone());
+                }
+            }
+        }
     }
     fn saved_scroll(&self, thread: bool) -> f32 {
         self.draft_key(thread)
@@ -1260,13 +1343,25 @@ impl App {
                 entry = entry.push(replies);
             }
             let avatar: Element<'_, Message> = if activity {
-                container(shell::activity_avatar(&message.display_name))
-                    .center_x(32)
-                    .into()
+                container(shell::activity_avatar(
+                    &message.display_name,
+                    message
+                        .avatar_url
+                        .as_ref()
+                        .and_then(|uri| self.model.avatars.get(uri)),
+                ))
+                .center_x(32)
+                .into()
             } else if grouped {
                 iced::widget::space().width(32).into()
             } else {
-                shell::avatar(&message.display_name)
+                shell::avatar(
+                    &message.display_name,
+                    message
+                        .avatar_url
+                        .as_ref()
+                        .and_then(|uri| self.model.avatars.get(uri)),
+                )
             };
             let body = container(row![avatar, entry.width(Length::Fill)].spacing(12)).padding(
                 iced::Padding {
@@ -1639,6 +1734,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     pub(super) fn demo_app() -> App {
         let mut app = App::new();
         app.demo = Some(demo::Demo::default());
@@ -1647,6 +1743,74 @@ mod tests {
         app.shell.space = Scope::Space("studio-space".into());
         let _ = app.update(Message::Room("studio".into()));
         app
+    }
+
+    #[test]
+    fn avatar_demand_uses_current_visible_rows_and_profile_updates() {
+        let mut app = demo_app();
+        app.demo = None;
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let mut model = app.model.clone();
+        let pane = model.room.as_mut().unwrap();
+        let mut rows = pane.rows.as_ref().clone();
+        let row = rows
+            .iter_mut()
+            .find(|row| row.kind == RowKind::Message && row.thread_root.is_none())
+            .unwrap();
+        let key = row.key.clone();
+        let uri: matrix_sdk::ruma::OwnedMxcUri = "mxc://example.org/first-avatar".into();
+        row.avatar_url = Some(uri.clone());
+        pane.rows = Arc::new(rows);
+        let _ = app.update(Message::State(Box::new(model)));
+        let _ = app.update(Message::RowsVisible {
+            thread: false,
+            generation: generation + 1,
+            keys: vec![key.clone()],
+        });
+        assert!(
+            app.selection.avatars.is_empty(),
+            "stale viewport must not load media"
+        );
+        let _ = app.update(Message::RowsVisible {
+            thread: false,
+            generation,
+            keys: vec![key.clone()],
+        });
+        assert_eq!(app.selection.avatars, vec![uri]);
+        let mut model = app.model.clone();
+        let rows = Arc::make_mut(&mut model.room.as_mut().unwrap().rows);
+        let uri: matrix_sdk::ruma::OwnedMxcUri = "mxc://example.org/new-avatar".into();
+        rows.iter_mut()
+            .find(|row| row.key == key)
+            .unwrap()
+            .avatar_url = Some(uri.clone());
+        let _ = app.update(Message::State(Box::new(model)));
+        assert_eq!(
+            app.selection.avatars,
+            vec![uri],
+            "profile changes must refresh a stationary viewport"
+        );
+        let _ = app.update(Message::Room("threads".into()));
+        assert!(
+            app.selection.avatars.is_empty(),
+            "navigation must release old demand"
+        );
+    }
+
+    #[test]
+    fn demo_does_not_request_avatars_even_with_media_metadata() {
+        let mut app = demo_app();
+        let pane = app.model.room.as_mut().unwrap();
+        let rows = Arc::make_mut(&mut pane.rows);
+        rows[0].avatar_url = Some("mxc://example.org/demo".into());
+        let key = rows[0].key.clone();
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let _ = app.update(Message::RowsVisible {
+            thread: false,
+            generation,
+            keys: vec![key],
+        });
+        assert!(app.selection.avatars.is_empty());
     }
 
     #[test]

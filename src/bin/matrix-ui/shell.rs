@@ -201,13 +201,32 @@ pub fn editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::
     };
     style
 }
-pub fn avatar(sender: &str) -> Element<'_, Message> {
-    avatar_view(sender, false)
+pub fn avatar<'a>(
+    sender: &'a str,
+    image: Option<&iced::widget::image::Handle>,
+) -> Element<'a, Message> {
+    avatar_view(sender, false, image)
 }
-pub fn activity_avatar(sender: &str) -> Element<'_, Message> {
-    avatar_view(sender, true)
+pub fn activity_avatar<'a>(
+    sender: &'a str,
+    image: Option<&iced::widget::image::Handle>,
+) -> Element<'a, Message> {
+    avatar_view(sender, true, image)
 }
-fn avatar_view(sender: &str, compact: bool) -> Element<'_, Message> {
+fn avatar_view<'a>(
+    sender: &'a str,
+    compact: bool,
+    image: Option<&iced::widget::image::Handle>,
+) -> Element<'a, Message> {
+    if let Some(handle) = image {
+        let size = if compact { 16 } else { 32 };
+        return widget::image(handle.clone())
+            .width(size)
+            .height(size)
+            .content_fit(iced::ContentFit::Cover)
+            .border_radius(if compact { 8.0 } else { 10.0 })
+            .into();
+    }
     let initials: String = sender
         .trim_start_matches('@')
         .split([' ', ':', '.'])
@@ -242,6 +261,7 @@ pub fn empty_state<'a>(heading: &'a str, detail: &'a str) -> Element<'a, Message
     .center_y(Length::Fill)
     .into()
 }
+
 impl App {
     pub(super) fn section_key(&self, section: &str) -> String {
         format!("{:?}/{section}", self.shell.space)
@@ -314,6 +334,13 @@ impl App {
             ]
             .spacing(8)
             .align_y(Alignment::Center);
+            if let Some(error) = &self.model.media_error {
+                footer = footer.push(widget::tooltip(
+                    text("Avatars unavailable").size(11).color(MUTED),
+                    text(error).size(12),
+                    widget::tooltip::Position::Top,
+                ));
+            }
             if self.stopped {
                 footer = footer.push(button("Exit").on_press(Message::Exit).style(quiet_button));
             }
@@ -551,5 +578,38 @@ impl App {
         .height(Length::Fill)
         .style(|_| surface(SIDEBAR))
         .into()
+    }
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    use super::*;
+    use iced::advanced::{layout, widget::Tree};
+
+    #[test]
+    fn decoded_images_keep_the_same_layout_as_initials() {
+        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let handle = widget::image::Handle::from_rgba(64, 64, vec![160; 64 * 64 * 4]);
+        for compact in [false, true] {
+            let sizes: Vec<_> = [None, Some(&handle)]
+                .into_iter()
+                .map(|image| {
+                    let mut avatar = avatar_view("Sample person", compact, image);
+                    let mut tree = Tree::new(&avatar);
+                    avatar
+                        .as_widget_mut()
+                        .layout(
+                            &mut tree,
+                            &renderer,
+                            &layout::Limits::new(iced::Size::ZERO, iced::Size::new(100.0, 100.0)),
+                        )
+                        .size()
+                })
+                .collect();
+            assert_eq!(
+                sizes[0], sizes[1],
+                "loading an avatar must not move timeline rows"
+            );
+        }
     }
 }

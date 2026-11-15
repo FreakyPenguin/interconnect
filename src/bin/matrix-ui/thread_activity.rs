@@ -158,6 +158,7 @@ mod tests {
             event_id: Some(id.into()),
             sender: "@other:example.org".into(),
             display_name: "Other".into(),
+            avatar_url: None,
             timestamp_ms: Some(1),
             thread_replies: 0,
             thread_root: root.map(str::to_owned),

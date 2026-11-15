@@ -42,6 +42,7 @@ mod tests {
             event_id: None,
             sender: sender.into(),
             display_name: "Same name".into(),
+            avatar_url: None,
             timestamp_ms,
             thread_replies: 0,
             thread_root: None,

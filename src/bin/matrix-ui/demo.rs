@@ -161,6 +161,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         event_id: Some(id.into()),
         sender: sender.into(),
         display_name: sender.into(),
+        avatar_url: None,
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         thread_replies: if id == "review" { 2 } else { 0 },
         thread_root: None,

@@ -23,6 +23,57 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
+## Cached avatars — 2026-11-15
+
+Room and thread message headers now display the sender avatar from the SDK
+profile. Compact membership/activity rows use the same image at 16px. Missing,
+unavailable, unsupported, and malformed images retain the existing initials.
+Thread summaries retain their arrow; room-list and space icons remain text.
+
+Viewport reports request only avatars actually shown in message/activity rows,
+deduplicated across both panes. Reports reject stale view generations and do not
+schedule redraw timers. Profile URI changes in SDK snapshots update demand even
+when the viewport is stationary. Navigation cancels obsolete requests. Failed
+visible loads are retried after reconnect or after leaving and re-entering the
+viewport, without a retry timer. Demo mode never starts this service or requests
+media, including if sample rows contain an avatar URI.
+
+The account-scoped service requests static 64px thumbnails through the SDK's
+authenticated media API with disk caching enabled. PNG, JPEG, WebP, and GIF are
+enabled; GIF uses its first frame. Decoding and resizing run on blocking workers,
+with four load/decode slots, at most 256 demanded URIs, and an 8 MiB LRU budget
+for retained RGBA pixels. The service rejects encoded input above 2 MiB and
+dimensions above 1024px. The SDK buffers the response before that size check;
+renderer copies, old UI snapshots, and decoder working memory are outside the
+retained-pixel budget.
+
+SDK media retention is explicitly configured to its default 400 MiB content
+target, 20 MiB maximum cached item, and 60-day last-access expiry. Cleanup is
+checked on media activity at most daily, not by an application timer. This is a
+retention target, not a hard SQLite file-size limit. Protected pending uploads
+remain exempt under SDK policy. Crypto, room state, and message stores are not
+cleared. These limits are fixed defaults for now; settings and explicit clearing
+controls remain future work.
+
+Temporary-store tests cover deduplication, decoded-memory reuse, disk reuse after
+reopening with media endpoints unavailable, preservation of the device key,
+bounded downloads, cancellation, reconnect retries, decoding limits, and LRU
+eviction. UI tests cover stale visibility, profile URI changes, demo isolation,
+room/thread viewport reports without repeated idle reports, and stable avatar
+layout. Existing SDK projection tests check the sender profile's avatar URI.
+
+Validation passed: all 43 regular library tests and 53 GUI tests, formatting,
+workspace Clippy with warnings denied, and the locked GUI build. The opt-in
+100-cycle lifecycle stress test was not run. No saved account was opened or
+messages sent to a live server.
+
+Desktop and host idle-resource acceptance remain pending. On a dedicated test
+profile, inspect room and thread avatars, scroll through history, change rooms
+rapidly, and check cached avatars after an offline restart. Change a member's
+avatar from another client and confirm the new URI is displayed when the SDK
+updates its profile snapshot. Check missing avatars, fixed row positions,
+offline shutdown, and settled CPU/wakeups using [idle validation](idle-resources.md).
+
 ## Cached startup — 2026-11-15
 
 The desktop restores its saved SDK stores and checks the local device signing
@@ -50,8 +101,9 @@ device-key preservation and rejection of damaged or incomplete saved state.
 
 This establishes cached room reading, not a complete offline archive: only SDK
 retained content is available. Uncached history, thread roots, and missing room
-keys can still require network access. Message retention limits, media loading,
-media budgets, and cache-clearing controls are future work. Existing SDK stores
+keys can still require network access. Message retention limits, attachment and
+emoji loading, configurable budgets, and cache-clearing controls are future work.
+Avatar media loading is described above. Existing SDK stores
 stay in place; this change introduces no migration or eviction.
 
 Desktop acceptance remains pending: with the client closed and Secret Service
