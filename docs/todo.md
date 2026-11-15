@@ -1,6 +1,5 @@
 # Rooms
 - show room membersihp
-- pinned messages
 - room topic
 - attachments
 - add images (file picker, paste, drop)

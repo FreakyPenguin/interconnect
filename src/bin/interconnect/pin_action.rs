@@ -57,11 +57,41 @@ impl App {
         (self.pin_available(&target) && (!pinned || row.can_react))
             .then(|| message(Event::Set(target, pinned)))
     }
+    pub(super) fn pinned_unpin_action(&self, row: &MessageRow, generation: u64) -> Option<Message> {
+        let (current, room) = self.selection.room.as_ref()?;
+        if *current != generation {
+            return None;
+        }
+        let target = Target {
+            room: room.clone(),
+            thread: false,
+            generation,
+            event: row.event_id.clone()?,
+        };
+        (self.pin_available(&target)
+            && (self.demo.is_some() || self.reaction_composer(&target).is_some()))
+        .then(|| message(Event::Set(target, false)))
+    }
+    fn pin_target_row(&self, target: &Target) -> Option<&MessageRow> {
+        self.message_row(target).or_else(|| {
+            let (generation, room) = self.selection.room.as_ref()?;
+            if target.thread || *generation != target.generation || room != &target.room {
+                return None;
+            }
+            self.model
+                .pinned
+                .as_ref()
+                .filter(|pins| pins.generation == target.generation)?
+                .rows
+                .iter()
+                .find(|row| row.event_id.as_ref() == Some(&target.event))
+        })
+    }
     pub(super) fn validate_pin_error(&mut self) {
         if self
             .pin_error
             .as_ref()
-            .is_some_and(|(target, _)| self.message_row(target).is_none())
+            .is_some_and(|(target, _)| self.pin_target_row(target).is_none())
         {
             self.pin_error = None;
         }
@@ -90,7 +120,7 @@ impl App {
             Event::Set(target, pinned) => {
                 if !self.pin_available(&target)
                     || !self
-                        .message_row(&target)
+                        .pin_target_row(&target)
                         .is_some_and(|row| !pinned || row.can_react)
                     || self.settings.draft.is_some()
                     || self.verification.open
@@ -130,7 +160,7 @@ impl App {
                 self.pending_ops -= 1;
                 if !self.closing
                     && !self.stopped
-                    && self.message_row(&target).is_some()
+                    && self.pin_target_row(&target).is_some()
                     && let Err(error) = result
                 {
                     self.pin_error = Some((
@@ -388,6 +418,48 @@ mod tests {
         let _ = app.update(Message::Room("release".into()));
         assert!(action(&app, false, "release").is_none());
     }
+    #[test]
+    fn panel_unpin_feedback_survives_missing_history_and_rejects_old_views() {
+        let mut app = demo_app();
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let row = app.model.pinned.as_ref().unwrap().rows[0].clone();
+        app.model.room.as_mut().unwrap().rows = std::sync::Arc::default();
+        let Message::Pin(Event::Set(target, false)) =
+            app.pinned_unpin_action(&row, generation).unwrap()
+        else {
+            panic!()
+        };
+        assert!(app.pinned_unpin_action(&row, generation + 1).is_none());
+        app.pinning.insert(target.clone());
+        app.pending_ops = 1;
+        assert!(app.pinned_unpin_action(&row, generation).is_none());
+        let _ = app.update(message(Event::Saved(
+            target.clone(),
+            false,
+            Err("Denied".into()),
+        )));
+        assert!(
+            app.pin_error
+                .as_ref()
+                .unwrap()
+                .1
+                .contains("Could not unpin")
+        );
+        assert!(app.pinned_unpin_action(&row, generation).is_some());
+        let _ = app.update(Message::Room("general".into()));
+        let _ = app.update(message(Event::Set(target, false)));
+        assert!(app.pin_error.is_none());
+        assert!(
+            app.model
+                .rooms
+                .iter()
+                .find(|room| room.id == "studio")
+                .unwrap()
+                .pinned_events
+                .contains(&row.key)
+        );
+    }
+
     #[test]
     fn a_redacted_pinned_message_can_still_be_unpinned() {
         let mut app = demo_app();

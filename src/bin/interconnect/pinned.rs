@@ -1,8 +1,8 @@
-//! A bounded, read-only strip above the room timeline.
+//! A bounded strip above the room timeline, with permission-gated removal.
 use super::{App, Message, emoji, presentation, shell};
 use iced::{
     Element, Length,
-    widget::{column, container, row, rule, scrollable, text, tooltip},
+    widget::{button, column, container, row, rule, scrollable, text, tooltip},
 };
 
 impl App {
@@ -24,18 +24,37 @@ impl App {
                 text(presentation::time_detail(message)).size(12),
                 tooltip::Position::Bottom,
             );
-            entries = entries.push(
-                row![
-                    container(emoji::preview("📌".into()).size(14)).width(20),
-                    column![
-                        row![shell::title(&message.display_name, 12), timestamp].spacing(10),
-                        emoji::preview(message.body.clone()).size(13),
-                    ]
-                    .spacing(4)
-                    .width(Length::Fill),
+            let icon: Element<'_, Message> =
+                if let Some(unpin) = self.pinned_unpin_action(message, generation) {
+                    tooltip(
+                        container(
+                            button(emoji::preview("📌".into()).size(14))
+                                .padding(0)
+                                .width(20)
+                                .style(shell::icon_button)
+                                .on_press(unpin),
+                        )
+                        .id(format!("pinned-unpin:{}", message.key)),
+                        text("Unpin message").size(12),
+                        tooltip::Position::Bottom,
+                    )
+                    .into()
+                } else {
+                    container(emoji::preview("📌".into()).size(14))
+                        .width(20)
+                        .into()
+                };
+            let body = row![
+                icon,
+                column![
+                    row![shell::title(&message.display_name, 12), timestamp].spacing(10),
+                    emoji::preview(message.body.clone()).size(13),
                 ]
-                .spacing(8),
-            );
+                .spacing(4)
+                .width(Length::Fill),
+            ]
+            .spacing(8);
+            entries = entries.push(self.pin_feedback(body.into(), message, false, generation));
         }
         if let Some(error) = &pins.error {
             entries = entries.push(text(error).size(12).color(shell::MUTED));
@@ -74,6 +93,94 @@ mod tests {
     use super::*;
     use crate::{DraftKey, tests::demo_app};
     use iced::advanced::{layout, widget};
+
+    #[test]
+    fn panel_icon_unpins_events_outside_history_and_stays_static_without_permission() {
+        use iced::advanced::{Layout, Shell, mouse};
+        #[derive(Default)]
+        struct Probe(Option<iced::Rectangle>);
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("pinned-unpin:direction")) {
+                    self.0 = Some(bounds);
+                }
+            }
+        }
+        let mut app = demo_app();
+        let generation = app.selection.room.as_ref().unwrap().0;
+        // This pin is older than the loaded history; removal must use the pin snapshot.
+        app.model.room.as_mut().unwrap().rows = std::sync::Arc::default();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = iced::Size::new(360.0, 200.0);
+        let mut tree = widget::Tree::empty();
+        std::sync::Arc::make_mut(&mut app.model.rooms)
+            .iter_mut()
+            .find(|room| room.id == "studio")
+            .unwrap()
+            .can_pin = false;
+        {
+            let mut view = app.pinned_view(generation).unwrap();
+            tree.diff(view.as_widget());
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(iced::Size::ZERO, size),
+            );
+            let mut probe = Probe::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+            assert!(probe.0.is_none(), "no unpin button without permission");
+        }
+        std::sync::Arc::make_mut(&mut app.model.rooms)
+            .iter_mut()
+            .find(|room| room.id == "studio")
+            .unwrap()
+            .can_pin = true;
+        let mut view = app.pinned_view(generation).unwrap();
+        tree.diff(view.as_widget());
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        let mut probe = Probe::default();
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+        let mut messages = Vec::new();
+        for event in [
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ] {
+            view.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Available(probe.0.unwrap().center()),
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &iced::Rectangle::with_size(size),
+            );
+        }
+        drop(view);
+        let unpin = messages
+            .into_iter()
+            .find(|message| {
+                matches!(
+                    message,
+                    Message::Pin(super::super::pin_action::Event::Set(_, false))
+                )
+            })
+            .expect("the icon dispatches unpin");
+        let _ = app.update(unpin.clone());
+        assert_eq!(app.model.pinned.as_ref().unwrap().total, 1);
+        assert_eq!(app.model.pinned.as_ref().unwrap().rows[0].key, "proposal");
+        let _ = app.update(unpin);
+        assert_eq!(app.model.pinned.as_ref().unwrap().total, 1);
+    }
 
     #[test]
     fn pins_are_room_scoped_and_space_filters_keep_drafts_and_scroll() {

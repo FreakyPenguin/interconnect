@@ -1550,7 +1550,8 @@ editor text. Do not change a real room topic without authorization.
 
 Rooms with pins show a strip directly below the topic and above the message
 history, without a section title or count. Each message has a pin icon on its
-left, followed by author, timestamp (with the existing full-time tooltip), and
+left; with pinning permission it is an **Unpin message** button, otherwise it
+remains a static icon. The icon is followed by author, timestamp (with the existing full-time tooltip), and
 message text, including multiline text and emoji. Media
 uses the existing textual event description in this first display-only pass.
 The section has its own scroll area capped at 144 pixels; it stays above the
@@ -1631,3 +1632,19 @@ both buttons and checks the pinned strip. Native visual checks and real-account
 pin/unpin writes remain untested.
 Use **Design studio** in `--demo` to pin another message and see it appear above
 the timeline; **Release notes** has no pin permission and shows no pin button.
+
+
+The pinned-panel icon reuses the same captured unpin action, per-room operation
+limit, asynchronous save, and permission recheck as the timeline hover panel.
+It works for pins outside the loaded history by validating against the current
+pins snapshot; it waits for a current room send target before becoming active.
+While an operation is pending or after shutdown, icons are static. Errors appear
+beside the pin, and a failed removal can be retried. Generation checks reject
+queued clicks after navigation. No new subscription, timer, or SDK handle is
+added to UI snapshots.
+
+Automated panel checks click an icon for a pin absent from room history and
+verify only that pin disappears, permission denial renders no unpin button,
+repeated clicks are idempotent, pending operations disable the action, scoped
+errors remain visible without history, and stale clicks cannot affect the room
+left behind. Native/connected-account checks remain untested.
