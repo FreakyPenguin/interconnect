@@ -1,0 +1,77 @@
+--- upstream/src/text_editor.rs
++++ patched/src/text_editor.rs
+@@ -128,6 +128,7 @@
+         &Theme,
+     ) -> highlighter::Format<Renderer::Font>,
+     last_status: Option<Status>,
++    cursor_blinking: bool,
+ }
+ 
+ impl<'a, Message, Theme, Renderer>
+@@ -159,6 +160,7 @@
+                 highlighter::Format::default()
+             },
+             last_status: None,
++            cursor_blinking: true,
+         }
+     }
+ 
+@@ -176,6 +178,14 @@
+     Theme: Catalog,
+     Renderer: text::Renderer,
+ {
++    /// Sets whether the focused caret blinks. Defaults to true.
++    ///
++    /// When disabled, the caret stays visible and no blink redraw is scheduled.
++    pub fn cursor_blinking(mut self, enabled: bool) -> Self {
++        self.cursor_blinking = enabled;
++        self
++    }
++
+     /// Sets the placeholder of the [`TextEditor`].
+     pub fn placeholder(
+         mut self,
+@@ -304,6 +314,7 @@
+             highlighter_settings: settings,
+             highlighter_format: to_format,
+             last_status: self.last_status,
++            cursor_blinking: self.cursor_blinking,
+         }
+     }
+ 
+@@ -553,11 +564,12 @@
+         }
+     }
+ 
+-    fn is_cursor_visible(&self) -> bool {
++    fn is_cursor_visible(&self, blinking: bool) -> bool {
+         self.is_window_focused
+-            && ((self.now - self.updated_at).as_millis()
+-                / Self::CURSOR_BLINK_INTERVAL_MILLIS)
+-                .is_multiple_of(2)
++            && (!blinking
++                || ((self.now - self.updated_at).as_millis()
++                    / Self::CURSOR_BLINK_INTERVAL_MILLIS)
++                    .is_multiple_of(2))
+     }
+ }
+ 
+@@ -713,6 +725,7 @@
+             Event::Window(window::Event::RedrawRequested(now)) => {
+                 if let Some(focus) = &mut state.focus
+                     && focus.is_window_focused
++                    && self.cursor_blinking
+                 {
+                     focus.now = *now;
+ 
+@@ -1020,7 +1033,9 @@
+ 
+         if let Some(focus) = state.focus.as_ref() {
+             match internal.editor.selection() {
+-                Selection::Caret(position) if focus.is_cursor_visible() => {
++                Selection::Caret(position)
++                    if focus.is_cursor_visible(self.cursor_blinking) =>
++                {
+                     let cursor =
+                         Rectangle::new(
+                             position + translation,

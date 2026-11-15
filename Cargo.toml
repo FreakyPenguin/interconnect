@@ -28,3 +28,7 @@ wiremock = "0.6"
 
 [profile.dev]
 debug = 0
+
+# Iced 0.14 has no public switch for the editor's blink timer.
+[patch.crates-io]
+iced_widget = { path = "vendor/iced_widget" }

@@ -330,3 +330,28 @@ for the whole client, mostly in sync-response bursts every 30 seconds. Separate 
 traces found 51 crypto-store flushes before and none after. See
 [the measurement report](idle-resources.md#single-process-fix-and-ab-check--2026-11-14)
 for capture conditions and limits. No live messages were sent during this check.
+
+
+### Static composer caret — 2026-11-15
+
+Both room and thread composers now use a steady visible caret while focused.
+Iced 0.14.2's text editor hard-codes its 500 ms blink timer, so the pinned
+`iced_widget` crate is locally overridden with a small `cursor_blinking(bool)`
+option, defaulting to upstream behavior. The composers explicitly disable it.
+This suppresses the timer's scheduled redraws and keeps the focused caret drawn;
+normal input, selection, and window-focus behavior remain in the widget.
+See [the dependency patch notes](../../vendor/iced_widget/PATCH.md).
+
+A real-widget regression delivers redraw events across multiple blink phases:
+enabled blinking schedules a future redraw, while disabled blinking requests no
+redraw after focus styling settles. All 28 regular tests, GUI build, formatting,
+and application Clippy passed. The vendored pick list also removes its legacy `std::f32` import so
+`f32::INFINITY` uses the associated constant without a deprecation warning.
+
+Live host check: restored the existing session, selected an encrypted room,
+focused its composer, and typed an unsent test draft. The caret was visibly
+present, and the next 30 seconds showed zero redraw events and zero UI updates.
+The draft was cleared afterward without sending a message. Earlier blinking
+behavior produced 63 redraw events in 30 seconds in a focused thread composer;
+these are redraw observations, not whole-process scheduler-wakeup counts. Raw
+local evidence is in `artifacts/static-caret-2026-11-15/` (ignored).

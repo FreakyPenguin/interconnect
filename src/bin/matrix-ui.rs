@@ -422,6 +422,7 @@ impl App {
             let send_key = key.clone();
             let composing = self.composing;
             let mut editor = text_editor(&draft.content)
+                .cursor_blinking(false)
                 .height(110)
                 .placeholder("Write a message…");
             if !self.closing && !self.stopped && !draft.pending {
@@ -550,6 +551,58 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn focused_editor_schedules_redraw_only_when_blinking_is_enabled() {
+        use iced::advanced::text::highlighter::PlainText;
+        use iced::advanced::widget::operation::Focusable;
+        use iced::advanced::{Shell, Widget, layout, mouse, widget};
+        use iced::window::RedrawRequest;
+        for blinking in [false, true] {
+            let content = text_editor::Content::with_text("caret fixture");
+            let mut editor = text_editor(&content)
+                .on_action(std::convert::identity)
+                .cursor_blinking(blinking);
+            let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let mut tree = widget::Tree::new(
+                &editor as &dyn Widget<text_editor::Action, iced::Theme, iced::Renderer>,
+            );
+            tree.state
+                .downcast_mut::<text_editor::State<PlainText>>()
+                .focus();
+            let node = editor.layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(iced::Size::ZERO, iced::Size::new(300.0, 110.0)),
+            );
+            let now = iced::time::Instant::now();
+            // First redraw resolves focus style; later redraws must not arm a
+            // blink deadline when disabled, even across multiple blink phases.
+            for milliseconds in [0, 750, 1250] {
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                editor.update(
+                    &mut tree,
+                    &iced::Event::Window(iced::window::Event::RedrawRequested(
+                        now + std::time::Duration::from_millis(milliseconds),
+                    )),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &iced::Rectangle::with_size(iced::Size::new(300.0, 110.0)),
+                );
+                if milliseconds > 0 {
+                    if blinking {
+                        assert!(matches!(shell.redraw_request(), RedrawRequest::At(_)));
+                    } else {
+                        assert_eq!(shell.redraw_request(), RedrawRequest::Wait);
+                    }
+                }
+            }
+        }
+    }
+
     #[test]
     fn sqlite_cleanup_outlives_iced_executor_and_runs_before_return() {
         use iced::Executor;
