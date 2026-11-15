@@ -2124,3 +2124,48 @@ ignored; 149 GUI tests passed), and the locked desktop build. The incoming
 fixture also delivers its first sync before polling the view, checking that
 listener registration precedes subscription processing. No desktop session was
 launched for these checks.
+
+## Quick room switcher — 2026-11-15
+
+**Ctrl+P** opens a VS Code style quick-open panel; **Cmd+P** also works on macOS.
+Search matches names and room IDs case-insensitively, ranking exact, prefix,
+substring, and fuzzy subsequence matches. It searches all joined conversations,
+including direct messages and rooms outside the selected space or collapsed
+sections. Up/Down wraps through matches, Enter opens the highlighted room, and
+clicking a result opens it. Escape or a backdrop click dismisses the panel.
+Tab keeps focus in search. Other dialogs take priority over opening the picker.
+
+Search and highlighting leave the current room/thread intact. Selecting a room
+uses ordinary room navigation, retaining per-conversation drafts and saved scroll
+positions. Selecting the current room preserves its thread and view generation.
+The sidebar space, query, and collapsed sections stay unchanged. Dismissal
+restores room/thread composer focus. The picker uses the existing room snapshot,
+a static caret, and event-driven keyboard input; it adds no SDK requests, polling,
+or animation timers. File drops cannot target the obscured conversation.
+
+Automated UI tests cover fuzzy/Unicode/ID matching, shortcut modifiers,
+cross-space switching, draft and saved-scroll preservation, thread cancellation,
+empty/stale result safety, keyboard wrapping, Enter submission without a duplicate
+global action, and backdrop capture at 640×480. The full desktop suite (154 tests),
+locked workspace Clippy with warnings denied, formatting, and locked desktop build
+passed. An isolated headless Wayland/tiny-skia demo exercised Ctrl+P, search,
+Enter, Down, Escape, and layout at 1000×720 and 640×480. Synthetic keyboard input
+requires a short delay after virtual-keyboard creation in this harness. Local
+captures and logs remain ignored under `artifacts/quick-room-2026-11-15/`.
+No saved account or connected client was used. macOS shortcut behavior,
+real-account acceptance, and measured idle-resource checks remain pending.
+
+Manual acceptance:
+
+1. Run `cargo run --locked --bin interconnect -- --demo`. Open Ctrl+P from both
+   room and thread composers. Search `home`, use Enter, and check that Weekend
+   plans opens while the Studio sidebar remains selected.
+2. Type separate drafts and scroll room/thread timelines. Open and dismiss the
+   picker using Escape and a backdrop click; verify the thread, drafts, and
+   reading position remain. Switch away and back, checking draft/scroll recovery.
+3. Search a partial name, fuzzy abbreviation, room ID, and nonexistent name.
+   Use Up/Down through the entire list and across both ends. Check selection
+   remains visible, click a result, and repeat at 640×480.
+4. Verify Ctrl+P cannot obscure Settings, verification, image/emoji pickers,
+   invitations, or the topic editor. Confirm no typing notification or message
+   is sent by editing the quick-open search.

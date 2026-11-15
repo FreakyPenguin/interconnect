@@ -97,6 +97,7 @@ impl App {
         self.selection.notifications = self.settings.current.notifications.clone();
         self.selection.conversation_visible = self.window_focused
             && self.settings.draft.is_none()
+            && self.room_picker.is_none()
             && !self.verification.open
             && self.image_view.is_none()
             && !self.closing

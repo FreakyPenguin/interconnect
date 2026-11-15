@@ -35,6 +35,8 @@ mod presentation;
 mod reaction_picker;
 #[path = "interconnect/reactions.rs"]
 mod reactions;
+#[path = "interconnect/room_picker.rs"]
+mod room_picker;
 #[path = "interconnect/selectable.rs"]
 mod selectable;
 #[path = "interconnect/selection.rs"]
@@ -123,9 +125,11 @@ struct App {
     inviting: HashSet<String>,
     pinning: HashSet<reaction_picker::Target>,
     pin_error: Option<(reaction_picker::Target, String)>,
+    room_picker: Option<room_picker::State>,
 }
 #[derive(Clone, Debug)]
 enum Message {
+    QuickRoom(room_picker::Event),
     Pin(pin_action::Event),
     Topic(topic::Event),
     Members(members::Event),
@@ -242,6 +246,7 @@ impl App {
             inviting: HashSet::new(),
             pinning: HashSet::new(),
             pin_error: None,
+            room_picker: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.model.authentication = None;
@@ -257,6 +262,23 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if let Message::QuickRoom(event) = message {
+            let task = self.quick_room_event(event);
+            self.publish_notification_context();
+            return task;
+        }
+        if self.room_picker.is_some() && matches!(message, Message::Escape) {
+            return self.update(Message::QuickRoom(room_picker::Event::Close));
+        }
+        if self.room_picker.is_some()
+            && matches!(
+                message,
+                Message::Settings(settings::Event::Open)
+                    | Message::Verification(verification::Event::Open)
+            )
+        {
+            return Task::none();
+        }
         if matches!(
             &message,
             Message::Room(_)
@@ -332,7 +354,8 @@ impl App {
         {
             return self.update(dismiss);
         }
-        if self.settings.draft.is_some()
+        if self.room_picker.is_some()
+            || self.settings.draft.is_some()
             || self.verification.open
             || self.image_view.is_some()
             || self.reaction_picker.is_some()
@@ -1197,7 +1220,9 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.verification.open {
+            if self.room_picker.is_some() {
+                iced::event::listen_with(room_picker::shortcut)
+            } else if self.verification.open {
                 iced::event::listen_with(|event, _, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
@@ -1272,6 +1297,9 @@ impl App {
             return self.login_view(authentication);
         }
         let mut layers = iced::widget::stack![self.shell_view()];
+        if self.room_picker.is_some() {
+            layers = layers.push(self.quick_room_view());
+        }
         if self.settings.draft.is_some() {
             layers = layers.push(self.settings_view());
         }
@@ -2117,6 +2145,9 @@ fn shell_shortcut(
     modifiers: iced::keyboard::Modifiers,
 ) -> Option<Message> {
     use iced::keyboard::{Key, key::Named};
+    if room_picker::is_shortcut(key, modifiers) {
+        return Some(Message::QuickRoom(room_picker::Event::Open));
+    }
     match key.as_ref() {
         Key::Character(",") if modifiers.command() => {
             Some(Message::Settings(settings::Event::Open))

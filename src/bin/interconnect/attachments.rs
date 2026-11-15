@@ -51,6 +51,7 @@ impl App {
                     .is_some_and(|width| self.side_panel_replaces_room(width)))
             && self.account_id == target.account
             && self.settings.draft.is_none()
+            && self.room_picker.is_none()
             && !self.verification.open
             && self.image_view.is_none()
             && self.reaction_picker.is_none()
