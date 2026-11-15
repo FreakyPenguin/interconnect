@@ -650,19 +650,6 @@ impl App {
             iced::widget::space().width(Length::Fill)
         ]
         .align_y(iced::Alignment::Center);
-        header = header.push(iced::widget::tooltip(
-            button(text("⌄").size(24))
-                .padding([2, 10])
-                .style(shell::quiet_button)
-                .on_press(Message::JumpToNewest {
-                    thread,
-                    generation: *generation,
-                }),
-            container(text("Jump to newest message").size(12))
-                .padding(8)
-                .style(container::rounded_box),
-            iced::widget::tooltip::Position::Bottom,
-        ));
         if thread {
             header = header.push(
                 button("Close")
@@ -790,7 +777,31 @@ impl App {
             .height(Length::Fill);
         // New view identity resets the scroll state; async rows retain that
         // state and a zero distance from the bottom follows loaded history.
-        content = content.push(timeline::view(*generation, timeline.into()));
+        let mut message_area = iced::widget::stack![timeline::view(*generation, timeline.into())];
+        // Keep the timeline in the same widget slot as this overlay appears and
+        // disappears. The one-pixel tolerance accounts for layout rounding.
+        if self.pending_scroll[usize::from(thread)].is_none() && self.saved_scroll(thread) > 1.0 {
+            let jump = iced::widget::tooltip(
+                button(container(text("⌄").size(24)).center_x(36).center_y(36))
+                    .padding(0)
+                    .style(shell::jump_button)
+                    .on_press(Message::JumpToNewest {
+                        thread,
+                        generation: *generation,
+                    }),
+                container(text("Jump to newest message").size(12))
+                    .padding(8)
+                    .style(container::rounded_box),
+                iced::widget::tooltip::Position::Top,
+            );
+            message_area = message_area.push(
+                container(jump)
+                    .center_x(Length::Fill)
+                    .align_bottom(Length::Fill)
+                    .padding(12),
+            );
+        }
+        content = content.push(message_area);
         if let Some(key) = self.draft_key(thread)
             && let Some(draft) = self.drafts.get(&key)
         {

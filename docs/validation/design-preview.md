@@ -64,7 +64,7 @@ Shortcuts:
 ## Feasibility findings and scope
 
 Room/thread scroll positions are remembered during the session; first-time opens
-start at the bottom. The header chevron jumps to the newest message. See the
+start at the bottom. A bottom-center floating chevron appears when scrolled up and jumps to the newest message. See the
 [scrolling validation](connected-ui.md#timeline-scrolling--2026-11-15).
 
 The shell uses standard Iced layout and styling APIs. No new custom layout,

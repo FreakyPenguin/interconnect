@@ -102,6 +102,28 @@ pub fn scrollbar() -> scrollable::Direction {
             .margin(2),
     )
 }
+pub fn jump_button(theme: &Theme, status: button::Status) -> button::Style {
+    let mut style = quiet_button(theme, status);
+    style.background = Some(
+        if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+            SELECTED
+        } else {
+            Color::WHITE
+        }
+        .into(),
+    );
+    style.border = Border {
+        color: LINE,
+        width: 1.0,
+        radius: 18.0.into(),
+    };
+    style.shadow = iced::Shadow {
+        color: Color::BLACK.scale_alpha(0.12),
+        offset: iced::Vector::new(0.0, 2.0),
+        blur_radius: 8.0,
+    };
+    style
+}
 pub fn send_button(theme: &Theme, status: button::Status) -> button::Style {
     let mut style = button::primary(theme, status);
     style.border = Border::default().rounded(7);

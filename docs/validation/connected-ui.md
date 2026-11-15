@@ -92,8 +92,9 @@ without marking the room read in the other client.
 A room or thread opened for the first time starts at the bottom. Returning to a
 previously opened conversation restores its own in-memory scroll position after
 initial history loading completes. Room and thread positions are independent.
-Each pane has a down-chevron in its header, with the tooltip **Jump to newest
-message**, that returns that pane to the bottom. No read receipt is sent by the
+Each pane shows a floating down-chevron centered near the bottom of its message
+area only while scrolled away from the bottom. Its tooltip is **Jump to newest
+message**; clicking returns that pane to the bottom and hides the button. No read receipt is sent by the
 button. Scroll positions are not written to the profile or restored after exit.
 
 Iced's bottom anchor handles messages arriving after the initial empty view.
@@ -470,3 +471,9 @@ restart acceptance, and resource measurements on a representative account,
 remain pending. Metadata refresh currently scans the joined-room cache and
 stored space links per coalesced update; larger-account costs still need to be
 measured before claiming a navigation performance budget.
+
+The chevron placement was refined to a bottom-center overlay. A native demo
+check confirmed it appears when scrolled up, survives a room round-trip, and
+hides after jumping to the bottom. It does not reserve layout space or move the
+message viewport when appearing. All 16 GUI tests, build, formatting, and Clippy
+passed. Screenshots are in `artifacts/scroll-chevron-2026-11-15/` (ignored).
