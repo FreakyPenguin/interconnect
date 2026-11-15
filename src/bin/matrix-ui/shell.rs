@@ -357,8 +357,8 @@ impl App {
             .on_input(Message::Search)
             .on_submit(Message::SearchOpen)
             .size(13)
-            .padding(10);
-        let mut rooms = column![].spacing(5);
+            .padding([7, 10]);
+        let mut rooms = column![].spacing(2);
         let sections = ["Favorites", "Direct messages", "Unread", "Rooms"];
         let visible = self.visible_rooms();
         if let Some(error) = &self.model.preferences_error {
@@ -377,12 +377,12 @@ impl App {
                 .filter(|s| space.children.contains(&s.id))
                 .collect();
             if !children.is_empty() {
-                rooms = rooms.push(container(title("Spaces", 11).color(MUTED)).padding([10, 8]));
+                rooms = rooms.push(container(title("Spaces", 11).color(MUTED)).padding([6, 8]));
                 for child in children {
                     rooms = rooms.push(
                         button(text(format!("› {}", child.name)).size(13))
                             .width(Length::Fill)
-                            .padding([9, 10])
+                            .padding([4, 10])
                             .style(quiet_button)
                             .on_press(Message::Space(Scope::Space(child.id.clone()))),
                     );
@@ -415,7 +415,7 @@ impl App {
                     .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
-                .padding([10, 8])
+                .padding([6, 8])
                 .style(quiet_button)
                 .on_press(Message::Section(section.into())),
             );
@@ -457,7 +457,7 @@ impl App {
                 }
                 let mut control = button(label)
                     .width(Length::Fill)
-                    .padding([9, 10])
+                    .padding([4, 10])
                     .style(move |_, status| navigation_button(selected, status));
                 if !self.closing && !self.stopped {
                     control = control.on_press(Message::Room(room.id.clone()));
@@ -470,20 +470,7 @@ impl App {
         }
         container(
             column![
-                container(
-                    column![
-                        title(name, 20),
-                        text(if self.demo.is_some() {
-                            "A place for your conversations"
-                        } else {
-                            "Your conversations"
-                        })
-                        .size(11)
-                        .color(MUTED)
-                    ]
-                    .spacing(6)
-                )
-                .padding([8, 4]),
+                container(title(name, 18)).padding([4, 4]),
                 search,
                 scrollable(rooms.padding(iced::Padding {
                     right: 8.0,
@@ -500,9 +487,9 @@ impl App {
                 .size(9)
                 .color(MUTED),
             ]
-            .spacing(16),
+            .spacing(10),
         )
-        .padding([18, 12])
+        .padding([12, 12])
         .width(242)
         .height(Length::Fill)
         .style(|_| surface(SIDEBAR))
