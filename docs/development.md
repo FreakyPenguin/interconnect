@@ -36,6 +36,31 @@ no saved session and sends no Matrix messages. See the [design preview guide](va
 for shortcuts, fixtures, and known interaction gaps. Normal `matrix-ui` launches
 use the same visual shell with the saved Matrix session.
 
+## Emoji picker
+
+`src/bin/matrix-ui/emoji_picker.rs` owns the reusable catalog, search/category/
+page state, and generic `view`/`Event` API. Build `Catalog::new(entries)`, create
+`State::new(&catalog)`, and map its events into the embedding surface's message
+type. `State::update` returns a selected catalog key; the caller decides whether
+to react, insert into a composer, or do something else. The host supplies the
+available size and may disable selection while its own operation runs. Result
+scroll state resets when a query/category/page changes, without resetting search
+focus. The built-in Unicode catalog is cached once from the pinned `emojis`
+dependency; only one page creates widgets. No picker subscription is required.
+
+Entry keys are separate from display names, aliases, categories, and glyphs.
+Custom emoji can later add an image-backed visual in `entry_view` and merge
+room/workspace catalog entries without changing selection events or reaction
+targeting. Media loading and caching belong to the embedding application's
+existing asynchronous media path. This change does not discover, upload, or
+render custom Matrix emoji.
+
+`popover.rs` hosts arbitrary generic content beside an anchor, clamps it to the
+window, and captures backdrop input. `reaction_picker.rs` alone owns Matrix
+targets, pending sends, errors, and demo behavior. Reuse the picker directly in
+another surface, or pair it with the same popup host. Search uses a static caret;
+emoji-name tooltips use Iced's ordinary one-shot hover delay.
+
 ## Renderer selection
 
 `matrix-ui` builds both Iced renderers. **Settings → Graphics** controls the

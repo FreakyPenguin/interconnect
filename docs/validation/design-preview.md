@@ -135,8 +135,16 @@ Shortcuts:
 Reaction fixtures are in **Studio → Design studio**: the welcome message and
 the last message have multiple badges; opening the last message's thread shows
 badges on its pinned original and first reply. Check own-reaction blue tints,
-Unicode emoji, wrapping, and inert clicks. See
+Unicode emoji, wrapping, and chip clicks that toggle your own reaction. See
 [reaction validation and SDK limits](connected-ui.md#message-reactions--2026-11-15).
+Hover a message's smiley-plus to open the reusable picker beside the reply arrow.
+Add reactions in the room, on the pinned original, and on replies. Search a name,
+`:rocket:`, or a pasted skin-tone emoji; browse categories/pages and repeat a
+selection to check that it stays add-only. Close with Escape or an outside click
+and verify drafts and scroll positions. See
+[picker validation](connected-ui.md#adding-reactions-and-the-emoji-picker--2026-11-15).
+Click a blue chip to remove your own reaction; shared reactions should remain.
+Check this in both the room and thread, including the pinned original.
 
 1. In Studio, open Design studio and a message's thread. Type different drafts
    in each pane, change rooms/spaces, and return. Send a demo reply; verify it

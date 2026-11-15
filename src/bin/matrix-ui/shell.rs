@@ -136,24 +136,49 @@ pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
 }
 pub fn message_actions<'a>(
     body: impl Into<Element<'a, Message>>,
-    event_id: &str,
-    enabled: bool,
+    reply: Option<Message>,
+    reaction: Option<Message>,
+    popup: Option<(Element<'a, Message>, Message)>,
 ) -> Element<'a, Message> {
-    let mut reply = button(container(text("↩").size(16)).center_x(28).center_y(20))
-        .padding(0)
-        .style(icon_button);
-    if enabled {
-        reply = reply.on_press(Message::Thread(event_id.to_owned()));
+    if reply.is_none() && reaction.is_none() && popup.is_none() {
+        return body.into();
     }
-    let actions = container(row![widget::tooltip(
-        reply,
-        container(text("Reply in thread").size(12))
-            .padding(8)
-            .style(container::rounded_box),
-        widget::tooltip::Position::Top,
-    )])
-    .padding(1)
-    .style(|_| container::Style {
+    let mut controls = row![].spacing(2);
+    if reaction.is_some() || popup.is_some() {
+        let add = container(
+            button(container(text("☺+").size(16)).center_x(28).center_y(20))
+                .padding(0)
+                .style(icon_button)
+                .on_press_maybe(reaction),
+        )
+        .id("add-reaction");
+        let (content, dismiss) = popup.map_or((None, Message::Escape), |(content, dismiss)| {
+            (Some(content), dismiss)
+        });
+        controls = controls.push(widget::tooltip(
+            super::popover::view(add, content, dismiss),
+            container(text("Add reaction").size(12))
+                .padding(8)
+                .style(container::rounded_box),
+            widget::tooltip::Position::Top,
+        ));
+    }
+    if let Some(reply) = reply {
+        controls = controls.push(widget::tooltip(
+            container(
+                button(container(text("↩").size(16)).center_x(28).center_y(20))
+                    .padding(0)
+                    .style(icon_button)
+                    .on_press(reply),
+            )
+            .id("reply-in-thread"),
+            container(text("Reply in thread").size(12))
+                .padding(8)
+                .style(container::rounded_box),
+            widget::tooltip::Position::Top,
+        ));
+    }
+    let actions = container(controls).padding(1).style(|_| container::Style {
         border: Border {
             color: LINE,
             width: 1.0,
@@ -263,6 +288,10 @@ pub fn empty_state<'a>(heading: &'a str, detail: &'a str) -> Element<'a, Message
 }
 
 impl App {
+    pub(super) fn thread_replaces_room(&self, width: f32) -> bool {
+        self.selection.thread.is_some()
+            && width < if self.shell.navigation { 1120.0 } else { 870.0 }
+    }
     pub(super) fn section_key(&self, section: &str) -> String {
         format!("{:?}/{section}", self.shell.space)
     }
@@ -303,8 +332,7 @@ impl App {
                     .push(self.room_navigation())
                     .push(widget::rule::vertical(1));
             }
-            let narrow = size.width < if self.shell.navigation { 1120.0 } else { 870.0 };
-            if self.selection.thread.is_some() && narrow {
+            if self.thread_replaces_room(size.width) {
                 body = body.push(container(self.pane(true)).width(Length::Fill));
             } else {
                 body = body.push(container(self.pane(false)).width(Length::Fill));

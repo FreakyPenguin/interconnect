@@ -58,6 +58,7 @@ pub struct MessageRow {
     pub avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     pub image: Option<crate::image_media::Attachment>,
     pub reactions: Vec<Reaction>,
+    pub can_react: bool,
     pub timestamp_ms: Option<i64>,
     pub thread_replies: u32,
     pub thread_root: Option<String>,
@@ -133,6 +134,133 @@ impl std::fmt::Debug for Composer {
     }
 }
 impl Composer {
+    /// Set the state shown by a chip, so repeated/stale clicks cannot invert it.
+    pub async fn set_reaction(
+        self,
+        event_id: String,
+        key: String,
+        selected: bool,
+    ) -> Result<(), String> {
+        if selected {
+            return self.add_reaction(event_id, key).await;
+        }
+        use matrix_sdk::ruma::events::{
+            AnySyncMessageLikeEvent, AnySyncTimelineEvent, relation::RelationType,
+        };
+        let event_id: matrix_sdk::ruma::OwnedEventId = event_id
+            .parse()
+            .map_err(|error: matrix_sdk::ruma::IdParseError| error.to_string())?;
+        let remove = async {
+            {
+                let items = self.0.items().await;
+                let event = items
+                    .iter()
+                    .filter_map(|item| item.as_event())
+                    .find(|event| event.event_id() == Some(event_id.as_ref()))
+                    .ok_or("Message is no longer available")?;
+                if !can_react(event.content()) {
+                    return Err("This message cannot receive reactions".to_owned());
+                }
+                if !event
+                    .content()
+                    .reactions()
+                    .and_then(|reactions| reactions.get(&key))
+                    .is_some_and(|senders| senders.contains_key(self.0.room().own_user_id()))
+                {
+                    return Ok(());
+                }
+            }
+            let (cache, _lifetime) = self
+                .0
+                .room()
+                .event_cache()
+                .await
+                .map_err(|error| error.to_string())?;
+            let related = cache
+                .find_event_relations(&event_id, Some(vec![RelationType::Annotation]))
+                .await
+                .map_err(|error| error.to_string())?;
+            let mut ids = std::collections::HashSet::new();
+            for event in related {
+                let Ok(AnySyncTimelineEvent::MessageLike(AnySyncMessageLikeEvent::Reaction(event))) =
+                    event.raw().deserialize()
+                else {
+                    continue;
+                };
+                let Some(event) = event.as_original() else {
+                    continue;
+                };
+                if event.sender == self.0.room().own_user_id()
+                    && event.content.relates_to.event_id == event_id
+                    && event.content.relates_to.key == key
+                {
+                    ids.insert(event.event_id.clone());
+                }
+            }
+            if ids.is_empty() {
+                return Err(
+                    "Your reaction is not available yet. Wait for sync and try again.".into(),
+                );
+            }
+            // A sender can have duplicate annotations. Remove all our matching
+            // events, keeping every other sender's reaction intact.
+            for id in ids {
+                self.0
+                    .room()
+                    .redact(&id, None, None)
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        };
+        tokio::time::timeout(Duration::from_secs(30), remove)
+            .await
+            .map_err(|_| "Removing reaction timed out".to_owned())?
+    }
+
+    /// Add-only: picking an existing own reaction must never toggle it off.
+    /// Keep the originating timeline alive until this asynchronous request ends.
+    pub async fn add_reaction(self, event_id: String, key: String) -> Result<(), String> {
+        use matrix_sdk::ruma::events::{reaction::ReactionEventContent, relation::Annotation};
+        let event_id: matrix_sdk::ruma::OwnedEventId = event_id
+            .parse()
+            .map_err(|error: matrix_sdk::ruma::IdParseError| error.to_string())?;
+        if key.trim().is_empty() {
+            return Err("Reaction is empty".into());
+        }
+        {
+            let items = self.0.items().await;
+            let event = items
+                .iter()
+                .filter_map(|item| item.as_event())
+                .find(|event| event.event_id() == Some(event_id.as_ref()))
+                .ok_or("Message is no longer available")?;
+            if !can_react(event.content()) {
+                return Err("This message cannot receive reactions".into());
+            }
+            if event
+                .content()
+                .reactions()
+                .and_then(|reactions| reactions.get(&key))
+                .is_some_and(|senders| senders.contains_key(self.0.room().own_user_id()))
+            {
+                return Ok(());
+            }
+        }
+        // Await the request so delivery errors can be shown and retried by the
+        // picker. The SDK sync stream supplies the resulting reaction badge.
+        tokio::time::timeout(
+            Duration::from_secs(30),
+            self.0
+                .room()
+                .send(ReactionEventContent::from(Annotation::new(event_id, key))),
+        )
+        .await
+        .map_err(|_| "Sending reaction timed out".to_owned())?
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+    }
+
     pub async fn send(self, body: String) -> Result<(), String> {
         if body.trim().is_empty() {
             return Err("Message is empty".into());
@@ -147,6 +275,11 @@ impl Composer {
         .map(|_| ())
         .map_err(|e| e.to_string())
     }
+}
+
+fn can_react(content: &TimelineItemContent) -> bool {
+    matches!(content, TimelineItemContent::MsgLike(content) if !matches!(content.kind,
+        matrix_sdk_ui::timeline::MsgLikeKind::Redacted | matrix_sdk_ui::timeline::MsgLikeKind::UnableToDecrypt(_)))
 }
 
 #[derive(Clone, Debug)]
@@ -683,6 +816,7 @@ async fn publish(
                 },
                 image: crate::image_media::Attachment::from_content(content),
                 reactions: reactions(content, timeline.room().own_user_id()),
+                can_react: event.event_id().is_some() && can_react(content),
                 timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
                 thread_replies: content
                     .thread_summary()
@@ -1090,7 +1224,256 @@ mod tests {
                 &[("$reply", reply_reactions)],
             )
             .await;
+            if batch == "three" {
+                // Add-only selection of an own reaction does not send or redact.
+                Composer(RuntimeOwned::new(timeline.clone()))
+                    .add_reaction("$reply".into(), "👍🏽".into())
+                    .await
+                    .unwrap();
+            }
         }
+        let requests = server.received_requests().await.unwrap();
+        assert!(!requests.iter().any(|request| request.method == "PUT"));
+
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/send/m.reaction/.*"))
+            .respond_with(|request: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                if body["m.relates_to"]["key"] == "🛑" {
+                    ResponseTemplate::new(403).set_body_json(
+                        json!({"errcode":"M_FORBIDDEN","error":"fixture reaction denied"}),
+                    )
+                } else {
+                    ResponseTemplate::new(200).set_body_json(json!({"event_id":"$sent-reaction"}))
+                }
+            })
+            .mount(&server)
+            .await;
+        let room_composer = Composer(RuntimeOwned::new(timeline.clone()));
+        let thread_composer = Composer(RuntimeOwned::new(thread.clone()));
+        room_composer
+            .clone()
+            .add_reaction("$reply".into(), "🚀".into())
+            .await
+            .unwrap();
+        thread_composer
+            .clone()
+            .add_reaction("$outside".into(), "🦀".into())
+            .await
+            .unwrap();
+        assert!(
+            room_composer
+                .clone()
+                .add_reaction("$reply".into(), "🛑".into())
+                .await
+                .unwrap_err()
+                .contains("fixture reaction denied")
+        );
+        assert!(
+            room_composer
+                .clone()
+                .add_reaction("$missing".into(), "👍".into())
+                .await
+                .is_err()
+        );
+        assert!(
+            room_composer
+                .clone()
+                .add_reaction("$reply".into(), " ".into())
+                .await
+                .is_err()
+        );
+        let requests = server.received_requests().await.unwrap();
+        let sent: Vec<serde_json::Value> = requests
+            .iter()
+            .filter(|request| request.method == "PUT")
+            .map(|request| {
+                assert!(
+                    request.url.path().contains("/send/m.reaction/"),
+                    "SDK sends reactions as plaintext even in an encrypted room"
+                );
+                serde_json::from_slice(&request.body).unwrap()
+            })
+            .collect();
+        assert_eq!(sent.len(), 3);
+        assert_eq!(
+            sent[0],
+            json!({"m.relates_to":{"rel_type":"m.annotation","event_id":"$reply","key":"🚀"}})
+        );
+        assert_eq!(
+            sent[1],
+            json!({"m.relates_to":{"rel_type":"m.annotation","event_id":"$outside","key":"🦀"}})
+        );
+
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/redact/.*"))
+            .respond_with(|request: &wiremock::Request| {
+                if request.url.path().contains("toggle-denied") {
+                    ResponseTemplate::new(403).set_body_json(
+                        json!({"errcode":"M_FORBIDDEN","error":"fixture redaction denied"}),
+                    )
+                } else {
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"event_id":"$removed-reaction"}))
+                }
+            })
+            .mount(&server)
+            .await;
+        let events = vec![
+            reaction("$toggle-own-a", "$reply", "@test:example.org", "👍🏽"),
+            reaction("$toggle-own-b", "$reply", "@test:example.org", "👍🏽"),
+            reaction("$toggle-other", "$reply", "@other:example.org", "👍🏽"),
+            reaction("$toggle-root", "$outside", "@test:example.org", "❤️"),
+            reaction("$toggle-text", "$reply", "@test:example.org", "approved"),
+            reaction("$toggle-denied", "$reply", "@test:example.org", "🛑"),
+        ];
+        *response.lock().unwrap() = json!({"next_batch":"six", "rooms":{"join":{"!room:example.org":{"timeline":{"events":events,"limited":false}}}}});
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        let expected = vec![
+            Reaction {
+                key: "approved".into(),
+                count: 1,
+                is_own: true,
+            },
+            Reaction {
+                key: "👍🏽".into(),
+                count: 2,
+                is_own: true,
+            },
+            Reaction {
+                key: "🛑".into(),
+                count: 1,
+                is_own: true,
+            },
+        ];
+        expect_reactions(
+            &timeline,
+            &mut updates,
+            false,
+            &[
+                ("$reply", expected.clone()),
+                (
+                    "$outside",
+                    vec![Reaction {
+                        key: "❤️".into(),
+                        count: 1,
+                        is_own: true,
+                    }],
+                ),
+            ],
+        )
+        .await;
+        expect_reactions(
+            &thread,
+            &mut thread_updates,
+            true,
+            &[("$reply", expected.clone())],
+        )
+        .await;
+        // Remove both duplicate own events, never another sender's annotation.
+        thread_composer
+            .clone()
+            .set_reaction("$reply".into(), "👍🏽".into(), false)
+            .await
+            .unwrap();
+        room_composer
+            .clone()
+            .set_reaction("$outside".into(), "❤️".into(), false)
+            .await
+            .unwrap();
+        room_composer
+            .clone()
+            .set_reaction("$reply".into(), "approved".into(), false)
+            .await
+            .unwrap();
+        assert!(
+            room_composer
+                .clone()
+                .set_reaction("$reply".into(), "🛑".into(), false)
+                .await
+                .unwrap_err()
+                .contains("fixture redaction denied")
+        );
+        // Failure and HTTP success both leave badge updates to SDK sync.
+        expect_reactions(&timeline, &mut updates, false, &[("$reply", expected)]).await;
+        let requests = server.received_requests().await.unwrap();
+        let redactions: Vec<_> = requests
+            .iter()
+            .filter(|request| request.url.path().contains("/redact/"))
+            .collect();
+        assert_eq!(redactions.len(), 5);
+        for id in [
+            "toggle-own-a",
+            "toggle-own-b",
+            "toggle-root",
+            "toggle-text",
+            "toggle-denied",
+        ] {
+            assert!(
+                redactions
+                    .iter()
+                    .any(|request| request.url.path().contains(id))
+            );
+        }
+        assert!(
+            !redactions
+                .iter()
+                .any(|request| request.url.path().contains("toggle-other"))
+        );
+
+        let events: Vec<_> = [
+            "$toggle-own-a",
+            "$toggle-own-b",
+            "$toggle-root",
+            "$toggle-text",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(index, id)| redaction(&format!("$toggle-removal-{index}"), id))
+        .collect();
+        *response.lock().unwrap() = json!({"next_batch":"seven", "rooms":{"join":{"!room:example.org":{"timeline":{"events":events,"limited":false}}}}});
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        let expected = vec![
+            Reaction {
+                key: "👍🏽".into(),
+                count: 1,
+                is_own: false,
+            },
+            Reaction {
+                key: "🛑".into(),
+                count: 1,
+                is_own: true,
+            },
+        ];
+        expect_reactions(
+            &timeline,
+            &mut updates,
+            false,
+            &[("$reply", expected.clone()), ("$outside", vec![])],
+        )
+        .await;
+        expect_reactions(&thread, &mut thread_updates, true, &[("$reply", expected)]).await;
+        // Replaying an old remove intent is a no-op rather than adding it back.
+        room_composer
+            .set_reaction("$reply".into(), "👍🏽".into(), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|request| request.url.path().contains("/redact/"))
+                .count(),
+            5
+        );
     }
 
     #[tokio::test]

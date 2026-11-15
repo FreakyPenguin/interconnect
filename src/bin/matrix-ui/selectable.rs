@@ -392,8 +392,9 @@ mod tests {
                     top: 5.0,
                     ..iced::Padding::ZERO
                 }),
-                "$one",
-                true,
+                Some(Message::Thread("$one".into())),
+                None,
+                None,
             )
         ])
         .anchor_bottom()

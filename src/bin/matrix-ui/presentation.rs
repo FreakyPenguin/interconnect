@@ -45,6 +45,7 @@ mod tests {
             avatar_url: None,
             image: None,
             reactions: Vec::new(),
+            can_react: true,
             timestamp_ms,
             thread_replies: 0,
             thread_root: None,

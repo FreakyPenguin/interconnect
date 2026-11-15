@@ -3,10 +3,16 @@
 mod demo;
 #[path = "matrix-ui/emoji.rs"]
 mod emoji;
+#[path = "matrix-ui/emoji_picker.rs"]
+mod emoji_picker;
 #[path = "matrix-ui/images.rs"]
 mod images;
+#[path = "matrix-ui/popover.rs"]
+mod popover;
 #[path = "matrix-ui/presentation.rs"]
 mod presentation;
+#[path = "matrix-ui/reaction_picker.rs"]
+mod reaction_picker;
 #[path = "matrix-ui/reactions.rs"]
 mod reactions;
 #[path = "matrix-ui/selectable.rs"]
@@ -70,14 +76,19 @@ struct App {
     timeline_metrics: [Option<(u64, u64, timeline::Metrics)>; 2],
     thread_activity: thread_activity::State,
     window_focused: bool,
+    window_width: Option<f32>,
     thread_scroll_target: Option<(u64, f32)>,
     visible_rows: [Vec<String>; 2],
     image_view: Option<images::Viewing>,
+    reaction_picker: Option<reaction_picker::State>,
+    reaction_sends: HashSet<reaction_picker::Sending>,
+    reaction_error: Option<(reaction_picker::Target, String)>,
 }
 #[derive(Clone, Debug)]
 enum Message {
     Settings(settings::Event),
     Image(images::Event),
+    Reaction(reaction_picker::Event),
     Space(Scope),
     Section(String),
     Search(String),
@@ -101,6 +112,7 @@ enum Message {
     OpenThreadLatest(String),
     DemoThreadReply,
     WindowFocused(bool),
+    WindowResized(f32),
     ThreadVisible {
         generation: u64,
         keys: Vec<String>,
@@ -161,9 +173,13 @@ impl App {
             timeline_metrics: [None, None],
             thread_activity: thread_activity::State::default(),
             window_focused: false,
+            window_width: None,
             thread_scroll_target: None,
             visible_rows: Default::default(),
             image_view: None,
+            reaction_picker: None,
+            reaction_sends: HashSet::new(),
+            reaction_error: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -182,6 +198,9 @@ impl App {
             if self.image_view.is_some() && matches!(event, settings::Event::Open) {
                 return Task::none();
             }
+            if matches!(event, settings::Event::Open) {
+                self.reaction_picker = None;
+            }
             let task = self.settings_update(event);
             self.publish_notification_context();
             return task;
@@ -189,7 +208,15 @@ impl App {
         if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_settings() {
             return Task::none();
         }
-        if self.settings.draft.is_some() || self.image_view.is_some() {
+        if matches!(message, Message::Escape)
+            && let Some(state) = &self.reaction_picker
+        {
+            return self.update(state.dismiss());
+        }
+        if self.settings.draft.is_some()
+            || self.image_view.is_some()
+            || self.reaction_picker.is_some()
+        {
             if matches!(message, Message::Escape) {
                 if self.image_view.is_some() {
                     return self.update(Message::Image(images::Event::Close));
@@ -248,7 +275,9 @@ impl App {
                         images::Event::Open { .. } | images::Event::Close | images::Event::Retry
                     )
             );
+        let mut action_task = Task::none();
         match message {
+            Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::Image(event) => self.image_event(event),
             Message::RowsVisible {
                 thread,
@@ -273,6 +302,7 @@ impl App {
                     self.stop_image_playback();
                 }
             }
+            Message::WindowResized(width) => self.window_width = Some(width),
             Message::ThreadVisible {
                 generation,
                 keys,
@@ -679,6 +709,7 @@ impl App {
             self.thread_activity
                 .observe(room, &pane.rows, &pane.history);
         }
+        self.validate_reaction_picker();
         if self.closing && self.pending_ops == 0 {
             if self.stopped {
                 return iced::exit();
@@ -710,7 +741,7 @@ impl App {
                 }
             });
         }
-        let scroll = self.restore_scroll();
+        let scroll = Task::batch([action_task, self.restore_scroll()]);
         if opening_image && self.image_view.is_some() {
             Task::batch([scroll, iced::widget::operation::focus("image-viewer")])
         } else if closing_image {
@@ -903,7 +934,9 @@ impl App {
             } else {
                 Subscription::run_with(self.profile.clone(), |profile| connection(profile))
             },
-            if self.composing {
+            // The popup handles Escape itself; a second global Escape could
+            // otherwise also close the thread after dismissing the picker.
+            if self.composing || self.reaction_picker.is_some() {
                 Subscription::none()
             } else {
                 iced::event::listen_with(|event, _, _| {
@@ -926,6 +959,9 @@ impl App {
                 }
                 iced::Event::Window(iced::window::Event::Unfocused) => {
                     Some(Message::WindowFocused(false))
+                }
+                iced::Event::Window(iced::window::Event::Resized(size)) => {
+                    Some(Message::WindowResized(size.width))
                 }
                 _ => None,
             }),
@@ -1140,8 +1176,9 @@ impl App {
         let original = if let Some(badges) = self
             .thread_original_in_room()
             .or_else(|| self.thread_original())
-            .and_then(|message| reactions::view(&message.reactions))
-        {
+            .and_then(|message| {
+                self.reaction_chips(message, true, self.selection.thread.as_ref()?.0)
+            }) {
             column![original, badges].spacing(6).into()
         } else {
             original
@@ -1161,6 +1198,21 @@ impl App {
             } else {
                 original
             };
+        let original = if let Some(message) = self.thread_original() {
+            let generation = self.selection.thread.as_ref().expect("thread original").0;
+            shell::message_actions(
+                original,
+                None,
+                self.reaction_action(message, true, generation),
+                self.reaction_popup(
+                    true,
+                    generation,
+                    message.event_id.as_deref().unwrap_or_default(),
+                ),
+            )
+        } else {
+            original
+        };
         column![
             container(
                 container(
@@ -1398,7 +1450,7 @@ impl App {
             if message.image.is_some() {
                 entry = entry.push(self.image_preview(message, thread, *generation));
             }
-            if let Some(badges) = reactions::view(&message.reactions) {
+            if let Some(badges) = self.reaction_chips(message, thread, *generation) {
                 entry = entry.push(badges);
             }
             if !message.send_state.is_empty() && message.send_state != "Sent" {
@@ -1482,11 +1534,15 @@ impl App {
                     ..iced::Padding::ZERO
                 },
             );
-            let body: Element<'_, Message> = if !thread
-                && !activity
-                && let Some(id) = &message.event_id
-            {
-                shell::message_actions(body, id, !self.closing && !self.stopped)
+            let body: Element<'_, Message> = if !activity && let Some(id) = &message.event_id {
+                let reply = (!thread && !self.closing && !self.stopped)
+                    .then(|| Message::Thread(id.clone()));
+                shell::message_actions(
+                    body,
+                    reply,
+                    self.reaction_action(message, thread, *generation),
+                    self.reaction_popup(thread, *generation, id),
+                )
             } else {
                 body.into()
             };

@@ -1,42 +1,54 @@
-//! Read-only reaction badges, shared by room messages and thread originals/replies.
+//! Toggleable reaction chips, shared by room messages and thread originals/replies.
 use super::{Message, emoji, shell};
 use chatclient::connected::Reaction;
 use iced::{
     Border, Color, Element,
-    widget::{container, row},
+    widget::{button, container, row},
 };
 
-pub fn view(reactions: &[Reaction]) -> Option<Element<'_, Message>> {
+pub fn view<'a>(
+    reactions: &'a [Reaction],
+    on_toggle: impl Fn(&Reaction) -> Option<Message>,
+) -> Option<Element<'a, Message>> {
     if reactions.is_empty() {
         return None;
     }
     let badges = reactions.iter().map(|reaction| {
         let is_own = reaction.is_own;
-        container(emoji::preview(format!("{}  {}", reaction.key, reaction.count)).size(12))
-            .max_width(180)
-            .padding([3, 8])
-            .style(move |_| container::Style {
-                background: Some(
-                    if is_own {
-                        Color::from_rgb8(226, 234, 247)
-                    } else {
-                        Color::from_rgb8(246, 247, 249)
-                    }
-                    .into(),
-                ),
-                text_color: Some(if is_own { shell::ACCENT } else { shell::INK }),
-                border: Border {
-                    color: if is_own {
-                        shell::ACCENT.scale_alpha(0.45)
-                    } else {
-                        Color::from_rgb8(228, 232, 237)
+        container(
+            button(emoji::preview(format!("{}  {}", reaction.key, reaction.count)).size(12))
+                .padding([3, 8])
+                .on_press_maybe(on_toggle(reaction))
+                .style(move |_, status| button::Style {
+                    background: Some(
+                        if is_own {
+                            Color::from_rgb8(226, 234, 247)
+                        } else if matches!(
+                            status,
+                            button::Status::Hovered | button::Status::Pressed
+                        ) {
+                            Color::from_rgb8(237, 240, 244)
+                        } else {
+                            Color::from_rgb8(246, 247, 249)
+                        }
+                        .into(),
+                    ),
+                    text_color: if is_own { shell::ACCENT } else { shell::INK },
+                    border: Border {
+                        color: if is_own {
+                            shell::ACCENT.scale_alpha(0.45)
+                        } else {
+                            Color::from_rgb8(228, 232, 237)
+                        },
+                        width: 1.0,
+                        radius: 7.0.into(),
                     },
-                    width: 1.0,
-                    radius: 7.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
+                    ..Default::default()
+                }),
+        )
+        .max_width(180)
+        .id(format!("reaction-chip:{}", reaction.key))
+        .into()
     });
     Some(
         container(row(badges).spacing(5).wrap())
@@ -55,7 +67,7 @@ mod tests {
     };
 
     #[test]
-    fn badges_wrap_unicode_and_text_keys_and_remain_read_only_without_timers() {
+    fn chips_wrap_unicode_and_text_keys_and_stay_disabled_without_actions_or_timers() {
         let reactions: Vec<_> = ["👍🏽", "👩🏽‍💻", "❤️", "approved", "a-long-custom-annotation-key"]
             .into_iter()
             .enumerate()
@@ -65,11 +77,11 @@ mod tests {
                 is_own: index % 2 == 0,
             })
             .collect();
-        assert!(view(&[]).is_none());
+        assert!(view(&[], |_| None).is_none());
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         let mut heights = Vec::new();
         for width in [700.0, 120.0, 64.0] {
-            let mut badges = view(&reactions).unwrap();
+            let mut badges = view(&reactions, |_| None).unwrap();
             let mut tree = Tree::new(&badges);
             let size = Size::new(width, 1000.0);
             let node = badges.as_widget_mut().layout(

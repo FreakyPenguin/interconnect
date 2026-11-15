@@ -33,7 +33,7 @@ pub struct Highlighter {
 }
 
 /// Thread excerpts use rich text because their whole row is a button.
-pub fn preview(body: String) -> iced::widget::text::Rich<'static, (), super::Message> {
+pub fn preview<Message: 'static>(body: String) -> iced::widget::text::Rich<'static, (), Message> {
     use highlighter::Highlighter as _;
     use iced::widget::{rich_text, span};
     let mut highlighter = Highlighter::new(&font());

@@ -162,6 +162,7 @@ mod tests {
             avatar_url: None,
             image: None,
             reactions: Vec::new(),
+            can_react: true,
             timestamp_ms: Some(1),
             thread_replies: 0,
             thread_root: root.map(str::to_owned),

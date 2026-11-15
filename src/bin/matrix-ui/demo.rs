@@ -254,6 +254,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         avatar_url: None,
         image: None,
         reactions: Vec::new(),
+        can_react: true,
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         thread_replies: if id == "review" { 2 } else { 0 },
         thread_root: None,
@@ -267,6 +268,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
 fn activity(id: &str, sender: &str, body: &str) -> MessageRow {
     MessageRow {
         kind: RowKind::Activity,
+        can_react: false,
         ..message(id, sender, body)
     }
 }
@@ -462,6 +464,62 @@ impl Demo {
             .entry(key.clone())
             .or_default()
             .push(outgoing);
+    }
+    pub fn add_reaction(&mut self, room: &str, event: &str, key: &str) {
+        // Update all loaded copies, including a pinned original and its room row.
+        for (conversation, rows) in &mut self.conversations {
+            if conversation.room != room {
+                continue;
+            }
+            for row in rows
+                .iter_mut()
+                .filter(|row| row.event_id.as_deref() == Some(event))
+            {
+                if let Some(reaction) = row
+                    .reactions
+                    .iter_mut()
+                    .find(|reaction| reaction.key == key)
+                {
+                    if !reaction.is_own {
+                        reaction.count += 1;
+                        reaction.is_own = true;
+                    }
+                } else {
+                    row.reactions.push(Reaction {
+                        key: key.into(),
+                        count: 1,
+                        is_own: true,
+                    });
+                    row.reactions.sort_unstable_by(|a, b| a.key.cmp(&b.key));
+                }
+            }
+        }
+    }
+    pub fn set_reaction(&mut self, room: &str, event: &str, key: &str, selected: bool) {
+        if selected {
+            self.add_reaction(room, event, key);
+            return;
+        }
+        for (conversation, rows) in &mut self.conversations {
+            if conversation.room != room {
+                continue;
+            }
+            for row in rows
+                .iter_mut()
+                .filter(|row| row.event_id.as_deref() == Some(event))
+            {
+                if let Some(reaction) = row
+                    .reactions
+                    .iter_mut()
+                    .find(|reaction| reaction.key == key)
+                    && reaction.is_own
+                {
+                    reaction.count = reaction.count.saturating_sub(1);
+                    reaction.is_own = false;
+                }
+                row.reactions.retain(|reaction| reaction.count > 0);
+            }
+        }
     }
     pub fn incoming(&mut self) {
         self.next_message += 1;

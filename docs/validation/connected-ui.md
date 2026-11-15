@@ -1141,12 +1141,13 @@ measurements remain pending.
 
 ## Message reactions — 2026-11-15
 
-Room messages, pinned thread originals, and thread replies display read-only
-reaction badges beneath their content. Each badge shows the exact annotation
+Room messages, pinned thread originals, and thread replies display reaction
+chips beneath their content. Each chip shows the exact annotation
 key and the SDK's unique-sender count; your own reactions use a blue tint.
 Badges wrap at narrow widths, support Unicode emoji sequences and ordinary text
-keys, and disappear when the last reaction is removed. They add no polling,
-animation subscription, or reaction-sending controls.
+keys, and disappear when the last reaction is removed. Clicking a chip toggles
+your own reaction; the picker below adds other emoji. Neither adds polling or an
+animation subscription.
 
 The pinned original uses current-generation room reactions when its message is
 loaded there. The pinned SDK routes live root reactions to the room timeline,
@@ -1174,3 +1175,100 @@ tints and color emoji. Resize and hide the sidebar to inspect wrapping. In a
 separately authorized connected run, observe another client's reaction additions
 and removals on a loaded room message and a thread reply; verify counts update
 while drafts and a scrolled reading position remain intact.
+
+## Adding reactions and the emoji picker — 2026-11-15
+
+Hover a message and choose **Add reaction** (the smiley-plus beside **Reply in
+thread**). Thread replies and the pinned original have the same add control.
+The picker searches emoji names, shortcodes (with or without surrounding
+colons), and exact glyphs, including skin-tone sequences. Categories and paged
+results keep the widget grid bounded to 48 choices at a time. Enter chooses the
+first visible result. Escape, ×, or a click outside dismisses the popup; backdrop
+scrolling and conversation shortcuts are captured while it is open. Resizing
+to a layout that hides its room anchor dismisses it too.
+
+Picking an existing own reaction leaves it in place. Connected sends capture
+their room/event and originating SDK timeline, run asynchronously, and wait for
+the homeserver response (up to 30 seconds). The picker disables selection while
+sending, then closes on success; SDK sync provides the badge. Errors stay in the
+picker with retry guidance. Dismissing the picker lets an admitted send finish;
+stale results cannot change another picker, and closing the app waits for the
+bounded request before stopping sync. Removed/redacted targets, activity rows,
+undecrypted messages, and local echoes without an event ID cannot receive a new
+reaction. Pending sends are bounded by the existing operation limit. Picker
+selections stay add-only; chips toggle as described below. Custom emoji remains
+future work.
+
+The picker and anchored popup are reusable generic components, separate from
+the Matrix reaction adapter. See [development notes](../development.md#emoji-picker)
+for the catalog/selection boundary and future custom-emoji extension points.
+Demo selections update in-memory room/thread copies and never access accounts
+or the network.
+
+Automated checks cover catalog search/categories/paging, independent catalog
+keys, mouse/Enter selection, busy controls, static-caret idle behavior, popup
+clamping beyond a narrow pane, outside-click/scroll capture, actual hover-button
+selection, demo add-once behavior, draft preservation, IME suppression, target
+invalidation, stale events/results, failure recovery, and shutdown with a pending
+send. The mock Matrix fixture checks `m.annotation` requests to a thread reply
+and original in an encrypted room, add-only handling of existing reactions,
+server-denied sends, and invalid targets/keys.
+
+Formatting, locked workspace Clippy with warnings denied, all 58 regular library
+tests and 84 GUI tests, and the locked GUI build passed. The final GUI run also
+checks that a popup Escape produces no second global shortcut that closes its
+thread. The existing opt-in lifecycle stress test was not run.
+
+A software-rendered demo widget capture at 360×640 was inspected for picker
+layout, layering, and color emoji. It is a widget raster check, not native
+desktop acceptance. Capture hooks were removed; the PNG remains under ignored
+`artifacts/reaction-picker/`. Native pointer/keyboard/IME acceptance, connected
+account checks, macOS, and new resource measurements remain pending.
+
+Manual checks: in `--demo`, add an emoji to a room message, thread original,
+and reply; search `:rocket:` and paste `👍🏽`, browse categories/pages, then
+choose the same reaction twice. Verify the count increases once and drafts and
+the reading position stay intact. At the minimum window size, check all popup
+controls, outside-click dismissal, Enter, and Escape. In a separately authorized
+connected run, check successful delivery and a denied/offline request without
+switching the target or clearing drafts.
+
+## Reaction chip toggling — 2026-11-15
+
+Click a reaction chip to add your own reaction when it is unselected, or remove
+your reaction when it is blue/selected. This works in rooms, on pinned originals,
+and on thread replies, including exact Unicode sequences and text annotation
+keys. Removing the final sender's reaction removes the chip; other senders'
+reactions remain. Picker selections still only add.
+
+Chip requests share the picker's operation bound and shutdown accounting.
+The same room/event/key is disabled across both panes while a request runs.
+Each click captures its intended selected state, so replaying an old remove
+does not add a reaction back. Removal looks up cached annotation events and
+redacts only matching events sent by the signed-in user, including duplicate
+own annotations. The entire asynchronous removal is bounded to 30 seconds;
+success updates arrive through SDK sync. There are no optimistic count changes
+to roll back on a failure or timeout. Errors appear beside that message's chips;
+clicking again retries. Navigation invalidates old errors and click targets,
+while admitted requests finish against their captured conversation.
+
+Automated widget clicks exercise room/original/reply toggles, own highlighting,
+counts, final-chip disappearance, replayed clicks, and preservation of drafts,
+conversation selection, and saved scroll offsets. State checks cover pending-click rejection, retry errors, stale
+completions, and shutdown. The mock Matrix fixture checks exact own-event
+redactions (including duplicates and text keys), preservation of other senders,
+denied removal without a count change, and sync updates in both timelines.
+The prior SDK limit for live root reactions outside loaded room history still
+applies. Native desktop and connected-account acceptance remain pending.
+
+Formatting, locked workspace Clippy with warnings denied, all 144 regular
+workspace tests (58 library and 86 GUI), and the locked GUI build passed. The
+existing opt-in lifecycle stress test was not run.
+
+Manual acceptance in `--demo`: click selected/unselected chips in Design studio
+and its thread. Repeat clicks on shared chips and remove the single own thumbs-up
+on the pinned original. Confirm counts and blue state, disappearance of an empty
+chip, and intact drafts and reading position. In a separately authorized
+connected run, add/remove a shared reaction and verify another sender remains;
+check a denied/offline request and retry. No real messages or reactions were
+sent and no connected client was restarted during this change.
