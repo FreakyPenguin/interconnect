@@ -893,27 +893,6 @@ impl App {
         if let Some(key) = self.draft_key(thread)
             && let Some(draft) = self.drafts.get(&key)
         {
-            let target = if thread {
-                format!(
-                    "Reply in thread · {}",
-                    self.model
-                        .rooms
-                        .iter()
-                        .find(|r| r.id == key.room)
-                        .map(|r| r.name.as_str())
-                        .unwrap_or(&key.room)
-                )
-            } else {
-                format!(
-                    "Message room · {}",
-                    self.model
-                        .rooms
-                        .iter()
-                        .find(|r| r.id == key.room)
-                        .map(|r| r.name.as_str())
-                        .unwrap_or(&key.room)
-                )
-            };
             let edit_key = key.clone();
             let send_key = key.clone();
             let composing = self.composing;
@@ -924,8 +903,15 @@ impl App {
                     "room-composer"
                 })
                 .cursor_blinking(false)
-                .height(88)
-                .padding(12)
+                .height(80)
+                .size(14)
+                // Keep text and selection above the bottom action row.
+                .padding(iced::Padding {
+                    top: 8.0,
+                    right: 10.0,
+                    bottom: 34.0,
+                    left: 10.0,
+                })
                 .style(shell::editor_style)
                 .placeholder(if thread {
                     "Reply to this thread…"
@@ -937,9 +923,13 @@ impl App {
                     .on_action(move |action| Message::Edit(edit_key.clone(), action))
                     .key_binding(move |press| composer_binding(press, composing, &send_key));
             }
-            let mut send = button(if draft.pending { "Queueing…" } else { "Send" })
-                .padding([7, 16])
-                .style(shell::send_button);
+            let mut send = button(
+                container(text(if draft.pending { "…" } else { "↑" }).size(18))
+                    .center_x(26)
+                    .center_y(26),
+            )
+            .padding(0)
+            .style(shell::send_button);
             if !self.closing
                 && !self.stopped
                 && !self.composing
@@ -950,24 +940,31 @@ impl App {
             {
                 send = send.on_press(Message::Send(key));
             }
-            let composer = column![
-                text(target).size(11).color(shell::MUTED),
-                editor,
-                row![
-                    text(if self.demo.is_some() {
-                        "Local preview · messages stay here"
+            let send = iced::widget::tooltip(
+                send,
+                container(
+                    text(if draft.pending {
+                        "Queueing message…"
+                    } else if thread {
+                        "Send reply (Ctrl+Enter)"
                     } else {
-                        "Ctrl+Enter to send"
+                        "Send message (Ctrl+Enter)"
                     })
-                    .size(11)
-                    .color(shell::MUTED),
-                    iced::widget::space().width(Length::Fill),
-                    send
-                ]
-                .align_y(iced::Alignment::Center)
-            ]
-            .spacing(9);
-            content = content.push(container(composer).padding([16, 24]));
+                    .size(12),
+                )
+                .padding(8)
+                .style(container::rounded_box),
+                iced::widget::tooltip::Position::Top,
+            );
+            let actions = row![iced::widget::space().width(Length::Fill), send]
+                .align_y(iced::Alignment::Center);
+            let composer = iced::widget::stack![
+                editor,
+                container(actions)
+                    .align_bottom(Length::Fill)
+                    .padding([4, 6]),
+            ];
+            content = content.push(container(composer).padding([10, 24]));
             if let Some(error) = &draft.error {
                 content = content.push(text(error));
             }

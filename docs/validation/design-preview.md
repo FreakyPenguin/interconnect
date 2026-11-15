@@ -31,6 +31,17 @@ menu button toggles the room list. At narrower widths, an open thread replaces
 the room timeline; at wider widths it sits beside it. Thread and room drafts
 remain separate across these transitions and navigation.
 
+The room list uses compact spacing: single-line room rows are about 31 pixels
+apart (previously about 44), with the same 13-pixel room labels. Section headings,
+child-space buttons, and search padding are tighter too. The sidebar heading has
+no subtitle, leaving more height for rooms. Long room names can still wrap.
+
+Room and thread composers share a compact 80-pixel frame, with a small send
+arrow at the bottom right. The bottom action row stays clear of editable text
+and leaves space for future controls. The room/reply label and shortcut footer
+are removed; hover over the arrow for **Send message (Ctrl+Enter)** or
+**Send reply (Ctrl+Enter)**. The arrow becomes an ellipsis while queueing.
+
 Shortcuts:
 
 - Ctrl+K: focus room search and select the current query (Command+K on macOS).
@@ -60,6 +71,15 @@ Shortcuts:
    still. The existing opt-in diagnostics and measurement script apply to demo
    mode too. There is no animation or periodic UI timer. Search and composers use
    static visible carets.
+6. Check the compact room list in All rooms and Studio at both the default window
+   size and the 640×480 minimum. Verify selected rows and unread badges remain
+   legible, the long room name wraps, and section collapse/search still work.
+   This density-specific desktop check remains pending.
+7. In both room and thread composers, type a multiline draft and scroll within
+   it. Text, caret, and selection should stay above the send arrow. Check the
+   tooltip, empty-draft disabled state, and sending by click and Ctrl+Enter in
+   demo mode. Repeat at the 640×480 minimum. This composer-specific desktop
+   check remains pending.
 
 ## Feasibility findings and scope
 
@@ -111,3 +131,13 @@ A second 30-second capture with search focused also recorded zero redraws, zero
 UI updates, and 0.00 seconds of procfs CPU time. The 640-pixel minimum-width
 thread layout was visually inspected as well: navigation scrolls independently
 and the thread composer and close control remain available.
+
+For the compact room-list follow-up, formatting, workspace Clippy with warnings
+denied, all 27 GUI tests, and the locked GUI build passed. Desktop inspection of
+the compact spacing remains pending; the earlier desktop observations above
+predate this change.
+
+For the compact composer follow-up, the same checks passed, including all 27 GUI
+tests covering draft isolation, keyboard sending/IME guards, scroll restoration,
+and static caret behavior. Desktop inspection of the new action-row layout and
+tooltip remains pending.

@@ -125,8 +125,13 @@ pub fn jump_button(theme: &Theme, status: button::Status) -> button::Style {
     style
 }
 pub fn send_button(theme: &Theme, status: button::Status) -> button::Style {
-    let mut style = button::primary(theme, status);
-    style.border = Border::default().rounded(7);
+    let mut style = quiet_button(theme, status);
+    style.text_color = match status {
+        button::Status::Disabled => MUTED.scale_alpha(0.45),
+        button::Status::Active => MUTED,
+        _ => ACCENT,
+    };
+    style.border = Border::default().rounded(5);
     style
 }
 fn search_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
