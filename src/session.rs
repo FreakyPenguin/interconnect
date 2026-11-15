@@ -318,6 +318,9 @@ pub struct RestoredSession {
     _profile: Profile,
 }
 
+/// Restore the desktop session using local credentials and device keys only.
+/// The ongoing sync service authenticates with the server and reports revoked
+/// tokens; an unavailable network must not prevent reading cached conversations.
 pub async fn restore(directory: &str) -> anyhow::Result<RestoredSession> {
     let service = connect().await?;
     let profile = Profile::open(Path::new(directory), false)?;
@@ -325,6 +328,14 @@ pub async fn restore(directory: &str) -> anyhow::Result<RestoredSession> {
         .read(&service)
         .await?
         .context("no saved session for this profile")?;
+    let client = restore_client(&profile, &saved).await?;
+    Ok(RestoredSession {
+        client,
+        _profile: profile,
+    })
+}
+
+async fn restore_client(profile: &Profile, saved: &SavedSession) -> anyhow::Result<Client> {
     ensure!(
         !saved.logged_out,
         "session was logged out; finish cleanup with session-logout"
@@ -334,16 +345,13 @@ pub async fn restore(directory: &str) -> anyhow::Result<RestoredSession> {
         profile.directory.join("store").is_dir(),
         "SDK store missing; refusing replacement crypto state"
     );
-    let client = client(&profile, &saved).await?;
+    let client = client(profile, saved).await?;
     client
         .matrix_auth()
         .restore_session(session.clone(), Default::default())
         .await?;
-    validate_restored(&client, &saved, &session).await?;
-    Ok(RestoredSession {
-        client,
-        _profile: profile,
-    })
+    validate_local_device(&client, saved).await?;
+    Ok(client)
 }
 
 async fn validate_restored(
@@ -351,6 +359,12 @@ async fn validate_restored(
     saved: &SavedSession,
     session: &MatrixSession,
 ) -> anyhow::Result<()> {
+    validate_local_device(client, saved).await?;
+    verify_identity(client, session).await.context("session check failed; saved credentials retained (no automatic relogin or device replacement)")?;
+    Ok(())
+}
+
+async fn validate_local_device(client: &Client, saved: &SavedSession) -> anyhow::Result<()> {
     let expected_key = saved
         .device_key
         .as_ref()
@@ -359,7 +373,6 @@ async fn validate_restored(
         &device_key(client).await? == expected_key,
         "local device key changed; refusing to use a replacement crypto store"
     );
-    verify_identity(client, session).await.context("session check failed; saved credentials retained (no automatic relogin or device replacement)")?;
     Ok(())
 }
 
@@ -507,7 +520,7 @@ mod tests {
         assert!(Profile::open(&link, false).is_err());
     }
     #[tokio::test]
-    async fn sqlite_reopen_preserves_device_keys_and_rejects_wrong_store_key() {
+    async fn offline_restore_preserves_device_keys_and_rejects_damaged_store() {
         let parent = tempfile::tempdir().unwrap();
         let profile = Profile::open(&parent.path().join("profile"), true).unwrap();
         let session: MatrixSession = serde_json::from_value(serde_json::json!({
@@ -530,13 +543,15 @@ mod tests {
             .await
             .unwrap();
         let original_key = device_key(&first).await.unwrap();
+        saved.device_key = Some(original_key.clone());
         drop(first);
-        let restored = client(&profile, &saved).await.unwrap();
-        restored
-            .matrix_auth()
-            .restore_session(session, Default::default())
-            .await
-            .unwrap();
+        // Nothing is listening at the saved homeserver. Exercise the same local
+        // restoration as the desktop, including the device fingerprint check.
+        let restored =
+            tokio::time::timeout(Duration::from_secs(5), restore_client(&profile, &saved))
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(device_key(&restored).await.unwrap(), original_key);
         let record = Zeroizing::new(serde_json::to_vec(&saved).unwrap());
         let decoded = SavedSession::decode(&record).unwrap();
@@ -545,8 +560,40 @@ mod tests {
             "TESTDEVICE"
         );
         drop(restored);
+        saved.device_key = Some("different-device-key".into());
+        assert!(
+            restore_client(&profile, &saved)
+                .await
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("local device key changed")
+        );
+        saved.device_key = None;
+        assert!(
+            restore_client(&profile, &saved)
+                .await
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("device fingerprint is missing")
+        );
+        saved.device_key = Some(original_key);
         saved.store_key = "wrong-store-passphrase".into();
-        assert!(client(&profile, &saved).await.is_err());
+        assert!(restore_client(&profile, &saved).await.is_err());
+        saved.logged_out = true;
+        assert!(
+            restore_client(&profile, &saved)
+                .await
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("session was logged out")
+        );
+        saved.logged_out = false;
+        let empty = Profile::open(&parent.path().join("empty"), true).unwrap();
+        assert!(restore_client(&empty, &saved).await.is_err());
+        assert!(!empty.directory.join("store").exists());
     }
 
     #[test]

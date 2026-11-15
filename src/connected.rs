@@ -1003,6 +1003,292 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sqlite_restart_reads_encrypted_history_offline_and_reconciles() {
+        cached_restart_fixture(true).await;
+    }
+
+    #[tokio::test]
+    async fn sqlite_restart_reads_unencrypted_history_offline_and_reconciles() {
+        cached_restart_fixture(false).await;
+    }
+
+    async fn cached_restart_fixture(encrypted: bool) {
+        use matrix_sdk::{config::SyncSettings, ruma::room_id};
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        async fn open(server: &MockServer, directory: &std::path::Path) -> Client {
+            let client = Client::builder()
+                .cross_process_store_config(
+                    matrix_sdk_common::cross_process_lock::CrossProcessLockConfig::SingleProcess,
+                )
+                .homeserver_url(server.uri())
+                .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+                .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
+                    with_subscriptions: false,
+                })
+                .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
+                .sqlite_store(directory, Some("test-only-cache-passphrase"))
+                .build()
+                .await
+                .unwrap();
+            client
+                .matrix_auth()
+                .restore_session(
+                    serde_json::from_value::<MatrixSession>(json!({
+                        "user_id":"@test:example.org", "device_id":"TEST", "access_token":"fake"
+                    }))
+                    .unwrap(),
+                    Default::default(),
+                )
+                .await
+                .unwrap();
+            client
+        }
+
+        let directory = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        let online = Arc::new(AtomicBool::new(true));
+        let available = online.clone();
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(move |_: &wiremock::Request| {
+                if available.load(Ordering::SeqCst) {
+                    ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]}))
+                } else {
+                    ResponseTemplate::new(503)
+                }
+            })
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(".*/keys/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "device_keys":{}, "one_time_key_counts":{"signed_curve25519":50}
+            })))
+            .mount(&server)
+            .await;
+        let member = json!({"type":"m.room.member", "state_key":"@test:example.org",
+            "sender":"@test:example.org", "event_id":"$member", "origin_server_ts":1,
+            "content":{"membership":"join"}});
+        let mut required_state = vec![
+            member.clone(),
+            json!({"type":"m.room.name", "state_key":"", "sender":"@test:example.org",
+                "event_id":"$name", "origin_server_ts":1, "content":{"name":"Cached room"}}),
+        ];
+        if encrypted {
+            required_state.push(json!({"type":"m.room.encryption", "state_key":"",
+                "sender":"@test:example.org", "event_id":"$encryption", "origin_server_ts":1,
+                "content":{"algorithm":"m.megolm.v1.aes-sha2"}}));
+        }
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.encryption/?"))
+            .respond_with(ResponseTemplate::new(404).set_body_json(json!({
+                "errcode":"M_NOT_FOUND", "error":"No encryption event"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*/members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[member]})))
+            .mount(&server)
+            .await;
+        let initial = Arc::new(std::sync::Mutex::new(json!({"next_batch":"seed",
+            "rooms":{"join":{"!room:example.org":{
+                "state":{"events":required_state},
+                "timeline":{"events":[], "limited":false, "prev_batch":"older"}
+            }}}
+        })));
+        let seed = initial.clone();
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/v3/sync"))
+            .respond_with(move |_: &wiremock::Request| {
+                ResponseTemplate::new(200).set_body_json(seed.lock().unwrap().clone())
+            })
+            .mount(&server)
+            .await;
+        let send_count = AtomicUsize::new(0);
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/send/.*"))
+            .respond_with(move |_: &wiremock::Request| {
+                let id = if send_count.fetch_add(1, Ordering::SeqCst) == 0 {
+                    "$cached"
+                } else {
+                    "$fresh"
+                };
+                ResponseTemplate::new(200).set_body_json(json!({"event_id":id}))
+            })
+            .mount(&server)
+            .await;
+
+        let first = open(&server, directory.path()).await;
+        first.event_cache().subscribe().unwrap();
+        first
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        let room = first.get_room(room_id!("!room:example.org")).unwrap();
+        let timeline = TimelineBuilder::new(&room).build().await.unwrap();
+        let (_, updates) = timeline.subscribe().await;
+        let mut updates = Box::pin(updates);
+        for body in ["Cached message", "Arrived after restart"] {
+            room.send(
+                matrix_sdk::ruma::events::room::message::RoomMessageEventContent::text_plain(body),
+            )
+            .await
+            .unwrap();
+        }
+        let requests = server.received_requests().await.unwrap();
+        let events: Vec<_> = requests
+            .iter()
+            .filter(|r| r.url.path().contains("/send/"))
+            .enumerate()
+            .map(|(index, request)| {
+                let content: serde_json::Value = request.body_json().unwrap();
+                if encrypted {
+                    assert!(content.get("body").is_none());
+                }
+                json!({"type":if encrypted {"m.room.encrypted"} else {"m.room.message"},
+                    "event_id":if index == 0 {"$cached"} else {"$fresh"},
+                    "sender":"@test:example.org", "origin_server_ts":index + 2,
+                    "content":content})
+            })
+            .collect();
+        assert_eq!(events.len(), 2);
+        *initial.lock().unwrap() = json!({"next_batch":"cached", "rooms":{"join":{
+            "!room:example.org":{"timeline":{"events":[events[0]], "limited":false}}
+        }}});
+        first
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if timeline.items().await.iter().any(|item| {
+                    item.as_event().is_some_and(|event| {
+                        event.event_id().is_some_and(|id| id.as_str() == "$cached")
+                    })
+                }) {
+                    break;
+                }
+                updates.next().await.unwrap();
+            }
+        })
+        .await
+        .unwrap();
+        // Release all first-client handles; the next client must read SQLite.
+        drop(updates);
+        drop(timeline);
+        drop(room);
+        drop(first);
+        online.store(false, Ordering::SeqCst);
+        let cached_event = events[0].clone();
+        Mock::given(method("GET"))
+            .and(path_regex(".*/messages"))
+            .respond_with(ResponseTemplate::new(503).set_delay(Duration::from_secs(60)))
+            .mount(&server)
+            .await;
+        let available = online.clone();
+        Mock::given(method("POST"))
+            .and(path("/_matrix/client/unstable/org.matrix.simplified_msc3575/sync"))
+            .respond_with(move |_: &wiremock::Request| {
+                if !available.load(Ordering::SeqCst) {
+                    return ResponseTemplate::new(503);
+                }
+                ResponseTemplate::new(200).set_delay(Duration::from_millis(50)).set_body_json(json!({
+                    "pos":"reconnected", "lists":{"all_rooms":{"count":1,"ops":[
+                        {"op":"SYNC","range":[0,0],"room_ids":["!room:example.org"]}
+                    ]}}, "rooms":{"!room:example.org":{"name":"Cached room", "initial":true,
+                        "required_state":required_state, "timeline":events, "prev_batch":"older", "num_live":1}},
+                    "extensions":{"e2ee":{"device_one_time_keys_count":{"signed_curve25519":50}}}
+                }))
+            })
+            .mount(&server)
+            .await;
+
+        let restored = open(&server, directory.path()).await;
+        if encrypted {
+            // Decrypt the original ciphertext with the reopened store, rather
+            // than relying only on already-decrypted cached timeline content.
+            let event =
+                matrix_sdk::ruma::serde::Raw::from_json_string(cached_event.to_string()).unwrap();
+            let decrypted = restored
+                .get_room(room_id!("!room:example.org"))
+                .unwrap()
+                .decrypt_event(&event, None)
+                .await
+                .unwrap();
+            let content: serde_json::Value =
+                serde_json::from_str(decrypted.raw().json().get()).unwrap();
+            assert_eq!(content["content"]["body"], "Cached message");
+        }
+        let sync = build_sync(restored.clone()).await.unwrap();
+        let (control, mut selection) = watch::channel(Selection {
+            room: Some((1, "!room:example.org".into())),
+            ..Default::default()
+        });
+        let (state, mut snapshots) = watch::channel(Model::default());
+        let worker = tokio::spawn(async move {
+            let result = connected(&restored, &sync, &mut selection, &state).await;
+            crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(5))
+                .await
+                .unwrap();
+            result.unwrap();
+        });
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            snapshots.wait_for(|model| {
+                model.rooms.iter().any(|r| r.name == "Cached room")
+                    && model.room.as_ref().is_some_and(|pane| {
+                        pane.rows.iter().any(|r| {
+                            r.event_id.as_deref() == Some("$cached") && r.body == "Cached message"
+                        })
+                    })
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(15),
+            snapshots.wait_for(|s| s.status.starts_with("Offline")),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        online.store(true, Ordering::SeqCst);
+        let model = tokio::time::timeout(
+            Duration::from_secs(15),
+            snapshots.wait_for(|model| {
+                model.status == "Connected"
+                    && model.room.as_ref().is_some_and(|pane| {
+                        pane.rows.iter().any(|r| {
+                            r.event_id.as_deref() == Some("$fresh")
+                                && r.body == "Arrived after restart"
+                        })
+                    })
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .clone();
+        let pane = model.room.unwrap();
+        assert_eq!(
+            pane.rows
+                .iter()
+                .filter(|r| r.event_id.as_deref() == Some("$cached"))
+                .count(),
+            1
+        );
+        assert!(pane.error.is_none());
+        control.send_modify(|s| s.shutdown = true);
+        tokio::time::timeout(Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn revoked_session_is_not_treated_as_a_network_outage() {
         let server = MockServer::start().await;
         Mock::given(method("GET")).and(path("/_matrix/client/versions"))

@@ -300,8 +300,8 @@ The GUI handles startup in the same ongoing loop rather than applying the CLI
 probe's finite initial-sync deadline/error policy. Account-token rejection is
 observed separately through session-change notifications and remains terminal.
 Failed send queues retain explicit Retry semantics after connectivity returns.
-Full offline startup is still blocked by the restoration identity check and is
-not claimed by this change.
+This lifecycle change did not yet remove the restoration identity check that
+blocked offline startup; see the cached-startup follow-up below.
 
 
 ## Single-process store ownership — 2026-11-14
@@ -334,3 +334,34 @@ phases or before owner exit, and can acquire it after exit. The SDK-backed
 reconnect/history/send and navigation fixtures also run in single-process mode.
 See [idle-resource validation](../validation/idle-resources.md) for before/after
 host measurements.
+
+## Cached desktop startup — 2026-11-15
+
+Keep the SDK as the owner of persistent crypto, room state, event relationships,
+and media bytes. `sqlite_store` already configures these stores under the existing
+private profile; there is no application message database or store migration.
+Device identity and room keys are durable account data and must remain outside
+any future cache-eviction operation. Credential and store-key storage stays in
+Secret Service.
+
+Desktop restoration now validates the saved local device fingerprint without a
+network identity request. The SDK restores room state from SQLite; navigation
+reads that state, and room timelines publish cached events while pagination is
+pending. The ongoing authenticated sync service handles network recovery and
+token rejection. CLI resume/live retain their explicit `whoami` validation.
+Profile ownership, cancellation, generation checks, and runtime cleanup are
+unchanged; no new background timer is introduced.
+
+The first caching milestone covers locally available room messages and retained
+keys across store reopening. Complete history, offline access to uncached thread
+roots, and recovery of missing historical keys are separate requirements. Next,
+use SDK media storage with bounded, deduplicated asynchronous downloads and a
+byte-bounded decoded-image memory cache for avatars, thumbnails, and custom emoji.
+Media retention and explicit clearing should use SDK APIs and preserve pending
+uploads. Verify safe event-history pruning in the pinned SDK before offering a
+message budget; never clear the entire profile to free cached content. Custom
+emoji pack metadata needs a separate format adapter while image bytes share the
+media path. These media and retention decisions are proposed, not implemented.
+
+See [cached-startup validation](../validation/connected-ui.md#cached-startup--2026-11-15)
+for local evidence and remaining desktop checks.

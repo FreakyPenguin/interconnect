@@ -23,6 +23,50 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
+## Cached startup — 2026-11-15
+
+The desktop restores its saved SDK stores and checks the local device signing
+key against the keyring record without waiting for `whoami`. Cached navigation
+and room messages can appear before synchronization succeeds. The existing
+timeline presentation publishes cached rows while history requests are pending;
+a slow or failed history request does not hide those rows. The SDK owns offline
+availability checks and reconnects; no application polling timer was added.
+
+An unlocked, reachable Secret Service and the original profile/store are still
+required. Missing stores, missing or mismatched device fingerprints, wrong store
+passphrases, and logged-out records remain errors. Sync reports rejected tokens
+as requiring sign-in. The CLI resume/live commands retain their explicit online
+identity check.
+
+Temporary-store regressions close all first-client timeline handles and reopen
+SQLite with sync returning HTTP 503 and history responses delayed for 60 seconds.
+Both encrypted and unencrypted room names and cached message bodies appear
+within five seconds of starting presentation. The encrypted variant additionally
+decrypts the original ciphertext using the reopened crypto store. Restoring the
+sync endpoint delivers another message without duplicating the cached event,
+and shutdown cancels the pending history request. A separate session test exercises
+the desktop's local restoration against an unreachable homeserver and checks
+device-key preservation and rejection of damaged or incomplete saved state.
+
+This establishes cached room reading, not a complete offline archive: only SDK
+retained content is available. Uncached history, thread roots, and missing room
+keys can still require network access. Message retention limits, media loading,
+media budgets, and cache-clearing controls are future work. Existing SDK stores
+stay in place; this change introduces no migration or eviction.
+
+Desktop acceptance remains pending: with the client closed and Secret Service
+available, disable networking, launch the existing profile, and confirm its saved
+room opens with cached text. Check drafts and room switching, restore networking,
+and confirm Connected and subsequent updates without duplicates. Close while
+offline to check shutdown. Compare settled idle resources using
+[the idle-resource procedure](idle-resources.md); no host measurements are claimed
+for this change. Automated tests use only temporary profiles and local servers.
+
+Validation passed: formatting, workspace Clippy with warnings denied, all 89
+regular workspace tests (including 49 GUI tests), and the locked GUI build.
+The opt-in 100-cycle lifecycle stress test was not run. No saved account was
+opened or live-server messages sent.
+
 ## Unencrypted rooms — 2026-11-15
 
 The desktop no longer rejects rooms without encryption. Both room types use the
@@ -307,7 +351,8 @@ absence of app timers is not evidence of zero SDK/network wakeups or redraws.
   state only; future send commands/results will need separate delivery semantics.
 - Persistent client construction retains the exclusive profile lock until process
   exit, covering late GUI handles and runtime cleanup, and shares
-  the CLI's device-key and server-identity checks. SDK stop has a 15-second bound.
+  the CLI's local device-key check. The desktop relies on ongoing authenticated
+  sync for token rejection; see cached startup above. SDK stop has a 15-second bound.
   The GUI owns one Tokio runtime and lends its handle to Iced. After UI teardown,
   runtime cleanup has a five-second bound and reports incomplete cleanup on timeout.
   In-progress queue admission still has no total deadline.
@@ -544,9 +589,9 @@ checks that the same view can queue a message, restores the endpoints, retries t
 failed send, sends another message, then shuts down during a second outage.
 Physical Wi-Fi and live-server confirmation remain pending.
 
-Starting the application entirely offline remains a separate limitation: the
-existing saved-session restoration still validates identity with `whoami` before
-entering this recoverable sync lifecycle. No change to that check was made here.
+At this stage, starting entirely offline was still blocked by `whoami` during
+saved-session restoration. The cached-startup change documented above removes
+that gate for the desktop while retaining the local device-key check.
 
 
 Local recovery checks: all 26 workspace tests, formatting, Clippy with warnings
