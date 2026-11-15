@@ -1,4 +1,6 @@
 #![recursion_limit = "256"]
+#[path = "interconnect/attachments.rs"]
+mod attachments;
 #[path = "interconnect/composer_picker.rs"]
 mod composer_picker;
 #[path = "interconnect/demo.rs"]
@@ -61,6 +63,7 @@ struct DraftKey {
 #[derive(Default)]
 struct Draft {
     content: text_editor::Content,
+    attachment: Option<interconnect::attachment::Attachment>,
     pending: bool,
     error: Option<String>,
 }
@@ -101,6 +104,7 @@ struct App {
     reaction_sends: HashSet<reaction_picker::Sending>,
     reaction_error: Option<(reaction_picker::Target, String)>,
     composer_picker: Option<composer_picker::State>,
+    attachment_picker: Option<attachments::Target>,
     emoji_completion: emoji_completion::State,
     topic_editor: Option<topic::State>,
     pinning: HashSet<reaction_picker::Target>,
@@ -116,6 +120,7 @@ enum Message {
     Image(images::Event),
     Reaction(reaction_picker::Event),
     ComposerEmoji(composer_picker::Event),
+    Attachment(attachments::Event),
     EmojiCompletion(emoji_completion::Event),
     Space(Scope),
     Section(String),
@@ -171,7 +176,7 @@ enum Message {
     Exit,
     Edit(DraftKey, text_editor::Action),
     Send(DraftKey),
-    Sent(DraftKey, Result<(), String>),
+    Sent(DraftKey, Option<String>, Result<(), String>),
     Retry(RetrySend),
     Retried(String, Result<(), String>),
     Composing(bool),
@@ -212,6 +217,7 @@ impl App {
             reaction_sends: HashSet::new(),
             reaction_error: None,
             composer_picker: None,
+            attachment_picker: None,
             emoji_completion: emoji_completion::State::default(),
             topic_editor: None,
             pinning: HashSet::new(),
@@ -364,6 +370,7 @@ impl App {
             Message::Pin(event) => action_task = self.pin_event(event),
             Message::Topic(event) => action_task = self.topic_event(event),
             Message::Reaction(event) => action_task = self.reaction_event(event),
+            Message::Attachment(event) => action_task = self.attachment_event(event),
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
             Message::EmojiCompletion(event) => action_task = self.emoji_completion_event(event),
             Message::Image(event) => self.image_event(event),
@@ -634,12 +641,24 @@ impl App {
                     && !self.composing
                     && self.pending_ops < MAX_PENDING_OPERATIONS =>
             {
+                if self.attachment_picking(&key)
+                    || (self.draft_key(false).as_ref() != Some(&key)
+                        && self.draft_key(true).as_ref() != Some(&key))
+                {
+                    return Task::none();
+                }
                 if self.demo.is_some() {
                     if let Some(draft) = self.drafts.get_mut(&key) {
                         let body = draft.content.text();
-                        if !body.trim().is_empty() {
-                            self.demo.as_mut().unwrap().send(&key, body);
+                        if !draft.pending && (!body.trim().is_empty() || draft.attachment.is_some())
+                        {
+                            self.demo.as_mut().unwrap().send_attachment_or_text(
+                                &key,
+                                body,
+                                draft.attachment.take(),
+                            );
                             draft.content = text_editor::Content::new();
+                            draft.error = None;
                             self.refresh_demo();
                         }
                     }
@@ -648,23 +667,35 @@ impl App {
                 if let Some(composer) = self.composer_for(&key)
                     && let Some(draft) = self.drafts.get_mut(&key)
                     && !draft.pending
-                    && !draft.content.text().trim().is_empty()
+                    && (!draft.content.text().trim().is_empty() || draft.attachment.is_some())
                 {
                     let body = draft.content.text();
+                    let attachment = draft.attachment.clone();
+                    let account = self.account_id.clone();
                     draft.pending = true;
                     draft.error = None;
                     self.pending_ops += 1;
-                    return Task::perform(composer.send(body), move |result| {
-                        Message::Sent(key.clone(), result)
-                    });
+                    return Task::perform(
+                        async move {
+                            if let Some(attachment) = attachment {
+                                composer.send_attachment(attachment, body).await
+                            } else {
+                                composer.send(body).await
+                            }
+                        },
+                        move |result| Message::Sent(key.clone(), account.clone(), result),
+                    );
                 }
             }
-            Message::Sent(key, result) => {
+            Message::Sent(key, account, result) => {
                 self.pending_ops -= 1;
-                if let Some(draft) = self.drafts.get_mut(&key) {
+                if account == self.account_id
+                    && let Some(draft) = self.drafts.get_mut(&key)
+                {
                     draft.pending = false;
                     match result {
                         Ok(()) => {
+                            draft.attachment = None;
                             draft.content = text_editor::Content::new();
                             draft.error = None;
                         }
@@ -1819,7 +1850,9 @@ impl App {
                     left: 10.0,
                 })
                 .style(shell::editor_style)
-                .placeholder(if thread {
+                .placeholder(if draft.attachment.is_some() {
+                    "Add a caption…"
+                } else if thread {
                     "Reply to this thread…"
                 } else {
                     "Write a message…"
@@ -1845,7 +1878,8 @@ impl App {
                 && !draft.pending
                 && self.pending_ops < MAX_PENDING_OPERATIONS
                 && (pane.composer.is_some() || self.demo.is_some())
-                && !draft.content.text().trim().is_empty()
+                && !self.attachment_picking(&key)
+                && (!draft.content.text().trim().is_empty() || draft.attachment.is_some())
             {
                 send = send.on_press(Message::Send(key.clone()));
             }
@@ -1877,11 +1911,15 @@ impl App {
             );
             let actions = row![
                 iced::widget::space().width(Length::Fill),
+                self.attachment_button(&key, *generation),
                 self.composer_emoji_button(&key, *generation),
                 container(send).id("composer-send")
             ]
             .spacing(4)
             .align_y(iced::Alignment::Center);
+            if let Some(chip) = self.attachment_chip(&key, *generation) {
+                content = content.push(container(chip).padding([0, 24]));
+            }
             let composer = iced::widget::stack![
                 editor,
                 container(actions)
@@ -3224,7 +3262,11 @@ mod tests {
         let second = app.draft_key(false).unwrap();
         app.drafts.get_mut(&second).unwrap().content =
             text_editor::Content::with_text("unrelated draft");
-        let _ = app.update(Message::Sent(room_key.clone(), Err("queue failed".into())));
+        let _ = app.update(Message::Sent(
+            room_key.clone(),
+            app.account_id.clone(),
+            Err("queue failed".into()),
+        ));
         assert_eq!(
             app.drafts[&room_key].content.text().trim_end(),
             "room draft"
@@ -3237,7 +3279,11 @@ mod tests {
             !app.selection.shutdown,
             "wait for queue admission before stopping sync"
         );
-        let _ = app.update(Message::Sent(room_key.clone(), Ok(())));
+        let _ = app.update(Message::Sent(
+            room_key.clone(),
+            app.account_id.clone(),
+            Ok(()),
+        ));
         assert!(app.selection.shutdown);
         assert!(app.drafts[&room_key].content.text().trim().is_empty());
         assert_eq!(

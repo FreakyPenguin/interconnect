@@ -1,6 +1,5 @@
 # Rooms
 - show room membersihp
-- room topic
 - attachments
 - add images (file picker, paste, drop)
 - markdown

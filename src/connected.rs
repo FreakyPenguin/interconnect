@@ -346,6 +346,36 @@ impl Composer {
         .map_err(|error| error.to_string())
     }
 
+    /// Read locally on a blocking worker, then let the SDK own upload, encryption,
+    /// local echoes and retries. The captured timeline supplies the thread relation.
+    pub async fn send_attachment(
+        self,
+        attachment: crate::attachment::Attachment,
+        caption: String,
+    ) -> Result<(), String> {
+        use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
+        use matrix_sdk_ui::timeline::{AttachmentConfig, AttachmentSource};
+        let prepared = attachment.read().await?;
+        let config = AttachmentConfig {
+            info: Some(prepared.info),
+            thumbnail: prepared.thumbnail,
+            caption: (!caption.trim().is_empty()).then(|| TextMessageEventContent::plain(caption)),
+            ..Default::default()
+        };
+        self.0
+            .send_attachment(
+                AttachmentSource::Data {
+                    bytes: prepared.bytes,
+                    filename: prepared.filename,
+                },
+                prepared.mime,
+                config,
+            )
+            .use_send_queue()
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     pub async fn send(self, body: String) -> Result<(), String> {
         if body.trim().is_empty() {
             return Err("Message is empty".into());
@@ -3015,3 +3045,7 @@ mod tests {
         history_fixture(false, false, 100, 1, true).await;
     }
 }
+
+#[cfg(test)]
+#[path = "connected/attachments_tests.rs"]
+mod attachments_tests;

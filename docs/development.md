@@ -256,3 +256,38 @@ This mount is opt-in so headless/remote builds still work. See
 
 References: [Secret Service specification](https://specifications.freedesktop.org/secret-service/latest-single/),
 [Dev Container bind mounts](https://code.visualstudio.com/remote/advancedcontainers/add-local-file-mount).
+
+## Sending attachments
+
+The room and thread composers share a native file picker (`rfd`), opened with the
+paperclip immediately left of the emoji button. Linux uses the XDG desktop portal
+and needs a working session bus and a portal backend offering `FileChooser`;
+macOS uses the native dialog. Picker UI and backend upload require native-host
+acceptance separately from compilation.
+
+One file up to 50 MiB can be staged per conversation, removed with **×**, or
+replaced by picking another file. Composer text becomes its caption. Attachment
+paths and captions remain in memory with their room/thread draft across
+navigation; selection cancellation leaves an existing attachment intact. Files
+are read when **Send** is pressed, so later edits to a selected file are included.
+Clipboard attachments and drag/drop are not implemented.
+
+`src/attachment.rs` checks metadata and prepares bounded file bytes, image
+header metadata, and an optional static PNG thumbnail on blocking workers. Image
+preview decoding is limited to 4096 pixels per dimension and a 128 MiB decoder
+allocation budget; the thumbnail fits 512×384 without enlarging small images.
+Unsupported, damaged, or larger images still send their originals, with preview
+omitted. No image decoding runs on the UI thread. `Composer::send_attachment` supplies bytes to the SDK timeline's send
+queue, avoiding its synchronous path-reading API. The captured timeline supplies
+the room/thread target; the SDK owns encryption (including thumbnails), local
+echoes, upload and event retries. Explicit thumbnail sources are read as files,
+so local queued and sent previews can use the SDK cache directly. Queue admission clears the composer; it does not prove delivery. Failed
+preparation/admission retains the draft. Later failures use the existing timeline
+retry action. The local 50 MiB limit does not override a smaller homeserver limit.
+Demo sends display the filename/caption in memory and never read or upload the
+file contents. This adds no polling subscription or animation timer.
+
+In a development container using the host's portal, the chosen file path must be
+accessible at the same location inside the container. Sharing the session bus
+alone does not expose host files. An unavailable path produces an inline file
+access error; native builds use the local filesystem directly.

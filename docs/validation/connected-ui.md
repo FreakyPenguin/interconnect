@@ -1648,3 +1648,91 @@ verify only that pin disappears, permission denial renders no unpin button,
 repeated clicks are idempotent, pending operations disable the action, scoped
 errors remain visible without history, and stale clicks cannot affect the room
 left behind. Native/connected-account checks remain untested.
+
+## Sending attachments — 2026-11-15
+
+The paperclip left of the emoji button opens a native file picker in both room
+and thread composers. Pick one file (up to 50 MiB), optionally add a caption,
+then use the normal send button/shortcut. The staged filename/size and **×**
+remove action appear above the composer. Picking another file replaces it;
+cancelling preserves it. Drafts, including attachments, stay with each
+conversation. Clipboard files and drag/drop remain pending.
+
+Automated coverage includes file validation and missing-file rechecks, image
+MIME detection/dimensions, room/thread draft isolation, picker cancellation,
+obsolete picker result rejection after navigation/account changes, and draft
+retention on queue failure. Local mock homeserver tests inspect outgoing image
+captions, filenames, size/dimensions, ordinary room vs thread relationships,
+and encrypted media/event requests. These fixtures do not prove interoperability
+with a real homeserver or a second client.
+
+Native acceptance (use `--demo` for picker and draft behavior; sending on a real
+account requires authorization):
+
+1. Open each composer and confirm the paperclip is immediately left of emoji.
+   Pick a PNG/JPEG, a PDF or other file, and a filename long enough to wrap.
+   Check filename/size, optional caption, remove, replacement, and cancellation.
+2. Stage separate room/thread files and captions. Switch rooms, reopen the
+   thread, change spaces, resize to the narrow thread view, and check drafts and
+   reading positions. Close/cancel a picker after navigation; obsolete results
+   must not attach to another conversation.
+3. Pick an oversized file or delete a staged file before sending. Check the
+   inline error and that the caption/file stay available for correction.
+4. In an authorized encrypted test room, send an image with a caption and a
+   generic file both to the room and a thread. Verify decryption, filename,
+   caption, image dimensions/preview and thread membership in a second client.
+   Check disconnected upload/send retry and that successful queue admission
+   clears only the originating draft. Do not manually resend uncertain sends.
+5. Check Linux portal opening/cancellation and native macOS dialogs independently.
+   Confirm idle/hidden-window behavior using [idle resources](idle-resources.md).
+
+Live homeserver delivery, second-client decryption, macOS dialogs, and resource
+measurements have not been exercised for this change.
+
+Validation result: `cargo fmt --all -- --check`, locked workspace Clippy with
+warnings denied, `cargo test --locked --workspace` (79 library and 127 GUI tests
+passed; one existing lifecycle stress test ignored), and the locked desktop
+build passed. A native Wayland/wgpu demo rendered the paperclip in the requested
+position and opened the XDG portal's **Attach a file** dialog. The dialog and demo
+were closed normally; the demo exited 0. Native selection/send acceptance remains
+pending: the host picker could not resolve this container's fixture path, and
+virtual-keyboard input was unreliable. The demo screenshot is under ignored
+`artifacts/attachments-2026-11-15/`. No saved account was opened, no real messages
+were sent, and the user's connected client was not restarted.
+
+
+### Attachment previews and local echoes — 2026-11-15
+
+The initial sender uploaded originals without thumbnail metadata. For encrypted
+images the existing image policy deliberately shows **Open image to load** when
+no separate thumbnail exists; a peer could receive the image while this client
+had no inline preview. Image sends now generate an optional PNG thumbnail fitting
+512×384 on the file worker, with decoder dimensions limited to 4096×4096 and
+allocations limited to 128 MiB. Small images are not enlarged. Unsupported,
+damaged, and larger images still send without thumbnails. Both original and
+thumbnail encryption remain SDK-owned. Existing messages without thumbnails are
+unchanged and can be opened explicitly.
+
+Explicit thumbnail sources now use `MediaFormat::File`, including plaintext
+local-upload URIs. Requesting a resized server thumbnail bypassed the SDK's cached
+thumbnail file and could not serve a queued local source. Generated thumbnails
+remain within the existing 2 MiB preview decode budget; no new background timer,
+polling, or automatic original download is introduced.
+
+The mock-server attachment tests now run the real room/thread presentation
+workers and assert a sent image row reaches each UI snapshot without navigation.
+They decode each sent preview from the SDK cache with no media GET, check bounded
+thumbnail dimensions and separate original/thumbnail upload URIs, and check that
+encrypted uploads do not expose the original bytes. Preparation tests cover the
+static thumbnail's bounds, small images, invalid image bytes, and dimension-limit
+fallback. The reported first-attempt missing row was not reproduced by these
+fixtures; the user reported that the original image reached the peer and that
+sending after restarting worked locally. These are user-reported observations;
+live acceptance of the new thumbnails still requires an authorized account send.
+
+Preview follow-up validation: formatting, locked workspace Clippy with warnings
+denied, the locked workspace suite (80 library and 127 GUI tests passed; one
+existing stress test ignored), and the locked desktop build passed. After refining
+the protocol fixture to cover an image-only room send as well as a captioned
+thread send, both attachment fixtures and Clippy passed again. No connected
+client was restarted and no account message was sent during this follow-up.

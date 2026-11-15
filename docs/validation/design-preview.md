@@ -351,3 +351,14 @@ messages were sent, and the user's connected client was not restarted.
 Native pointer/keyboard acceptance, connected configuration acceptance, macOS,
 and idle-resource measurements remain pending. The settings code adds no timer,
 polling loop, or subscription.
+
+## Attachment composer
+
+The paperclip immediately left of emoji opens the same native file picker as the
+connected client. Each room/thread draft can stage one file, display its
+filename/size, remove or replace it, and add a caption. Demo **Send** appends only
+the filename/caption to its in-memory conversation; it neither reads file contents
+nor uploads anything. Picker cancellation preserves an existing staged file.
+Clipboard files and drop input are not yet supported. See
+[attachment validation](connected-ui.md#sending-attachments--2026-11-15) for
+coverage and native-host limits.

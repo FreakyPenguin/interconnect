@@ -81,10 +81,9 @@ impl Attachment {
     }
     pub fn new(source: &MediaSource, thumbnail: Option<&MediaSource>) -> Self {
         let preview = match thumbnail {
-            Some(source @ MediaSource::Encrypted(_)) => {
-                Some(Key::new(source, Variant::ThumbnailFile))
-            }
-            Some(source @ MediaSource::Plain(_)) => Some(Key::new(source, Variant::Thumbnail)),
+            // An explicit thumbnail is already a preview image. Request its file
+            // directly, including queued uploads stored in the SDK's file cache.
+            Some(source) => Some(Key::new(source, Variant::ThumbnailFile)),
             None if matches!(source, MediaSource::Plain(_)) => {
                 Some(Key::new(source, Variant::Thumbnail))
             }

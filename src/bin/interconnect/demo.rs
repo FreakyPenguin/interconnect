@@ -454,6 +454,23 @@ impl Demo {
             composer: None,
         }
     }
+    pub fn send_attachment_or_text(
+        &mut self,
+        key: &DraftKey,
+        body: String,
+        attachment: Option<interconnect::attachment::Attachment>,
+    ) {
+        let Some(attachment) = attachment else {
+            return self.send(key, body);
+        };
+        let label = if body.trim().is_empty() {
+            attachment.filename
+        } else {
+            format!("{}\n{}", attachment.filename, body)
+        };
+        self.send(key, label);
+        // Demo sends stay entirely in memory; never upload or read file contents.
+    }
     pub fn send(&mut self, key: &DraftKey, body: String) {
         if let Some(root) = &key.root
             && let Some(row) = self
