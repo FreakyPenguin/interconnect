@@ -1,10 +1,10 @@
 //! Presentation only: no SDK state or polling belongs in this module.
 use super::{App, Message};
-use chatclient::navigation::{self, Scope};
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Theme, font,
     widget::{self, button, column, container, row, scrollable, text, text_editor, text_input},
 };
+use interconnect::navigation::{self, Scope};
 use std::collections::HashSet;
 
 pub const INK: Color = Color::from_rgb8(39, 46, 56);

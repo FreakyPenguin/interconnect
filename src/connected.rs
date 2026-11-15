@@ -641,7 +641,7 @@ async fn view(
     generation: u64,
     state: watch::Sender<Model>,
 ) {
-    tracing::debug!(target: "chatclient", generation, thread = root.is_some(), "connected presentation view started");
+    tracing::debug!(target: "interconnect", generation, thread = root.is_some(), "connected presentation view started");
     let diagnostics = state.borrow().diagnostics.clone();
     let _lifetime = diagnostics.view(root.is_some());
     let is_thread = root.is_some();

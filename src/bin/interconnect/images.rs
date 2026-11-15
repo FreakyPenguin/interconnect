@@ -1,13 +1,13 @@
 //! Image previews and an on-demand viewer; all loading stays in the backend.
 use super::{App, Message, current_pane, shell};
-use chatclient::{
-    connected::MessageRow, image_media::Key, media::Animation, settings::GifPlayback,
-};
 use iced::time::Instant;
 use iced::{
     Element, Length, Subscription,
     futures::StreamExt,
     widget::{button, column, container, image, mouse_area, opaque, row, text},
+};
+use interconnect::{
+    connected::MessageRow, image_media::Key, media::Animation, settings::GifPlayback,
 };
 use std::time::Duration;
 

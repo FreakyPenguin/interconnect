@@ -10,7 +10,7 @@ validation (the application still has Linux-specific integration).
 ## Run
 
 ```sh
-cargo run --locked --bin matrix-ui -- --demo
+cargo run --locked --bin interconnect -- --demo
 ```
 
 Demo mode never starts the SDK connection, opens a profile, or sends network
@@ -48,7 +48,7 @@ and encrypted download coverage uses generated GIFs in automated tests.
 
 The default launch tries wgpu with a low-power adapter preference and software
 fallback. Repeat the image/scroll/selection checks with
-`ICED_BACKEND=tiny-skia cargo run --locked --bin matrix-ui -- --demo` to force
+`ICED_BACKEND=tiny-skia cargo run --locked --bin interconnect -- --demo` to force
 the CPU renderer, and `ICED_BACKEND=wgpu` to require wgpu. See
 [renderer selection](../development.md#renderer-selection) for adapter logs and
 overrides. Check that the selected wgpu adapter is a hardware device before

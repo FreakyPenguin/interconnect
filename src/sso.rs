@@ -32,7 +32,7 @@ pub async fn check(homeserver: &str) -> anyhow::Result<()> {
                 .port_range(8765..8766)
                 .bind_tries(1),
         )
-        .initial_device_display_name("chatclient milestone-0 temporary SSO check")
+        .initial_device_display_name("interconnect milestone-0 temporary SSO check")
         .send();
     tokio::time::timeout(Duration::from_secs(180), login)
         .await
@@ -47,7 +47,7 @@ pub async fn check(homeserver: &str) -> anyhow::Result<()> {
     match logout {
         Ok(Ok(_)) => println!("Temporary session logged out."),
         _ => eprintln!(
-            "Logout could not be confirmed. Remove the temporary chatclient device in your other client."
+            "Logout could not be confirmed. Remove the temporary interconnect device in your other client."
         ),
     }
     result?;

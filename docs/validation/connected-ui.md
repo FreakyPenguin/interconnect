@@ -3,7 +3,7 @@
 Desktop notification setup, behavior, test evidence, and native acceptance steps
 are documented in [notification validation](notifications.md).
 
-The `matrix-ui` binary connects Iced to the existing persistent session. It restores
+The `interconnect` binary connects Iced to the existing persistent session. It restores
 credentials without browser login, lists joined rooms, and displays SDK room and
 thread timelines in encrypted and unencrypted rooms. History loads automatically
 in 50-event batches, filling the viewport and an older-message buffer while
@@ -18,13 +18,30 @@ Secret Service available and unlocked, and provide a Wayland display as describe
 in [development.md](../development.md).
 
 ```sh
-cargo run --locked --bin matrix-ui
+cargo run --locked --bin interconnect
 ```
 
 An optional profile-directory argument follows the binary name. The default is
 `.matrix-spike`; keep its canonical path unchanged from login. This command does
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
+
+The package and GUI binary are now named `interconnect`, with application settings
+under the `interconnect` configuration directory; see [settings](../settings.md)
+for reusing an existing settings file. The account profile directory and legacy
+Secret Service application attribute (`chatclient-milestone-0`) are retained for
+saved-login compatibility. Existing profiles do not need a new login or a move.
+The window, notification app name, and macOS bundle are branded **Interconnect**.
+The macOS bundle identifier is now `io.github.interconnect.desktop`; check its
+notification permission on the native host after rebuilding the bundle.
+
+Rename validation on Linux (2026-11-15): formatting, workspace Clippy with
+warnings denied, workspace tests (58 library and 100 GUI tests passed; one
+existing stress test ignored), and `cargo build --locked --bin interconnect`
+passed. Locked Cargo metadata resolves the renamed library and GUI binary;
+dependency versions are unchanged. Bundle plist structure, bundle script syntax,
+and container JSON syntax also passed checks. Desktop appearance, macOS execution,
+and live saved-session restoration were not exercised for this rename.
 
 ## GPU passthrough startup stall — 2026-11-15
 
@@ -87,7 +104,7 @@ and timeline scroll-preservation tests include the added controls.
 Validation: `cargo fmt --all -- --check`,
 `cargo clippy --locked --workspace --all-targets -- -D warnings`, and
 `cargo test --locked --workspace` passed (48 library and 64 GUI tests; one
-pre-existing library test ignored). `cargo build --locked --bin matrix-ui` also
+pre-existing library test ignored). `cargo build --locked --bin interconnect` also
 passed. No connected account was opened or restarted.
 
 Desktop acceptance remains pending: save both graphics options, confirm the
@@ -99,7 +116,7 @@ selected hardware adapter on the native host. Power use remains unmeasured.
 ## wgpu with software fallback — 2026-11-15
 
 The GUI now enables both Iced renderer features. With no `ICED_BACKEND` override,
-Iced attempts wgpu first and tiny-skia if initialization fails. `matrix-ui`
+Iced attempts wgpu first and tiny-skia if initialization fails. `interconnect`
 defaults to `WGPU_POWER_PREF=low` while preserving explicit `low`, `high`, or
 `none` values. Graphics settings above now control these defaults and can force
 software rendering. The environment is applied by re-executing the Unix process before
@@ -641,7 +658,7 @@ send messages or restart the user's connected app.
 For presentation-lifetime traces (without SDK event logging):
 
 ```sh
-RUST_LOG=chatclient=debug cargo run --locked --bin matrix-ui
+RUST_LOG=interconnect=debug cargo run --locked --bin interconnect
 ```
 
 Each started presentation view should stop when replaced or closed. Closing a
@@ -1168,7 +1185,7 @@ Native desktop acceptance, live-account checks, and reaction-specific resource
 measurements remain pending. No connected client was restarted or real messages
 sent for this change.
 
-For manual acceptance, run `cargo run --locked --bin matrix-ui -- --demo`, open
+For manual acceptance, run `cargo run --locked --bin interconnect -- --demo`, open
 **Studio → Design studio**, and open the last message's thread. Check badges on
 the welcome message, thread original, and first reply, including blue own-reaction
 tints and color emoji. Resize and hide the sidebar to inspect wrapping. In a

@@ -138,7 +138,7 @@ impl Candidate {
                 plain(&format!("{}: {}", self.sender, self.body), 300),
             )
         } else {
-            ("Chatclient".into(), "New Matrix message".into())
+            ("Interconnect".into(), "New Matrix message".into())
         }
     }
 }
@@ -276,14 +276,14 @@ impl Service {
 async fn authorize() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        notify_rust::check_bundle().map_err(|_| "Notifications require Chatclient.app. Run scripts/bundle-macos.sh and launch the bundle.".to_owned())?;
+        notify_rust::check_bundle().map_err(|_| "Notifications require Interconnect.app. Run scripts/bundle-macos.sh and launch the bundle.".to_owned())?;
         let granted = tokio::time::timeout(Duration::from_secs(60), notify_rust::request_auth())
             .await
             .map_err(|_| "Notification permission request timed out.".to_owned())?
             .map_err(|_| "Could not request notification permission.".to_owned())?;
         if !granted {
             return Err(
-                "Allow Chatclient notifications in System Settings → Notifications.".into(),
+                "Allow Interconnect notifications in System Settings → Notifications.".into(),
             );
         }
     }
@@ -294,7 +294,10 @@ async fn show(title: &str, body: &str) -> Result<(), String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         let mut notification = notify_rust::Notification::new();
-        notification.summary(title).body(body).appname("Chatclient");
+        notification
+            .summary(title)
+            .body(body)
+            .appname("Interconnect");
         #[cfg(target_os = "linux")]
         {
             // Message text is untrusted plain text, not notification markup.
@@ -306,7 +309,7 @@ async fn show(title: &str, body: &str) -> Result<(), String> {
                         .replace('>', "&gt;"),
                 )
                 .hint(notify_rust::Hint::Category("im.received".into()))
-                .hint(notify_rust::Hint::DesktopEntry("chatclient".into()));
+                .hint(notify_rust::Hint::DesktopEntry("interconnect".into()));
         }
         tokio::time::timeout(Duration::from_secs(10), notification.show_async()).await
             .map_err(|_| "Desktop notification service timed out.".to_owned())?
@@ -325,7 +328,7 @@ async fn show(title: &str, body: &str) -> Result<(), String> {
 /// Explicit, account-independent native test, also available in demo mode.
 pub async fn test_notification() -> Result<(), String> {
     authorize().await?;
-    show("Chatclient", "Desktop notifications are working.").await
+    show("Interconnect", "Desktop notifications are working.").await
 }
 
 #[cfg(test)]

@@ -55,7 +55,7 @@ The runtime idle executable uses one end-of-run deadline and Ctrl-C handling. It
 has no measurement polling timer. Lifecycle tracing can be inspected with:
 
 ```sh
-RUST_LOG=chatclient=trace target/debug/spike lifecycle
+RUST_LOG=interconnect=trace target/debug/spike lifecycle
 ```
 
 ## Live-server gate (pending)
@@ -218,7 +218,7 @@ boundary, explicit keyring cleanup may be needed; it is not automated yet.
 
 An interrupted login may leave a reserved profile whose record lacks session
 credentials. Do not overwrite it or reuse its crypto state; inspect/remove any
-abandoned chatclient device in the second client and use a new profile directory.
+abandoned interconnect device in the second client and use a new profile directory.
 
 Live validation remains pending: keyring unlock/save/read, two-process login and
 resume, container restart, logout, network loss, abrupt exit and historical key

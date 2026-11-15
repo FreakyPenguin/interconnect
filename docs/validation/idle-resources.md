@@ -32,7 +32,7 @@ all traffic in this test goes to the local mock server.
 ## Opt-in live diagnostics
 
 ```sh
-CHATCLIENT_METRICS=1 RUST_LOG=off target/debug/matrix-ui .matrix-spike
+INTERCONNECT_METRICS=1 RUST_LOG=off target/debug/interconnect .matrix-spike
 ```
 
 Once the initial `{"metrics":true,...}` JSON report appears on stderr, send
@@ -146,7 +146,7 @@ panic marker in stderr. No live send was performed during these measurements.
 
 After the user made tracefs directories traversable and the `id`/`format` files
 for `sched_wakeup` and `sched_wakeup_new` readable, unprivileged captures worked.
-The same development binary was launched with `CHATCLIENT_METRICS=1 RUST_LOG=off`
+The same development binary was launched with `INTERCONNECT_METRICS=1 RUST_LOG=off`
 and the saved host profile. The UI showed Connected, with no room selected.
 Two alternating visible/hidden pairs used `scripts/measure-idle.py` without
 `--cpu-only`, requesting 30 seconds per capture. Sway scratchpad hid only this

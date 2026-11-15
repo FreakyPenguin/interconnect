@@ -7,11 +7,11 @@ if [[ "$(uname -s)" != Darwin ]]; then
 fi
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_root"
-cargo build --locked --bin matrix-ui
+cargo build --locked --bin interconnect
 build_root="${CARGO_TARGET_DIR:-target}"
-bundle_path="$build_root/Chatclient.app"
+bundle_path="$build_root/Interconnect.app"
 mkdir -p "$bundle_path/Contents/MacOS" "$bundle_path/Contents/Resources"
-cp "$build_root/debug/matrix-ui" "$bundle_path/Contents/MacOS/matrix-ui"
+cp "$build_root/debug/interconnect" "$bundle_path/Contents/MacOS/interconnect"
 cp packaging/macos/Info.plist "$bundle_path/Contents/Info.plist"
 plutil -lint "$bundle_path/Contents/Info.plist"
 # Give local builds a stable app identity. Distribution requires proper signing

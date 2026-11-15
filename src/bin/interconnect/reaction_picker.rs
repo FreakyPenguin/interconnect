@@ -1,10 +1,10 @@
 //! Bind a reusable picker to a captured conversation/event; send off the UI thread.
 use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, emoji_picker, shell};
-use chatclient::connected::{Composer, MessageRow};
 use iced::{
     Element, Task,
     widget::{column, text},
 };
+use interconnect::connected::{Composer, MessageRow};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {

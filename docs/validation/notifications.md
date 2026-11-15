@@ -61,7 +61,7 @@ dbus-send --session --print-reply --dest=org.freedesktop.Notifications \
   /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation
 ```
 
-Run `cargo run --locked --bin matrix-ui -- --demo`, open Settings, and click
+Run `cargo run --locked --bin interconnect -- --demo`, open Settings, and click
 **Send sample notification**. Check the host banner or notification center.
 A forwarded display alone does not forward notifications; the session bus must
 also be accessible. An absent daemon should produce a Settings error while the
@@ -73,17 +73,17 @@ On a Mac with Rust and Xcode command-line tools:
 
 ```sh
 ./scripts/bundle-macos.sh
-open target/Chatclient.app --args --demo
+open target/Interconnect.app --args --demo
 ```
 
 The script builds the GUI, copies its binary/Info.plist into an `.app`, and
 ad-hoc signs it for local development. It does not launch the application. With
 `CARGO_TARGET_DIR` set, substitute that directory for `target`. The stable bundle
-identifier is `io.github.chatclient.desktop`. Distribution signing/notarization
+identifier is `io.github.interconnect.desktop`. Distribution signing/notarization
 remain release work.
 
 Send the sample in Settings, accept the permission prompt, and inspect
-Notification Center. Denial should show an actionable error. Enable Chatclient
+Notification Center. Denial should show an actionable error. Enable Interconnect
 in **System Settings → Notifications**, then retry and check again after
 relaunching the same bundle. A bare `cargo run` launch should report the missing
 bundle instead of invoking UserNotifications without a bundle identity. Iced

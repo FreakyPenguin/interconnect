@@ -17,6 +17,7 @@ use secret_service::{EncryptionType, SecretService};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+// Keep the original keyring namespace so existing saved accounts remain readable.
 const APPLICATION: &str = "chatclient-milestone-0";
 
 // Never derive Debug: this object contains bearer tokens and an encryption key.
@@ -140,7 +141,7 @@ impl Profile {
         let bytes = Zeroizing::new(serde_json::to_vec(saved)?);
         collection
             .create_item(
-                "chatclient milestone 0 session",
+                "interconnect milestone 0 session",
                 self.attributes(),
                 &bytes,
                 true,
@@ -227,7 +228,7 @@ pub async fn login(homeserver: &str, directory: &str) -> anyhow::Result<()> {
                 .port_range(8765..8766)
                 .bind_tries(1),
         )
-        .initial_device_display_name("chatclient milestone-0 persistent session")
+        .initial_device_display_name("interconnect milestone-0 persistent session")
         .send();
     tokio::time::timeout(Duration::from_secs(180), login)
         .await
@@ -269,7 +270,7 @@ async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Resu
         println!("Local credential cleanup completed; SDK store retained.");
         return Ok(());
     }
-    let session = saved.session.clone().context("login was interrupted before session persistence; use a new profile and remove any abandoned chatclient device in the other client")?;
+    let session = saved.session.clone().context("login was interrupted before session persistence; use a new profile and remove any abandoned interconnect device in the other client")?;
     ensure!(
         profile.directory.join("store").is_dir(),
         "SDK store missing; refusing to restore a device without its local crypto store"
@@ -423,7 +424,7 @@ mod tests {
     #[test]
     fn process_lock_survives_handles_and_runtime_cleanup() {
         use std::io::{BufRead, Read, Write};
-        const CHILD_PROFILE: &str = "CHATCLIENT_TEST_LOCK_PROFILE";
+        const CHILD_PROFILE: &str = "INTERCONNECT_TEST_LOCK_PROFILE";
         if let Some(path) = std::env::var_os(CHILD_PROFILE) {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             let profile = Profile::open(Path::new(&path), false).unwrap();

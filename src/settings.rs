@@ -177,7 +177,7 @@ fn default_path_from(xdg: Option<PathBuf>, home: Option<PathBuf>) -> anyhow::Res
         })?;
     #[cfg(target_os = "macos")]
     let _ = xdg;
-    Ok(root.join("chatclient/settings.toml"))
+    Ok(root.join("interconnect/settings.toml"))
 }
 
 #[derive(Clone, Debug)]
@@ -414,11 +414,11 @@ mod tests {
     fn config_path_follows_xdg_and_ignores_relative_overrides() {
         assert_eq!(
             default_path_from(Some("/config".into()), None).unwrap(),
-            PathBuf::from("/config/chatclient/settings.toml")
+            PathBuf::from("/config/interconnect/settings.toml")
         );
         assert_eq!(
             default_path_from(Some("relative".into()), Some("/users/me".into())).unwrap(),
-            PathBuf::from("/users/me/.config/chatclient/settings.toml")
+            PathBuf::from("/users/me/.config/interconnect/settings.toml")
         );
         assert!(default_path_from(None, None).is_err());
     }

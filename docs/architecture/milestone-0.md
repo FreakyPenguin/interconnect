@@ -42,11 +42,11 @@ presentation workers. `ViewWorker` is the first isolated lifecycle experiment:
 commands and results use bounded channels, cancellation interrupts blocked
 sends, explicit close joins completion, and drop requests cancellation. Results
 are not silently dropped on channel saturation. The Iced probe opens/closes a synthetic event subscription with a view-owned
-worker and rejects stale generation IDs. The separate `matrix-ui` prototype now connects actual SDK subscriptions to Iced
+worker and rejects stale generation IDs. The separate `interconnect` prototype now connects actual SDK subscriptions to Iced
 using replaceable full-state snapshots; see the connected UI follow-up below.
 Never coalesce raw timeline diffs without retaining their ordering/application.
 
-There is no recurring application timer. Optional `RUST_LOG=chatclient=trace`
+There is no recurring application timer. Optional `RUST_LOG=interconnect=trace`
 records worker lifetime and event delivery. SDK tracing can be enabled separately
 for investigation, but logs may contain account/event data; do not commit them.
 External Linux scheduler tracing measures actual thread wakeups. App trace events
@@ -197,7 +197,7 @@ was not reported. See the interactive validation record for the evidence scope.
 
 ## Connected Iced follow-up — 2026-11-14
 
-`matrix-ui` restores the existing profile with a lifetime-owned profile lock and
+`interconnect` restores the existing profile with a lifetime-owned profile lock and
 runs one `SyncService` on Iced's Tokio executor. The backend owns independently
 cancellable room/thread futures. Dropping a view future releases its timeline
 subscription; no separate presentation task needs an asynchronous join.

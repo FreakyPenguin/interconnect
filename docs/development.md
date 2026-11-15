@@ -1,6 +1,6 @@
 # Development container
 
-Open the repository in VS Code with the Dev Containers extension and choose **Dev Containers: Reopen in Container**. The default configuration supports building, linting, and testing without requiring a display or GPU on the host. The Cargo project contains milestone 0 headless and Iced runtime probes; see [validation commands](validation/milestone-0.md). A separate `matrix-ui` binary connects the saved session to room and thread views; see [connected UI validation](validation/connected-ui.md).
+Open the repository in VS Code with the Dev Containers extension and choose **Dev Containers: Reopen in Container**. The default configuration supports building, linting, and testing without requiring a display or GPU on the host. The Cargo project contains milestone 0 headless and Iced runtime probes; see [validation commands](validation/milestone-0.md). A separate `interconnect` binary connects the saved session to room and thread views; see [connected UI validation](validation/connected-ui.md).
 
 The image uses Debian Bookworm and installs the latest stable Rust available when its Rust installation layer is built, together with rustfmt, Clippy, and rust-src. The repository's `rust-toolchain.toml` selects stable both inside and outside the container. To refresh an existing container, run `rustup update stable`; alternatively rebuild without the Docker cache. This intentionally tracks stable rather than pinning an exact compiler version. Pin a version when reproducible release builds are introduced.
 
@@ -30,15 +30,15 @@ are unchanged. Rebuilding picks up these package-specific profile settings.
 
 ## Design preview
 
-Run `cargo run --locked --bin matrix-ui -- --demo` for a memory-only workspace
+Run `cargo run --locked --bin interconnect -- --demo` for a memory-only workspace
 with spaces, sectioned room navigation, and room/thread conversations. It uses
 no saved session and sends no Matrix messages. See the [design preview guide](validation/design-preview.md)
-for shortcuts, fixtures, and known interaction gaps. Normal `matrix-ui` launches
+for shortcuts, fixtures, and known interaction gaps. Normal `interconnect` launches
 use the same visual shell with the saved Matrix session.
 
 ## Emoji picker
 
-`src/bin/matrix-ui/emoji_picker.rs` owns the reusable catalog, search/category/
+`src/bin/interconnect/emoji_picker.rs` owns the reusable catalog, search/category/
 page state, and generic `view`/`Event` API. Build `Catalog::new(entries)`, create
 `State::new(&catalog)`, and map its events into the embedding surface's message
 type. `State::update` returns a selected catalog key; the caller decides whether
@@ -86,7 +86,7 @@ SDK request, or persistent recent-emoji state.
 
 ## Renderer selection
 
-`matrix-ui` builds both Iced renderers. **Settings → Graphics** controls the
+`interconnect` builds both Iced renderers. **Settings → Graphics** controls the
 renderer on the next launch: **Use GPU rendering** defaults on and tries
 **wgpu** first with **tiny-skia** startup fallback. Turning it off forces the CPU
 renderer even when `ICED_BACKEND` requests wgpu. **Prefer a low-power GPU** defaults
@@ -99,10 +99,10 @@ To compare the renderers with isolated sample data:
 
 ```sh
 # Force CPU rendering without attempting wgpu.
-ICED_BACKEND=tiny-skia cargo run --locked --bin matrix-ui -- --demo
+ICED_BACKEND=tiny-skia cargo run --locked --bin interconnect -- --demo
 
 # Require wgpu; initialization errors are reported instead of falling back.
-ICED_BACKEND=wgpu cargo run --locked --bin matrix-ui -- --demo
+ICED_BACKEND=wgpu cargo run --locked --bin interconnect -- --demo
 ```
 
 With GPU rendering enabled, unset `ICED_BACKEND` for the normal wgpu-first/
@@ -115,7 +115,7 @@ after initialization does not dynamically switch the running renderer.
 Iced's software renderer.
 
 For adapter diagnostics, use
-`RUST_LOG=iced_wgpu=info cargo run --locked --bin matrix-ui -- --demo` and inspect
+`RUST_LOG=iced_wgpu=info cargo run --locked --bin interconnect -- --demo` and inspect
 the `Selected: AdapterInfo` record. An adapter named llvmpipe/lavapipe with device
 type `Cpu` uses software rendering through wgpu. In a container, expose `/dev/dri`
 and the appropriate device permissions to try actual hardware acceleration.
@@ -129,7 +129,7 @@ the save lockout until repaired. Renderer environment is applied by a Unix
 re-exec when needed before Tokio/Iced starts, preserving PID, working directory,
 arguments, and inherited environment. This
 avoids changing process environment variables while threads may read them.
-The same settings apply to direct `target/debug/matrix-ui` launches.
+The same settings apply to direct `target/debug/interconnect` launches.
 
 ## Settings
 
@@ -180,7 +180,7 @@ Rebuild the container to apply the environment change. In an existing terminal,
 test it immediately without accessing a saved account:
 
 ```sh
-NODEVICE_SELECT=1 cargo run --locked --bin matrix-ui -- --demo
+NODEVICE_SELECT=1 cargo run --locked --bin interconnect -- --demo
 ```
 
 If startup stalls before an adapter is selected, compare `vulkaninfo --summary`

@@ -9,7 +9,7 @@ UI that will also fit macOS, with spaces and room-list sections for organization
   and runtime-safe cleanup. Never block the UI thread.
 - Preserve per-conversation drafts and scroll behavior. Changing spaces filters
   the room list without switching the open conversation.
-- Use `cargo run --locked --bin matrix-ui -- --demo` for UI experiments. Keep
+- Use `cargo run --locked --bin interconnect -- --demo` for UI experiments. Keep
   demo mode independent of saved accounts and network access. Do not send test
   messages or restart the user's connected client without authorization.
 - Never commit credentials, account stores, private message content, or local
@@ -23,9 +23,9 @@ UI that will also fit macOS, with spaces and room-list sections for organization
 
 Run checks appropriate to the change: `cargo fmt --all -- --check`,
 `cargo clippy --locked --workspace --all-targets -- -D warnings`, and targeted
-tests (UI: `cargo test --locked --bin matrix-ui`). Use
+tests (UI: `cargo test --locked --bin interconnect`). Use
 `cargo test --locked --workspace` for shared/backend changes and
-`cargo build --locked --bin matrix-ui` before desktop validation.
+`cargo build --locked --bin interconnect` before desktop validation.
 
 See `docs/development.md`, `docs/validation/connected-ui.md`, and
 `docs/validation/idle-resources.md` for setup and validation details.

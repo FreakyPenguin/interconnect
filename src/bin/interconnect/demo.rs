@@ -1,6 +1,8 @@
 //! Deterministic, memory-only fixtures. Demo mode never creates an SDK client.
 use super::DraftKey;
-use chatclient::connected::{History, MessageRow, Pane, Reaction, RoomEntry, RowKind, SpaceEntry};
+use interconnect::connected::{
+    History, MessageRow, Pane, Reaction, RoomEntry, RowKind, SpaceEntry,
+};
 use std::collections::HashMap;
 
 pub struct Room {
@@ -168,7 +170,7 @@ pub struct Demo {
     conversations: HashMap<DraftKey, Vec<MessageRow>>,
     next_message: u64,
 }
-pub fn attachment(missing: bool) -> chatclient::image_media::Attachment {
+pub fn attachment(missing: bool) -> interconnect::image_media::Attachment {
     let source = matrix_sdk::ruma::events::room::MediaSource::Plain(
         if missing {
             "mxc://demo.invalid/missing"
@@ -177,14 +179,14 @@ pub fn attachment(missing: bool) -> chatclient::image_media::Attachment {
         }
         .into(),
     );
-    chatclient::image_media::Attachment::new(&source, None)
+    interconnect::image_media::Attachment::new(&source, None)
 }
-pub fn gif_attachment() -> chatclient::image_media::Attachment {
+pub fn gif_attachment() -> interconnect::image_media::Attachment {
     let source =
         matrix_sdk::ruma::events::room::MediaSource::Plain("mxc://demo.invalid/gif".into());
-    chatclient::image_media::Attachment::new(&source, None)
+    interconnect::image_media::Attachment::new(&source, None)
 }
-pub fn images() -> chatclient::media::Snapshot<chatclient::image_media::Key> {
+pub fn images() -> interconnect::media::Snapshot<interconnect::image_media::Key> {
     // A deterministic pixel fixture, generated once at demo startup. No files,
     // decoding, account access, or downloads are involved.
     let pixels: Vec<u8> = (0..180)
@@ -202,7 +204,7 @@ pub fn images() -> chatclient::media::Snapshot<chatclient::image_media::Key> {
     let sample = attachment(false);
     let missing = attachment(true);
     let gif = gif_attachment();
-    let animation = std::sync::Arc::new(chatclient::media::Animation {
+    let animation = std::sync::Arc::new(interconnect::media::Animation {
         frames: (0..8)
             .map(|frame| {
                 let pixels = (0..180)
@@ -224,7 +226,7 @@ pub fn images() -> chatclient::media::Snapshot<chatclient::image_media::Key> {
             .collect(),
     });
     let first = animation.frames[0].0.clone();
-    chatclient::media::Snapshot {
+    interconnect::media::Snapshot {
         ready: [
             (sample.preview.unwrap(), handle.clone()),
             (sample.original, handle),

@@ -27,7 +27,7 @@ impl ViewWorker {
         let cancel = CancellationToken::new();
         let stopped = cancel.clone();
         let task = tokio::spawn(async move {
-            tracing::debug!(target: "chatclient", "view worker started");
+            tracing::debug!(target: "interconnect", "view worker started");
             loop {
                 tokio::select! {
                     biased;
@@ -39,13 +39,13 @@ impl ViewWorker {
                             _ = stopped.cancelled() => break,
                             result = events.send(command) => {
                                 if result.is_err() { break; }
-                                tracing::trace!(target: "chatclient", "event delivered");
+                                tracing::trace!(target: "interconnect", "event delivered");
                             }
                         }
                     }
                 }
             }
-            tracing::debug!(target: "chatclient", "view worker stopped");
+            tracing::debug!(target: "interconnect", "view worker stopped");
         });
         Self {
             cancel,

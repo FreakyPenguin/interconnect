@@ -385,7 +385,8 @@ mod tests {
         for thread in [false, true] {
             let mut app = crate::tests::demo_app();
             let _ = app.update(Message::Thread("review".into()));
-            app.settings.current.composer.send_shortcut = chatclient::settings::SendShortcut::Enter;
+            app.settings.current.composer.send_shortcut =
+                interconnect::settings::SendShortcut::Enter;
             let target = target(&app, thread);
             app.drafts.get_mut(&target.key).unwrap().content =
                 text_editor::Content::with_text("draft");

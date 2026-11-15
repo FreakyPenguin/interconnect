@@ -680,38 +680,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "chatclient"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "emojis",
- "iced",
- "iced_tiny_skia",
- "image",
- "matrix-sdk",
- "matrix-sdk-common",
- "matrix-sdk-crypto",
- "matrix-sdk-ui",
- "notify-rust",
- "rand 0.9.5",
- "secret-service",
- "serde",
- "serde_json",
- "tempfile",
- "tiny-skia",
- "tokio",
- "tokio-util",
- "toml_edit",
- "tracing",
- "tracing-subscriber",
- "unicode-segmentation",
- "wiremock",
- "zbus 6.3.0",
- "zeroize",
-]
-
-[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2680,6 +2648,38 @@ checksum = "3a580c13f0ffc335ef42dd3f6b1a41b726051c5e1656d9a3aa6fddb3c5dfbbf9"
 dependencies = [
  "block-padding 0.4.2",
  "hybrid-array",
+]
+
+[[package]]
+name = "interconnect"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "emojis",
+ "iced",
+ "iced_tiny_skia",
+ "image",
+ "matrix-sdk",
+ "matrix-sdk-common",
+ "matrix-sdk-crypto",
+ "matrix-sdk-ui",
+ "notify-rust",
+ "rand 0.9.5",
+ "secret-service",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tiny-skia",
+ "tokio",
+ "tokio-util",
+ "toml_edit",
+ "tracing",
+ "tracing-subscriber",
+ "unicode-segmentation",
+ "wiremock",
+ "zbus 6.3.0",
+ "zeroize",
 ]
 
 [[package]]

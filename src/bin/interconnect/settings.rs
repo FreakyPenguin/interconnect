@@ -1,6 +1,5 @@
 //! Startup settings and asynchronous dialog reload/save tasks. No timers.
 use super::{App, Message, shell};
-use chatclient::settings::{self, GifPlayback, Graphics, SendShortcut, Settings, Store};
 use iced::{
     Element, Length, Task,
     widget::{
@@ -8,6 +7,7 @@ use iced::{
         text_input,
     },
 };
+use interconnect::settings::{self, GifPlayback, Graphics, SendShortcut, Settings, Store};
 use std::path::PathBuf;
 
 #[derive(Default)]
@@ -172,7 +172,7 @@ impl App {
             Event::TestNotification if !self.settings.notification_test_busy && !self.closing => {
                 self.settings.notification_test_busy = true;
                 self.settings.notification_test_result = None;
-                return Task::perform(chatclient::notifications::test_notification(), |result| {
+                return Task::perform(interconnect::notifications::test_notification(), |result| {
                     message(Event::NotificationTested(result))
                 });
             }

@@ -1,5 +1,5 @@
 {
-  "name": "Matrix client — Rust",
+  "name": "Interconnect — Rust",
   "build": { "dockerfile": "Dockerfile" },
   "remoteUser": "vscode",
   "updateRemoteUserUID": true,

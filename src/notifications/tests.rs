@@ -38,7 +38,7 @@ fn rejects_own_messages_edits_redactions_and_non_messages() {
     assert_eq!(candidate.body, "Encrypted message");
     assert_eq!(
         candidate.preview(false),
-        ("Chatclient".into(), "New Matrix message".into())
+        ("Interconnect".into(), "New Matrix message".into())
     );
 }
 
@@ -145,7 +145,7 @@ async fn pending_permission_rechecks_focus_and_worker_drop_cancels_delivery() {
         .unwrap();
     assert_eq!(
         delivered,
-        ("Chatclient".into(), "New Matrix message".into())
+        ("Interconnect".into(), "New Matrix message".into())
     );
     assert!(
         previews.try_recv().is_err(),
@@ -311,7 +311,7 @@ mod dbus {
 
     #[tokio::test]
     async fn delivery_on_private_session_bus() {
-        const CHILD: &str = "CHATCLIENT_NOTIFICATION_TEST_CHILD";
+        const CHILD: &str = "INTERCONNECT_NOTIFICATION_TEST_CHILD";
         if std::env::var_os(CHILD).is_some() {
             show("Sample room", "<b>hello & goodbye</b>").await.unwrap();
             test_notification().await.unwrap();
@@ -357,7 +357,7 @@ mod dbus {
         assert!(status.success());
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 3);
-        assert_eq!(calls[0].0, "Chatclient");
+        assert_eq!(calls[0].0, "Interconnect");
         assert_eq!(calls[0].1, "Sample room");
         assert_eq!(calls[0].2, "&lt;b&gt;hello &amp; goodbye&lt;/b&gt;");
         assert_eq!(

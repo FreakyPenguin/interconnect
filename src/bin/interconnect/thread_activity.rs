@@ -1,6 +1,6 @@
 //! Project SDK replies into one recent activity row per thread. Unread state is
 //! local to this process: no receipts, timers, extra timelines, or persisted text.
-use chatclient::connected::{History, MessageRow};
+use interconnect::connected::{History, MessageRow};
 use std::collections::{HashMap, HashSet};
 
 #[derive(Clone, Copy)]
@@ -151,7 +151,7 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chatclient::connected::RowKind;
+    use interconnect::connected::RowKind;
     fn event(id: &str, root: Option<&str>, live: bool) -> MessageRow {
         MessageRow {
             key: id.into(),

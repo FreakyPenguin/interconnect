@@ -1,17 +1,17 @@
 use anyhow::{Context, bail};
-use chatclient::ViewWorker;
+use interconnect::ViewWorker;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
 fn main() -> anyhow::Result<()> {
-    chatclient::init_tracing();
+    interconnect::init_tracing();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     let result = runtime.block_on(run());
     // Tokio's default Drop waits indefinitely for blocking SQLite work. Keep
     // the CLI's exit bounded, and report incomplete cleanup as a failure.
-    let cleanup = chatclient::shutdown_runtime(runtime, Duration::from_secs(5));
+    let cleanup = interconnect::shutdown_runtime(runtime, Duration::from_secs(5));
     if let Err(error) = &cleanup {
         eprintln!("{error:#}");
     }
@@ -48,22 +48,22 @@ async fn run() -> anyhow::Result<()> {
         }
         Some("session-live") => {
             let profile = args.get(1).map(String::as_str).unwrap_or(".matrix-spike");
-            chatclient::session::live(profile).await?;
+            interconnect::session::live(profile).await?;
         }
         Some("session-login") => {
             let url = args
                 .get(1)
                 .context("usage: spike session-login <homeserver> [profile-directory]")?;
             let profile = args.get(2).map(String::as_str).unwrap_or(".matrix-spike");
-            chatclient::session::login(url, profile).await?;
+            interconnect::session::login(url, profile).await?;
         }
         Some("session-resume") | Some("session-logout") => {
             let profile = args.get(1).map(String::as_str).unwrap_or(".matrix-spike");
-            chatclient::session::resume(profile, args[0] == "session-logout").await?;
+            interconnect::session::resume(profile, args[0] == "session-logout").await?;
         }
         Some("sso") => {
             let url = args.get(1).context("usage: spike sso https://homeserver")?;
-            chatclient::sso::check(url).await?;
+            interconnect::sso::check(url).await?;
         }
         Some("probe") => {
             let url = args

@@ -1,5 +1,5 @@
-use chatclient::connected::{MessageRow, RowKind};
 use chrono::{DateTime, Local, NaiveDate};
+use interconnect::connected::{MessageRow, RowKind};
 
 pub fn local_time(message: &MessageRow) -> Option<DateTime<Local>> {
     DateTime::from_timestamp_millis(message.timestamp_ms?).map(|time| time.with_timezone(&Local))

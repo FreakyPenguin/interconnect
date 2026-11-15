@@ -1,45 +1,45 @@
 #![recursion_limit = "256"]
-#[path = "matrix-ui/composer_picker.rs"]
+#[path = "interconnect/composer_picker.rs"]
 mod composer_picker;
-#[path = "matrix-ui/demo.rs"]
+#[path = "interconnect/demo.rs"]
 mod demo;
-#[path = "matrix-ui/emoji.rs"]
+#[path = "interconnect/emoji.rs"]
 mod emoji;
-#[path = "matrix-ui/emoji_completion.rs"]
+#[path = "interconnect/emoji_completion.rs"]
 mod emoji_completion;
-#[path = "matrix-ui/emoji_picker.rs"]
+#[path = "interconnect/emoji_picker.rs"]
 mod emoji_picker;
-#[path = "matrix-ui/images.rs"]
+#[path = "interconnect/images.rs"]
 mod images;
-#[path = "matrix-ui/popover.rs"]
+#[path = "interconnect/popover.rs"]
 mod popover;
-#[path = "matrix-ui/presentation.rs"]
+#[path = "interconnect/presentation.rs"]
 mod presentation;
-#[path = "matrix-ui/reaction_picker.rs"]
+#[path = "interconnect/reaction_picker.rs"]
 mod reaction_picker;
-#[path = "matrix-ui/reactions.rs"]
+#[path = "interconnect/reactions.rs"]
 mod reactions;
-#[path = "matrix-ui/selectable.rs"]
+#[path = "interconnect/selectable.rs"]
 mod selectable;
-#[path = "matrix-ui/selection.rs"]
+#[path = "interconnect/selection.rs"]
 mod selection;
-#[path = "matrix-ui/settings.rs"]
+#[path = "interconnect/settings.rs"]
 mod settings;
-#[path = "matrix-ui/shell.rs"]
+#[path = "interconnect/shell.rs"]
 mod shell;
-#[path = "matrix-ui/thread_activity.rs"]
+#[path = "interconnect/thread_activity.rs"]
 mod thread_activity;
-#[path = "matrix-ui/timeline.rs"]
+#[path = "interconnect/timeline.rs"]
 mod timeline;
 
-use chatclient::connected::{History, MessageRow, Model, Pane, RetrySend, RowKind, Selection};
-use chatclient::navigation::Scope;
-use chatclient::navigation_preferences::Preferences;
 use iced::{
     Element, Length, Subscription, Task,
     futures::SinkExt,
     widget::{button, column, container, row, scrollable, text, text_editor},
 };
+use interconnect::connected::{History, MessageRow, Model, Pane, RetrySend, RowKind, Selection};
+use interconnect::navigation::Scope;
+use interconnect::navigation_preferences::Preferences;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::watch;
 
@@ -203,7 +203,7 @@ impl App {
         app
     }
     fn update(&mut self, message: Message) -> Task<Message> {
-        chatclient::diagnostics::update();
+        interconnect::diagnostics::update();
         if let Message::Settings(event) = message {
             if self.image_view.is_some() && matches!(event, settings::Event::Open) {
                 return Task::none();
@@ -856,7 +856,7 @@ impl App {
                 });
                 if visible.contains(projected.key().as_str())
                     && let Some(key) = row.image.as_ref().and_then(|image| image.preview.as_ref())
-                    && previews < chatclient::image_media::MAX_PREVIEWS
+                    && previews < interconnect::image_media::MAX_PREVIEWS
                     && !self.selection.images.contains(key)
                 {
                     self.selection.images.push(key.clone());
@@ -866,7 +866,7 @@ impl App {
                     && visible.contains(projected.key().as_str())
                     && let Some(uri) = row.avatar_url.as_ref()
                     && !self.selection.avatars.contains(uri)
-                    && self.selection.avatars.len() < chatclient::media::MAX_REQUESTED
+                    && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED
                 {
                     self.selection.avatars.push(uri.clone());
                 }
@@ -956,7 +956,7 @@ impl App {
         };
         Some(DraftKey { room, root })
     }
-    fn composer_for(&self, key: &DraftKey) -> Option<chatclient::connected::Composer> {
+    fn composer_for(&self, key: &DraftKey) -> Option<interconnect::connected::Composer> {
         let thread = key.root.is_some();
         if self.draft_key(thread).as_ref() != Some(key) {
             return None;
@@ -979,7 +979,7 @@ impl App {
             if self.demo.is_some() {
                 Subscription::run(|| {
                     iced::stream::channel(1, async |_output| {
-                        chatclient::diagnostics::Diagnostics::default()
+                        interconnect::diagnostics::Diagnostics::default()
                             .reports()
                             .await;
                     })
@@ -1020,13 +1020,13 @@ impl App {
                 }
                 _ => None,
             }),
-            if chatclient::diagnostics::enabled() {
+            if interconnect::diagnostics::enabled() {
                 iced::event::listen_raw(|event, _, _| {
                     if matches!(
                         event,
                         iced::Event::Window(iced::window::Event::RedrawRequested(_))
                     ) {
-                        chatclient::diagnostics::redraw();
+                        interconnect::diagnostics::redraw();
                     }
                     None
                 })
@@ -1741,17 +1741,17 @@ impl App {
                         "Queueing message…"
                     } else if thread {
                         match shortcut {
-                            chatclient::settings::SendShortcut::CtrlEnter => {
+                            interconnect::settings::SendShortcut::CtrlEnter => {
                                 "Send reply (Ctrl+Enter)"
                             }
-                            chatclient::settings::SendShortcut::Enter => "Send reply (Enter)",
+                            interconnect::settings::SendShortcut::Enter => "Send reply (Enter)",
                         }
                     } else {
                         match shortcut {
-                            chatclient::settings::SendShortcut::CtrlEnter => {
+                            interconnect::settings::SendShortcut::CtrlEnter => {
                                 "Send message (Ctrl+Enter)"
                             }
-                            chatclient::settings::SendShortcut::Enter => "Send message (Enter)",
+                            interconnect::settings::SendShortcut::Enter => "Send message (Enter)",
                         }
                     })
                     .size(12),
@@ -1818,7 +1818,7 @@ fn composer_binding(
     press: text_editor::KeyPress,
     composing: bool,
     key: &DraftKey,
-    shortcut: chatclient::settings::SendShortcut,
+    shortcut: interconnect::settings::SendShortcut,
 ) -> Option<text_editor::Binding<Message>> {
     if shell_shortcut(&press.key, press.modifiers).is_some() {
         return None;
@@ -1826,7 +1826,7 @@ fn composer_binding(
     if matches!(press.status, text_editor::Status::Focused { .. })
         && press.key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter)
         && (press.modifiers == iced::keyboard::Modifiers::CTRL
-            || (shortcut == chatclient::settings::SendShortcut::Enter
+            || (shortcut == interconnect::settings::SendShortcut::Enter
                 && press.modifiers.is_empty()))
     {
         return (!composing).then(|| text_editor::Binding::Custom(Message::Send(key.clone())));
@@ -1847,7 +1847,7 @@ fn connection(profile: &str) -> impl iced::futures::Stream<Item = Message> + use
             return;
         }
         let diagnostics = state.borrow().diagnostics.clone();
-        let backend = chatclient::connected::run(profile, selection, state);
+        let backend = interconnect::connected::run(profile, selection, state);
         let result = {
             let forward = async {
                 while updates.changed().await.is_ok() {
@@ -1901,7 +1901,7 @@ fn run_ui(run: impl FnOnce() -> iced::Result) -> anyhow::Result<()> {
         let _entered = runtime.enter();
         run()
     };
-    let cleanup = chatclient::shutdown_runtime(runtime, std::time::Duration::from_secs(5));
+    let cleanup = interconnect::shutdown_runtime(runtime, std::time::Duration::from_secs(5));
     if let Err(error) = &cleanup {
         eprintln!("{error:#}");
     }
@@ -1937,10 +1937,10 @@ fn main() -> anyhow::Result<()> {
         std::env::args().any(|argument| argument == "--demo"),
     );
     configure_graphics_environment(&startup.graphics())?;
-    chatclient::init_tracing();
+    interconnect::init_tracing();
     run_ui(|| {
         iced::application(move || App::boot(startup.clone()), App::update, App::view)
-            .title("Matrix")
+            .title("Interconnect")
             .theme(shell::theme())
             .default_font(iced::Font::with_name("Inter"))
             .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())
@@ -1962,7 +1962,9 @@ fn main() -> anyhow::Result<()> {
 /// threads may read it. exec preserves PID, arguments, working directory, and
 /// inherited display/session variables. GPU opt-out is authoritative; an
 /// explicit power-preference environment value otherwise takes priority.
-fn configure_graphics_environment(graphics: &chatclient::settings::Graphics) -> anyhow::Result<()> {
+fn configure_graphics_environment(
+    graphics: &interconnect::settings::Graphics,
+) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
     let set_power = std::env::var_os("WGPU_POWER_PREF").is_none();
     let force_software = !graphics.gpu_enabled
@@ -1999,12 +2001,12 @@ mod tests {
 
     #[test]
     fn graphics_environment_child() {
-        if std::env::var_os("CHATCLIENT_TEST_GRAPHICS_CHILD").is_none() {
+        if std::env::var_os("INTERCONNECT_TEST_GRAPHICS_CHILD").is_none() {
             return;
         }
         let startup = settings::Startup::load(
-            std::env::var_os("CHATCLIENT_TEST_GRAPHICS_CONFIG").map(std::path::PathBuf::from),
-            std::env::var_os("CHATCLIENT_TEST_GRAPHICS_DEMO").is_some(),
+            std::env::var_os("INTERCONNECT_TEST_GRAPHICS_CONFIG").map(std::path::PathBuf::from),
+            std::env::var_os("INTERCONNECT_TEST_GRAPHICS_DEMO").is_some(),
         );
         configure_graphics_environment(&startup.graphics()).unwrap();
         println!(
@@ -2033,11 +2035,11 @@ mod tests {
                     "--nocapture",
                 ])
                 .env(
-                    "CHATCLIENT_TEST_GRAPHICS_CONFIG",
+                    "INTERCONNECT_TEST_GRAPHICS_CONFIG",
                     directory.path().join("missing.toml"),
                 )
-                .env_remove("CHATCLIENT_TEST_GRAPHICS_DEMO")
-                .env("CHATCLIENT_TEST_GRAPHICS_CHILD", "1");
+                .env_remove("INTERCONNECT_TEST_GRAPHICS_DEMO")
+                .env("INTERCONNECT_TEST_GRAPHICS_CHILD", "1");
             if let Some(value) = preference {
                 child.env("WGPU_POWER_PREF", value);
             } else {
@@ -2075,14 +2077,14 @@ mod tests {
                     "tests::graphics_environment_child",
                     "--nocapture",
                 ])
-                .env("CHATCLIENT_TEST_GRAPHICS_CHILD", "1")
-                .env("CHATCLIENT_TEST_GRAPHICS_CONFIG", &path)
+                .env("INTERCONNECT_TEST_GRAPHICS_CHILD", "1")
+                .env("INTERCONNECT_TEST_GRAPHICS_CONFIG", &path)
                 .env("ICED_BACKEND", "wgpu")
                 .env_remove("WGPU_POWER_PREF");
             if demo {
-                command.env("CHATCLIENT_TEST_GRAPHICS_DEMO", "1");
+                command.env("INTERCONNECT_TEST_GRAPHICS_DEMO", "1");
             } else {
-                command.env_remove("CHATCLIENT_TEST_GRAPHICS_DEMO");
+                command.env_remove("INTERCONNECT_TEST_GRAPHICS_DEMO");
             }
             let output = command.output().unwrap();
             assert!(output.status.success());
@@ -3099,7 +3101,7 @@ mod tests {
             composer_binding(plain.clone(), false, &key, Default::default()),
             Some(text_editor::Binding::Enter)
         ));
-        use chatclient::settings::SendShortcut::Enter;
+        use interconnect::settings::SendShortcut::Enter;
         assert!(matches!(
             composer_binding(plain.clone(), false, &key, Enter),
             Some(text_editor::Binding::Custom(Message::Send(_)))

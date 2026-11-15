@@ -42,7 +42,7 @@ impl Probe {
             ),
             Message::Finished => {
                 self.completed += 1;
-                tracing::debug!(target: "chatclient", "finite UI task completed");
+                tracing::debug!(target: "interconnect", "finite UI task completed");
                 Task::none()
             }
         }
@@ -79,7 +79,7 @@ fn view_events(generation: &u64) -> impl iced::futures::Stream<Item = Message> +
         let (events, mut received) = tokio::sync::mpsc::channel(1);
         // Iced drops this stream when the view closes. The guard cancels the
         // worker even if stream cancellation interrupts an await below.
-        let worker = chatclient::ViewWorker::start(input, events);
+        let worker = interconnect::ViewWorker::start(input, events);
         if commands.send(generation).await.is_ok() {
             while let Some(generation) = received.recv().await {
                 if output.send(Message::Delivered(generation)).await.is_err() {
@@ -91,7 +91,7 @@ fn view_events(generation: &u64) -> impl iced::futures::Stream<Item = Message> +
     })
 }
 fn main() -> iced::Result {
-    chatclient::init_tracing();
+    interconnect::init_tracing();
     iced::application(Probe::default, Probe::update, Probe::view)
         .subscription(Probe::subscription)
         .run()

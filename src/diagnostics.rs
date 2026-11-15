@@ -9,7 +9,7 @@ static REDRAWS: AtomicU64 = AtomicU64::new(0);
 static UPDATES: AtomicU64 = AtomicU64::new(0);
 pub fn enabled() -> bool {
     *OnceLock::get_or_init(&ENABLED, || {
-        std::env::var_os("CHATCLIENT_METRICS").is_some_and(|v| v == "1")
+        std::env::var_os("INTERCONNECT_METRICS").is_some_and(|v| v == "1")
     })
 }
 static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -99,6 +99,6 @@ impl Drop for ViewLifetime {
         if self.diagnostics.enabled {
             self.diagnostics.counts.lock().unwrap().stops[self.kind] += 1;
         }
-        tracing::debug!(target: "chatclient", thread = self.kind == 1, "connected presentation view stopped");
+        tracing::debug!(target: "interconnect", thread = self.kind == 1, "connected presentation view stopped");
     }
 }

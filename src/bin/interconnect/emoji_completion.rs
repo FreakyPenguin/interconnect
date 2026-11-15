@@ -644,7 +644,8 @@ mod tests {
         for thread in [false, true] {
             let mut app = app();
             let _ = app.update(Message::Thread("review".into()));
-            app.settings.current.composer.send_shortcut = chatclient::settings::SendShortcut::Enter;
+            app.settings.current.composer.send_shortcut =
+                interconnect::settings::SendShortcut::Enter;
             let key = app.draft_key(thread).unwrap();
             let before = app.model.room.as_ref().unwrap().rows.len();
             let mut tree = iced::advanced::widget::Tree::empty();

@@ -1,10 +1,10 @@
 //! Toggleable reaction chips, shared by room messages and thread originals/replies.
 use super::{Message, emoji, shell};
-use chatclient::connected::Reaction;
 use iced::{
     Border, Color, Element,
     widget::{button, container, row},
 };
+use interconnect::connected::Reaction;
 
 pub fn view<'a>(
     reactions: &'a [Reaction],

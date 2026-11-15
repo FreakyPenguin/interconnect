@@ -13,21 +13,26 @@ or writing a config file, even when `--config` is supplied.
 
 ## File location and format
 
-On Linux the default is `$XDG_CONFIG_HOME/chatclient/settings.toml`, or
-`~/.config/chatclient/settings.toml` when XDG_CONFIG_HOME is unset or relative.
+On Linux the default is `$XDG_CONFIG_HOME/interconnect/settings.toml`, or
+`~/.config/interconnect/settings.toml` when XDG_CONFIG_HOME is unset or relative.
 On macOS the intended location is
-`~/Library/Application Support/chatclient/settings.toml`; the macOS port and
+`~/Library/Application Support/interconnect/settings.toml`; the macOS port and
 native behavior have not been validated.
+
+The project was renamed from `chatclient` to `interconnect`. Existing settings
+are not moved automatically. To keep them, copy `settings.toml` from the old
+`chatclient` configuration directory into `interconnect`, or pass the old file
+with `--config PATH`.
 
 Override the location with `--config PATH`, before or after the optional account
 profile argument:
 
 ```sh
-cargo run --locked --bin matrix-ui -- /path/to/profile --config /path/to/settings.toml
+cargo run --locked --bin interconnect -- /path/to/profile --config /path/to/settings.toml
 ```
 
 This example opens the supplied saved account. For UI experiments use
-`cargo run --locked --bin matrix-ui -- --demo`.
+`cargo run --locked --bin interconnect -- --demo`.
 
 A missing file uses defaults and is created, with its parent directories, on the
 first explicit Save. The dialog displays the selected path. See the commented
@@ -121,7 +126,7 @@ version, and file persistence. Add fields there, their documented example values
 and their comment-preserving assignments in `Store::save`. Give new fields
 backward-compatible defaults; incompatible formats require a version migration.
 
-`src/bin/matrix-ui/settings.rs` owns dialog drafts and asynchronous load/save
+`src/bin/interconnect/settings.rs` owns dialog drafts and asynchronous load/save
 completion handling. Apply live values from `settings.current`; keep startup-only
 behavior explicit. Unknown keys survive dialog saves to support later additions.
 Keep file I/O off the UI thread and avoid settings subscriptions that wake when idle.
