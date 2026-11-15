@@ -182,6 +182,19 @@ login UI and keyboard workflow are not completed by this CLI feasibility result.
 
 ## Persistent-session check
 
+The automated `session::tests::offline_restore_preserves_device_keys_and_rejects_damaged_store`
+test restores a temporary encrypted store with an unreachable localhost
+homeserver and checks device-key preservation and rejection of invalid stores.
+Its 60-second timeout is a hang guard for debug builds on shared CI runners,
+not a startup performance target. Run it with:
+
+```sh
+cargo test --locked --lib session::tests::offline_restore_preserves_device_keys_and_rejects_damaged_store
+```
+
+This fixture does not validate saved accounts, host keyring access, or connected
+restoration; use the manual checks below for those.
+
 First expose and unlock the host Secret Service using [the container setup](../development.md#using-the-host-secret-service-from-the-container).
 The command fails before browser login if the service cannot be reached. No
 secrets should be shared in chat or committed to the repository.

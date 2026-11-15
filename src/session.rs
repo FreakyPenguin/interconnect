@@ -891,11 +891,14 @@ mod tests {
         drop(first);
         // Nothing is listening at the saved homeserver. Exercise the same local
         // restoration as the desktop, including the device fingerprint check.
+        // Opening encrypted SQLite stores can exceed five seconds in debug
+        // builds on shared CI runners. Keep a generous hang guard rather than
+        // treating local restoration as a performance benchmark.
         let restored =
-            tokio::time::timeout(Duration::from_secs(5), restore_client(&profile, &saved))
+            tokio::time::timeout(Duration::from_secs(60), restore_client(&profile, &saved))
                 .await
-                .unwrap()
-                .unwrap();
+                .expect("offline session restoration did not finish within 60 seconds")
+                .expect("offline session restoration failed");
         assert_eq!(device_key(&restored).await.unwrap(), original_key);
         let record = Zeroizing::new(serde_json::to_vec(&saved).unwrap());
         let decoded = SavedSession::decode(&record).unwrap();

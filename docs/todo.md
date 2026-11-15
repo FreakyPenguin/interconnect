@@ -11,9 +11,6 @@
 
 # Infrastructure
 - context menu
-- github action build
-- OS x build
-
 
 # Miscelaneous
 - bookmarks (MSC4482)
