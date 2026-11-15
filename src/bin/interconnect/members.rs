@@ -220,18 +220,20 @@ impl App {
         if snapshot.error.is_some() && snapshot.rows.is_empty() {
             return content.height(Length::Fill).into();
         }
-        let count = snapshot.rows.len();
+        let count = snapshot.rows.iter().filter(|m| !m.invited).count();
+        let pending = snapshot.rows.len() - count;
         content = content.push(
             container(
                 column![
-                    text_input("Find a member…", &self.members.query)
+                    text_input("Find a person…", &self.members.query)
                         .id("member-search")
                         .cursor_blinking(false)
                         .on_input(|q| message(Event::Search(q)))
                         .size(13),
                     text(format!(
-                        "{count} {}",
-                        if count == 1 { "member" } else { "members" }
+                        "{count} {} · {pending} pending {}",
+                        if count == 1 { "member" } else { "members" },
+                        if pending == 1 { "invite" } else { "invites" },
                     ))
                     .size(12)
                     .color(shell::MUTED),
@@ -242,7 +244,23 @@ impl App {
         );
         let filtered = self.filtered_members().len();
         let mut entries = column![].spacing(0);
+        let mut group = None;
         for member in self.visible_members() {
+            if group != Some(member.invited) {
+                entries = entries.push(
+                    container(
+                        text(if member.invited {
+                            "Pending invitations"
+                        } else {
+                            "Members"
+                        })
+                        .size(12)
+                        .color(shell::MUTED),
+                    )
+                    .padding([8, 16]),
+                );
+                group = Some(member.invited);
+            }
             let avatar = member
                 .avatar_url
                 .as_ref()
@@ -263,7 +281,13 @@ impl App {
                         row![
                             shell::avatar(&member.name, avatar),
                             identity,
-                            text(&member.role).size(11).color(shell::MUTED)
+                            text(if member.invited {
+                                "Invited"
+                            } else {
+                                &member.role
+                            })
+                            .size(11)
+                            .color(shell::MUTED)
                         ]
                         .spacing(10)
                         .align_y(iced::Alignment::Center),
@@ -275,8 +299,8 @@ impl App {
         if filtered == 0 && snapshot.error.is_none() {
             entries = entries.push(
                 container(
-                    text(if count == 0 {
-                        "No joined members."
+                    text(if count + pending == 0 {
+                        "No members or pending invitations."
                     } else {
                         "No matching members."
                     })
@@ -328,7 +352,7 @@ fn reset_scroll() -> Task<Message> {
         iced::widget::operation::AbsoluteOffset { x: 0.0, y: 0.0 },
     )
 }
-pub fn demo(generation: u64, direct: bool) -> Members {
+pub fn demo(generation: u64, direct: bool, invitations: &[Member]) -> Members {
     let mut rows: Vec<_> = [
         ("Alex Rivera", "alex", "Admin"),
         ("Jamie Davis", "jamie", "Moderator"),
@@ -341,12 +365,24 @@ pub fn demo(generation: u64, direct: bool) -> Members {
         name: name.into(),
         user_id: format!("@{id}:example.org"),
         role: role.into(),
+        invited: false,
         avatar_url: None,
     })
     .collect();
     if direct {
         rows = vec![rows.remove(0), rows.pop().unwrap()];
     }
+    if !direct {
+        rows.push(Member {
+            user_id: "@casey:example.org".into(),
+            name: "Casey Nguyen".into(),
+            avatar_url: None,
+            role: String::new(),
+            invited: true,
+        });
+    }
+    rows.extend_from_slice(invitations);
+    rows.sort_by_cached_key(|m| (m.invited, m.name.to_lowercase(), m.user_id.clone()));
     Members {
         generation,
         rows: Arc::new(rows),
@@ -360,6 +396,36 @@ mod tests {
     use super::*;
     use crate::tests::demo_app;
     use iced::widget::text_editor;
+
+    #[test]
+    fn pending_invites_share_search_and_pages_without_becoming_joined_members() {
+        let mut app = demo_app();
+        let _ = app.update(message(Event::Open));
+        let snapshot = app.model.members.as_ref().unwrap();
+        assert_eq!(snapshot.rows.iter().filter(|m| !m.invited).count(), 5);
+        assert_eq!(snapshot.rows.iter().filter(|m| m.invited).count(), 1);
+        let _ = app.update(message(Event::Search("@casey:".into())));
+        assert_eq!(app.visible_members().len(), 1);
+        assert!(app.visible_members()[0].invited);
+        let _ = app.update(message(Event::Search("CASEY NGUYEN".into())));
+        assert_eq!(app.visible_members().len(), 1);
+        assert!(app.visible_members()[0].invited);
+        let _ = app.update(message(Event::Search(String::new())));
+        let rows = Arc::make_mut(&mut app.model.members.as_mut().unwrap().rows);
+        let invited = rows.pop().unwrap();
+        assert!(invited.invited);
+        let template = rows[0].clone();
+        rows.extend((5..50).map(|i| Member {
+            user_id: format!("@extra{i}:example.org"),
+            ..template.clone()
+        }));
+        rows.push(invited);
+        assert_eq!(app.visible_members().len(), 50);
+        assert!(app.visible_members().iter().all(|m| !m.invited));
+        let _ = app.update(message(Event::Page(1)));
+        assert_eq!(app.visible_members().len(), 1);
+        assert!(app.visible_members()[0].invited);
+    }
 
     #[test]
     fn focused_people_search_does_not_schedule_idle_redraws() {
@@ -417,7 +483,7 @@ mod tests {
         let _ = app.update(message(Event::Open));
         assert!(app.selection.thread.is_none());
         assert!(app.selection.members.is_some());
-        assert_eq!(app.visible_members().len(), 5);
+        assert_eq!(app.visible_members().len(), 6);
         assert!(app.side_panel_replaces_room(800.0));
         assert!(!app.side_panel_replaces_room(1400.0));
         let _ = app.update(Message::Space(interconnect::navigation::Scope::All));
@@ -458,6 +524,7 @@ mod tests {
                         name: format!("User {i}"),
                         user_id: format!("@user{i}:example.org"),
                         role: String::new(),
+                        invited: false,
                         avatar_url: None,
                     })
                     .collect(),

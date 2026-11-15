@@ -380,3 +380,8 @@ The People panel's Invite people form uses local directory fixtures: search
 Direct Matrix ID entry is also accepted. The joined-member count does not change,
 and no server invitation is sent. The Release notes fixture hides Invite because
 it denies invite permission.
+
+Ordinary demo rooms also show Casey Nguyen under Pending invitations. New
+simulated invites appear there after sending and remain when People is reopened
+or another room is visited during the same run. Search and paging include
+invitees; the header count includes joined members only.

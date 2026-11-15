@@ -181,6 +181,7 @@ pub fn spaces() -> Vec<SpaceEntry> {
 }
 #[derive(Default)]
 pub struct Demo {
+    pub(super) invitations: HashMap<String, Vec<interconnect::connected::Member>>,
     conversations: HashMap<DraftKey, Vec<MessageRow>>,
     next_message: u64,
 }

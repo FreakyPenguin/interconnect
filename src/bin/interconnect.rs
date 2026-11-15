@@ -1260,7 +1260,13 @@ impl App {
                     .as_ref()
                     .and_then(|(_, id)| self.model.rooms.iter().find(|r| &r.id == id))
                     .is_some_and(|r| r.direct);
-                members::demo(generation, direct)
+                let invitations = self
+                    .selection
+                    .room
+                    .as_ref()
+                    .and_then(|(_, room)| demo.invitations.get(room))
+                    .map_or(&[][..], Vec::as_slice);
+                members::demo(generation, direct, invitations)
             });
             self.model.room = self.selection.room.as_ref().map(|(generation, room)| {
                 demo.pane(

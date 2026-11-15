@@ -1907,11 +1907,13 @@ or Escape returns to the room. Changing spaces keeps the open conversation and
 People panel; choosing another room closes the panel. Room and thread drafts
 and saved timeline positions remain conversation-owned.
 
-People lists joined users only, with names, Matrix IDs, avatars (or initials),
-and the SDK's suggested Creator/Admin/Moderator role. Invitations, departed and
-banned users are excluded. Search matches names and Matrix IDs without case
-sensitivity. Lists are paged in groups of 50; avatar demand is bounded to the
-current page and uses the existing media cache. Room invitations are available through the Invite people button described below;
+People lists joined users and pending invitations in separate sections, with
+names, Matrix IDs, and avatars (or initials). Joined users show the SDK's suggested
+Creator/Admin/Moderator role; invitees show Invited. Departed and banned users
+are excluded. The header badge counts joined members only. Search matches names
+and Matrix IDs without case sensitivity. Lists are paged in groups of 50; avatar
+demand is bounded to the current page and uses the existing media cache. Room
+invitations are available through the Invite people button described below;
 changing roles or removing members remains outside this panel’s scope.
 
 The badge uses the SDK's cached joined-member summary, without fetching a roster
@@ -1922,7 +1924,8 @@ an open panel. No polling or animation timer is added. Closing, navigation, and
 shutdown drop the worker future; request generations reject old snapshots.
 
 Automated coverage includes a local Matrix fixture for lazy member loading,
-joined-only filtering, roles, avatars, departure updates, and cancellation. UI
+joined/invited filtering, invitation transitions, roles, avatars, departure
+updates, and cancellation. UI
 state tests cover mutual exclusion with threads, retained drafts/scroll offsets,
 space filtering, room changes, Escape, search, pagination, and stale snapshots.
 Real-server acceptance and macOS validation remain pending.
@@ -1930,7 +1933,7 @@ Real-server acceptance and macOS validation remain pending.
 Manual acceptance:
 
 1. Run `cargo run --locked --bin interconnect -- --demo`. Click the header badge
-   and check five sample members, roles, Matrix IDs, and initials. Search a name
+   and check five sample members and one pending invitation, roles, Matrix IDs, and initials. Search a name
    and a Matrix ID; clear search and close with both × and Escape.
 2. Write separate room/thread drafts and scroll each timeline. Open People over
    the thread, reopen the thread, then close it. Check drafts and scroll offsets.
@@ -2013,3 +2016,56 @@ member list, and a 760×480 requested window. Captures/logs are ignored under
 `artifacts/invites-2026-11-15/`. The demo closed normally, its explicit config
 path remained absent, and no saved account, connected client, or real invitation
 was used.
+
+## Pending room invitations — 2026-11-15
+
+People shows joined members and **Pending invitations** as separate sections,
+with a summary of both counts. Pending invitees have names, full Matrix IDs,
+avatars/initials, and an Invited label. The room-header badge still counts only
+joined members. Name/ID search and 50-person pagination cover both sections;
+section labels repeat when a group continues on another page. Pending invites
+are visible even when the current account cannot invite people.
+
+The existing cancellable roster loads JOIN and INVITE membership together.
+Membership updates move accepted invitations into Members and remove declined,
+revoked, or banned invitations. After a successful invite, the UI restarts the
+roster worker with a fresh generation, retaining the form's success feedback.
+Old snapshots cannot restore the preceding roster. A completion for a different
+room cannot refresh or change the currently open room's roster. There is no
+polling, new animation timer, or invitation-management action.
+
+Demo mode includes Casey Nguyen as a pending invite in ordinary rooms. Newly
+simulated invitations retain their selected profile (or raw ID), appear in
+Pending invitations, and survive closing/reopening People or changing rooms
+within that demo run. Already-invited people cannot be invited again. The joined
+member count stays unchanged.
+
+Manual acceptance:
+
+1. Run `cargo run --locked --bin interconnect -- --demo`. Open People and check
+   five members, one pending invite, the separate sections, and a header count
+   of five. Search Casey by name and Matrix ID.
+2. Invite Taylor through directory search and another user by full Matrix ID.
+   Close the invite form. Both should appear as Invited without increasing the
+   header count. Close/reopen People, switch rooms and return, and confirm the
+   simulated invitations persist. Attempt a duplicate invite.
+3. In an independently authorized connected session, inspect an existing pending
+   invite and an intended new invitation. From the other client, accept or
+   decline it; verify the section and header count follow server membership.
+   Check invitations sent/revoked by another room admin and navigation while a
+   refreshed roster is loading. Connected acceptance, macOS, and measured idle
+   resources remain pending.
+
+Validation passed: locked workspace tests (86 library tests; two existing opt-in
+tests ignored), all 145 GUI tests, workspace Clippy with warnings denied,
+formatting, and the locked desktop build. The local Matrix fixture covers
+lazy-loaded invitations, excluded left/banned users, acceptance, renewed invites,
+declines, and cancellation. UI tests cover searching/paging invitees, simulated
+invite persistence, duplicate prevention, fresh roster generations, and stale
+successful sends after room navigation. Native Wayland demo checks covered the
+pending section, search, a new raw-ID invitation appearing after form closure,
+persistence after reopening People, the unchanged joined-member badge, and the
+760×480 narrow layout. The demo closed normally; its explicit config path stayed
+absent. Local captures/logs are ignored under
+`artifacts/pending-invites-2026-11-15/`. No real invitation was sent and no saved
+account or connected client was opened or restarted.

@@ -1,4 +1,4 @@
-//! On-demand joined-member snapshots. The session drops this future on navigation.
+//! On-demand joined-member and pending-invitation snapshots. The session drops this future on navigation.
 use super::Model;
 use matrix_sdk::{Client, RoomMemberships, room::RoomMemberRole, sync::RoomUpdate};
 use std::{sync::Arc, time::Duration};
@@ -10,10 +10,13 @@ pub struct Member {
     pub name: String,
     pub avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     pub role: String,
+    /// Pending invitation, rather than joined membership.
+    pub invited: bool,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Members {
     pub generation: u64,
+    /// Joined people followed by pending invitees, each group sorted by name and ID.
     pub rows: Arc<Vec<Member>>,
     pub loading: bool,
     pub error: Option<String>,
@@ -35,15 +38,19 @@ pub(super) async fn view(client: Client, id: String, generation: u64, state: wat
     };
     state.send_modify(|s| s.members = Some(snapshot.clone()));
     loop {
-        let result =
-            tokio::time::timeout(Duration::from_secs(30), room.members(RoomMemberships::JOIN))
-                .await;
+        let result = tokio::time::timeout(
+            Duration::from_secs(30),
+            room.members(RoomMemberships::JOIN | RoomMemberships::INVITE),
+        )
+        .await;
         snapshot.loading = false;
         match result {
             Ok(Ok(members)) => {
                 let mut rows: Vec<_> = members
                     .into_iter()
                     .map(|member| Member {
+                        invited: member.membership()
+                            == &matrix_sdk::ruma::events::room::member::MembershipState::Invite,
                         user_id: member.user_id().to_string(),
                         name: member.name().to_owned(),
                         avatar_url: member.avatar_url().map(ToOwned::to_owned),
@@ -56,7 +63,7 @@ pub(super) async fn view(client: Client, id: String, generation: u64, state: wat
                         .into(),
                     })
                     .collect();
-                rows.sort_by_cached_key(|m| (m.name.to_lowercase(), m.user_id.clone()));
+                rows.sort_by_cached_key(|m| (m.invited, m.name.to_lowercase(), m.user_id.clone()));
                 snapshot.rows = Arc::new(rows);
                 snapshot.error = None;
             }
@@ -155,13 +162,24 @@ mod tests {
         let invited = event(
             "m.room.member",
             "@invite:example.org",
-            json!({"membership":"invite","displayname":"Invite"}),
+            json!({"membership":"invite","displayname":"Invite","avatar_url":"mxc://example.org/invite"}),
+        );
+        let departed = event(
+            "m.room.member",
+            "@departed:example.org",
+            json!({"membership":"leave"}),
+        );
+        let banned = event(
+            "m.room.member",
+            "@banned:example.org",
+            json!({"membership":"ban"}),
         );
         Mock::given(method("GET"))
             .and(path_regex(".*/members"))
             .respond_with(
-                ResponseTemplate::new(200)
-                    .set_body_json(json!({"chunk":[own.clone(), other, invited]})),
+                ResponseTemplate::new(200).set_body_json(
+                    json!({"chunk":[own.clone(), other, invited, departed, banned]}),
+                ),
             )
             .expect(1)
             .mount(&server)
@@ -206,11 +224,14 @@ mod tests {
         .members
         .clone()
         .unwrap();
-        assert_eq!(loaded.rows.len(), 2, "snapshot: {loaded:?}");
+        assert_eq!(loaded.rows.len(), 3, "snapshot: {loaded:?}");
         assert_eq!(loaded.rows[0].name, "Alice");
         assert_eq!(loaded.rows[0].role, "Moderator");
         assert!(loaded.rows[0].avatar_url.is_some());
         assert_eq!(loaded.rows[1].role, "Admin");
+        assert!(!loaded.rows[0].invited && !loaded.rows[1].invited);
+        assert_eq!(loaded.rows[2].user_id, "@invite:example.org");
+        assert!(loaded.rows[2].invited && loaded.rows[2].avatar_url.is_some());
         *response.lock().unwrap() = json!({"next_batch":"leave","rooms":{"join":{"!room:example.org":{"state":{"events":[event("m.room.member","@other:example.org",json!({"membership":"leave"}))]},"timeline":{"events":[],"limited":false}}}}});
         client
             .sync_once(SyncSettings::default().timeout(Duration::ZERO))
@@ -218,11 +239,39 @@ mod tests {
             .unwrap();
         tokio::time::timeout(
             Duration::from_secs(5),
-            snapshots.wait_for(|s| s.members.as_ref().is_some_and(|m| m.rows.len() == 1)),
+            snapshots.wait_for(|s| s.members.as_ref().is_some_and(|m| m.rows.len() == 2)),
         )
         .await
         .unwrap()
         .unwrap();
+        // Accepting, renewing, then declining an invitation updates the same roster.
+        for (batch, membership) in [
+            ("accept", "join"),
+            ("renew", "invite"),
+            ("decline", "leave"),
+        ] {
+            *response.lock().unwrap() = json!({"next_batch":batch,"rooms":{"join":{"!room:example.org":{"state":{"events":[event("m.room.member","@invite:example.org",json!({"membership":membership,"displayname":"Invite"}))]},"timeline":{"events":[],"limited":false}}}}});
+            client
+                .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+                .await
+                .unwrap();
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                snapshots.wait_for(|s| {
+                    s.members.as_ref().is_some_and(|m| {
+                        let person = m.rows.iter().find(|m| m.user_id == "@invite:example.org");
+                        match membership {
+                            "join" => person.is_some_and(|m| !m.invited),
+                            "invite" => person.is_some_and(|m| m.invited),
+                            _ => person.is_none(),
+                        }
+                    })
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        }
         worker.abort();
         assert!(worker.await.unwrap_err().is_cancelled());
         state.send_modify(|s| s.members = None);

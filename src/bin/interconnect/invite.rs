@@ -126,22 +126,42 @@ impl App {
                     state.error = Some("This person already has an invitation.".into());
                     return Task::none();
                 }
-                if self
+                if let Some(member) = self
                     .model
                     .members
                     .as_ref()
                     .filter(|m| m.generation == state.target.panel)
-                    .is_some_and(|m| m.rows.iter().any(|m| m.user_id == user))
+                    .and_then(|m| m.rows.iter().find(|m| m.user_id == user))
                 {
-                    state.error = Some("This person is already a room member.".into());
+                    state.error = Some(
+                        if member.invited {
+                            "This person already has an invitation."
+                        } else {
+                            "This person is already a room member."
+                        }
+                        .into(),
+                    );
                     return Task::none();
                 }
-                if self.demo.is_some() {
+                if let Some(demo) = &mut self.demo {
+                    let person = state.picker.selected.as_ref().filter(|p| p.user_id == user);
+                    demo.invitations
+                        .entry(state.target.room.1.clone())
+                        .or_default()
+                        .push(interconnect::connected::Member {
+                            user_id: user.clone(),
+                            name: person.map_or_else(|| user.clone(), |p| p.name.clone()),
+                            avatar_url: person.and_then(|p| p.avatar_url.clone()),
+                            role: String::new(),
+                            invited: true,
+                        });
                     state.picker.cancel_search();
                     state.sent.insert(user.clone());
                     state.success = Some(format!("Invitation sent to {user} (demo)."));
                     state.error = None;
                     state.picker.clear();
+                    let room = state.target.room.clone();
+                    self.refresh_invited_room(&room);
                 } else if let Some(composer) = current_pane(&self.model.room, state.target.room.0)
                     .and_then(|p| p.composer.clone())
                 {
@@ -160,6 +180,7 @@ impl App {
             Event::Completed(target, user, result) => {
                 self.pending_ops -= 1;
                 self.inviting.remove(&target.room.1);
+                let sent = result.is_ok();
                 if let Some(state) = &mut self.invite
                     && state.target == target
                 {
@@ -173,10 +194,25 @@ impl App {
                         Err(error) => state.error = Some(error),
                     }
                 }
+                if sent {
+                    self.refresh_invited_room(&target.room);
+                }
             }
             _ => {}
         }
         Task::none()
+    }
+    // A successful invite invalidates the SDK member cache. Restart the cancellable
+    // roster load with a fresh generation while keeping the current form intact.
+    fn refresh_invited_room(&mut self, room: &(u64, String)) {
+        if self.selection.room.as_ref() == Some(room) && self.selection.members.is_some() {
+            self.generation += 1;
+            self.selection.members = Some(self.generation);
+            if let Some(state) = &mut self.invite {
+                state.target.panel = self.generation;
+            }
+            self.refresh_demo();
+        }
     }
     pub(super) fn invite_avatars(&self) -> Vec<matrix_sdk::ruma::OwnedMxcUri> {
         self.invite
@@ -337,10 +373,83 @@ mod tests {
             count
         );
         assert_eq!(app.pending_ops, 0);
+        let roster = &app.model.members.as_ref().unwrap().rows;
+        assert!(
+            roster
+                .iter()
+                .any(|m| m.user_id == "@new:remote.example" && m.invited)
+        );
+        assert!(
+            roster
+                .iter()
+                .any(|m| m.user_id == "@taylor:example.org" && m.name == "Taylor" && m.invited)
+        );
+        assert_eq!(roster.iter().filter(|m| !m.invited).count(), 5);
         let _ = app.update(Message::Escape);
         assert!(app.invite.is_none());
         assert!(app.selection.members.is_some());
+        let _ = app.update(Message::Members(members::Event::Close));
+        let _ = app.update(Message::Members(members::Event::Open));
+        assert!(
+            app.model
+                .members
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|m| m.user_id == "@taylor:example.org" && m.invited)
+        );
+        let _ = app.update(message(Event::Open));
+        edit(&mut app, "@taylor:example.org");
+        let _ = app.update(message(Event::Submit));
+        assert!(
+            app.invite
+                .as_ref()
+                .unwrap()
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("already has an invitation")
+        );
     }
+    #[test]
+    fn successful_send_refreshes_only_its_open_room_and_rejects_old_rosters() {
+        let mut app = demo_app();
+        open(&mut app);
+        let target = app.invite.as_ref().unwrap().target.clone();
+        app.demo = None;
+        app.pending_ops = 1;
+        app.inviting.insert(target.room.1.clone());
+        app.invite.as_mut().unwrap().pending = true;
+        let _ = app.update(message(Event::Completed(
+            target.clone(),
+            "@new:example.org".into(),
+            Ok(()),
+        )));
+        assert_ne!(app.selection.members, Some(target.panel));
+        assert!(
+            app.visible_members().is_empty(),
+            "old-generation roster is hidden"
+        );
+        let state = app.invite.as_ref().unwrap();
+        assert!(state.success.is_some());
+        assert_eq!(Some(state.target.panel), app.selection.members);
+        let pending = state.target.clone();
+        app.pending_ops = 1;
+        app.inviting.insert(pending.room.1.clone());
+        let _ = app.update(Message::Room("general".into()));
+        open(&mut app);
+        let generation = app.selection.members;
+        let _ = app.update(message(Event::Completed(
+            pending,
+            "@late:example.org".into(),
+            Ok(()),
+        )));
+        assert_eq!(app.selection.members, generation);
+        assert!(app.invite.as_ref().unwrap().success.is_none());
+        assert_eq!(app.pending_ops, 0);
+    }
+
     #[test]
     fn navigation_permission_changes_and_new_forms_reject_stale_results() {
         let mut app = demo_app();
