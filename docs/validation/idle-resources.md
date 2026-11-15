@@ -399,3 +399,50 @@ Raw evidence and summaries are in the ignored local directory
 `artifacts/residual-idle-2026-11-14/`. The existing `perf stat` helper is useful for
 fixed-thread comparisons, but transient-thread accounting is required before
 calling its result a whole-process rate.
+
+## Connected navigation follow-up — 2026-11-15
+
+Measured the user's already-running actual-account process on build `3e8f25c`,
+without restarting it or changing its room/thread selection. The running
+executable matched the current development binary. No messages were sent and no
+application text input was generated. Sway scratchpad hid only this window for
+the hidden sample; its original position and size were restored afterward.
+
+Diagnostics were not enabled in this process. No SIGUSR1 was sent; redraw and
+UI-update counts are therefore **unmeasured**, rather than zero. Logging and
+incoming account traffic were left as configured in the running app.
+
+The first `measure-idle.py` fixed-thread capture was invalidated by changing
+endpoint TIDs, despite both endpoints having 18 threads. Full-process captures
+then used system-wide `perf record` with `sched_wakeup` and `sched_wakeup_new`,
+1024-page buffers, and no stack sampling. Decoding included task and lost-record
+metadata. Counts below retain only target TIDs belonging to this client, with
+FORK/EXIT records tracking transient workers and their lifetimes. Both accepted
+recordings and decodes succeeded with no lost records.
+
+| State | Recorder elapsed | Wakeups incl. new workers | Wakeups/s | CPU seconds | One-core CPU | RSS KiB, start → end |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Hidden | 31.663 s | 106 | 3.35 | 0.05 | 0.16% | 129596 → 129596 |
+| Visible, focused, settled | 31.695 s | 102 | 3.22 | 0.06 | 0.19% | 130508 → 130508 |
+
+Both captures requested 30 seconds; elapsed times include perf setup/teardown.
+The hidden count comprises 104 `sched_wakeup` plus 2 `sched_wakeup_new` events;
+the visible count comprises 99 plus 3. Of these totals, respectively 41 and 46
+wakeups targeted workers absent from the initial TID set. File descriptors stayed
+at 132 throughout each sample. Sway reported hidden/not focused at both hidden
+endpoints, and visible/focused at both visible endpoints. Exact focused widget
+and open-pane composition were not instrumented.
+
+Almost all events were clustered: 103 hidden events in about 62 ms, and 99
+visible events in about 64 ms. The main clusters began about 30.1 seconds apart
+across the sequential captures. This is consistent with sync-response work;
+without stacks it does not assign every event to a particular SDK operation.
+The results remain close to the previous roughly 3/s full-process observation,
+with no obvious return of the old continuous lease-heartbeat activity. These
+short samples are not a busy-account, long-run memory, or battery-power budget.
+
+An earlier full-process recording overlapped a visibility/focus transition and
+recorded a large short activity burst (1581 events, 3.00 CPU seconds). It is
+excluded from the idle comparison. Local raw recordings, task-event decodes,
+resource endpoints, capture/analysis scripts, and summaries are retained in
+`artifacts/navigation-wakeups-2026-11-15/` (ignored).
