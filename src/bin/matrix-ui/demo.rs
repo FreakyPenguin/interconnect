@@ -1,6 +1,6 @@
 //! Deterministic, memory-only fixtures. Demo mode never creates an SDK client.
 use super::DraftKey;
-use chatclient::connected::{History, MessageRow, Pane, RoomEntry, SpaceEntry};
+use chatclient::connected::{History, MessageRow, Pane, RoomEntry, RowKind, SpaceEntry};
 use std::collections::HashMap;
 
 pub struct Room {
@@ -49,6 +49,13 @@ pub const ROOMS: &[Room] = &[
     Room {
         id: "empty",
         name: "Off the clock",
+        space: 1,
+        section: "Rooms",
+        unread: 0,
+    },
+    Room {
+        id: "activity",
+        name: "Room activity",
         space: 1,
         section: "Rooms",
         unread: 0,
@@ -142,6 +149,7 @@ pub struct Demo {
 }
 fn message(id: &str, sender: &str, body: &str) -> MessageRow {
     MessageRow {
+        kind: RowKind::Message,
         event_id: Some(id.into()),
         sender: sender.into(),
         display_name: sender.into(),
@@ -150,6 +158,12 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         body: body.into(),
         send_state: String::new(),
         retry: None,
+    }
+}
+fn activity(id: &str, sender: &str, body: &str) -> MessageRow {
+    MessageRow {
+        kind: RowKind::Activity,
+        ..message(id, sender, body)
     }
 }
 impl Demo {
@@ -195,6 +209,16 @@ impl Demo {
                 message("review", "Alex Rivera", "That sounds right. Try opening a thread here — we can work through the details together."),
             ],
             "long" => vec![message("long-body", "Maya Chen", &format!("Some deliberately difficult content to try at narrow widths.\n\n{}\n\nhttps://example.org/a/very/long/reference/with-many-details-and-a-descriptive-name\n\n日本語のメッセージ · Bonjour · Grüß dich", "Good reading rhythm depends on line length, spacing, and a stable layout. ".repeat(12)))],
+            "activity" => vec![
+                activity("activity-create", "Maya Chen", "Created the room"),
+                activity("activity-join", "Alex Rivera", "Joined the room"),
+                activity("activity-invite", "Maya Chen", "Invited Jamie Davis (@jamie:example.org) to the room"),
+                message("activity-hello", "Jamie Davis", "Thanks for the invitation! I’ll keep the room topic up to date."),
+                activity("activity-topic", "Jamie Davis", "Changed the room topic to A quiet place for design notes, longer discussions, useful references, and plans for the next release."),
+                activity("activity-avatar", "Jamie Davis", "Changed avatar"),
+                message("activity-followup", "Jamie Davis", "The latest notes are ready to review."),
+                activity("activity-leave", "Alex Rivera", "Left the room"),
+            ],
             "busy" => (0..150).map(|i| message(&format!("busy-{i}"), ["Maya Chen", "Alex Rivera", "Jamie Davis"][i % 3], &format!("Conversation note {}. A longer history to exercise scrolling, selection, and opening threads.", i + 1))).collect(),
             "home" => vec![message("weekend", "Alex Rivera", "A slow Saturday? Coffee, a walk, and somewhere good for lunch."), message("coffee", "Jamie Davis", "Perfect. I’ll bring the camera.")],
             "release" => vec![message("release", "Maya Chen", "The new preview is ready to explore. Room navigation, a quieter timeline, and space for threads."), message("release2", "Alex Rivera", "I’ll try it with a longer conversation this afternoon.")],

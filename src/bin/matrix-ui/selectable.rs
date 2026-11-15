@@ -7,18 +7,40 @@ use iced::advanced::{
 };
 use iced::widget::text_editor::{self, Action, Binding};
 use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme};
+use std::borrow::Cow;
+
+#[derive(Clone, Copy)]
+enum Appearance {
+    Message,
+    Activity,
+}
 
 #[cfg(test)]
 pub fn view<'a>(id: &'a str, body: &'a str) -> Element<'a, Message> {
     named_view(id, body, "")
 }
 pub fn named_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, Message> {
-    Element::new(Selectable { id, body, name })
+    Element::new(Selectable {
+        id,
+        body: Cow::Borrowed(body),
+        name,
+        appearance: Appearance::Message,
+    })
+}
+pub fn activity_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, Message> {
+    Element::new(Selectable {
+        id,
+        body: Cow::Owned(format!("{name} · {body}")),
+        // The inline name is already part of the selectable/copyable text.
+        name: "",
+        appearance: Appearance::Activity,
+    })
 }
 struct Selectable<'a> {
     name: &'a str,
     id: &'a str,
-    body: &'a str,
+    body: Cow<'a, str>,
+    appearance: Appearance,
 }
 pub(super) struct State {
     pub id: String,
@@ -65,9 +87,13 @@ fn normalize_selection(content: &mut text_editor::Content) {
 }
 fn editor(
     content: &text_editor::Content,
+    appearance: Appearance,
 ) -> text_editor::TextEditor<'_, iced::advanced::text::highlighter::PlainText, Action> {
     iced::widget::text_editor(content)
-        .size(14)
+        .size(match appearance {
+            Appearance::Message => 14,
+            Appearance::Activity => 12,
+        })
         .padding(0)
         .cursor_blinking(false)
         .show_cursor(false)
@@ -86,10 +112,13 @@ fn editor(
                 )
             })
         })
-        .style(|_, _| text_editor::Style {
+        .style(move |_, _| text_editor::Style {
             background: iced::Color::TRANSPARENT.into(),
             border: iced::Border::default(),
-            value: shell::INK,
+            value: match appearance {
+                Appearance::Message => shell::INK,
+                Appearance::Activity => shell::MUTED,
+            },
             placeholder: shell::MUTED,
             selection: iced::Color::from_rgba8(73, 121, 211, 0.25),
         })
@@ -104,18 +133,18 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
             name: self.name.into(),
             selected: false,
             clicks: 0,
-            body: self.body.into(),
-            content: text_editor::Content::with_text(self.body),
+            body: self.body.to_string(),
+            content: text_editor::Content::with_text(&self.body),
         })
     }
     fn children(&self) -> Vec<Tree> {
         let content = text_editor::Content::new();
-        vec![Tree::new(Element::from(editor(&content)))]
+        vec![Tree::new(Element::from(editor(&content, self.appearance)))]
     }
     fn diff(&self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<State>();
         state.name = self.name.into();
-        if state.id != self.id || state.body != self.body {
+        if state.id != self.id || state.body != self.body.as_ref() {
             tree.state = self.state();
             tree.children = self.children();
         }
@@ -154,7 +183,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         limits: &layout::Limits,
     ) -> layout::Node {
         let state = tree.state.downcast_ref::<State>();
-        editor(&state.content).layout(&mut tree.children[0], renderer, limits)
+        editor(&state.content, self.appearance).layout(&mut tree.children[0], renderer, limits)
     }
     fn update(
         &mut self,
@@ -177,7 +206,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         let state = tree.state.downcast_mut::<State>();
         let mut actions = Vec::new();
         let mut local = Shell::new(&mut actions);
-        editor(&state.content).update(
+        editor(&state.content, self.appearance).update(
             &mut tree.children[0],
             event,
             layout,
@@ -220,7 +249,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         viewport: &Rectangle,
     ) {
         let state = tree.state.downcast_ref::<State>();
-        editor(&state.content).draw(
+        editor(&state.content, self.appearance).draw(
             &tree.children[0],
             renderer,
             theme,
@@ -267,7 +296,8 @@ mod tests {
         let mut view = Selectable {
             id: "$one",
             name: "Alice",
-            body: "hello world café 👋",
+            body: Cow::Borrowed("hello world café 👋"),
+            appearance: Appearance::Message,
         };
         let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(14.0));
         let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);

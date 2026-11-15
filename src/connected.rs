@@ -7,7 +7,7 @@ use matrix_sdk::Client;
 use matrix_sdk_ui::{
     room_list_service::State as RoomState,
     sync_service::{State, SyncService},
-    timeline::{EventSendState, Timeline, TimelineBuilder, TimelineFocus},
+    timeline::{EventSendState, Timeline, TimelineBuilder, TimelineFocus, TimelineItemContent},
 };
 use tokio::sync::{mpsc, watch};
 
@@ -21,8 +21,28 @@ pub struct Selection {
 
 pub use crate::navigation::{RoomEntry, SpaceEntry};
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowKind {
+    Message,
+    Activity,
+}
+impl RowKind {
+    pub(crate) fn from_content(content: &TimelineItemContent) -> Self {
+        match content {
+            TimelineItemContent::MembershipChange(_)
+            | TimelineItemContent::ProfileChange(_)
+            | TimelineItemContent::OtherState(_)
+            | TimelineItemContent::FailedToParseState { .. }
+            | TimelineItemContent::CallInvite
+            | TimelineItemContent::RtcNotification { .. } => Self::Activity,
+            _ => Self::Message,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct MessageRow {
+    pub kind: RowKind,
     pub event_id: Option<String>,
     pub sender: String,
     pub display_name: String,
@@ -530,6 +550,7 @@ async fn publish(
         .map(|event| {
             let content = event.content();
             MessageRow {
+                kind: RowKind::from_content(content),
                 event_id: event.event_id().map(ToString::to_string),
                 sender: event.sender().to_string(),
                 display_name: match event.sender_profile() {
@@ -551,14 +572,7 @@ async fn publish(
                 thread_replies: content
                     .thread_summary()
                     .map_or(0, |summary| summary.num_replies),
-                body: if content.is_unable_to_decrypt() {
-                    "Unable to decrypt — keys unavailable".into()
-                } else {
-                    content
-                        .as_message()
-                        .map(|m| m.body().to_owned())
-                        .unwrap_or_else(|| "[non-text event]".into())
-                },
+                body: crate::event_text::body(content, event.sender()),
                 send_state: match event.send_state() {
                     Some(EventSendState::NotSentYet { .. }) => "Pending".into(),
                     Some(EventSendState::SendingFailed { error, .. }) => format!("Failed: {error}"),

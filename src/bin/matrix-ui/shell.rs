@@ -202,11 +202,17 @@ pub fn editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::
     style
 }
 pub fn avatar(sender: &str) -> Element<'_, Message> {
+    avatar_view(sender, false)
+}
+pub fn activity_avatar(sender: &str) -> Element<'_, Message> {
+    avatar_view(sender, true)
+}
+fn avatar_view(sender: &str, compact: bool) -> Element<'_, Message> {
     let initials: String = sender
         .trim_start_matches('@')
         .split([' ', ':', '.'])
         .filter_map(|part| part.chars().next())
-        .take(2)
+        .take(if compact { 1 } else { 2 })
         .flat_map(char::to_uppercase)
         .collect();
     let colors = [
@@ -216,11 +222,11 @@ pub fn avatar(sender: &str) -> Element<'_, Message> {
         Color::from_rgb8(242, 232, 218),
     ];
     let color = colors[sender.bytes().map(usize::from).sum::<usize>() % colors.len()];
-    container(text(initials).size(11))
-        .center_x(32)
-        .center_y(32)
+    container(text(initials).size(if compact { 9 } else { 11 }))
+        .center_x(if compact { 16 } else { 32 })
+        .center_y(if compact { 16 } else { 32 })
         .style(move |_| container::Style {
-            border: Border::default().rounded(10),
+            border: Border::default().rounded(if compact { 8 } else { 10 }),
             ..surface(color)
         })
         .into()

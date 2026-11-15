@@ -288,7 +288,7 @@ impl Selection {
         for (id, cursor) in ranges {
             let row = rows.iter().find(|row| row.id == id)?;
             if let Some(selected) = fragment(&row.body, cursor).filter(|text| !text.is_empty()) {
-                parts.push(if multi {
+                parts.push(if multi && !row.name.is_empty() {
                     format!("{}:\n{selected}", row.name.replace(['\r', '\n'], " "))
                 } else {
                     selected.to_owned()
@@ -613,6 +613,55 @@ mod tests {
         Event::Window(iced::window::Event::RedrawRequested(
             iced::time::Instant::now(),
         ))
+    }
+    #[test]
+    fn mixed_activity_and_messages_copy_inline_names_once_and_preserve_wrapping() {
+        let topic =
+            "Changed the room topic to A calm place for longer discussions and useful references";
+        for reverse in [false, true] {
+            let mut h = Harness::new();
+            let mut element = super::super::timeline::view(
+                1,
+                vec![
+                    Some("one".into()),
+                    Some("activity".into()),
+                    Some("two".into()),
+                ],
+                scrollable(
+                    column![
+                        selectable::named_view("one", "hello", "Alice"),
+                        selectable::activity_view("activity", topic, "Alice"),
+                        selectable::named_view("two", "goodbye", "Bob"),
+                    ]
+                    .spacing(6),
+                )
+                .id("room-timeline")
+                .height(200)
+                .into(),
+            );
+            let node = h.layout(&mut element);
+            let data = h.read(&mut element, &node);
+            let first = data.rows[0].bounds;
+            let last = data.rows[2].bounds;
+            assert!(
+                data.rows[1].bounds.height > first.height,
+                "the activity wraps"
+            );
+            let a = Point::new(first.x, first.y + 5.0);
+            let b = Point::new(last.x + last.width - 1.0, last.y + last.height - 5.0);
+            let (from, to) = if reverse { (b, a) } else { (a, b) };
+            h.event(&mut element, &node, down(), from);
+            h.event(&mut element, &node, moved(to), to);
+            h.event(&mut element, &node, up(), to);
+            let expected = format!("Alice:\nhello\n\nAlice · {topic}\n\nBob:\ngoodbye");
+            assert_eq!(h.copy(&mut element, &node), expected);
+            let node = h.layout(&mut element);
+            assert_eq!(h.copy(&mut element, &node), expected);
+            assert_eq!(
+                h.event(&mut element, &node, redraw(), to).0,
+                iced::window::RedrawRequest::Wait
+            );
+        }
     }
     #[test]
     fn forward_and_backward_copy_include_names_but_no_layout_or_actions() {

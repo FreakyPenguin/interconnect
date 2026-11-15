@@ -103,14 +103,7 @@ async fn display_window(timeline: &Timeline, label: &str, oldest: bool) {
     for item in items.iter().skip(start).take(20) {
         if let Some(event) = item.as_event() {
             let content = event.content();
-            let text = if content.is_unable_to_decrypt() {
-                "[unable to decrypt: keys unavailable]"
-            } else {
-                content
-                    .as_message()
-                    .map(|m| m.body())
-                    .unwrap_or("[non-text event]")
-            };
+            let text = crate::event_text::body(content, event.sender());
             println!(
                 "  {} {:?} send={:?}",
                 event

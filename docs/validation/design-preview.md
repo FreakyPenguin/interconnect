@@ -47,6 +47,20 @@ Hover over a room message to reveal a small action panel at its top right.
 The reply arrow opens its thread; the tooltip says **Reply in thread**.
 The panel overlays the full-width message without changing wrapping or height.
 
+Membership, profile, room-setting, and call events use compact activity rows:
+a 16-pixel circular initial badge, smaller muted text, and the sender inline.
+Consecutive activity rows keep close spacing; timestamps are available on hover.
+Activity rows have no reply hover panel and break normal sender grouping.
+Text remains selectable, including across activity rows and ordinary messages;
+copying includes each activity's inline sender once. Messages, attachments,
+stickers, polls, decryption failures, and removed-message placeholders retain
+their ordinary message layout. Alt+T selects the newest message, skipping
+activity rows. Existing reply links on activity events remain accessible.
+
+Studio → Room activity mixes activity and messages, including a long topic change
+for wrapping checks. Inspect it with the sidebar visible and hidden, then open
+a message's thread. These fixtures use no account data or network requests.
+
 Thread panels keep the original message beneath the header, above the scrolling
 replies. Its author, timestamp, and selectable text stay visible when opening a
 busy thread at the newest reply. Long originals scroll independently within a
@@ -110,6 +124,12 @@ Shortcuts:
    message and scroll its original independently; replies and the composer should
    remain accessible. Switch threads and check the original returns to its top.
    This thread-original desktop check remains pending.
+10. In Studio → Room activity, check small badges, muted inline names, tight
+    activity spacing, and the full message header after an activity by the same
+    sender. Hover an activity for its timestamp; its row should stay still.
+    Select/copy across messages and the wrapped topic event in both directions.
+    Verify the sender appears once in each copied activity, and Alt+T skips the
+    final leave event. Repeat with the sidebar hidden at a narrow width.
 
 ## Feasibility findings and scope
 
@@ -177,3 +197,19 @@ denied, all 29 GUI tests, and the locked GUI build passed. New tests exercise
 current-generation lookup with room fallback, stale-source rejection, a bounded
 long original, deduplication, and independent reply scrolling through real Iced
 layout. Desktop inspection remains pending.
+
+For activity styling, native Wayland demo screenshots were inspected at
+1920×1200 for the room and side-by-side thread, and 636×1162 with the sidebar
+hidden. Compact badges, inline muted text, wrapping, and full author headers
+after activity were visible. The thread capture reused the mixed demo rows to
+exercise activity among replies. Capture-only source hooks were removed after
+the three demo processes exited normally; screenshots and the capture script
+remain under ignored `artifacts/activity-rows/`. No connected client was
+restarted and no Matrix messages were sent. Native pointer/tooltip and clipboard
+acceptance remain pending; widget tests cover forward/backward copying through
+a wrapped activity, selection after relayout, no selection timer while idle,
+compact room/thread layouts, and keyboard thread selection.
+Formatting, workspace Clippy with warnings denied, all 67 regular workspace
+tests (35 GUI tests), and the locked GUI build passed. The existing opt-in
+lifecycle stress test was not repeated. Idle resource measurements were not
+repeated for this presentation change.

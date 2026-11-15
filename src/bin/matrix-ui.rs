@@ -12,7 +12,7 @@ mod shell;
 #[path = "matrix-ui/timeline.rs"]
 mod timeline;
 
-use chatclient::connected::{History, MessageRow, Model, Pane, RetrySend, Selection};
+use chatclient::connected::{History, MessageRow, Model, Pane, RetrySend, RowKind, Selection};
 use chatclient::navigation::Scope;
 use chatclient::navigation_preferences::Preferences;
 use iced::{
@@ -271,7 +271,7 @@ impl App {
                     .model
                     .room
                     .as_ref()
-                    .and_then(|p| p.rows.last())
+                    .and_then(|p| p.rows.iter().rev().find(|row| row.kind == RowKind::Message))
                     .and_then(|r| r.event_id.clone())
                 {
                     let task = self.update(Message::Thread(root));
@@ -704,32 +704,40 @@ impl App {
 
     fn thread_original_view(&self) -> Element<'_, Message> {
         let original: Element<'_, Message> = if let Some(message) = self.thread_original() {
-            let timestamp = iced::widget::tooltip(
-                text(presentation::time_label(message))
-                    .size(11)
-                    .color(shell::MUTED),
-                text(presentation::time_detail(message)).size(12),
-                iced::widget::tooltip::Position::Top,
-            );
-            column![
-                row![
-                    iced::widget::tooltip(
-                        shell::title(&message.display_name, 13),
-                        text(&message.sender).size(12),
-                        iced::widget::tooltip::Position::Top,
-                    ),
-                    iced::widget::space().width(Length::Fill),
-                    timestamp,
-                ]
-                .spacing(12),
-                selectable::named_view(
+            if message.kind == RowKind::Activity {
+                selectable::activity_view(
                     message.event_id.as_deref().unwrap_or(&message.body),
                     &message.body,
                     &message.display_name,
-                ),
-            ]
-            .spacing(6)
-            .into()
+                )
+            } else {
+                let timestamp = iced::widget::tooltip(
+                    text(presentation::time_label(message))
+                        .size(11)
+                        .color(shell::MUTED),
+                    text(presentation::time_detail(message)).size(12),
+                    iced::widget::tooltip::Position::Top,
+                );
+                column![
+                    row![
+                        iced::widget::tooltip(
+                            shell::title(&message.display_name, 13),
+                            text(&message.sender).size(12),
+                            iced::widget::tooltip::Position::Top,
+                        ),
+                        iced::widget::space().width(Length::Fill),
+                        timestamp,
+                    ]
+                    .spacing(12),
+                    selectable::named_view(
+                        message.event_id.as_deref().unwrap_or(&message.body),
+                        &message.body,
+                        &message.display_name,
+                    ),
+                ]
+                .spacing(6)
+                .into()
+            }
         } else {
             text(
                 if self
@@ -899,6 +907,7 @@ impl App {
         let mut messages = column![history_controls].spacing(0).padding([16, 24]);
         for (index, message) in rows.iter().copied().enumerate() {
             let previous = index.checked_sub(1).map(|i| rows[i]);
+            let activity = message.kind == RowKind::Activity;
             let grouped = presentation::grouped(previous, message);
             let new_date = presentation::date(message)
                 .filter(|date| previous.and_then(presentation::date).as_ref() != Some(date));
@@ -909,12 +918,26 @@ impl App {
                 text(presentation::time_detail(message)).size(12),
                 iced::widget::tooltip::Position::Top,
             );
-            let body = selectable::named_view(
-                message.event_id.as_deref().unwrap_or(&message.body),
-                &message.body,
-                &message.display_name,
-            );
-            let mut entry = if grouped {
+            let body = if activity {
+                selectable::activity_view(
+                    message.event_id.as_deref().unwrap_or(&message.body),
+                    &message.body,
+                    &message.display_name,
+                )
+            } else {
+                selectable::named_view(
+                    message.event_id.as_deref().unwrap_or(&message.body),
+                    &message.body,
+                    &message.display_name,
+                )
+            };
+            let mut entry = if activity {
+                column![iced::widget::tooltip(
+                    body,
+                    text(presentation::time_detail(message)).size(12),
+                    iced::widget::tooltip::Position::Top,
+                )]
+            } else if grouped {
                 column![row![body, timestamp].spacing(12)]
             } else {
                 column![
@@ -966,7 +989,11 @@ impl App {
                 }
                 entry = entry.push(replies);
             }
-            let avatar: Element<'_, Message> = if grouped {
+            let avatar: Element<'_, Message> = if activity {
+                container(shell::activity_avatar(&message.display_name))
+                    .center_x(32)
+                    .into()
+            } else if grouped {
                 iced::widget::space().width(32).into()
             } else {
                 shell::avatar(&message.display_name)
@@ -985,11 +1012,26 @@ impl App {
             }
             let body = container(row![avatar, entry.width(Length::Fill)].spacing(12)).padding(
                 iced::Padding {
-                    top: if grouped { 5.0 } else { 18.0 },
+                    top: if activity {
+                        if previous.is_some_and(|row| row.kind == RowKind::Activity)
+                            && new_date.is_none()
+                        {
+                            4.0
+                        } else {
+                            12.0
+                        }
+                    } else if grouped {
+                        5.0
+                    } else {
+                        18.0
+                    },
                     ..iced::Padding::ZERO
                 },
             );
-            let body: Element<'_, Message> = if !thread && let Some(id) = &message.event_id {
+            let body: Element<'_, Message> = if !thread
+                && !activity
+                && let Some(id) = &message.event_id
+            {
                 shell::message_actions(body, id, !self.closing && !self.stopped)
             } else {
                 body.into()
@@ -1348,6 +1390,88 @@ mod tests {
             "a local reply"
         );
         assert_eq!(app.drafts[&room_key].content.text().trim(), "room draft");
+    }
+
+    #[test]
+    fn keyboard_thread_opening_skips_trailing_activity() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("activity".into()));
+        let _ = app.update(Message::OpenLastThread);
+        assert_eq!(
+            app.selection.thread.as_ref().unwrap().1,
+            "activity-followup"
+        );
+    }
+
+    #[test]
+    fn activity_layout_is_compact_and_selectable_in_rooms_and_threads() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Probe {
+            rows: Vec<(String, String, iced::Rectangle)>,
+            containers: HashMap<widget::Id, iced::Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if let Some(id) = id {
+                    self.containers.insert(id.clone(), bounds);
+                }
+            }
+            fn custom(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                state: &mut dyn std::any::Any,
+            ) {
+                if let Some(state) = state.downcast_ref::<selectable::State>() {
+                    self.rows
+                        .push((state.id.clone(), state.body.clone(), bounds));
+                }
+            }
+        }
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("activity".into()));
+        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        for width in [320.0, 720.0] {
+            for thread in [false, true] {
+                if thread {
+                    // Reuse the mixed room fixture as thread replies; SDK kind
+                    // and selection behavior must survive either pane layout.
+                    let mut pane = app.model.room.clone().unwrap();
+                    pane.generation = 100;
+                    app.model.thread = Some(pane);
+                    app.selection.thread = Some((100, "$other-root".into()));
+                }
+                let mut view = app.pane(thread);
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(iced::Size::ZERO, iced::Size::new(width, 640.0)),
+                );
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                let activity = probe.containers[&timeline::row_id(1)];
+                let message = probe.containers[&timeline::row_id(3)];
+                assert!(activity.height < message.height / 2.0);
+                let (_, text, bounds) = probe
+                    .rows
+                    .iter()
+                    .find(|row| row.0 == "activity-topic")
+                    .unwrap();
+                assert!(text.starts_with("Jamie Davis · Changed the room topic"));
+                assert!(bounds.width > 0.0 && bounds.width < width);
+                assert_eq!(probe.rows.len(), 8, "one selectable body per event");
+            }
+        }
     }
 
     #[test]

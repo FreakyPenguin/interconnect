@@ -1,4 +1,4 @@
-use chatclient::connected::MessageRow;
+use chatclient::connected::{MessageRow, RowKind};
 use chrono::{DateTime, Local, NaiveDate};
 
 pub fn local_time(message: &MessageRow) -> Option<DateTime<Local>> {
@@ -9,7 +9,9 @@ pub fn date(message: &MessageRow) -> Option<NaiveDate> {
 }
 pub fn grouped(previous: Option<&MessageRow>, current: &MessageRow) -> bool {
     previous.is_some_and(|previous| {
-        previous.sender == current.sender
+        previous.kind == RowKind::Message
+            && current.kind == RowKind::Message
+            && previous.sender == current.sender
             && previous.display_name == current.display_name
             && date(previous).is_some()
             && date(previous) == date(current)
@@ -35,6 +37,7 @@ mod tests {
     use super::*;
     fn message(sender: &str, timestamp_ms: Option<i64>) -> MessageRow {
         MessageRow {
+            kind: RowKind::Message,
             event_id: None,
             sender: sender.into(),
             display_name: "Same name".into(),
@@ -61,5 +64,10 @@ mod tests {
         assert!(!grouped(Some(&a), &message(&a.sender, Some(now - 1))));
         assert!(!grouped(Some(&a), &message(&a.sender, None)));
         assert!(!grouped(None, &a));
+        let mut activity = a.clone();
+        activity.kind = RowKind::Activity;
+        assert!(!grouped(Some(&a), &activity));
+        assert!(!grouped(Some(&activity), &a));
+        assert!(!grouped(Some(&activity), &activity));
     }
 }

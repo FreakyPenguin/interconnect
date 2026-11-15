@@ -1,6 +1,7 @@
 #![recursion_limit = "256"]
 pub mod connected;
 pub mod diagnostics;
+mod event_text;
 pub mod live;
 pub mod navigation;
 pub mod navigation_preferences;

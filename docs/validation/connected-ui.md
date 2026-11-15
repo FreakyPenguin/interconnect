@@ -21,6 +21,50 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
+## Timeline event text — 2026-11-15
+
+Room and thread timelines now use SDK-parsed event content instead of the generic
+`[non-text event]` placeholder. Membership summaries distinguish joins, leaves,
+invitations, kicks, bans, and requests to join. Moderation actions name the
+affected member, including their Matrix ID; available reasons are appended.
+Profile changes describe display-name and avatar updates. Room changes describe
+names, topics, encryption, permissions, pinned messages, and other settings.
+Stickers use their description, polls use the supplied fallback text or question,
+and calls and live-location shares have text labels. These are plain-text
+summaries; media viewing, poll voting, and call controls are not implemented.
+Ordinary message bodies, including attachment filenames/captions, still come
+from the SDK unchanged. The feasibility console shares this wording.
+
+Removed messages and redacted state events have explicit removal text.
+Decryption failures remain distinct from unsupported or malformed events; the
+latter identify the event type without exposing parser diagnostics. Summaries
+are computed when SDK snapshots arrive, with no extra requests or timers.
+
+Local SDK/mock-server tests cover membership transitions and reasons, profile
+changes, room name/topic changes and removal, encryption, pins, stickers, polls,
+live-location descriptions, custom events, redacted content, and preservation of
+text and file-message bodies. Fallback tests cover decryption, parse failures,
+and call labels. Connected desktop acceptance remains pending: inspect existing
+events in a room and thread, then change a test room's topic or a member's
+display name from another client and verify the wording updates. Confirm invites
+and moderation events name the affected member, and inspect a removed message.
+No real-account mutations are needed for the automated tests.
+
+Validation passed: formatting, workspace Clippy with warnings denied, all 63
+regular workspace tests (including 32 GUI tests), and the locked GUI build. The
+existing opt-in 100-cycle lifecycle stress test was not run for this text change.
+
+Membership, profile, room-setting, and call events now carry an explicit activity
+kind in snapshots. The UI renders them as compact muted rows with a small initial
+badge and inline sender, without the ordinary author header or reply hover
+panel. Timestamps remain available on hover. Consecutive activity rows keep close
+spacing; messages after activity regain their author header. Classification
+comes from SDK content, so ordinary messages containing activity-like wording
+retain the message layout. Stickers, polls, attachments, decryption failures, and
+removed messages retain the message layout too. Room and thread panes use the
+same activity presentation and selection behavior; stable event IDs still anchor
+scrolling. See [the demo checks](design-preview.md) for the mixed activity fixture.
+
 ## Connected navigation — 2026-11-15
 
 The visual shell now projects joined spaces and rooms from SDK metadata. The
