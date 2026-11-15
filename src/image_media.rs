@@ -99,8 +99,8 @@ impl Attachment {
     }
 }
 impl ImageRequest for Key {
-    const MEMORY_BYTES: usize = 32 * 1024 * 1024;
-    // One original (<=16 MiB RGBA) and 16 previews (<=12 MiB) fit together.
+    const MEMORY_BYTES: usize = 96 * 1024 * 1024;
+    // One original (<=16 MiB), GIF frames (<=64 MiB), and previews (<=12 MiB).
     const MAX_REQUESTED: usize = MAX_PREVIEWS + 1;
     const RETAIN_READY: bool = true;
     fn parameters(&self) -> MediaRequestParameters {
@@ -116,20 +116,22 @@ impl ImageRequest for Key {
     }
     fn decode(&self, bytes: Vec<u8>) -> anyhow::Result<Decoded> {
         let original = self.variant == Variant::Original;
-        crate::media::decode_with(
-            bytes,
-            DecodeLimits {
-                encoded: if original {
-                    20 * 1024 * 1024
-                } else {
-                    2 * 1024 * 1024
-                },
-                dimension: 4096,
-                allocation: 128 * 1024 * 1024,
-                target: if original { (2048, 2048) } else { (512, 384) },
-                crop: false,
+        let limits = DecodeLimits {
+            encoded: if original {
+                20 * 1024 * 1024
+            } else {
+                2 * 1024 * 1024
             },
-        )
+            dimension: 4096,
+            allocation: 128 * 1024 * 1024,
+            target: if original { (2048, 2048) } else { (512, 384) },
+            crop: false,
+        };
+        if original && matches!(image::guess_format(&bytes), Ok(image::ImageFormat::Gif)) {
+            crate::media::decode_gif(bytes, limits)
+        } else {
+            crate::media::decode_with(bytes, limits)
+        }
     }
 }
 
@@ -229,11 +231,33 @@ mod tests {
 
     #[tokio::test]
     async fn plain_preview_defers_original_and_both_reopen_from_disk() {
-        cache_fixture(false).await;
+        cache_fixture(false, false).await;
     }
     #[tokio::test]
     async fn encrypted_thumbnail_and_original_decrypt_and_reopen_from_disk() {
-        cache_fixture(true).await;
+        cache_fixture(true, false).await;
+    }
+    #[tokio::test]
+    async fn plain_and_encrypted_gifs_keep_previews_static_and_reopen_animations_offline() {
+        cache_fixture(false, true).await;
+        cache_fixture(true, true).await;
+    }
+    fn gif() -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
+            for color in [30, 60] {
+                encoder
+                    .encode_frame(image::Frame::from_parts(
+                        image::RgbaImage::from_pixel(8, 8, image::Rgba([color, 80, 160, 255])),
+                        0,
+                        0,
+                        image::Delay::from_numer_denom_ms(100, 1),
+                    ))
+                    .unwrap();
+            }
+        }
+        bytes
     }
     #[tokio::test]
     async fn invalid_encrypted_content_is_reported_as_failed() {
@@ -351,7 +375,7 @@ mod tests {
             .unwrap()
             .unwrap();
     }
-    async fn cache_fixture(encryption: bool) {
+    async fn cache_fixture(encryption: bool, animated: bool) {
         let directory = tempfile::tempdir().unwrap();
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -359,20 +383,21 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
             .mount(&server)
             .await;
+        let pixels = || if animated { gif() } else { png() };
         let (source, original_bytes) = if encryption {
-            encrypted("original", png())
+            encrypted("original", pixels())
         } else {
             (
                 MediaSource::Plain("mxc://example.org/original".into()),
-                png(),
+                pixels(),
             )
         };
         let (thumbnail, thumbnail_bytes) = if encryption {
-            encrypted("preview", png())
+            encrypted("preview", pixels())
         } else {
             (
                 MediaSource::Plain("mxc://example.org/original".into()),
-                png(),
+                pixels(),
             )
         };
         let attachment = Attachment::new(&source, encryption.then_some(&thumbnail));
@@ -414,6 +439,7 @@ mod tests {
             Arc::new(Semaphore::new(4)),
         ));
         ready(&mut images, &preview).await;
+        assert!(images.borrow().animations.is_empty());
         assert!(
             !server
                 .received_requests()
@@ -429,6 +455,18 @@ mod tests {
         });
         ready(&mut images, &original).await;
         assert!(images.borrow().failed.is_empty());
+        assert_eq!(images.borrow().animations.contains_key(&original), animated);
+        if animated {
+            assert_eq!(
+                images.borrow().animations[&original]
+                    .as_ref()
+                    .unwrap()
+                    .frames
+                    .len(),
+                2
+            );
+        }
+        assert!(!images.borrow().animations.contains_key(&preview));
         let cached_id = images.borrow().ready[&original].id();
         // Closing and reopening must keep the same decoded handle available
         // synchronously, rather than sending empty/loading/ready snapshots.
@@ -474,6 +512,7 @@ mod tests {
         ));
         ready(&mut images, &original).await;
         ready(&mut images, &preview).await;
+        assert_eq!(images.borrow().animations.contains_key(&original), animated);
         assert!(
             !server.received_requests().await.unwrap().iter().any(|r| r
                 .url

@@ -20,6 +20,7 @@ pub struct Settings {
     pub navigation: Navigation,
     pub composer: Composer,
     pub graphics: Graphics,
+    pub media: Media,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -28,7 +29,59 @@ impl Default for Settings {
             navigation: Navigation::default(),
             composer: Composer::default(),
             graphics: Graphics::default(),
+            media: Media::default(),
         }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Media {
+    pub gif_playback: GifPlayback,
+    pub gif_seconds: u16,
+}
+impl Default for Media {
+    fn default() -> Self {
+        Self {
+            gif_playback: GifPlayback::Once,
+            gif_seconds: 5,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GifPlayback {
+    #[default]
+    Once,
+    Duration,
+}
+impl GifPlayback {
+    fn config_value(self) -> &'static str {
+        match self {
+            Self::Once => "once",
+            Self::Duration => "duration",
+        }
+    }
+}
+impl std::fmt::Display for GifPlayback {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Once => "Once",
+            Self::Duration => "For a duration",
+        })
+    }
+}
+impl Settings {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.version == 1,
+            "Unsupported settings version {}; expected 1",
+            self.version
+        );
+        ensure!(
+            (1..=300).contains(&self.media.gif_seconds),
+            "GIF playback duration must be between 1 and 300 seconds"
+        );
+        Ok(())
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -127,7 +180,7 @@ impl Store {
     /// Preserve comments and unknown keys; reject edits made since the last load.
     /// The temporary file and atomic replacement live in the same directory.
     pub fn save(&mut self, settings: &Settings) -> anyhow::Result<()> {
-        ensure!(settings.version == 1, "Unsupported settings version");
+        settings.validate()?;
         let mut document = self
             .source
             .as_deref()
@@ -149,6 +202,14 @@ impl Store {
         replace(
             &mut document["graphics"]["low_power"],
             settings.graphics.low_power.into(),
+        );
+        replace(
+            &mut document["media"]["gif_playback"],
+            settings.media.gif_playback.config_value().into(),
+        );
+        replace(
+            &mut document["media"]["gif_seconds"],
+            i64::from(settings.media.gif_seconds).into(),
         );
         let contents = document.to_string();
         ensure!(
@@ -196,11 +257,7 @@ fn replace(item: &mut toml_edit::Item, mut value: toml_edit::Value) {
 fn decode(source: &str) -> anyhow::Result<Settings> {
     let settings: Settings =
         toml_edit::de::from_str(source).context("Could not parse settings TOML")?;
-    ensure!(
-        settings.version == 1,
-        "Unsupported settings version {}; expected 1",
-        settings.version
-    );
+    settings.validate()?;
     Ok(settings)
 }
 fn read(path: &Path) -> anyhow::Result<Option<String>> {
@@ -245,6 +302,10 @@ mod tests {
             "[graphics]\ngpu_enabled = 'false'",
             "[graphics]\nlow_power = 1",
             "graphics = false",
+            "[media]\ngif_playback = 'auto'",
+            "[media]\ngif_seconds = 0",
+            "[media]\ngif_seconds = 301",
+            "[media]\ngif_seconds = '5'",
         ] {
             assert!(decode(invalid).is_err(), "accepted {invalid}");
         }
@@ -261,6 +322,8 @@ mod tests {
         settings.navigation.show_room_list = false;
         settings.graphics.gpu_enabled = false;
         settings.graphics.low_power = false;
+        settings.media.gif_playback = GifPlayback::Duration;
+        settings.media.gif_seconds = 17;
         store.save(&settings).unwrap();
         assert_eq!(Store::load(path.clone()).unwrap().1, settings);
         assert_eq!(

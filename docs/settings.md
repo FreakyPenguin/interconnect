@@ -45,6 +45,10 @@ send_shortcut = "ctrl_enter"
 [graphics]
 gpu_enabled = true
 low_power = true
+
+[media]
+gif_playback = "once"
+gif_seconds = 5
 ```
 
 | Setting | Default | Effect |
@@ -53,6 +57,14 @@ low_power = true
 | `composer.send_shortcut` | `"ctrl_enter"` | Enter inserts a newline; Ctrl+Enter sends in room and thread composers. Set `"enter"` to send with Enter and use Shift+Enter for a newline. Ctrl+Enter still sends. IME composition suppresses sending. |
 | `graphics.gpu_enabled` | `true` | **Use GPU rendering**. On the next launch, try wgpu with software fallback. Set to `false` to force the CPU renderer, including when `ICED_BACKEND` requests wgpu. |
 | `graphics.low_power` | `true` | **Prefer a low-power GPU**. On the next launch, prefer a lower-power adapter when GPU rendering is enabled; `false` prefers higher performance. An explicit `WGPU_POWER_PREF` environment value takes priority. |
+| `media.gif_playback` | `"once"` | **GIF playback**: `"once"` plays one loop per click; `"duration"` repeats for `gif_seconds`, ignoring the GIF's embedded loop count. GIFs never autoplay. |
+| `media.gif_seconds` | `5` | Playback duration in whole seconds, from 1 to 300. Used with `"duration"`. |
+
+Open an image, then click **Play GIF** or the image itself to animate it. Click
+**Stop** or the image to stop early. Playback freezes on the last displayed
+frame; another Play starts from the beginning. Closing or unfocusing the viewer
+stops playback. Reopening it always starts still. GIF settings apply on Save
+without restarting; **Once** is the default. Previews and avatars remain static.
 
 Graphics controls are in **Settings → Graphics** and require restarting the
 application after saving. The low-power checkbox is disabled while GPU rendering

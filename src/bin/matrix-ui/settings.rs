@@ -1,10 +1,11 @@
 //! Startup settings and asynchronous dialog reload/save tasks. No timers.
 use super::{App, Message, shell};
-use chatclient::settings::{self, Graphics, SendShortcut, Settings, Store};
+use chatclient::settings::{self, GifPlayback, Graphics, SendShortcut, Settings, Store};
 use iced::{
     Element, Length, Task,
     widget::{
         button, checkbox, column, container, mouse_area, opaque, pick_list, row, scrollable, text,
+        text_input,
     },
 };
 use std::path::PathBuf;
@@ -23,6 +24,7 @@ pub struct State {
     pub navigation_touched: bool,
     close_after_save: bool,
     launched_graphics: Graphics,
+    gif_seconds_input: String,
 }
 impl State {
     pub(super) fn graphics_restart_required(&self) -> bool {
@@ -70,6 +72,8 @@ pub enum Event {
     Cancel,
     ShowRoomList(bool),
     SendShortcut(SendShortcut),
+    GifPlayback(GifPlayback),
+    GifSeconds(String),
     GpuEnabled(bool),
     LowPower(bool),
     Defaults,
@@ -83,6 +87,17 @@ fn message(event: Event) -> Message {
     Message::Settings(event)
 }
 impl App {
+    fn valid_gif_seconds(&self) -> bool {
+        self.settings
+            .draft
+            .as_ref()
+            .is_none_or(|draft| draft.media.gif_playback == GifPlayback::Once)
+            || self
+                .settings
+                .gif_seconds_input
+                .parse::<u16>()
+                .is_ok_and(|seconds| (1..=300).contains(&seconds))
+    }
     pub(super) fn boot(startup: Startup) -> (Self, Task<Message>) {
         let mut app = Self::new();
         let Some(loaded) = startup.loaded else {
@@ -117,6 +132,8 @@ impl App {
     pub(super) fn settings_update(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::Open if self.settings.draft.is_none() && !self.closing => {
+                self.settings.gif_seconds_input =
+                    self.settings.current.media.gif_seconds.to_string();
                 self.settings.draft = Some(self.settings.current.clone());
                 // Remove focus from composers/search while the modal is visible.
                 return iced::widget::operation::focus("settings-dialog");
@@ -139,6 +156,21 @@ impl App {
                     draft.composer.send_shortcut = shortcut;
                 }
             }
+            Event::GifPlayback(playback) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.media.gif_playback = playback;
+                }
+            }
+            Event::GifSeconds(input) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    if let Ok(seconds) = input.parse::<u16>()
+                        && (1..=300).contains(&seconds)
+                    {
+                        draft.media.gif_seconds = seconds;
+                    }
+                    self.settings.gif_seconds_input = input;
+                }
+            }
             Event::GpuEnabled(enabled) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     draft.graphics.gpu_enabled = enabled;
@@ -154,6 +186,7 @@ impl App {
             Event::Defaults if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     *draft = Settings::default();
+                    self.settings.gif_seconds_input = draft.media.gif_seconds.to_string();
                 }
             }
             Event::Reload if self.settings.draft.is_some() => return self.load_settings(),
@@ -173,6 +206,8 @@ impl App {
                             self.shell.navigation = settings.navigation.show_room_list;
                         }
                         if self.settings.draft.is_some() {
+                            self.settings.gif_seconds_input =
+                                settings.media.gif_seconds.to_string();
                             self.settings.draft = Some(settings.clone());
                         }
                         self.settings.current = settings;
@@ -189,6 +224,9 @@ impl App {
                 let Some(settings) = self.settings.draft.clone() else {
                     return Task::none();
                 };
+                if !self.valid_gif_seconds() {
+                    return Task::none();
+                }
                 if self.demo.is_some() {
                     self.settings.current = settings;
                     return self.settings_update(Event::Cancel);
@@ -283,12 +321,27 @@ impl App {
             if self.settings.path.is_some() {
                 reload = reload.on_press(message(Event::Reload));
             }
-            if self.demo.is_some() || self.settings.store.is_some() {
+            if (self.demo.is_some() || self.settings.store.is_some()) && self.valid_gif_seconds() {
                 save = save.on_press(message(Event::Save));
             }
         }
         if !self.settings.saving {
             cancel = cancel.on_press(message(Event::Cancel));
+        }
+        let playback = pick_list(
+            [GifPlayback::Once, GifPlayback::Duration],
+            Some(draft.media.gif_playback),
+            |value| message(Event::GifPlayback(value)),
+        );
+        let mut gif_controls = row![text("Play").size(14), playback]
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+        if draft.media.gif_playback == GifPlayback::Duration {
+            let mut seconds = text_input("1–300", &self.settings.gif_seconds_input).width(80);
+            if available {
+                seconds = seconds.on_input(|value| message(Event::GifSeconds(value)));
+            }
+            gif_controls = gif_controls.push(seconds).push(text("seconds").size(14));
         }
         let mut content = column![
             shell::title("Settings", 24),
@@ -305,6 +358,11 @@ impl App {
             text("With Enter to send, use Shift+Enter for a new line. Ctrl+Enter always sends.")
                 .size(12)
                 .color(shell::MUTED),
+            iced::widget::rule::horizontal(1),
+            shell::title("GIF playback", 15),
+            text("GIFs stay still until you click Play in the image viewer.").size(12).color(shell::MUTED),
+            gif_controls,
+            text(if self.valid_gif_seconds() { "Duration repeats the GIF for 1–300 whole seconds. Once plays one loop." } else { "Enter a whole number from 1 to 300 seconds to save." }).size(12).color(shell::MUTED),
             iced::widget::rule::horizontal(1),
             shell::title("Graphics · restart required", 15),
             gpu,
@@ -364,6 +422,33 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gif_settings_validate_duration_and_apply_only_on_save() {
+        let mut app = super::super::tests::demo_app();
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::GifPlayback(GifPlayback::Duration));
+        for invalid in ["", "0", "301", "1.5", "abc"] {
+            let _ = app.settings_update(Event::GifSeconds(invalid.into()));
+            assert!(!app.valid_gif_seconds());
+            let _ = app.settings_update(Event::Save);
+            assert!(app.settings.draft.is_some());
+            assert_eq!(app.settings.current.media.gif_playback, GifPlayback::Once);
+        }
+        let _ = app.settings_update(Event::GifSeconds("17".into()));
+        let _ = app.settings_update(Event::Save);
+        assert!(app.settings.draft.is_none());
+        assert_eq!(
+            app.settings.current.media.gif_playback,
+            GifPlayback::Duration
+        );
+        assert_eq!(app.settings.current.media.gif_seconds, 17);
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::Defaults);
+        assert_eq!(app.settings.gif_seconds_input, "5");
+        let _ = app.settings_update(Event::Cancel);
+        assert_eq!(app.settings.current.media.gif_seconds, 17);
+    }
 
     #[test]
     fn startup_reads_graphics_before_boot_and_demo_skips_the_file() {

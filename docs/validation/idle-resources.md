@@ -446,3 +446,21 @@ recorded a large short activity burst (1581 events, 3.00 CPU seconds). It is
 excluded from the idle comparison. Local raw recordings, task-event decodes,
 resource endpoints, capture/analysis scripts, and summaries are retained in
 `artifacts/navigation-wakeups-2026-11-15/` (ignored).
+
+
+## GIF playback idle checks — 2026-11-15
+
+GIF playback has a subscription only while explicitly playing, with one wake
+scheduled for the next frame boundary or stop deadline. Opened and unopened
+still GIFs, stopped/completed playback, and a closed viewer have no animation
+subscription. Losing window focus stops playback and cancels that subscription.
+Frame ticks do not alter SDK media demand. Automated tests check subscription
+presence/absence and wall-time deadlines; these are not measured CPU or scheduler
+results. The historical measurements above predate GIF playback.
+
+For a new comparison, use the demo **Studio → Images** animation fixture and
+measure: unopened preview, open/still, playing, completed, manually stopped,
+closed, and unfocused. Allow unrelated UI redraws to settle before each idle
+sample. Confirm redraws/wakeups return to the initial idle level after stopping;
+record renderer, window visibility, and chosen playback duration with results.
+Live-account measurements require the existing connected-validation precautions.

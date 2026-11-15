@@ -238,7 +238,9 @@ impl App {
                     | Message::RowsVisible { .. }
                     | Message::Close
                     | Message::Stopped(_)
-                    | Message::Image(_)
+                    | Message::Image(
+                        images::Event::Open { .. } | images::Event::Close | images::Event::Retry
+                    )
             );
         match message {
             Message::Image(event) => self.image_event(event),
@@ -259,7 +261,12 @@ impl App {
                     self.visible_rows[usize::from(thread)] = keys;
                 }
             }
-            Message::WindowFocused(focused) => self.window_focused = focused,
+            Message::WindowFocused(focused) => {
+                self.window_focused = focused;
+                if !focused {
+                    self.stop_image_playback();
+                }
+            }
             Message::ThreadVisible {
                 generation,
                 keys,
@@ -877,6 +884,7 @@ impl App {
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
+            self.image_subscription(),
             if self.demo.is_some() {
                 Subscription::run(|| {
                     iced::stream::channel(1, async |_output| {

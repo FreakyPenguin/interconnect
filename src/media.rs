@@ -1,4 +1,4 @@
-//! Account-scoped, viewport-driven image loading. No polling or animation.
+//! Account-scoped, viewport-driven image loading. No polling.
 use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
@@ -27,17 +27,26 @@ const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
 const AVATAR_SIZE: u32 = 64;
 
 pub type Images<K = OwnedMxcUri> = HashMap<K, Handle>;
+pub type Animations<K> = HashMap<K, Result<Arc<Animation>, &'static str>>;
+
+/// Composited frames decoded on a blocking worker. Playback is owned by the UI.
+#[derive(Clone, Debug)]
+pub struct Animation {
+    pub frames: Vec<(Handle, Duration)>,
+}
 
 #[derive(Clone, Debug)]
 pub struct Snapshot<K = OwnedMxcUri> {
     pub ready: Arc<Images<K>>,
     pub failed: Arc<HashSet<K>>,
+    pub animations: Arc<Animations<K>>,
 }
 impl<K> Default for Snapshot<K> {
     fn default() -> Self {
         Self {
             ready: Arc::default(),
             failed: Arc::default(),
+            animations: Arc::default(),
         }
     }
 }
@@ -77,6 +86,7 @@ impl<K> Default for Demand<K> {
 
 pub(crate) struct Decoded {
     handle: Handle,
+    animation: Option<Result<Arc<Animation>, &'static str>>,
     pub(crate) bytes: usize,
 }
 struct Entry {
@@ -173,7 +183,7 @@ pub(crate) fn decode_with(bytes: Vec<u8>, limits: DecodeLimits) -> anyhow::Resul
     let image = if limits.crop {
         image.resize_to_fill(width, height, image::imageops::FilterType::Triangle)
     } else {
-        image.thumbnail(width, height)
+        image.thumbnail(width.min(image.width()), height.min(image.height()))
     }
     .into_rgba8();
     let (width, height) = image.dimensions();
@@ -182,7 +192,92 @@ pub(crate) fn decode_with(bytes: Vec<u8>, limits: DecodeLimits) -> anyhow::Resul
     Ok(Decoded {
         handle: Handle::from_rgba(width, height, bytes),
         bytes: cost,
+        animation: None,
     })
+}
+
+/// Decode animation only for originals explicitly opened by the user. Keep a
+/// static fallback if a later frame is malformed or exceeds the playback limits.
+pub(crate) fn decode_gif(bytes: Vec<u8>, limits: DecodeLimits) -> anyhow::Result<Decoded> {
+    use image::{AnimationDecoder, ImageDecoder};
+    ensure!(bytes.len() <= limits.encoded, "Image response is too large");
+    let mut decoded = decode_with(bytes.clone(), limits)?;
+    let animation = (|| -> anyhow::Result<Option<Arc<Animation>>> {
+        let mut decoder = image::codecs::gif::GifDecoder::new(Cursor::new(bytes))?;
+        let mut limits = image::Limits::default();
+        limits.max_image_width = Some(4096);
+        limits.max_image_height = Some(4096);
+        limits.max_alloc = Some(128 * 1024 * 1024);
+        decoder.set_limits(limits)?;
+        let (width, height) = decoder.dimensions();
+        let source_pixels = u64::from(width) * u64::from(height);
+        let mut frames: Vec<(Handle, Duration)> = Vec::new();
+        let mut target = 512;
+        let mut cost = 0;
+        let mut iterator = decoder.into_frames();
+        loop {
+            // Bound total decoding work as well as retained pixels. Probe only
+            // one extra frame at the boundary to distinguish EOF from overflow.
+            let Some(frame) = iterator.next() else { break };
+            ensure!(frames.len() < 512, "Too many GIF frames");
+            ensure!(
+                source_pixels * (frames.len() as u64 + 1) <= 128 * 1024 * 1024,
+                "GIF decode work limit exceeded"
+            );
+            let frame = frame?;
+            let (numerator, denominator) = frame.delay().numer_denom_ms();
+            let delay =
+                Duration::from_secs_f64(f64::from(numerator) / f64::from(denominator) / 1000.0)
+                    .max(Duration::from_millis(20));
+            let image = image::DynamicImage::ImageRgba8(frame.into_buffer());
+            let mut image = image.thumbnail(target.min(image.width()), target.min(image.height()));
+            // Reduce resolution uniformly instead of rejecting ordinary longer
+            // GIFs just because they were initially decoded at a larger size.
+            while cost + image.as_bytes().len() > 64 * 1024 * 1024 {
+                target /= 2;
+                ensure!(target >= 128, "GIF frame memory limit exceeded");
+                cost = 0;
+                for (handle, _) in &mut frames {
+                    let Handle::Rgba {
+                        width,
+                        height,
+                        pixels,
+                        ..
+                    } = handle
+                    else {
+                        unreachable!("decoded RGBA")
+                    };
+                    let pixels = image::RgbaImage::from_raw(*width, *height, pixels.to_vec())
+                        .expect("decoded dimensions");
+                    let resized = image::DynamicImage::ImageRgba8(pixels)
+                        .thumbnail(target.min(*width), target.min(*height))
+                        .into_rgba8();
+                    let (width, height) = resized.dimensions();
+                    let pixels = resized.into_raw();
+                    cost += pixels.len();
+                    *handle = Handle::from_rgba(width, height, pixels);
+                }
+                image = image.thumbnail(target.min(image.width()), target.min(image.height()));
+            }
+            let image = image.into_rgba8();
+            let (width, height) = image.dimensions();
+            let pixels = image.into_raw();
+            cost += pixels.len();
+            frames.push((Handle::from_rgba(width, height, pixels), delay));
+        }
+        if frames.len() < 2 {
+            return Ok(None);
+        }
+        decoded.bytes += cost;
+        Ok(Some(Arc::new(Animation { frames })))
+    })();
+    decoded.animation = match animation {
+        Ok(animation) => animation.map(Ok),
+        Err(_) => Some(Err(
+            "Animation unavailable: GIF is damaged or exceeds playback limits.",
+        )),
+    };
+    Ok(decoded)
 }
 
 async fn load<K: ImageRequest>(
@@ -297,6 +392,18 @@ pub(crate) async fn run_requests<K: ImageRequest>(
                 .map(|(key, entry)| (key.clone(), entry.image.handle.clone()))
                 .collect();
         }
+        let animations = cache
+            .entries
+            .iter()
+            .filter(|(key, _)| images.contains_key(*key))
+            .filter_map(|(key, entry)| {
+                entry
+                    .image
+                    .animation
+                    .clone()
+                    .map(|value| (key.clone(), value))
+            })
+            .collect();
         output.send_if_modified(|old| {
             if old.ready.len() == images.len()
                 && images.iter().all(|(uri, handle)| {
@@ -311,6 +418,7 @@ pub(crate) async fn run_requests<K: ImageRequest>(
                 *old = Snapshot {
                     ready: Arc::new(images),
                     failed: Arc::new(failed.clone()),
+                    animations: Arc::new(animations),
                 };
                 true
             }
@@ -393,6 +501,96 @@ mod tests {
         .get(key)
         .unwrap()
         .clone()
+    }
+
+    fn gif(count: usize) -> Vec<u8> {
+        gif_size(count, 2)
+    }
+    fn gif_size(count: usize, size: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        {
+            let mut encoder = image::codecs::gif::GifEncoder::new(&mut bytes);
+            encoder
+                .set_repeat(image::codecs::gif::Repeat::Infinite)
+                .unwrap();
+            for i in 0..count {
+                let pixels =
+                    image::RgbaImage::from_pixel(size, size, image::Rgba([i as u8, 80, 160, 255]));
+                encoder
+                    .encode_frame(image::Frame::from_parts(
+                        pixels,
+                        0,
+                        0,
+                        image::Delay::from_numer_denom_ms(if i == 0 { 0 } else { 70 }, 1),
+                    ))
+                    .unwrap();
+            }
+        }
+        bytes
+    }
+    fn gif_limits() -> DecodeLimits {
+        DecodeLimits {
+            encoded: 1024 * 1024,
+            dimension: 4096,
+            allocation: 128 * 1024 * 1024,
+            target: (2048, 2048),
+            crop: false,
+        }
+    }
+    #[test]
+    fn gif_frames_preserve_pixels_and_delay_and_count_toward_lru_budget() {
+        let decoded = decode_gif(gif(3), gif_limits()).unwrap();
+        let frames = &decoded.animation.as_ref().unwrap().as_ref().unwrap().frames;
+        assert_eq!(frames.len(), 3);
+        assert_eq!(frames[0].1, Duration::from_millis(20));
+        assert_eq!(frames[1].1, Duration::from_millis(70));
+        let Handle::Rgba { pixels, .. } = &frames[2].0 else {
+            panic!("decoded RGBA")
+        };
+        assert_eq!(&pixels[..4], &[2, 80, 160, 255]);
+        assert_eq!(decoded.bytes, 4 * 2 * 2 * 4); // Still plus three frames.
+        let mut cache = Cache::new(decoded.bytes);
+        cache.insert(uri("animated"), decoded);
+        cache.insert(
+            uri("replacement"),
+            decode_gif(gif(3), gif_limits()).unwrap(),
+        );
+        assert!(cache.get(&uri("animated")).is_none());
+        assert!(cache.get(&uri("replacement")).is_some());
+    }
+    #[test]
+    fn longer_gifs_shrink_all_frames_to_stay_within_the_pixel_budget() {
+        let decoded = decode_gif(gif_size(65, 512), gif_limits()).unwrap();
+        let animation = decoded.animation.unwrap().unwrap();
+        assert_eq!(animation.frames.len(), 65);
+        for (frame, _) in &animation.frames {
+            assert!(matches!(
+                frame,
+                Handle::Rgba {
+                    width: 256,
+                    height: 256,
+                    ..
+                }
+            ));
+        }
+        assert_eq!(decoded.bytes, 512 * 512 * 4 + 65 * 256 * 256 * 4);
+    }
+    #[test]
+    fn excessive_or_broken_gif_animation_keeps_a_static_fallback() {
+        let decoded = decode_gif(gif(513), gif_limits()).unwrap();
+        assert!(decoded.animation.unwrap().is_err());
+        assert_eq!(decoded.bytes, 16);
+        let mut truncated = gif(3);
+        truncated.truncate(truncated.len() - 10);
+        let decoded = decode_gif(truncated, gif_limits()).unwrap();
+        assert!(decoded.animation.unwrap().is_err());
+        assert_eq!(decoded.bytes, 16);
+        assert!(
+            decode_gif(gif(1), gif_limits())
+                .unwrap()
+                .animation
+                .is_none()
+        );
     }
 
     #[test]

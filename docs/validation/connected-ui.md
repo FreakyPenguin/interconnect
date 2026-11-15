@@ -144,6 +144,52 @@ adapter, open/close images repeatedly, scroll rooms/threads, select/copy text,
 resize, hide/unhide, and suspend/resume. Compare settled idle CPU/wakeups and
 active image/scroll behavior using [idle validation](idle-resources.md).
 
+## Click-to-play GIFs — 2026-11-15
+
+GIF previews and avatars stay static. Opening a GIF loads a still original;
+**Play GIF** or clicking the displayed image starts playback. **Stop** or clicking
+the image freezes it. **Settings → GIF playback** offers **Once** (the default,
+one loop) or **For a duration** (1–300 whole seconds, default 5). Timed playback
+repeats independently of the file's embedded loop count. Replay starts at frame
+zero; closing, redaction/source replacement, shutdown, or loss of window focus
+cancels playback. Reopening and regaining focus never resume automatically.
+
+Composited GIF frames, transparency, and disposal are handled by the existing
+`image` GIF decoder on the bounded blocking load workers, after the SDK decrypts
+the original. Frames start within 512×512 and shrink uniformly to fit the pixel budget
+(at most two reductions, to a 128px bounding box). Playback limits are 512 frames,
+64 MiB retained animation pixels, and 128 Mi source canvas pixels processed
+(with at most one extra frame decoded to detect the boundary). Frame delays
+have a 20 ms floor. Malformed or excessive animations retain the decoded still
+with a visible playback-unavailable explanation. The 96 MiB attachment LRU
+accounts for the still image and all retained animation frames. Decoder working
+memory, SDK download buffers, renderer copies, and old snapshots are additional.
+
+The UI subscribes only to the next frame boundary or playback deadline while
+playing; there is no idle animation polling. Late ticks skip expired frames
+using wall time and never extend the configured duration. Per-play tokens reject
+stale ticks after replay or reopening. Frame changes do not refresh SDK media
+demand or disturb conversation drafts and scroll positions.
+
+Automated coverage includes GIF pixels/delays, static previews, frame-limit and
+truncated-file fallback, LRU pixel accounting, plain/encrypted mock-server loads
+and offline reopening, precise one-loop/timed boundaries, an actual subscription
+tick, explicit playback, stale ticks, focus/close/redaction cancellation, and
+settings validation/persistence. See the demo fixture instructions in
+[design preview](design-preview.md). Validation passed: 52 library tests and 68
+GUI tests, workspace Clippy with warnings denied, formatting, and the GUI build.
+The existing 100-cycle SDK stress test remains explicitly ignored. Desktop visual
+checks, live homeserver GIF playback, extended resource measurements, and macOS
+behavior have not been validated.
+
+For a dedicated connected profile, inspect existing plain and encrypted GIFs
+without sending test messages. Check room previews and the pinned thread
+original stay still, then open/play/stop/replay them with both settings. Close,
+unfocus, and redact an opened GIF from another client; compare idle CPU/redraws
+before and after playback using [idle validation](idle-resources.md). Include a
+large or damaged GIF to check the static fallback. Do not restart the user's
+connected client without authorization.
+
 ## Image messages — 2026-11-15
 
 ### Image-viewer responsiveness correction
@@ -199,13 +245,14 @@ Redaction, source replacement, removal of the conversation, and session shutdown
 close an obsolete viewer. SDK caption updates refresh its title.
 
 Avatars and attachments share four load/decode permits. Attachments have a
-separate 32 MiB decoded-pixel LRU; viewport demand is capped at 16 previews plus
+separate 96 MiB decoded-pixel LRU; viewport demand is capped at 16 previews plus
 one opened original. Preview input is limited to 2 MiB and resized within
 512×384; originals accept up to 20 MiB and are displayed within 2048×2048.
 Both reject dimensions over 4096px and use a 128 MiB decoder allocation limit.
 The SDK buffers and decrypts downloads before these application checks; decoder
 working memory, renderer copies, and old snapshots are outside the retained
-pixel budget. Images use the existing PNG/JPEG/WebP/GIF codecs without animation.
+pixel budget. PNG/JPEG/WebP stay static; GIF originals support explicit playback
+as described above.
 SDK disk retention and encryption settings remain as described below. No cache
 file migration or account/key clearing is performed.
 

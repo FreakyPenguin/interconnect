@@ -17,3 +17,10 @@ gpu_enabled = true
 # Prefer a lower-power GPU when available; false prefers higher performance.
 # An explicit WGPU_POWER_PREF environment value takes priority.
 low_power = true
+
+[media]
+# GIFs stay still until Play is clicked in the image viewer.
+# "once": one loop. "duration": repeat for gif_seconds, ignoring file loop counts.
+gif_playback = "once"
+# Whole seconds, from 1 to 300. Used only with "duration".
+gif_seconds = 5

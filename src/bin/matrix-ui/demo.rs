@@ -172,9 +172,14 @@ pub fn attachment(missing: bool) -> chatclient::image_media::Attachment {
     );
     chatclient::image_media::Attachment::new(&source, None)
 }
+pub fn gif_attachment() -> chatclient::image_media::Attachment {
+    let source =
+        matrix_sdk::ruma::events::room::MediaSource::Plain("mxc://demo.invalid/gif".into());
+    chatclient::image_media::Attachment::new(&source, None)
+}
 pub fn images() -> chatclient::media::Snapshot<chatclient::image_media::Key> {
     // A deterministic pixel fixture, generated once at demo startup. No files,
-    // decoding, account access, downloads, or animation are involved.
+    // decoding, account access, or downloads are involved.
     let pixels: Vec<u8> = (0..180)
         .flat_map(|y| {
             (0..320).flat_map(move |x| {
@@ -189,14 +194,43 @@ pub fn images() -> chatclient::media::Snapshot<chatclient::image_media::Key> {
     let handle = iced::widget::image::Handle::from_rgba(320, 180, pixels);
     let sample = attachment(false);
     let missing = attachment(true);
+    let gif = gif_attachment();
+    let animation = std::sync::Arc::new(chatclient::media::Animation {
+        frames: (0..8)
+            .map(|frame| {
+                let pixels = (0..180)
+                    .flat_map(|y| {
+                        (0..320).flat_map(move |x| {
+                            if (x / 40 + y / 30 + frame) % 8 == 0 {
+                                [80, 130, 180, 255]
+                            } else {
+                                [226, 235, 242, 255]
+                            }
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                (
+                    iced::widget::image::Handle::from_rgba(320, 180, pixels),
+                    std::time::Duration::from_millis(150),
+                )
+            })
+            .collect(),
+    });
+    let first = animation.frames[0].0.clone();
     chatclient::media::Snapshot {
         ready: [
             (sample.preview.unwrap(), handle.clone()),
             (sample.original, handle),
+            (gif.preview.unwrap(), first.clone()),
+            (gif.original.clone(), first),
         ]
         .into_iter()
         .collect::<HashMap<_, _>>()
         .into(),
+        animations: [(gif.original, Ok(animation))]
+            .into_iter()
+            .collect::<HashMap<_, _>>()
+            .into(),
         failed: [missing.preview.unwrap(), missing.original]
             .into_iter()
             .collect::<std::collections::HashSet<_>>()
@@ -296,7 +330,10 @@ impl Demo {
                 sample.thread_replies = 2;
                 let mut missing = message("missing-image", "Alex Rivera", "A missing preview keeps its place in the conversation.");
                 missing.image = Some(attachment(true));
-                vec![sample, missing]
+                let mut gif = message("sample-gif", "Jamie Davis", "A click-to-play animation. Open it, then click Play GIF. Change playback in Settings → GIF playback.");
+                gif.image = Some(gif_attachment());
+                gif.thread_replies = 2;
+                vec![sample, missing, gif]
             },
             "studio" => vec![
                 message("welcome", "Maya Chen", "Morning! I’ve been thinking about what makes a chat app feel calm. Less chrome, a little more space, and a clear place for everything."),

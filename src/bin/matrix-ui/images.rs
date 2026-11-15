@@ -1,10 +1,15 @@
 //! Image previews and an on-demand viewer; all loading stays in the backend.
 use super::{App, Message, current_pane, shell};
-use chatclient::{connected::MessageRow, image_media::Key};
+use chatclient::{
+    connected::MessageRow, image_media::Key, media::Animation, settings::GifPlayback,
+};
+use iced::time::Instant;
 use iced::{
-    Element, Length,
+    Element, Length, Subscription,
+    futures::StreamExt,
     widget::{button, column, container, image, mouse_area, opaque, row, text},
 };
+use std::time::Duration;
 
 #[derive(Clone, Debug)]
 pub struct Viewing {
@@ -13,6 +18,51 @@ pub struct Viewing {
     row: String,
     pub original: Key,
     label: String,
+    frame: usize,
+    playback: Option<Playback>,
+}
+#[derive(Clone, Debug)]
+struct Playback {
+    started: Instant,
+    stop: Instant,
+    next: Instant,
+    once: bool,
+}
+impl Playback {
+    fn new(animation: &Animation, mode: GifPlayback, seconds: u16, now: Instant) -> Self {
+        let once = mode == GifPlayback::Once;
+        let duration = if once {
+            animation.frames.iter().map(|(_, delay)| *delay).sum()
+        } else {
+            Duration::from_secs(u64::from(seconds))
+        };
+        Self {
+            started: now,
+            stop: now + duration,
+            next: (now + animation.frames[0].1).min(now + duration),
+            once,
+        }
+    }
+    /// Use wall time so delayed events skip expired frames instead of extending
+    /// playback. Only the next frame boundary (or stop deadline) wakes the UI.
+    fn advance(&mut self, animation: &Animation, now: Instant) -> (usize, bool) {
+        if now >= self.stop && self.once {
+            return (animation.frames.len() - 1, true);
+        }
+        let total: Duration = animation.frames.iter().map(|(_, delay)| *delay).sum();
+        let elapsed = now.min(self.stop).saturating_duration_since(self.started);
+        let position = elapsed.as_nanos() % total.as_nanos();
+        let mut end = Duration::ZERO;
+        for (index, (_, delay)) in animation.frames.iter().enumerate() {
+            end += *delay;
+            if position < end.as_nanos() {
+                let remaining = end - Duration::from_nanos(position as u64);
+                self.next = (now + remaining).min(self.stop);
+                return (index, now >= self.stop);
+            }
+        }
+        unreachable!("positive bounded frame delays")
+    }
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -23,6 +73,9 @@ pub enum Event {
     },
     Close,
     Retry,
+    Play,
+    Stop,
+    Tick(Instant),
     Ignore,
 }
 impl App {
@@ -72,13 +125,67 @@ impl App {
                         row,
                         original: image.original.clone(),
                         label: message.body.clone(),
+                        frame: 0,
+                        playback: None,
                     });
+                }
+            }
+            Event::Play if !self.closing && !self.stopped && self.settings.draft.is_none() => {
+                if let Some(view) = &mut self.image_view
+                    && let Some(Ok(animation)) = self.model.images.animations.get(&view.original)
+                {
+                    view.frame = 0;
+                    view.playback = Some(Playback::new(
+                        animation,
+                        self.settings.current.media.gif_playback,
+                        self.settings.current.media.gif_seconds,
+                        Instant::now(),
+                    ));
+                }
+            }
+            Event::Stop => self.stop_image_playback(),
+            Event::Tick(started) => {
+                if let Some(view) = &mut self.image_view
+                    && let Some(playback) = &mut view.playback
+                    && playback.started == started
+                {
+                    if let Some(Ok(animation)) = self.model.images.animations.get(&view.original) {
+                        let (frame, finished) = playback.advance(animation, Instant::now());
+                        view.frame = frame;
+                        if finished {
+                            view.playback = None;
+                        }
+                    } else {
+                        view.playback = None;
+                    }
                 }
             }
             Event::Close => self.image_view = None,
             Event::Retry if self.image_view.is_some() => self.selection.image_retry += 1,
             _ => {}
         }
+    }
+    pub(super) fn stop_image_playback(&mut self) {
+        if let Some(view) = &mut self.image_view {
+            view.playback = None;
+        }
+    }
+    pub(super) fn image_subscription(&self) -> Subscription<Message> {
+        let Some(playback) = self
+            .image_view
+            .as_ref()
+            .and_then(|view| view.playback.as_ref())
+        else {
+            return Subscription::none();
+        };
+        Subscription::run_with((playback.started, playback.next), |(started, next)| {
+            let (started, next) = (*started, *next);
+            iced::futures::stream::once(async move {
+                tokio::time::sleep_until(next.into()).await;
+                Message::Image(Event::Tick(started))
+            })
+            .chain(iced::futures::stream::pending())
+        })
     }
     pub(super) fn validate_image_view(&mut self) {
         let label = self.image_view.as_ref().and_then(|view| {
@@ -157,14 +264,31 @@ impl App {
         iced::widget::responsive(move |size| {
             let view = self.image_view.as_ref().expect("open viewer");
             let width = (size.width - 48.0).clamp(1.0, 1000.0);
-            let height = (size.height - 144.0).clamp(1.0, 800.0);
+            let animation = self.model.images.animations.get(&view.original);
+            let height =
+                (size.height - if animation.is_some() { 196.0 } else { 144.0 }).clamp(1.0, 800.0);
             let content: Element<'_, Message> =
                 if let Some(handle) = self.model.images.ready.get(&view.original) {
-                    image(handle.clone())
+                    let handle = animation
+                        .and_then(|animation| animation.as_ref().ok())
+                        .and_then(|animation| animation.frames.get(view.frame))
+                        .map(|(frame, _)| frame)
+                        .unwrap_or(handle);
+                    let image = image(handle.clone())
                         .width(Length::Fill)
                         .height(height)
-                        .content_fit(iced::ContentFit::Contain)
-                        .into()
+                        .content_fit(iced::ContentFit::Contain);
+                    if matches!(animation, Some(Ok(_))) {
+                        mouse_area(image)
+                            .on_press(Message::Image(if view.playback.is_some() {
+                                Event::Stop
+                            } else {
+                                Event::Play
+                            }))
+                            .into()
+                    } else {
+                        image.into()
+                    }
                 } else if self.model.media_error.is_some() {
                     container(text("Image loading is unavailable").size(14))
                         .center_x(Length::Fill)
@@ -200,7 +324,34 @@ impl App {
                 .id("image-viewer-close")
             ]
             .spacing(12);
-            let card = container(column![header, content].spacing(12))
+            let mut body = column![header, content].spacing(12);
+            if let Some(animation) = animation {
+                body = body.push(match animation {
+                    Ok(_) => {
+                        let playing = view.playback.is_some();
+                        row![
+                            button(if playing { "Stop" } else { "Play GIF" }).on_press(
+                                Message::Image(if playing { Event::Stop } else { Event::Play })
+                            ),
+                            text(match self.settings.current.media.gif_playback {
+                                GifPlayback::Once =>
+                                    "One loop · click image to play or stop".to_owned(),
+                                GifPlayback::Duration => format!(
+                                    "{} seconds · click image to play or stop",
+                                    self.settings.current.media.gif_seconds
+                                ),
+                            })
+                            .size(12)
+                            .color(shell::MUTED)
+                        ]
+                        .spacing(12)
+                        .align_y(iced::Alignment::Center)
+                        .into()
+                    }
+                    Err(error) => Element::from(text(*error).size(12).color(shell::MUTED)),
+                });
+            }
+            let card = container(body)
                 .padding(16)
                 .width(width)
                 .style(|_| container::Style {
@@ -239,6 +390,174 @@ mod tests {
             generation,
             row: "sample-image".into(),
         }));
+    }
+
+    fn open_gif(app: &mut App) {
+        let _ = app.update(Message::Image(Event::Open {
+            thread: false,
+            generation: app.selection.room.as_ref().unwrap().0,
+            row: "sample-gif".into(),
+        }));
+    }
+    #[test]
+    fn playback_honors_frame_delays_single_loop_and_precise_duration_deadlines() {
+        let images = super::super::demo::images();
+        let animation = images.animations.values().next().unwrap().as_ref().unwrap();
+        let now = Instant::now();
+        let mut once = Playback::new(animation, GifPlayback::Once, 5, now);
+        assert_eq!(once.advance(animation, now), (0, false));
+        assert_eq!(
+            once.advance(animation, now + Duration::from_millis(150)),
+            (1, false)
+        );
+        assert_eq!(once.next, now + Duration::from_millis(300));
+        assert_eq!(
+            once.advance(animation, now + Duration::from_millis(1199)),
+            (7, false)
+        );
+        assert_eq!(
+            once.advance(animation, now + Duration::from_millis(1200)),
+            (7, true)
+        );
+        let mut timed = Playback::new(animation, GifPlayback::Duration, 2, now);
+        assert_eq!(
+            timed.advance(animation, now + Duration::from_millis(1450)),
+            (1, false)
+        );
+        assert_eq!(timed.next, now + Duration::from_millis(1500));
+        assert_eq!(
+            timed.advance(animation, now + Duration::from_millis(1950)),
+            (5, false)
+        );
+        assert_eq!(timed.next, now + Duration::from_secs(2));
+        assert_eq!(
+            timed.advance(animation, now + Duration::from_secs(9)),
+            (5, true)
+        );
+    }
+    #[tokio::test]
+    async fn gifs_require_play_and_cancel_timers_on_stop_close_focus_loss_and_replacement() {
+        let mut app = sample();
+        open_gif(&mut app);
+        assert_eq!(app.image_subscription().units(), 0);
+        let _ = app.update(Message::Image(Event::Play));
+        assert_eq!(app.image_subscription().units(), 1);
+        let started = app
+            .image_view
+            .as_ref()
+            .unwrap()
+            .playback
+            .as_ref()
+            .unwrap()
+            .started;
+        let recipe = iced::advanced::subscription::into_recipes(app.image_subscription())
+            .pop()
+            .unwrap();
+        let mut ticks = recipe.stream(Box::pin(iced::futures::stream::pending()));
+        let tick = tokio::time::timeout(Duration::from_secs(2), ticks.next())
+            .await
+            .unwrap()
+            .unwrap();
+        let _ = app.update(tick);
+        assert!(app.image_view.as_ref().unwrap().frame > 0);
+        let _ = app.update(Message::Image(Event::Stop));
+        assert_eq!(app.image_subscription().units(), 0);
+        let _ = app.update(Message::Image(Event::Tick(started)));
+        assert!(app.image_view.as_ref().unwrap().playback.is_none());
+        let _ = app.update(Message::Image(Event::Play));
+        let current = app
+            .image_view
+            .as_ref()
+            .unwrap()
+            .playback
+            .as_ref()
+            .unwrap()
+            .started;
+        let _ = app.update(Message::Image(Event::Tick(started)));
+        assert_eq!(
+            app.image_view
+                .as_ref()
+                .unwrap()
+                .playback
+                .as_ref()
+                .unwrap()
+                .started,
+            current
+        );
+        let _ = app.update(Message::WindowFocused(false));
+        assert_eq!(app.image_subscription().units(), 0);
+        let _ = app.update(Message::WindowFocused(true));
+        assert_eq!(app.image_subscription().units(), 0);
+        let _ = app.update(Message::Image(Event::Play));
+        let _ = app.update(Message::Escape);
+        assert_eq!(app.image_subscription().units(), 0);
+        open_gif(&mut app);
+        assert_eq!(app.image_view.as_ref().unwrap().frame, 0);
+        assert_eq!(app.image_subscription().units(), 0);
+        let _ = app.update(Message::Image(Event::Play));
+        let mut model = app.model.clone();
+        Arc::make_mut(&mut model.room.as_mut().unwrap().rows)
+            .iter_mut()
+            .find(|row| row.key == "sample-gif")
+            .unwrap()
+            .image = None;
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.image_view.is_none());
+        assert_eq!(app.image_subscription().units(), 0);
+    }
+
+    #[test]
+    fn completion_removes_subscription_and_image_clicks_toggle_playback_at_minimum_size() {
+        use iced::advanced::{Shell, mouse};
+        let mut app = sample();
+        open_gif(&mut app);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut tree = Tree::empty();
+        let size = iced::Size::new(640.0, 480.0);
+        for playing in [false, true] {
+            assert_eq!(app.image_subscription().units(), usize::from(playing));
+            let mut messages = Vec::new();
+            {
+                let mut view = app.image_viewer();
+                tree.diff(view.as_widget());
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                assert_eq!(node.size(), size);
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Available(iced::Point::new(320.0, 240.0)),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                    &iced::Rectangle::with_size(size),
+                );
+            }
+            assert_eq!(messages.len(), 1);
+            assert!(
+                matches!(&messages[0], Message::Image(Event::Stop) if playing)
+                    || matches!(&messages[0], Message::Image(Event::Play) if !playing)
+            );
+            let _ = app.update(messages.remove(0));
+        }
+        assert_eq!(app.image_subscription().units(), 0);
+        for mode in [GifPlayback::Once, GifPlayback::Duration] {
+            app.settings.current.media.gif_playback = mode;
+            app.settings.current.media.gif_seconds = 1;
+            let _ = app.update(Message::Image(Event::Play));
+            let view = app.image_view.as_mut().unwrap();
+            let animation = app.model.images.animations[&view.original]
+                .as_ref()
+                .unwrap();
+            let started = Instant::now() - Duration::from_secs(3);
+            view.playback = Some(Playback::new(animation, mode, 1, started));
+            let _ = app.update(Message::Image(Event::Tick(started)));
+            assert_eq!(app.image_subscription().units(), 0);
+        }
     }
 
     #[test]

@@ -19,13 +19,23 @@ uses the same shell, timeline presentation, and composers as the connected app.
 Running without `--demo` still restores the real saved session and sends real
 messages; see [connected UI validation](connected-ui.md).
 
-**Studio → Images** contains a ready preview and a failed-preview example. Open
+**Studio → Images** contains a ready preview, a failed-preview example, and a
+click-to-play animation fixture. Open
 each image, close it with Escape or **Close**, and check the viewer at narrow
 window sizes. Open the first image's thread and use the pinned original's
 **Open image** action. Compare the fixed preview space in ready, loading, and
 failed states; drafts and reading positions should survive opening and closing
 the viewer. The ready image is a deterministic pixel fixture generated once at
 startup; no image files, SDK clients, saved profiles, or network requests are used.
+The animation fixture also uses generated in-memory frames. Open it and confirm
+it stays still until **Play GIF** or an image click. Check **Stop**, replay from
+the beginning, and automatic stopping after one loop. Close the viewer, choose
+**Settings → GIF playback → For a duration**, enter a duration, and save. Reopen
+the fixture and verify it loops for the chosen time only after Play. Escape,
+Close, and switching window focus stop playback; reopening/regaining focus must
+stay still. Repeat in its thread, at 640×480, and with both renderers. Settings
+remain in memory in demo mode. The fixture tests playback/UI behavior; decoder
+and encrypted download coverage uses generated GIFs in automated tests.
 
 The default launch tries wgpu with a low-power adapter preference and software
 fallback. Repeat the image/scroll/selection checks with
