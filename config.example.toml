@@ -9,3 +9,11 @@ show_room_list = true
 # "ctrl_enter": Enter inserts a newline; Ctrl+Enter sends.
 # "enter": Enter sends; Shift+Enter inserts a newline. Ctrl+Enter also sends.
 send_shortcut = "ctrl_enter"
+
+[graphics]
+# Both settings apply on the next launch.
+# false forces the CPU renderer, including when ICED_BACKEND requests wgpu.
+gpu_enabled = true
+# Prefer a lower-power GPU when available; false prefers higher performance.
+# An explicit WGPU_POWER_PREF environment value takes priority.
+low_power = true

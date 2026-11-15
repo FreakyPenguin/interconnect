@@ -31,11 +31,14 @@ use the same visual shell with the saved Matrix session.
 
 ## Renderer selection
 
-`matrix-ui` builds both Iced renderers. Startup tries **wgpu** first and falls
-back to **tiny-skia** if wgpu initialization fails. The application defaults
-`WGPU_POWER_PREF` to `low`, preferring an integrated/low-power adapter when one
-is available. An explicit environment value (`low`, `high`, or `none`) wins.
-This preference does not guarantee a particular device or lower power use.
+`matrix-ui` builds both Iced renderers. **Settings → Graphics** controls the
+renderer on the next launch: **Use GPU rendering** defaults on and tries
+**wgpu** first with **tiny-skia** startup fallback. Turning it off forces the CPU
+renderer even when `ICED_BACKEND` requests wgpu. **Prefer a low-power GPU** defaults
+on, supplying `WGPU_POWER_PREF=low`; off supplies `high`. An explicit power
+preference environment value (`low`, `high`, or `none`) wins. These preferences
+do not guarantee a particular device or lower power use. See
+[application settings](settings.md) for TOML keys, persistence, and restart status.
 
 To compare the renderers with isolated sample data:
 
@@ -47,8 +50,11 @@ ICED_BACKEND=tiny-skia cargo run --locked --bin matrix-ui -- --demo
 ICED_BACKEND=wgpu cargo run --locked --bin matrix-ui -- --demo
 ```
 
-Unset `ICED_BACKEND` for the normal wgpu-first/software-fallback behavior, or
-set it to `wgpu,tiny-skia` explicitly. This is a startup choice; device loss
+With GPU rendering enabled, unset `ICED_BACKEND` for the normal wgpu-first/
+software-fallback behavior, or set it to `wgpu,tiny-skia` explicitly. Saved GPU
+opt-out always takes priority. Demo launches use default graphics settings and
+ignore config files, so environment overrides remain useful for isolated
+comparisons. This is a startup choice; device loss
 after initialization does not dynamically switch the running renderer.
 `WGPU_BACKEND=vulkan` selects a graphics API within wgpu, rather than selecting
 Iced's software renderer.
@@ -62,10 +68,13 @@ Normal rendering remains event-driven; enabling wgpu adds no application frame
 timer. Native-host checks are required to compare GPU memory, battery use,
 hidden-window behavior, and suspend/resume.
 
-The low-power default is set by a one-time Unix re-exec before Tokio/Iced starts,
-preserving PID, working directory, arguments, and inherited environment. This
+Graphics values are read from the selected settings file before the window
+and runtime exist. Invalid files use defaults and show a Settings error, retaining
+the save lockout until repaired. Renderer environment is applied by a Unix
+re-exec when needed before Tokio/Iced starts, preserving PID, working directory,
+arguments, and inherited environment. This
 avoids changing process environment variables while threads may read them.
-The same default applies to direct `target/debug/matrix-ui` launches.
+The same settings apply to direct `target/debug/matrix-ui` launches.
 
 ## Settings
 

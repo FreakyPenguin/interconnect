@@ -41,12 +41,26 @@ show_room_list = true
 
 [composer]
 send_shortcut = "ctrl_enter"
+
+[graphics]
+gpu_enabled = true
+low_power = true
 ```
 
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `navigation.show_room_list` | `true` | Initial room-list visibility on the next launch. The existing button still toggles it during use. |
 | `composer.send_shortcut` | `"ctrl_enter"` | Enter inserts a newline; Ctrl+Enter sends in room and thread composers. Set `"enter"` to send with Enter and use Shift+Enter for a newline. Ctrl+Enter still sends. IME composition suppresses sending. |
+| `graphics.gpu_enabled` | `true` | **Use GPU rendering**. On the next launch, try wgpu with software fallback. Set to `false` to force the CPU renderer, including when `ICED_BACKEND` requests wgpu. |
+| `graphics.low_power` | `true` | **Prefer a low-power GPU**. On the next launch, prefer a lower-power adapter when GPU rendering is enabled; `false` prefers higher performance. An explicit `WGPU_POWER_PREF` environment value takes priority. |
+
+Graphics controls are in **Settings → Graphics** and require restarting the
+application after saving. The low-power checkbox is disabled while GPU rendering
+is off, retaining its saved value for later. It selects a GPU adapter preference;
+it is not a general CPU power limit and does not guarantee a particular device
+or battery improvement. The Settings button shows **restart required** when saved
+graphics values differ from those loaded at launch. The application does not
+restart automatically. Demo changes remain in memory and disappear on exit.
 
 Omitted values use defaults. Unsupported versions, invalid known values, and
 malformed TOML produce a visible error; the last working settings remain active
@@ -58,11 +72,15 @@ UTF-8 file of at most 64 KiB; symlinked config files are currently unsupported.
 
 Edit the file in a text editor, then open Settings and choose **Reload file**.
 Reload immediately applies the disk values and replaces the dialog's unsaved
-values; startup visibility still waits for the next launch. Restarting also
+values; startup visibility and graphics choices still wait for the next launch. Restarting also
 loads disk values. Opening the dialog alone does not reread the file.
 
-There is no file watcher or polling timer. Reads and writes run on Tokio blocking
-workers, with one settings operation at a time. Save preserves comments and
+There is no file watcher or polling timer. Initial settings are read before Iced
+and the Tokio runtime start, so renderer configuration is available during
+initialization; this pre-window read has the same file-size/type/schema checks.
+The loaded store/settings are handed to the UI without a second UI-side read.
+Reloads and writes run on Tokio blocking workers, with one settings operation
+at a time. Save preserves comments and
 unknown keys, writes a private temporary file in the same directory, flushes it,
 and atomically replaces the destination. Existing edits detected since the last
 load cause Save to fail with a reload instruction. This is an optimistic check,

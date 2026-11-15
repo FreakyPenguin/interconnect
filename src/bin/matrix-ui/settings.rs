@@ -1,6 +1,6 @@
-//! Settings dialog and asynchronous file tasks. No subscriptions or timers.
+//! Startup settings and asynchronous dialog reload/save tasks. No timers.
 use super::{App, Message, shell};
-use chatclient::settings::{self, SendShortcut, Settings, Store};
+use chatclient::settings::{self, Graphics, SendShortcut, Settings, Store};
 use iced::{
     Element, Length, Task,
     widget::{
@@ -22,6 +22,47 @@ pub struct State {
     initial_load: bool,
     pub navigation_touched: bool,
     close_after_save: bool,
+    launched_graphics: Graphics,
+}
+impl State {
+    pub(super) fn graphics_restart_required(&self) -> bool {
+        self.current.graphics != self.launched_graphics
+    }
+}
+
+/// Read before creating the runtime/window: the renderer needs these settings
+/// before Iced starts. Subsequent reloads and saves stay on blocking workers.
+#[derive(Clone)]
+pub(super) struct Startup {
+    path: Option<PathBuf>,
+    loaded: Option<Result<(Store, Settings), String>>,
+}
+impl Startup {
+    pub(super) fn load(path: Option<PathBuf>, demo: bool) -> Self {
+        if demo {
+            return Self {
+                path: None,
+                loaded: None,
+            };
+        }
+        match path.map(Ok).unwrap_or_else(settings::default_path) {
+            Ok(path) => Self {
+                loaded: Some(Store::load(path.clone()).map_err(|error| format!("{error:#}"))),
+                path: Some(path),
+            },
+            Err(error) => Self {
+                path: None,
+                loaded: Some(Err(format!("{error:#}"))),
+            },
+        }
+    }
+    pub(super) fn graphics(&self) -> Graphics {
+        self.loaded
+            .as_ref()
+            .and_then(|loaded| loaded.as_ref().ok())
+            .map(|(_, settings)| settings.graphics.clone())
+            .unwrap_or_default()
+    }
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -29,6 +70,8 @@ pub enum Event {
     Cancel,
     ShowRoomList(bool),
     SendShortcut(SendShortcut),
+    GpuEnabled(bool),
+    LowPower(bool),
     Defaults,
     Reload,
     Save,
@@ -40,23 +83,16 @@ fn message(event: Event) -> Message {
     Message::Settings(event)
 }
 impl App {
-    pub(super) fn boot(path: Option<PathBuf>) -> (Self, Task<Message>) {
+    pub(super) fn boot(startup: Startup) -> (Self, Task<Message>) {
         let mut app = Self::new();
-        if app.demo.is_some() {
+        let Some(loaded) = startup.loaded else {
             return (app, Task::none());
-        }
+        };
         app.settings.initial_load = true;
-        match path.map(Ok).unwrap_or_else(settings::default_path) {
-            Ok(path) => {
-                app.settings.path = Some(path);
-                let task = app.load_settings();
-                (app, task)
-            }
-            Err(error) => {
-                app.settings.error = Some(format!("{error:#}"));
-                (app, Task::none())
-            }
-        }
+        app.settings.path = startup.path;
+        app.settings.busy = true;
+        let task = app.settings_update(Event::Loaded(0, loaded));
+        (app, task)
     }
     fn load_settings(&mut self) -> Task<Message> {
         if self.settings.busy {
@@ -103,6 +139,18 @@ impl App {
                     draft.composer.send_shortcut = shortcut;
                 }
             }
+            Event::GpuEnabled(enabled) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.graphics.gpu_enabled = enabled;
+                }
+            }
+            Event::LowPower(low_power) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft
+                    && draft.graphics.gpu_enabled
+                {
+                    draft.graphics.low_power = low_power;
+                }
+            }
             Event::Defaults if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     *draft = Settings::default();
@@ -118,6 +166,9 @@ impl App {
                 let initial = std::mem::take(&mut self.settings.initial_load);
                 match result {
                     Ok((store, settings)) => {
+                        if initial {
+                            self.settings.launched_graphics = settings.graphics.clone();
+                        }
                         if initial && !self.settings.navigation_touched {
                             self.shell.navigation = settings.navigation.show_room_list;
                         }
@@ -211,6 +262,14 @@ impl App {
             Some(draft.composer.send_shortcut),
             |shortcut| message(Event::SendShortcut(shortcut)),
         );
+        let mut gpu = checkbox(draft.graphics.gpu_enabled).label("Use GPU rendering");
+        let mut low_power = checkbox(draft.graphics.low_power).label("Prefer a low-power GPU");
+        if available {
+            gpu = gpu.on_toggle(|value| message(Event::GpuEnabled(value)));
+        }
+        if available && draft.graphics.gpu_enabled {
+            low_power = low_power.on_toggle(|value| message(Event::LowPower(value)));
+        }
         let mut reload = button("Reload file").style(shell::quiet_button);
         let mut defaults = button("Use defaults").style(shell::quiet_button);
         let mut cancel = button("Cancel").style(shell::quiet_button);
@@ -246,6 +305,12 @@ impl App {
             text("With Enter to send, use Shift+Enter for a new line. Ctrl+Enter always sends.")
                 .size(12)
                 .color(shell::MUTED),
+            iced::widget::rule::horizontal(1),
+            shell::title("Graphics · restart required", 15),
+            gpu,
+            text("Uses the CPU renderer when disabled. GPU rendering includes a software fallback.").size(12).color(shell::MUTED),
+            low_power,
+            text("Selects a lower-power adapter when GPU rendering is enabled. Changes apply on the next launch.").size(12).color(shell::MUTED),
             iced::widget::rule::horizontal(1),
         ]
         .spacing(16);
@@ -299,6 +364,77 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_reads_graphics_before_boot_and_demo_skips_the_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.toml");
+        std::fs::write(&path, "[graphics]\ngpu_enabled = false\nlow_power = false\n[navigation]\nshow_room_list = false").unwrap();
+        let startup = Startup::load(Some(path.clone()), false);
+        assert!(!startup.graphics().gpu_enabled && !startup.graphics().low_power);
+        let (app, _) = App::boot(startup);
+        assert!(!app.settings.current.graphics.gpu_enabled);
+        assert!(!app.settings.graphics_restart_required());
+        assert!(!app.shell.navigation);
+        assert_eq!(app.settings.path.as_ref(), Some(&path));
+        assert!(app.settings.store.is_some());
+        std::fs::write(&path, "[graphics]\ngpu_enabled = 'broken'").unwrap();
+        let startup = Startup::load(Some(path.clone()), false);
+        assert_eq!(startup.graphics(), Graphics::default());
+        let (app, _) = App::boot(startup);
+        assert!(app.settings.error.is_some());
+        assert!(app.settings.store.is_none());
+        let demo = Startup::load(Some(path), true);
+        assert!(demo.path.is_none() && demo.loaded.is_none());
+        assert_eq!(demo.graphics(), Graphics::default());
+    }
+
+    #[test]
+    fn graphics_edits_cancel_save_and_reload_require_restart_without_changing_session() {
+        let (_directory, mut app) = loaded_app();
+        let selection = app.selection.clone();
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::GpuEnabled(false));
+        let _ = app.settings_update(Event::LowPower(false));
+        assert!(
+            app.settings.draft.as_ref().unwrap().graphics.low_power,
+            "disabled control retains its value"
+        );
+        assert!(!app.settings.graphics_restart_required());
+        let _ = app.settings_update(Event::Cancel);
+        assert_eq!(app.settings.current.graphics, Graphics::default());
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::LowPower(false));
+        let _ = app.settings_update(Event::GpuEnabled(false));
+        let _ = app.settings_update(Event::Save);
+        let request = app.settings.request;
+        let draft = app.settings.draft.clone().unwrap();
+        let _ = app.settings_update(Event::Saved(request, draft, Err("disk full".into())));
+        assert!(!app.settings.graphics_restart_required());
+        let _ = app.settings_update(Event::Save);
+        let request = app.settings.request;
+        let draft = app.settings.draft.clone().unwrap();
+        let mut store = app.settings.store.clone().unwrap();
+        store.save(&draft).unwrap();
+        let _ = app.settings_update(Event::Saved(request, draft.clone(), Ok(store)));
+        assert!(app.settings.graphics_restart_required());
+        assert_eq!(app.settings.current.graphics, draft.graphics);
+        assert_eq!(app.selection, selection);
+        assert!(!app.closing);
+        let startup = Startup::load(app.settings.path.clone(), false);
+        assert_eq!(startup.graphics(), draft.graphics);
+        let (restarted, _) = App::boot(startup);
+        assert!(!restarted.settings.graphics_restart_required());
+        // Reloading the original values clears a pending restart notice.
+        let mut store = app.settings.store.clone().unwrap();
+        store.save(&Settings::default()).unwrap();
+        app.settings.busy = true;
+        let _ = app.settings_update(Event::Loaded(
+            request,
+            Store::load(app.settings.path.clone().unwrap()).map_err(|e| e.to_string()),
+        ));
+        assert!(!app.settings.graphics_restart_required());
+    }
 
     #[test]
     fn cancel_and_save_keep_settings_and_conversation_state_separate() {

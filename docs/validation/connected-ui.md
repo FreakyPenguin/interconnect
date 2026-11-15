@@ -23,12 +23,55 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
+## Graphics settings — 2026-11-15
+
+**Settings → Graphics** now exposes **Use GPU rendering** and **Prefer a low-power
+GPU**, both defaulting to true and applying on the next launch. Disabling GPU
+rendering forces `tiny-skia`, even over an `ICED_BACKEND=wgpu` environment value.
+The low-power control retains its value while disabled with GPU rendering off.
+When GPU rendering is enabled, low-power selects `low` and unchecked selects
+`high`; an explicit `WGPU_POWER_PREF` still takes precedence.
+
+The startup path reads the selected `--config`/default file before Iced and Tokio
+initialize, applies renderer environment via safe re-exec if needed, and hands
+the loaded settings/store to the UI. There is no initial UI-side file read. Demo
+launches skip config access, including with `--config`. Invalid files retain
+defaults, surface a Settings error, and keep Save blocked until repaired and
+reloaded. Existing settings files without graphics keys retain their defaults.
+
+Saving/reloading graphics values marks the Settings button **restart required**
+when they differ from launch values. Cancel or a failed save retains current
+values. Reloading launch values clears the notice. No renderer is replaced and
+no connected session is stopped by a settings edit/save. See
+[settings documentation](../settings.md) for the schema and environment precedence.
+
+Local regression coverage includes typed defaults/invalid values, persistence
+and comment/unknown-key preservation, pre-window startup, error lockout, demo
+isolation, disabled-control behavior, save failure/retry, restart status, and
+unchanged conversation selection. Subprocess tests exercise configured high/
+low preference, explicit power overrides, GPU opt-out over a GPU-only environment,
+and demo isolation through the re-exec path. The existing minimum-window modal
+and timeline scroll-preservation tests include the added controls.
+
+Validation: `cargo fmt --all -- --check`,
+`cargo clippy --locked --workspace --all-targets -- -D warnings`, and
+`cargo test --locked --workspace` passed (48 library and 64 GUI tests; one
+pre-existing library test ignored). `cargo build --locked --bin matrix-ui` also
+passed. No connected account was opened or restarted.
+
+Desktop acceptance remains pending: save both graphics options, confirm the
+restart notice, close/relaunch manually, and compare renderer adapter diagnostics.
+With GPU disabled there should be no wgpu initialization, including with a GPU
+environment override. Re-enable GPU, choose either preference, and check the
+selected hardware adapter on the native host. Power use remains unmeasured.
+
 ## wgpu with software fallback — 2026-11-15
 
 The GUI now enables both Iced renderer features. With no `ICED_BACKEND` override,
 Iced attempts wgpu first and tiny-skia if initialization fails. `matrix-ui`
 defaults to `WGPU_POWER_PREF=low` while preserving explicit `low`, `high`, or
-`none` values. The default is applied by re-executing the Unix process before
+`none` values. Graphics settings above now control these defaults and can force
+software rendering. The environment is applied by re-executing the Unix process before
 starting Tokio/Iced, preserving PID, arguments, working directory, and inherited
 environment without mutating it while other threads run.
 

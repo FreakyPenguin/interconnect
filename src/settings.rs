@@ -1,5 +1,5 @@
 //! Application settings, separate from credentials and per-account navigation.
-//! Call file operations on a blocking worker, never on the UI thread.
+//! Read startup settings before the event loop; reload/save on blocking workers.
 use anyhow::{Context, bail, ensure};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -19,6 +19,7 @@ pub struct Settings {
     pub version: u32,
     pub navigation: Navigation,
     pub composer: Composer,
+    pub graphics: Graphics,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -26,6 +27,21 @@ impl Default for Settings {
             version: 1,
             navigation: Navigation::default(),
             composer: Composer::default(),
+            graphics: Graphics::default(),
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Graphics {
+    pub gpu_enabled: bool,
+    pub low_power: bool,
+}
+impl Default for Graphics {
+    fn default() -> Self {
+        Self {
+            gpu_enabled: true,
+            low_power: true,
         }
     }
 }
@@ -126,6 +142,14 @@ impl Store {
             &mut document["composer"]["send_shortcut"],
             settings.composer.send_shortcut.config_value().into(),
         );
+        replace(
+            &mut document["graphics"]["gpu_enabled"],
+            settings.graphics.gpu_enabled.into(),
+        );
+        replace(
+            &mut document["graphics"]["low_power"],
+            settings.graphics.low_power.into(),
+        );
         let contents = document.to_string();
         ensure!(
             contents.len() as u64 <= MAX_BYTES,
@@ -209,12 +233,18 @@ mod tests {
         let settings = decode("[composer]\nsend_shortcut = 'enter'").unwrap();
         assert_eq!(settings.composer.send_shortcut, SendShortcut::Enter);
         assert!(settings.navigation.show_room_list);
+        assert_eq!(settings.graphics, Graphics::default());
+        let settings = decode("[graphics]\ngpu_enabled = false\nlow_power = false").unwrap();
+        assert!(!settings.graphics.gpu_enabled && !settings.graphics.low_power);
         for invalid in [
             "version = 2",
             "[composer]\nsend_shortcut = 'return'",
             "[navigation]\nshow_room_list = 1",
             "[navigation",
             "composer = false",
+            "[graphics]\ngpu_enabled = 'false'",
+            "[graphics]\nlow_power = 1",
+            "graphics = false",
         ] {
             assert!(decode(invalid).is_err(), "accepted {invalid}");
         }
@@ -229,16 +259,24 @@ mod tests {
         assert!(!path.exists());
         settings.composer.send_shortcut = SendShortcut::Enter;
         settings.navigation.show_room_list = false;
+        settings.graphics.gpu_enabled = false;
+        settings.graphics.low_power = false;
         store.save(&settings).unwrap();
         assert_eq!(Store::load(path.clone()).unwrap().1, settings);
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
-        let source = fs::read_to_string(&path).unwrap().replace(
-            "send_shortcut = \"enter\"",
-            "send_shortcut = 'enter' # my shortcut",
-        );
+        let source = fs::read_to_string(&path)
+            .unwrap()
+            .replace(
+                "send_shortcut = \"enter\"",
+                "send_shortcut = 'enter' # my shortcut",
+            )
+            .replace(
+                "low_power = false",
+                "low_power = false # power choice\nfuture_graphics_option = 'keep'",
+            );
         fs::write(
             &path,
             format!("# my settings\n{source}\n[future]\nvalue = 42\n"),
@@ -246,11 +284,16 @@ mod tests {
         .unwrap();
         let (mut store, mut settings) = Store::load(path.clone()).unwrap();
         settings.composer.send_shortcut = SendShortcut::CtrlEnter;
+        settings.graphics.gpu_enabled = true;
+        settings.graphics.low_power = true;
         store.save(&settings).unwrap();
         let saved = fs::read_to_string(path).unwrap();
         assert!(saved.starts_with("# my settings\n"));
         assert!(saved.contains("# my shortcut"));
+        assert!(saved.contains("# power choice"));
+        assert!(saved.contains("future_graphics_option = 'keep'"));
         assert!(saved.contains("[future]\nvalue = 42"));
+        assert_eq!(decode(&saved).unwrap(), settings);
     }
 
     #[test]

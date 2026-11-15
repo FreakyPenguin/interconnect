@@ -441,10 +441,16 @@ switch a running renderer to software. Keep the existing application-driven
 redraw scheduling and single Tokio runtime.
 
 Iced 0.14 reads GPU power preference only from `WGPU_POWER_PREF` and otherwise
-defaults to high performance. `matrix-ui` supplies `low` when unset via a
-one-time Unix re-exec before initialization. This preserves PID, working
-directory, arguments, and inherited environment and avoids unsafe environment
-mutation in a threaded process. Explicit preferences remain authoritative.
+defaults to high performance. Startup reads the bounded settings file before
+creating Iced/Tokio and hands that same result to the UI. Graphics settings
+default to GPU enabled and low-power preference; disabling GPU forces tiny-skia
+even over `ICED_BACKEND`, while an explicit `WGPU_POWER_PREF` overrides the power
+setting. When unset, the power preference becomes `low` or `high` according to
+the setting. A Unix re-exec applies required environment values before
+initialization, preserving PID, working directory, arguments, and inherited
+environment without unsafe mutation in a threaded process. Demo startup skips
+the file entirely. Reloads/saves remain asynchronous, and graphics edits require
+a manual restart; the UI compares saved values with launch values to show this.
 
 Headless widget tests explicitly instantiate the software variant of the same
 combined renderer; they do not initialize a GPU. Package versions and vendored

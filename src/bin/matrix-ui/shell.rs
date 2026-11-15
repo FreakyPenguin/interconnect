@@ -321,6 +321,8 @@ impl App {
                 button(
                     text(if self.settings.error.is_some() {
                         "Settings · needs attention"
+                    } else if self.demo.is_none() && self.settings.graphics_restart_required() {
+                        "Settings · restart required"
                     } else {
                         "Settings"
                     })

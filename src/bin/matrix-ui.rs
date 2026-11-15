@@ -1771,8 +1771,6 @@ fn profile_argument(arguments: impl Iterator<Item = String>) -> String {
 }
 
 fn main() -> anyhow::Result<()> {
-    configure_graphics_environment()?;
-    chatclient::init_tracing();
     let mut arguments = std::env::args().skip(1);
     let mut config = None;
     while let Some(argument) = arguments.next() {
@@ -1783,8 +1781,14 @@ fn main() -> anyhow::Result<()> {
                 )?));
         }
     }
+    let startup = settings::Startup::load(
+        config,
+        std::env::args().any(|argument| argument == "--demo"),
+    );
+    configure_graphics_environment(&startup.graphics())?;
+    chatclient::init_tracing();
     run_ui(|| {
-        iced::application(move || App::boot(config.clone()), App::update, App::view)
+        iced::application(move || App::boot(startup.clone()), App::update, App::view)
             .title("Matrix")
             .theme(shell::theme())
             .default_font(iced::Font::with_name("Inter"))
@@ -1805,17 +1809,27 @@ fn main() -> anyhow::Result<()> {
 /// Iced 0.14 reads adapter preference from the environment. Re-exec before
 /// starting Tokio/Iced instead of mutating the process environment while other
 /// threads may read it. exec preserves PID, arguments, working directory, and
-/// inherited display/session variables. Explicit user preferences take priority.
-fn configure_graphics_environment() -> anyhow::Result<()> {
+/// inherited display/session variables. GPU opt-out is authoritative; an
+/// explicit power-preference environment value otherwise takes priority.
+fn configure_graphics_environment(graphics: &chatclient::settings::Graphics) -> anyhow::Result<()> {
     use std::os::unix::process::CommandExt;
-    if std::env::var_os("WGPU_POWER_PREF").is_none() {
-        let error = std::process::Command::new(std::env::current_exe()?)
-            .args(std::env::args_os().skip(1))
-            .env("WGPU_POWER_PREF", "low")
-            .exec();
-        return Err(
-            anyhow::Error::new(error).context("Could not configure renderer power preference")
-        );
+    let set_power = std::env::var_os("WGPU_POWER_PREF").is_none();
+    let force_software = !graphics.gpu_enabled
+        && std::env::var_os("ICED_BACKEND").as_deref() != Some(std::ffi::OsStr::new("tiny-skia"));
+    if set_power || force_software {
+        let mut command = std::process::Command::new(std::env::current_exe()?);
+        command.args(std::env::args_os().skip(1));
+        if set_power {
+            command.env(
+                "WGPU_POWER_PREF",
+                if graphics.low_power { "low" } else { "high" },
+            );
+        }
+        if force_software {
+            command.env("ICED_BACKEND", "tiny-skia");
+        }
+        let error = command.exec();
+        return Err(anyhow::Error::new(error).context("Could not configure renderer settings"));
     }
     Ok(())
 }
@@ -1837,15 +1851,24 @@ mod tests {
         if std::env::var_os("CHATCLIENT_TEST_GRAPHICS_CHILD").is_none() {
             return;
         }
-        configure_graphics_environment().unwrap();
+        let startup = settings::Startup::load(
+            std::env::var_os("CHATCLIENT_TEST_GRAPHICS_CONFIG").map(std::path::PathBuf::from),
+            std::env::var_os("CHATCLIENT_TEST_GRAPHICS_DEMO").is_some(),
+        );
+        configure_graphics_environment(&startup.graphics()).unwrap();
         println!(
             "graphics-power-preference={}",
             std::env::var("WGPU_POWER_PREF").unwrap()
+        );
+        println!(
+            "graphics-backend={}",
+            std::env::var("ICED_BACKEND").unwrap_or_else(|_| "default".into())
         );
     }
 
     #[test]
     fn graphics_launch_defaults_to_low_power_and_preserves_overrides() {
+        let directory = tempfile::tempdir().unwrap();
         for (preference, expected) in [
             (None, "low"),
             (Some("high"), "high"),
@@ -1858,6 +1881,11 @@ mod tests {
                     "tests::graphics_environment_child",
                     "--nocapture",
                 ])
+                .env(
+                    "CHATCLIENT_TEST_GRAPHICS_CONFIG",
+                    directory.path().join("missing.toml"),
+                )
+                .env_remove("CHATCLIENT_TEST_GRAPHICS_DEMO")
                 .env("CHATCLIENT_TEST_GRAPHICS_CHILD", "1");
             if let Some(value) = preference {
                 child.env("WGPU_POWER_PREF", value);
@@ -1870,6 +1898,51 @@ mod tests {
                 String::from_utf8(output.stdout)
                     .unwrap()
                     .contains(&format!("graphics-power-preference={expected}"))
+            );
+        }
+    }
+
+    #[test]
+    fn saved_graphics_control_startup_and_gpu_opt_out_overrides_the_environment() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.toml");
+        for (gpu, low_power, demo, expected_backend, expected_power) in [
+            (true, false, false, "wgpu", "high"),
+            (false, true, false, "tiny-skia", "low"),
+            (false, false, false, "tiny-skia", "high"),
+            (false, false, true, "wgpu", "low"),
+        ] {
+            std::fs::write(
+                &path,
+                format!("[graphics]\ngpu_enabled = {gpu}\nlow_power = {low_power}\n"),
+            )
+            .unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "tests::graphics_environment_child",
+                    "--nocapture",
+                ])
+                .env("CHATCLIENT_TEST_GRAPHICS_CHILD", "1")
+                .env("CHATCLIENT_TEST_GRAPHICS_CONFIG", &path)
+                .env("ICED_BACKEND", "wgpu")
+                .env_remove("WGPU_POWER_PREF");
+            if demo {
+                command.env("CHATCLIENT_TEST_GRAPHICS_DEMO", "1");
+            } else {
+                command.env_remove("CHATCLIENT_TEST_GRAPHICS_DEMO");
+            }
+            let output = command.output().unwrap();
+            assert!(output.status.success());
+            let output = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                output.contains(&format!("graphics-power-preference={expected_power}")),
+                "{output}"
+            );
+            assert!(
+                output.contains(&format!("graphics-backend={expected_backend}")),
+                "{output}"
             );
         }
     }
