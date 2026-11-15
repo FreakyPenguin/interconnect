@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 #[path = "matrix-ui/demo.rs"]
 mod demo;
+#[path = "matrix-ui/images.rs"]
+mod images;
 #[path = "matrix-ui/presentation.rs"]
 mod presentation;
 #[path = "matrix-ui/selectable.rs"]
@@ -66,10 +68,12 @@ struct App {
     window_focused: bool,
     thread_scroll_target: Option<(u64, f32)>,
     visible_rows: [Vec<String>; 2],
+    image_view: Option<images::Viewing>,
 }
 #[derive(Clone, Debug)]
 enum Message {
     Settings(settings::Event),
+    Image(images::Event),
     Space(Scope),
     Section(String),
     Search(String),
@@ -155,6 +159,7 @@ impl App {
             window_focused: false,
             thread_scroll_target: None,
             visible_rows: Default::default(),
+            image_view: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -162,6 +167,7 @@ impl App {
             app.model.spaces = demo::spaces().into();
             app.shell.space = Scope::Space("studio-space".into());
             app.model.status = "Design preview · local sample data".into();
+            app.model.images = demo::images();
             let _ = app.update(Message::Room("studio".into()));
         }
         app
@@ -169,13 +175,19 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         chatclient::diagnostics::update();
         if let Message::Settings(event) = message {
+            if self.image_view.is_some() && matches!(event, settings::Event::Open) {
+                return Task::none();
+            }
             return self.settings_update(event);
         }
         if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_settings() {
             return Task::none();
         }
-        if self.settings.draft.is_some() {
+        if self.settings.draft.is_some() || self.image_view.is_some() {
             if matches!(message, Message::Escape) {
+                if self.image_view.is_some() {
+                    return self.update(Message::Image(images::Event::Close));
+                }
                 return self.settings_update(settings::Event::Cancel);
             }
             if matches!(
@@ -199,6 +211,7 @@ impl App {
                     | Message::JumpToNewest { .. }
                     | Message::Scrolled { .. }
                     | Message::ThreadVisible { .. }
+                    | Message::RowsVisible { .. }
             ) {
                 return Task::none();
             }
@@ -216,15 +229,19 @@ impl App {
         );
         let observe_threads =
             navigation || matches!(&message, Message::State(_) | Message::DemoThreadReply);
-        let refresh_avatars = navigation
+        let opening_image = matches!(&message, Message::Image(images::Event::Open { .. }));
+        let closing_image = matches!(&message, Message::Image(images::Event::Close));
+        let refresh_media = navigation
             || matches!(
                 &message,
                 Message::State(_)
                     | Message::RowsVisible { .. }
                     | Message::Close
                     | Message::Stopped(_)
+                    | Message::Image(_)
             );
         match message {
+            Message::Image(event) => self.image_event(event),
             Message::RowsVisible {
                 thread,
                 generation,
@@ -665,8 +682,8 @@ impl App {
                 ..Default::default()
             });
         }
-        if refresh_avatars {
-            self.refresh_avatar_demand();
+        if refresh_media {
+            self.refresh_media_demand();
         }
         if let Some(control) = &self.control {
             // Navigation represents desired state, so superseded selections can be replaced.
@@ -679,13 +696,37 @@ impl App {
                 }
             });
         }
-        self.restore_scroll()
+        let scroll = self.restore_scroll();
+        if opening_image && self.image_view.is_some() {
+            Task::batch([scroll, iced::widget::operation::focus("image-viewer")])
+        } else if closing_image {
+            Task::batch([
+                scroll,
+                iced::widget::operation::focus(if self.selection.thread.is_some() {
+                    "thread-composer"
+                } else {
+                    "room-composer"
+                }),
+            ])
+        } else {
+            scroll
+        }
     }
-    fn refresh_avatar_demand(&mut self) {
+    fn refresh_media_demand(&mut self) {
+        if self.closing || self.stopped {
+            self.image_view = None;
+        }
+        self.validate_image_view();
         self.selection.avatars.clear();
+        self.selection.images.clear();
         if self.demo.is_some() || self.closing || self.stopped {
             return;
         }
+        if let Some(view) = &self.image_view {
+            self.selection.images.push(view.original.clone());
+            return;
+        }
+        let mut previews = 0;
         for (index, (selected, snapshot)) in [
             (&self.selection.room, &self.model.room),
             (&self.selection.thread, &self.model.thread),
@@ -715,6 +756,14 @@ impl App {
                     thread_activity::Row::Event(row) => Some(row),
                     _ => None,
                 });
+                if visible.contains(projected.key().as_str())
+                    && let Some(key) = row.image.as_ref().and_then(|image| image.preview.as_ref())
+                    && previews < chatclient::image_media::MAX_PREVIEWS
+                    && !self.selection.images.contains(key)
+                {
+                    self.selection.images.push(key.clone());
+                    previews += 1;
+                }
                 if (row.kind == RowKind::Activity || !presentation::grouped(previous, row))
                     && visible.contains(projected.key().as_str())
                     && let Some(uri) = row.avatar_url.as_ref()
@@ -895,6 +944,9 @@ impl App {
         if self.settings.draft.is_some() {
             layers = layers.push(self.settings_view());
         }
+        if self.image_view.is_some() {
+            layers = layers.push(self.image_viewer());
+        }
         layers.into()
     }
     fn refresh_demo(&mut self) {
@@ -1066,6 +1118,21 @@ impl App {
             .color(shell::MUTED)
             .into()
         };
+        let original =
+            if let Some(message) = self.thread_original().filter(|row| row.image.is_some()) {
+                let generation = self.selection.thread.as_ref().expect("thread original").0;
+                let mut open = button(text("Open image").size(12)).style(shell::quiet_button);
+                if !self.closing && !self.stopped {
+                    open = open.on_press(Message::Image(images::Event::Open {
+                        thread: true,
+                        generation,
+                        row: message.key.clone(),
+                    }));
+                }
+                column![original, open].spacing(6).into()
+            } else {
+                original
+            };
         column![
             container(
                 container(
@@ -1300,6 +1367,9 @@ impl App {
                 ]
                 .spacing(6)
             };
+            if message.image.is_some() {
+                entry = entry.push(self.image_preview(message, thread, *generation));
+            }
             if !message.send_state.is_empty() && message.send_state != "Sent" {
                 entry = entry.push(text(&message.send_state).size(12));
             }
@@ -1740,6 +1810,7 @@ mod tests {
         app.demo = Some(demo::Demo::default());
         app.model.rooms = demo::rooms().into();
         app.model.spaces = demo::spaces().into();
+        app.model.images = demo::images();
         app.shell.space = Scope::Space("studio-space".into());
         let _ = app.update(Message::Room("studio".into()));
         app

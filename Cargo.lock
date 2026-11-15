@@ -665,6 +665,7 @@ dependencies = [
  "image",
  "matrix-sdk",
  "matrix-sdk-common",
+ "matrix-sdk-crypto",
  "matrix-sdk-ui",
  "rand 0.9.5",
  "secret-service",

@@ -336,7 +336,7 @@ impl App {
             .align_y(Alignment::Center);
             if let Some(error) = &self.model.media_error {
                 footer = footer.push(widget::tooltip(
-                    text("Avatars unavailable").size(11).color(MUTED),
+                    text("Media unavailable").size(11).color(MUTED),
                     text(error).size(12),
                     widget::tooltip::Position::Top,
                 ));

@@ -21,6 +21,8 @@ pub struct Selection {
     pub shutdown: bool,
     pub preferences: Option<crate::navigation_preferences::Preferences>,
     pub avatars: Vec<matrix_sdk::ruma::OwnedMxcUri>,
+    pub images: Vec<crate::image_media::Key>,
+    pub image_retry: u64,
 }
 
 pub use crate::navigation::{RoomEntry, SpaceEntry};
@@ -52,6 +54,7 @@ pub struct MessageRow {
     pub sender: String,
     pub display_name: String,
     pub avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
+    pub image: Option<crate::image_media::Attachment>,
     pub timestamp_ms: Option<i64>,
     pub thread_replies: u32,
     pub thread_root: Option<String>,
@@ -174,6 +177,7 @@ pub struct Model {
     pub saved_navigation: Option<crate::navigation_preferences::Preferences>,
     pub preferences_error: Option<String>,
     pub avatars: Arc<crate::media::Images>,
+    pub images: crate::media::Snapshot<crate::image_media::Key>,
     pub media_error: Option<String>,
     pub room: Option<Pane>,
     pub thread: Option<Pane>,
@@ -189,6 +193,7 @@ impl Default for Model {
             saved_navigation: None,
             preferences_error: None,
             avatars: Arc::default(),
+            images: Default::default(),
             media_error: None,
             room: None,
             thread: None,
@@ -292,10 +297,15 @@ async fn connected(
     state: &watch::Sender<Model>,
 ) -> anyhow::Result<()> {
     let (avatar_requests, requests) = watch::channel(crate::media::Demand::default());
-    let (images, mut avatar_updates) = watch::channel(Arc::default());
-    let media = crate::media::run(client.clone(), requests, images);
-    tokio::pin!(media);
+    let (images, mut avatar_updates) = watch::channel(crate::media::Snapshot::default());
+    let slots = Arc::new(tokio::sync::Semaphore::new(4));
+    let media = crate::media::run_requests(client.clone(), requests, images, slots.clone());
+    let (image_requests, requests) = watch::channel(crate::media::Demand::default());
+    let (images, mut image_updates) = watch::channel(crate::media::Snapshot::default());
+    let attachments = crate::media::run_requests(client.clone(), requests, images, slots);
+    tokio::pin!(media, attachments);
     let mut media_finished = false;
+    let mut images_finished = false;
     let mut retry_epoch = 0;
     let navigation = navigation_updates(client, state);
     tokio::pin!(navigation);
@@ -314,6 +324,10 @@ async fn connected(
             if next.shutdown { break; }
             let demand = crate::media::Demand { uris: next.avatars.clone(), retry_epoch };
             avatar_requests.send_if_modified(|old| {
+                if *old == demand { false } else { *old = demand; true }
+            });
+            let demand = crate::media::Demand { uris: next.images.clone(), retry_epoch: retry_epoch.wrapping_add(next.image_retry) };
+            image_requests.send_if_modified(|old| {
                 if *old == demand { false } else { *old = demand; true }
             });
             let status = connection_status(&sync_states.get(), &room_states.get());
@@ -356,10 +370,22 @@ async fn connected(
                         state.send_modify(|s| s.media_error = Some("Could not initialize the avatar cache.".into()));
                     }
                 }
+                result = &mut attachments, if !images_finished => {
+                    images_finished = true;
+                    if result.is_err() {
+                        state.send_modify(|s| s.media_error = Some("Could not initialize the image cache.".into()));
+                    }
+                }
+                changed = image_updates.changed(), if !images_finished => {
+                    if changed.is_ok() {
+                        let images = image_updates.borrow_and_update().clone();
+                        state.send_modify(|s| s.images = images);
+                    }
+                }
                 changed = avatar_updates.changed(), if !media_finished => {
                     if changed.is_ok() {
                         let images = avatar_updates.borrow_and_update().clone();
-                        state.send_modify(|s| s.avatars = images);
+                        state.send_modify(|s| s.avatars = images.ready);
                     }
                 }
                 changed = selection.changed() => { if changed.is_err() { break; } }
@@ -613,6 +639,7 @@ async fn publish(
                     }
                     _ => None,
                 },
+                image: crate::image_media::Attachment::from_content(content),
                 timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
                 thread_replies: content
                     .thread_summary()
@@ -792,7 +819,7 @@ mod tests {
         let (_, updates) = timeline.subscribe().await;
         tokio::pin!(updates);
         let reply = json!({"type":"m.room.message","event_id":"$reply","sender":"@other:example.org","origin_server_ts":2,
-            "content":{"msgtype":"m.text","body":"Fresh thread reply","m.relates_to":{"rel_type":"m.thread","event_id":"$outside","is_falling_back":false}}});
+            "content":{"msgtype":"m.image","body":"Fresh thread reply","url":"mxc://example.org/photo","info":{"thumbnail_url":"mxc://example.org/preview"},"m.relates_to":{"rel_type":"m.thread","event_id":"$outside","is_falling_back":false}}});
         Mock::given(method("GET"))
             .and(path_regex(".*/relations/.*"))
             .respond_with(
@@ -832,6 +859,12 @@ mod tests {
         assert_eq!(reply.thread_root.as_deref(), Some("$outside"));
         assert!(reply.is_live && !reply.is_own);
         assert_eq!(reply.body, "Fresh thread reply");
+        assert!(
+            reply
+                .image
+                .as_ref()
+                .is_some_and(|image| image.preview.is_some())
+        );
         assert_eq!(
             reply.avatar_url.as_deref().map(|uri| uri.as_str()),
             Some("mxc://example.org/avatar")

@@ -19,6 +19,14 @@ uses the same shell, timeline presentation, and composers as the connected app.
 Running without `--demo` still restores the real saved session and sends real
 messages; see [connected UI validation](connected-ui.md).
 
+**Studio → Images** contains a ready preview and a failed-preview example. Open
+each image, close it with Escape or **Close**, and check the viewer at narrow
+window sizes. Open the first image's thread and use the pinned original's
+**Open image** action. Compare the fixed preview space in ready, loading, and
+failed states; drafts and reading positions should survive opening and closing
+the viewer. The ready image is a deterministic pixel fixture generated once at
+startup; no image files, SDK clients, saved profiles, or network requests are used.
+
 The rail contains All rooms, Studio, Community, and Home. Each sample space has
 Favorites, Unread, Rooms, and/or Direct messages sections. Click section headings
 to collapse them. Unread badges and membership are fixtures, not Matrix state.

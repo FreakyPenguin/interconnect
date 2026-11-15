@@ -40,6 +40,13 @@ pub const ROOMS: &[Room] = &[
         unread: 0,
     },
     Room {
+        id: "images",
+        name: "Images",
+        space: 1,
+        section: "Rooms",
+        unread: 0,
+    },
+    Room {
         id: "long",
         name: "Research, references & tiny details",
         space: 1,
@@ -154,6 +161,48 @@ pub struct Demo {
     conversations: HashMap<DraftKey, Vec<MessageRow>>,
     next_message: u64,
 }
+pub fn attachment(missing: bool) -> chatclient::image_media::Attachment {
+    let source = matrix_sdk::ruma::events::room::MediaSource::Plain(
+        if missing {
+            "mxc://demo.invalid/missing"
+        } else {
+            "mxc://demo.invalid/sample"
+        }
+        .into(),
+    );
+    chatclient::image_media::Attachment::new(&source, None)
+}
+pub fn images() -> chatclient::media::Snapshot<chatclient::image_media::Key> {
+    // A deterministic pixel fixture, generated once at demo startup. No files,
+    // decoding, account access, downloads, or animation are involved.
+    let pixels: Vec<u8> = (0..180)
+        .flat_map(|y| {
+            (0..320).flat_map(move |x| {
+                if (x / 40 + y / 30) % 2 == 0 {
+                    [175, 199, 218, 255]
+                } else {
+                    [226, 235, 242, 255]
+                }
+            })
+        })
+        .collect();
+    let handle = iced::widget::image::Handle::from_rgba(320, 180, pixels);
+    let sample = attachment(false);
+    let missing = attachment(true);
+    chatclient::media::Snapshot {
+        ready: [
+            (sample.preview.unwrap(), handle.clone()),
+            (sample.original, handle),
+        ]
+        .into_iter()
+        .collect::<HashMap<_, _>>()
+        .into(),
+        failed: [missing.preview.unwrap(), missing.original]
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>()
+            .into(),
+    }
+}
 fn message(id: &str, sender: &str, body: &str) -> MessageRow {
     MessageRow {
         key: id.into(),
@@ -162,6 +211,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         sender: sender.into(),
         display_name: sender.into(),
         avatar_url: None,
+        image: None,
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         thread_replies: if id == "review" { 2 } else { 0 },
         thread_root: None,
@@ -240,6 +290,14 @@ impl Demo {
         }
         match key.room.as_str() {
             "empty" | "loading" | "error" => vec![],
+            "images" => {
+                let mut sample = message("sample-image", "Maya Chen", "A static image preview, entirely in memory.");
+                sample.image = Some(attachment(false));
+                sample.thread_replies = 2;
+                let mut missing = message("missing-image", "Alex Rivera", "A missing preview keeps its place in the conversation.");
+                missing.image = Some(attachment(true));
+                vec![sample, missing]
+            },
             "studio" => vec![
                 message("welcome", "Maya Chen", "Morning! I’ve been thinking about what makes a chat app feel calm. Less chrome, a little more space, and a clear place for everything."),
                 message("direction", "Alex Rivera", "This is the direction I like. Spaces for the bigger picture, sections to keep each room list manageable."),

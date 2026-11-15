@@ -388,3 +388,28 @@ Iced enables `image-without-codecs`; the `image` dependency enables only PNG,
 JPEG, WebP, and GIF. Existing dependency versions and vendored Iced code are
 unchanged. Attachments, custom emoji metadata, configurable budgets, and storage
 management remain subsequent work.
+
+## Image previews and original viewing — 2026-11-15
+
+The media worker now shares its bounded request/cache implementation across
+avatar and attachment keys, with four load/decode permits for the account.
+Avatar pixels retain their 8 MiB LRU; attachment pixels have a separate 32 MiB
+LRU. Attachment identity includes the full SDK media source descriptor and the
+thumbnail/file/original variant. Its Debug output omits source/key material.
+SDK media APIs own authenticated requests, attachment decryption/integrity, and
+disk caching. The application adds no custom encryption or media file format.
+
+`src/image_media.rs` projects SDK image-message content into preview/original
+requests. Encrypted originals without a separate thumbnail require explicit
+opening: the SDK ignores thumbnail dimensions for encrypted sources. The UI
+requests visible previews, reserves stable preview geometry, and owns one modal
+viewer identified by its conversation generation, row, and original source.
+Closing or invalidating that view cancels original demand. Background media
+demand is suspended while the viewer covers the timeline. Reconnection or
+explicit Retry advances a request epoch rather than starting a polling timer.
+
+`matrix-sdk-crypto` is a test-only direct dependency at the already pinned
+0.19.1 version, used to produce real encrypted attachment fixtures. No dependency
+versions or vendored Iced files changed. See [image validation](../validation/connected-ui.md#image-messages--2026-11-15)
+for limits, evidence, and remaining acceptance checks. Custom emoji, file export,
+uploads, and configurable storage controls remain separate work.

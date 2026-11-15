@@ -1,6 +1,7 @@
-//! Account-scoped, viewport-driven avatar loading. No polling or animation.
+//! Account-scoped, viewport-driven image loading. No polling or animation.
 use std::{
     collections::{HashMap, HashSet},
+    hash::Hash,
     io::Cursor,
     sync::Arc,
     time::Duration,
@@ -25,30 +26,69 @@ const MEMORY_BYTES: usize = 8 * 1024 * 1024;
 const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
 const AVATAR_SIZE: u32 = 64;
 
-pub type Images = HashMap<OwnedMxcUri, Handle>;
+pub type Images<K = OwnedMxcUri> = HashMap<K, Handle>;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Demand {
-    pub uris: Vec<OwnedMxcUri>,
+#[derive(Clone, Debug)]
+pub struct Snapshot<K = OwnedMxcUri> {
+    pub ready: Arc<Images<K>>,
+    pub failed: Arc<HashSet<K>>,
+}
+impl<K> Default for Snapshot<K> {
+    fn default() -> Self {
+        Self {
+            ready: Arc::default(),
+            failed: Arc::default(),
+        }
+    }
+}
+
+pub(crate) trait ImageRequest: Clone + Eq + Hash + Send + Sync + 'static {
+    const MEMORY_BYTES: usize;
+    const MAX_REQUESTED: usize;
+    fn parameters(&self) -> MediaRequestParameters;
+    fn decode(&self, bytes: Vec<u8>) -> anyhow::Result<Decoded>;
+}
+impl ImageRequest for OwnedMxcUri {
+    const MEMORY_BYTES: usize = MEMORY_BYTES;
+    const MAX_REQUESTED: usize = MAX_REQUESTED;
+    fn parameters(&self) -> MediaRequestParameters {
+        request(self.clone())
+    }
+    fn decode(&self, bytes: Vec<u8>) -> anyhow::Result<Decoded> {
+        decode(bytes)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Demand<K = OwnedMxcUri> {
+    pub uris: Vec<K>,
     /// Retry failed visible avatars when sync reconnects, without a timer.
     pub retry_epoch: u64,
 }
+impl<K> Default for Demand<K> {
+    fn default() -> Self {
+        Self {
+            uris: Vec::new(),
+            retry_epoch: 0,
+        }
+    }
+}
 
-struct Decoded {
+pub(crate) struct Decoded {
     handle: Handle,
-    bytes: usize,
+    pub(crate) bytes: usize,
 }
 struct Entry {
     image: Decoded,
     used: u64,
 }
-struct Cache {
-    entries: HashMap<OwnedMxcUri, Entry>,
+struct Cache<K = OwnedMxcUri> {
+    entries: HashMap<K, Entry>,
     bytes: usize,
     clock: u64,
     limit: usize,
 }
-impl Cache {
+impl<K: Eq + Hash + Clone> Cache<K> {
     fn new(limit: usize) -> Self {
         Self {
             entries: HashMap::new(),
@@ -57,13 +97,13 @@ impl Cache {
             limit,
         }
     }
-    fn get(&mut self, uri: &OwnedMxcUri) -> Option<Handle> {
+    fn get(&mut self, uri: &K) -> Option<Handle> {
         let entry = self.entries.get_mut(uri)?;
         self.clock += 1;
         entry.used = self.clock;
         Some(entry.image.handle.clone())
     }
-    fn insert(&mut self, uri: OwnedMxcUri, image: Decoded) {
+    fn insert(&mut self, uri: K, image: Decoded) {
         if image.bytes > self.limit {
             return;
         }
@@ -100,46 +140,66 @@ fn request(uri: OwnedMxcUri) -> MediaRequestParameters {
 }
 
 fn decode(bytes: Vec<u8>) -> anyhow::Result<Decoded> {
-    ensure!(
-        bytes.len() <= MAX_ENCODED_BYTES,
-        "Avatar response is too large"
-    );
+    decode_with(
+        bytes,
+        DecodeLimits {
+            encoded: MAX_ENCODED_BYTES,
+            dimension: 1024,
+            allocation: 8 * 1024 * 1024,
+            target: (AVATAR_SIZE, AVATAR_SIZE),
+            crop: true,
+        },
+    )
+}
+
+pub(crate) struct DecodeLimits {
+    pub encoded: usize,
+    pub dimension: u32,
+    pub allocation: u64,
+    pub target: (u32, u32),
+    pub crop: bool,
+}
+pub(crate) fn decode_with(bytes: Vec<u8>, limits: DecodeLimits) -> anyhow::Result<Decoded> {
+    ensure!(bytes.len() <= limits.encoded, "Image response is too large");
     let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(1024);
-    limits.max_image_height = Some(1024);
-    limits.max_alloc = Some(8 * 1024 * 1024);
-    reader.limits(limits);
-    let image = reader
-        .decode()?
-        .resize_to_fill(
-            AVATAR_SIZE,
-            AVATAR_SIZE,
-            image::imageops::FilterType::Triangle,
-        )
-        .into_rgba8();
+    let mut decoder_limits = image::Limits::default();
+    decoder_limits.max_image_width = Some(limits.dimension);
+    decoder_limits.max_image_height = Some(limits.dimension);
+    decoder_limits.max_alloc = Some(limits.allocation);
+    reader.limits(decoder_limits);
+    let image = reader.decode()?;
+    let (width, height) = limits.target;
+    let image = if limits.crop {
+        image.resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+    } else {
+        image.thumbnail(width, height)
+    }
+    .into_rgba8();
+    let (width, height) = image.dimensions();
     let bytes = image.into_raw();
     let cost = bytes.len();
     Ok(Decoded {
-        handle: Handle::from_rgba(AVATAR_SIZE, AVATAR_SIZE, bytes),
+        handle: Handle::from_rgba(width, height, bytes),
         bytes: cost,
     })
 }
 
-async fn load(client: Client, uri: OwnedMxcUri, slots: Arc<Semaphore>) -> anyhow::Result<Decoded> {
+async fn load<K: ImageRequest>(
+    client: Client,
+    key: K,
+    slots: Arc<Semaphore>,
+) -> anyhow::Result<Decoded> {
     let permit = slots.acquire_owned().await?;
-    // The SDK owns authentication, disk caching, and thumbnail request identity.
     let bytes = tokio::time::timeout(
         Duration::from_secs(20),
-        client.media().get_media_content(&request(uri), true),
+        client.media().get_media_content(&key.parameters(), true),
     )
     .await
-    .context("Avatar download timed out")??;
+    .context("Image download timed out")??;
     tokio::task::spawn_blocking(move || {
-        // Cancellation cannot interrupt a running decoder. Keep its slot until
-        // it finishes so rapid navigation cannot create unbounded blocking work.
+        // Keep the slot until a cancelled request's blocking decoder finishes.
         let _permit = permit;
-        decode(bytes)
+        key.decode(bytes)
     })
     .await?
 }
@@ -148,8 +208,23 @@ async fn load(client: Client, uri: OwnedMxcUri, slots: Arc<Semaphore>) -> anyhow
 /// bounded blocking decoders finish under the application's runtime cleanup.
 pub async fn run(
     client: Client,
-    mut requests: watch::Receiver<Demand>,
-    output: watch::Sender<Arc<Images>>,
+    requests: watch::Receiver<Demand>,
+    output: watch::Sender<Snapshot>,
+) -> anyhow::Result<()> {
+    run_requests(
+        client,
+        requests,
+        output,
+        Arc::new(Semaphore::new(CONCURRENT_LOADS)),
+    )
+    .await
+}
+
+pub(crate) async fn run_requests<K: ImageRequest>(
+    client: Client,
+    mut requests: watch::Receiver<Demand<K>>,
+    output: watch::Sender<Snapshot<K>>,
+    slots: Arc<Semaphore>,
 ) -> anyhow::Result<()> {
     // SDK cleanup is checked on media API activity, not on a background timer.
     // Its defaults are 400 MiB total, 20 MiB per file, and 60-day expiry.
@@ -157,11 +232,10 @@ pub async fn run(
         .media()
         .set_media_retention_policy(MediaRetentionPolicy::default())
         .await?;
-    let slots = Arc::new(Semaphore::new(CONCURRENT_LOADS));
-    let mut cache = Cache::new(MEMORY_BYTES);
-    let mut current = Demand::default();
+    let mut cache = Cache::new(K::MEMORY_BYTES);
+    let mut current_epoch = 0;
     let mut failed = HashSet::new();
-    let mut active: HashMap<OwnedMxcUri, (u64, CancellationToken)> = HashMap::new();
+    let mut active: HashMap<K, (u64, CancellationToken)> = HashMap::new();
     let mut jobs = FuturesUnordered::new();
     let mut serial = 0_u64;
     loop {
@@ -169,11 +243,11 @@ pub async fn run(
         let wanted: HashSet<_> = next
             .uris
             .iter()
-            .filter(|uri| uri.is_valid())
-            .take(MAX_REQUESTED)
+            .filter(|uri| uri.parameters().uri().is_valid())
+            .take(K::MAX_REQUESTED)
             .cloned()
             .collect();
-        if current.retry_epoch != next.retry_epoch {
+        if current_epoch != next.retry_epoch {
             failed.clear();
         }
         failed.retain(|uri| wanted.contains(uri));
@@ -185,9 +259,9 @@ pub async fn run(
                 false
             }
         });
-        current = next;
+        current_epoch = next.retry_epoch;
         let mut images = Images::new();
-        for uri in current.uris.iter().filter(|uri| wanted.contains(*uri)) {
+        for uri in next.uris.iter().filter(|uri| wanted.contains(*uri)) {
             if let Some(handle) = cache.get(uri) {
                 images.insert(uri.clone(), handle);
             } else if jobs.len() < CONCURRENT_LOADS
@@ -201,7 +275,7 @@ pub async fn run(
                 let client = client.clone();
                 let slots = slots.clone();
                 let uri = uri.clone();
-                let epoch = current.retry_epoch;
+                let epoch = current_epoch;
                 jobs.push(async move {
                     let result = tokio::select! {
                         biased;
@@ -213,14 +287,18 @@ pub async fn run(
             }
         }
         output.send_if_modified(|old| {
-            if old.len() == images.len()
+            if old.ready.len() == images.len()
                 && images
                     .iter()
-                    .all(|(uri, handle)| old.get(uri) == Some(handle))
+                    .all(|(uri, handle)| old.ready.get(uri) == Some(handle))
+                && old.failed.as_ref() == &failed
             {
                 false
             } else {
-                *old = Arc::new(images);
+                *old = Snapshot {
+                    ready: Arc::new(images),
+                    failed: Arc::new(failed.clone()),
+                };
                 true
             }
         });
@@ -290,14 +368,15 @@ mod tests {
             .mount(server)
             .await;
     }
-    async fn wait_image(images: &mut watch::Receiver<Arc<Images>>, key: &OwnedMxcUri) -> Handle {
+    async fn wait_image(images: &mut watch::Receiver<Snapshot>, key: &OwnedMxcUri) -> Handle {
         tokio::time::timeout(
             Duration::from_secs(5),
-            images.wait_for(|images| images.contains_key(key)),
+            images.wait_for(|images| images.ready.contains_key(key)),
         )
         .await
         .unwrap()
         .unwrap()
+        .ready
         .get(key)
         .unwrap()
         .clone()
@@ -353,13 +432,13 @@ mod tests {
             uris: vec![avatar.clone(), avatar.clone()],
             ..Default::default()
         });
-        let (output, mut images) = watch::channel(Arc::default());
+        let (output, mut images) = watch::channel(Snapshot::default());
         let worker = tokio::spawn(run(first.clone(), requests, output));
         let handle = wait_image(&mut images, &avatar).await;
         control.send_replace(Demand::default());
         tokio::time::timeout(
             Duration::from_secs(2),
-            images.wait_for(|images| images.is_empty()),
+            images.wait_for(|images| images.ready.is_empty()),
         )
         .await
         .unwrap()
@@ -391,7 +470,7 @@ mod tests {
             uris: vec![avatar.clone()],
             ..Default::default()
         });
-        let (output, mut images) = watch::channel(Arc::default());
+        let (output, mut images) = watch::channel(Snapshot::default());
         let worker = tokio::spawn(run(restored, requests, output));
         wait_image(&mut images, &avatar).await;
         let received = server.received_requests().await.unwrap();
@@ -448,7 +527,7 @@ mod tests {
             uris: (0..12).map(|i| uri(&format!("slow{i}"))).collect(),
             ..Default::default()
         });
-        let (output, mut images) = watch::channel(Arc::default());
+        let (output, mut images) = watch::channel(Snapshot::default());
         let worker = tokio::spawn(run(client, requests, output));
         for _ in 0..CONCURRENT_LOADS {
             tokio::time::timeout(Duration::from_secs(5), calls.recv())
@@ -469,7 +548,7 @@ mod tests {
             ..Default::default()
         });
         wait_image(&mut images, &fresh).await;
-        assert!(images.borrow().keys().all(|key| key == &fresh));
+        assert!(images.borrow().ready.keys().all(|key| key == &fresh));
         // Ensure the failed request was actually attempted before reconnecting.
         tokio::time::timeout(Duration::from_secs(5), async {
             while calls.recv().await.unwrap() != "retry" {}
@@ -481,7 +560,7 @@ mod tests {
             retry_epoch: 1,
         });
         wait_image(&mut images, &retry).await;
-        assert_eq!(images.borrow().len(), 2);
+        assert_eq!(images.borrow().ready.len(), 2);
         drop(control);
         tokio::time::timeout(Duration::from_secs(2), worker)
             .await

@@ -43,6 +43,7 @@ mod tests {
             sender: sender.into(),
             display_name: "Same name".into(),
             avatar_url: None,
+            image: None,
             timestamp_ms,
             thread_replies: 0,
             thread_root: None,

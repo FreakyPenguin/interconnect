@@ -23,6 +23,62 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
+## Image messages — 2026-11-15
+
+Room and thread timelines display image previews beneath their existing text
+caption/filename. Visible image rows request static 512×384 thumbnails; a fixed
+180px preview frame (up to 320px wide) preserves row geometry while loading or
+showing a failure. Clicking the preview opens the original in an in-app viewer.
+The pinned thread original has an **Open image** action too. Escape or **Close**
+returns to the conversation. The viewer blocks navigation, composer actions,
+and backdrop scrolling while preserving drafts and reading positions.
+
+For encrypted media, a supplied encrypted thumbnail is fetched as its own file
+and decrypted by the SDK. Without a supplied thumbnail, the image shows **Open
+image to load**, and no original is requested automatically. Plain images use
+the SDK thumbnail endpoint. Originals are requested only after a click. Failed
+originals show **Retry**; reconnect also retries current failed media. While the
+viewer covers the timeline, its original is the only demanded media, cancelling
+background avatar/preview downloads. Closing it restores viewport demand.
+Redaction, source replacement, removal of the conversation, and session shutdown
+close an obsolete viewer. SDK caption updates refresh its title.
+
+Avatars and attachments share four load/decode permits. Attachments have a
+separate 32 MiB decoded-pixel LRU; viewport demand is capped at 16 previews plus
+one opened original. Preview input is limited to 2 MiB and resized within
+512×384; originals accept up to 20 MiB and are displayed within 2048×2048.
+Both reject dimensions over 4096px and use a 128 MiB decoder allocation limit.
+The SDK buffers and decrypts downloads before these application checks; decoder
+working memory, renderer copies, and old snapshots are outside the retained
+pixel budget. Images use the existing PNG/JPEG/WebP/GIF codecs without animation.
+SDK disk retention and encryption settings remain as described below. No cache
+file migration or account/key clearing is performed.
+
+Temporary SQLite/mock-server tests verify plain and encrypted thumbnail loading,
+no original endpoint request before demand, original decryption, offline disk
+reuse after reopening, rejection of corrupt encrypted content, and the combined
+four-request concurrency bound. SDK projection retains image metadata alongside
+thread relations and sender profiles. UI checks cover stale viewport/click
+generations, preview dimensions across ready/loading/failed states, explicit
+retry, modal input isolation, preserved drafts/scroll positions, redaction, and
+the pinned original. The demo **Studio → Images** room uses only generated
+in-memory pixels, including ready and failed-preview examples.
+
+Validation passed: all 48 regular library tests and 58 GUI tests, formatting,
+workspace Clippy with warnings denied, and the locked GUI build. The opt-in
+100-cycle stress test was not run. No saved account was opened or live-server
+messages sent.
+
+Live-server, native desktop, and idle-resource measurements remain pending.
+With a dedicated profile, inspect existing plain/encrypted images in a room and
+thread, open/close originals, and restart offline to check previously loaded
+previews and originals. Verify a missing-thumbnail encrypted image makes no
+original request before clicking. Check narrow-window layout, rapidly navigate
+while previews load, redact an opened image from another client, and confirm
+shutdown cancels pending downloads. Do not send validation messages from the
+user's connected account without authorization. Image uploads, file export,
+zoom controls, video playback, and custom emoji remain future work.
+
 ## Cached avatars — 2026-11-15
 
 Room and thread message headers now display the sender avatar from the SDK
@@ -101,9 +157,9 @@ device-key preservation and rejection of damaged or incomplete saved state.
 
 This establishes cached room reading, not a complete offline archive: only SDK
 retained content is available. Uncached history, thread roots, and missing room
-keys can still require network access. Message retention limits, attachment and
-emoji loading, configurable budgets, and cache-clearing controls are future work.
-Avatar media loading is described above. Existing SDK stores
+keys can still require network access. Message retention limits, non-image
+attachments, custom emoji, configurable budgets, and cache-clearing controls
+are future work. Avatar and image loading are described above. Existing SDK stores
 stay in place; this change introduces no migration or eviction.
 
 Desktop acceptance remains pending: with the client closed and Secret Service
@@ -150,7 +206,8 @@ Profile changes describe display-name and avatar updates. Room changes describe
 names, topics, encryption, permissions, pinned messages, and other settings.
 Stickers use their description, polls use the supplied fallback text or question,
 and calls and live-location shares have text labels. These are plain-text
-summaries; media viewing, poll voting, and call controls are not implemented.
+summaries; video playback, poll voting, and call controls are not implemented.
+Image messages now have previews and a viewer as described above.
 Ordinary message bodies, including attachment filenames/captions, still come
 from the SDK unchanged. The feasibility console shares this wording.
 
