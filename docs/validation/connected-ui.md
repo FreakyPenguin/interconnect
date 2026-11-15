@@ -2,11 +2,13 @@
 
 The `matrix-ui` binary connects Iced to the existing persistent session. It restores
 credentials without browser login, lists joined rooms, and displays SDK room and
-thread timelines. History loads automatically in 50-event batches, filling the
-viewport and an older-message buffer while continuing to display live updates.
+thread timelines in encrypted and unencrypted rooms. History loads automatically
+in 50-event batches, filling the viewport and an older-message buffer while
+continuing to display live updates.
 Room and thread text composers are implemented. Verification UI,
 recovery UI, receipts, and automatic read marking remain pending.
-Use an already verified profile with access to the test room's keys.
+For encrypted rooms, use an already verified profile with access to the test
+room's keys.
 
 Close `session-live` or any other process using the profile first. Keep the host
 Secret Service available and unlocked, and provide a Wayland display as described
@@ -20,6 +22,27 @@ An optional profile-directory argument follows the binary name. The default is
 `.matrix-spike`; keep its canonical path unchanged from login. This command does
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
+
+## Unencrypted rooms — 2026-11-15
+
+The desktop no longer rejects rooms without encryption. Both room types use the
+same SDK timelines, history pagination, composers, and retry handling. The SDK
+chooses the outgoing event type from the room's encryption state; the application
+does not override it or fall back to plaintext after an encryption error.
+
+The local mock-server regression opens an unencrypted room and thread, paginates
+their history, sends ordinary messages and thread replies as `m.room.message`,
+and retries a failed send using the same transaction URL. It also checks repeated
+navigation and shutdown release the timelines. The existing encrypted variant
+still checks ciphertext on the wire and decrypts it to verify bodies and thread
+relationships. Live-server and desktop acceptance for unencrypted rooms remains
+pending; repeat the interactive checks below with a dedicated unencrypted room.
+The CLI encryption-feasibility harness continues to require an encrypted room.
+
+Validation passed: all 77 regular workspace tests (including 43 GUI tests),
+formatting, workspace Clippy with warnings denied, and the locked GUI build.
+The existing opt-in 100-cycle lifecycle stress test was not run. No saved account
+was opened or messages sent to a live server.
 
 ## Timeline event text — 2026-11-15
 
@@ -232,8 +255,8 @@ send messages or restart the user's connected app.
 ## Interactive acceptance
 
 1. Restore the existing profile. Confirm the room list appears without browser
-   login. Select a dedicated encrypted test room; an unencrypted room should show
-   an explicit error.
+   login. Select a dedicated test room. Repeat these checks for encrypted and
+   unencrypted rooms; both should open with a working timeline and composer.
 2. Confirm existing messages load without sending a new message. Then send
    messages from the second client and verify arrival, ordering, sender, and
    decryption in the room timeline. Scroll upward to request additional history;

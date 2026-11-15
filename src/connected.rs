@@ -419,10 +419,7 @@ async fn view(
         let setup = async {
             let room_id: matrix_sdk::ruma::OwnedRoomId = room_id.parse()?;
             let room = client.get_room(&room_id).context("Room is not loaded")?;
-            ensure!(
-                room.latest_encryption_state().await?.is_encrypted(),
-                "Select an encrypted room for this prototype"
-            );
+            // The SDK handles both room types and chooses encryption when sending.
             let focus = match root {
                 Some(root) => TimelineFocus::Thread {
                     root_event_id: root.parse()?,
@@ -982,22 +979,27 @@ mod tests {
 
     #[tokio::test]
     async fn sdk_views_switch_and_shutdown_without_ui_consumption() {
-        history_fixture(false, false, 3, 3).await;
+        history_fixture(false, false, 3, 3, true).await;
+    }
+
+    #[tokio::test]
+    async fn unencrypted_rooms_support_history_threads_sending_and_retry() {
+        history_fixture(false, false, 3, 3, false).await;
     }
 
     #[tokio::test]
     async fn long_threads_stop_eager_loading_and_continue_on_demand() {
-        history_fixture(false, false, 1, 12).await;
+        history_fixture(false, false, 1, 12, true).await;
     }
 
     #[tokio::test]
     async fn shutdown_cancels_pending_initial_history() {
-        history_fixture(true, false, 3, 3).await;
+        history_fixture(true, false, 3, 3, true).await;
     }
 
     #[tokio::test]
     async fn offline_views_recover_and_can_send_without_restarting_ui() {
-        history_fixture(false, true, 3, 3).await;
+        history_fixture(false, true, 3, 3, true).await;
     }
 
     #[tokio::test]
@@ -1082,12 +1084,19 @@ mod tests {
         reconnect: bool,
         cycles: u64,
         thread_pages: usize,
+        encrypted: bool,
     ) {
         let server = MockServer::start().await;
         let online = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let versions_online = online.clone();
         let sync_online = online.clone();
         let root = json!({"type":"m.room.message", "event_id":"$root", "sender":"@test:example.org", "origin_server_ts":1, "content":{"msgtype":"m.text", "body":"fixture root"}});
+        let mut required_state = vec![
+            json!({"type":"m.room.member", "state_key":"@test:example.org", "sender":"@test:example.org", "event_id":"$member", "origin_server_ts":0,"content":{"membership":"join"}}),
+        ];
+        if encrypted {
+            required_state.push(json!({"type":"m.room.encryption","state_key":"","sender":"@test:example.org","event_id":"$encryption","origin_server_ts":0,"content":{"algorithm":"m.megolm.v1.aes-sha2"}}));
+        }
         Mock::given(method("GET")).and(path("/_matrix/client/versions"))
             .respond_with(move |_: &wiremock::Request| {
                 if versions_online.load(std::sync::atomic::Ordering::SeqCst) {
@@ -1102,10 +1111,7 @@ mod tests {
                 ResponseTemplate::new(200).set_delay(Duration::from_millis(50)).set_body_json(json!({
                 "pos":"test-pos", "lists":{"all_rooms":{"count":1,"ops":[{"op":"SYNC","range":[0,0],"room_ids":["!room:example.org"]}]}},
                 "rooms":{"!room:example.org":{"name":"Fixture", "initial":true, "is_dm":false, "joined_count":1, "invited_count":0,
-                    "required_state":[
-                        {"type":"m.room.member", "state_key":"@test:example.org", "sender":"@test:example.org", "event_id":"$member", "origin_server_ts":0,"content":{"membership":"join"}},
-                        {"type":"m.room.encryption","state_key":"","sender":"@test:example.org","event_id":"$encryption","origin_server_ts":0,"content":{"algorithm":"m.megolm.v1.aes-sha2"}}
-                    ], "timeline":[],"prev_batch":"older","num_live":0}},
+                    "required_state":required_state, "timeline":[],"prev_batch":"older","num_live":0}},
                 "extensions":{"e2ee":{"device_one_time_keys_count":{"signed_curve25519":50},"device_unused_fallback_key_types":["signed_curve25519"]}}
             })) }).mount(&server).await;
         Mock::given(method("POST"))
@@ -1186,8 +1192,13 @@ mod tests {
         let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let send_attempts = attempts.clone();
         let sends_online = online.clone();
+        let send_type = if encrypted {
+            "m.room.encrypted"
+        } else {
+            "m.room.message"
+        };
         Mock::given(method("PUT"))
-            .and(path_regex(".*/send/m.room.encrypted/.*"))
+            .and(path_regex(format!(".*/send/{send_type}/.*")))
             .respond_with(move |_: &wiremock::Request| {
                 if !sends_online.load(std::sync::atomic::Ordering::SeqCst) {
                     return ResponseTemplate::new(503)
@@ -1409,7 +1420,7 @@ mod tests {
                 let requests = server.received_requests().await.unwrap();
                 let sends: Vec<_> = requests
                     .iter()
-                    .filter(|r| r.url.path().contains("/send/m.room.encrypted/"))
+                    .filter(|r| r.url.path().contains("/send/"))
                     .collect();
                 assert_eq!(
                     sends.len(),
@@ -1418,17 +1429,23 @@ mod tests {
                 );
                 assert_eq!(sends[0].url.path(), sends[1].url.path());
                 for (request, threaded) in [(sends[1], false), (sends[2], true)] {
+                    assert!(request.url.path().contains(&format!("/send/{send_type}/")));
                     let content: serde_json::Value = request.body_json().unwrap();
-                    assert!(
-                        content.get("body").is_none(),
-                        "message must be encrypted on the wire"
-                    );
-                    let event = matrix_sdk::ruma::serde::Raw::from_json_string(json!({"type":"m.room.encrypted", "event_id":if threaded {"$sent2"} else {"$sent1"}, "sender":"@test:example.org", "origin_server_ts":2, "content":content}).to_string()).unwrap();
-                    let decrypted = decrypt_room.decrypt_event(&event, None).await.unwrap();
-                    let json: serde_json::Value =
-                        serde_json::from_str(decrypted.raw().json().get()).unwrap();
+                    let content = if encrypted {
+                        assert!(
+                            content.get("body").is_none(),
+                            "message must be encrypted on the wire"
+                        );
+                        let event = matrix_sdk::ruma::serde::Raw::from_json_string(json!({"type":"m.room.encrypted", "event_id":if threaded {"$sent2"} else {"$sent1"}, "sender":"@test:example.org", "origin_server_ts":2, "content":content}).to_string()).unwrap();
+                        let decrypted = decrypt_room.decrypt_event(&event, None).await.unwrap();
+                        let json: serde_json::Value =
+                            serde_json::from_str(decrypted.raw().json().get()).unwrap();
+                        json["content"].clone()
+                    } else {
+                        content
+                    };
                     assert_eq!(
-                        json["content"]["body"],
+                        content["body"],
                         if threaded {
                             "thread send fixture"
                         } else {
@@ -1436,10 +1453,10 @@ mod tests {
                         }
                     );
                     if threaded {
-                        assert_eq!(json["content"]["m.relates_to"]["rel_type"], "m.thread");
-                        assert_eq!(json["content"]["m.relates_to"]["event_id"], "$root");
+                        assert_eq!(content["m.relates_to"]["rel_type"], "m.thread");
+                        assert_eq!(content["m.relates_to"]["event_id"], "$root");
                     } else {
-                        assert!(json["content"].get("m.relates_to").is_none());
+                        assert!(content.get("m.relates_to").is_none());
                     }
                 }
             }
@@ -1577,6 +1594,6 @@ mod tests {
     #[tokio::test]
     #[ignore = "100-cycle SDK lifecycle stress check; run explicitly"]
     async fn repeated_navigation_releases_timelines() {
-        history_fixture(false, false, 100, 1).await;
+        history_fixture(false, false, 100, 1, true).await;
     }
 }
