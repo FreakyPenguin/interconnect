@@ -820,6 +820,9 @@ impl App {
         if self.demo.is_some() || self.closing || self.stopped {
             return;
         }
+        if let Some(uri) = &self.model.account_avatar_url {
+            self.selection.avatars.push(uri.clone());
+        }
         if let Some(view) = &self.image_view {
             self.selection.images.push(view.original.clone());
             return;
@@ -2138,6 +2141,27 @@ mod tests {
         app.shell.space = Scope::Space("studio-space".into());
         let _ = app.update(Message::Room("studio".into()));
         app
+    }
+
+    #[test]
+    fn account_avatar_demand_survives_navigation_and_releases_on_removal() {
+        let mut app = demo_app();
+        let uri: matrix_sdk::ruma::OwnedMxcUri = "mxc://example.org/account".into();
+        app.model.account_avatar_url = Some(uri.clone());
+        app.refresh_media_demand();
+        assert!(
+            app.selection.avatars.is_empty(),
+            "demo never requests media"
+        );
+        app.demo = None;
+        app.refresh_media_demand();
+        assert_eq!(app.selection.avatars, vec![uri.clone()]);
+        let _ = app.update(Message::Room("threads".into()));
+        assert_eq!(app.selection.avatars, vec![uri]);
+        let mut model = app.model.clone();
+        model.account_avatar_url = None;
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.selection.avatars.is_empty());
     }
 
     #[test]

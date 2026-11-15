@@ -58,6 +58,34 @@ plus existing-directory and dangling-symlink destination refusal. No real accoun
 was moved, no connected client was restarted, and live keyring restoration and
 macOS behavior remain untested for this change.
 
+## Account avatar in the space rail — 2026-11-15
+
+The account badge occupies the top of the space rail in place of the “m” mark;
+there is no duplicate badge below the room-list toggle. It uses the signed-in
+user's avatar, with the same colored initials placeholder as room timeline
+avatars while unavailable. Hover shows the display name (Matrix ID fallback).
+Demo mode shows Jamie Davis's initials without reading an account or network.
+
+Profile loading runs asynchronously alongside sync, reads the SDK's cached own
+profile, fetches once for servers without the profiles extension, and listens
+for SDK own-profile updates. It adds no polling or animation timer. Servers
+without profile updates require a later launch to pick up external changes.
+Avatar thumbnails share the existing bounded media service and remain requested
+across conversation/space changes. Shutdown drops profile work with the connection.
+
+Automated coverage checks profile fetches with/without an avatar when no room
+is open, avatar demand across room changes/removal, and demo media isolation.
+The existing shared avatar layout test checks equal image/placeholder sizes.
+Validation passed: `cargo fmt --all -- --check`,
+`cargo clippy --locked --workspace --all-targets -- -D warnings`,
+`cargo test --locked --workspace` (63 library and 102 GUI tests passed; one
+pre-existing library test ignored), and `cargo build --locked --bin interconnect`.
+Desktop acceptance remains pending: in demo, check the top JD placeholder and
+bottom toggle at narrow widths; in an authorized connected session, compare an
+account with an avatar and one without, hover for identity, and switch spaces
+and conversations while checking draft/scroll preservation. No connected client
+was launched or restarted for this change.
+
 ## GPU passthrough startup stall — 2026-11-15
 
 After exposing `/dev/dri`, the Intel render node was accessible to the container

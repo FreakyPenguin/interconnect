@@ -54,6 +54,8 @@ the CPU renderer, and `ICED_BACKEND=wgpu` to require wgpu. See
 overrides. Check that the selected wgpu adapter is a hardware device before
 attributing performance or battery differences to GPU acceleration.
 
+The rail starts with Jamie Davis’s initials avatar placeholder in place of the
+old “m” mark. The bottom contains only the room-list toggle.
 The rail contains All rooms, Studio, Community, and Home. Each sample space has
 Favorites, Unread, Rooms, and/or Direct messages sections. Click section headings
 to collapse them. Unread badges and membership are fixtures, not Matrix state.

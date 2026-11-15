@@ -395,10 +395,24 @@ impl App {
         .into()
     }
     fn space_rail(&self) -> Element<'_, Message> {
+        let account_name = if self.demo.is_some() {
+            "Jamie Davis"
+        } else {
+            &self.model.account_name
+        };
+        let account_image = self
+            .model
+            .account_avatar_url
+            .as_ref()
+            .and_then(|uri| self.model.avatars.get(uri));
         let mut spaces = column![
-            container(title("m", 24).color(ACCENT))
-                .center_x(56)
-                .padding([12, 0])
+            container(widget::tooltip(
+                avatar(account_name, account_image),
+                account_name,
+                widget::tooltip::Position::Right,
+            ))
+            .center_x(56)
+            .padding([12, 0])
         ]
         .spacing(10)
         .align_x(Alignment::Center);
@@ -441,24 +455,14 @@ impl App {
                 .style(scroll_style)
                 .height(Length::Fill),
         );
-        spaces = spaces
-            .push(widget::tooltip(
-                button("☰")
-                    .padding(10)
-                    .style(quiet_button)
-                    .on_press(Message::ToggleNavigation),
-                "Toggle room list",
-                widget::tooltip::Position::Right,
-            ))
-            .push(
-                container(text(if self.demo.is_some() { "JD" } else { "Me" }).size(11))
-                    .center_x(34)
-                    .center_y(34)
-                    .style(|_| container::Style {
-                        border: Border::default().rounded(17),
-                        ..surface(SELECTED)
-                    }),
-            );
+        spaces = spaces.push(widget::tooltip(
+            button("☰")
+                .padding(10)
+                .style(quiet_button)
+                .on_press(Message::ToggleNavigation),
+            "Toggle room list",
+            widget::tooltip::Position::Right,
+        ));
         container(spaces)
             .width(64)
             .height(Length::Fill)

@@ -336,6 +336,8 @@ pub struct Model {
     pub navigation_error: Option<String>,
     pub saved_navigation: Option<crate::navigation_preferences::Preferences>,
     pub preferences_error: Option<String>,
+    pub account_name: String,
+    pub account_avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     pub avatars: Arc<crate::media::Images>,
     pub images: crate::media::Snapshot<crate::image_media::Key>,
     pub media_error: Option<String>,
@@ -353,6 +355,8 @@ impl Default for Model {
             navigation_error: None,
             saved_navigation: None,
             preferences_error: None,
+            account_name: "Me".into(),
+            account_avatar_url: None,
             avatars: Arc::default(),
             images: Default::default(),
             media_error: None,
@@ -482,6 +486,8 @@ async fn connected(
     let mut media_finished = false;
     let mut images_finished = false;
     let mut retry_epoch = 0;
+    let profile = account_profile_updates(client, state);
+    tokio::pin!(profile);
     let navigation = navigation_updates(client, state);
     tokio::pin!(navigation);
     let mut sync_states = sync.state();
@@ -564,6 +570,7 @@ async fn connected(
                     }
                 }
                 changed = selection.changed() => { if changed.is_err() { break; } }
+                _ = &mut profile => {},
                 _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
                 _ = &mut room_view => room_view = inactive(),
                 _ = &mut thread_view => thread_view = inactive(),
@@ -593,6 +600,50 @@ async fn connected(
         sync.room_list_service().remove_room_subscriptions(&[&id]);
     }
     result
+}
+
+// Scoped to the connection future: shutdown drops profile requests and subscriptions.
+async fn account_profile_updates(client: &Client, state: &watch::Sender<Model>) {
+    use matrix_sdk::ruma::profile::{AvatarUrl, DisplayName, UserProfile};
+
+    let fallback = client.user_id().map_or("Me", |id| id.as_str());
+    let publish = |profile: UserProfile| {
+        let name = profile
+            .get_static::<DisplayName>()
+            .ok()
+            .flatten()
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| fallback.to_owned());
+        let avatar = profile.get_static::<AvatarUrl>().ok().flatten();
+        state.send_if_modified(|s| {
+            if s.account_name == name && s.account_avatar_url == avatar {
+                return false;
+            }
+            s.account_name = name;
+            s.account_avatar_url = avatar;
+            true
+        });
+    };
+    publish(UserProfile::default());
+    if let Ok(updates) = client.subscribe_to_own_profile() {
+        tokio::pin!(updates);
+        if let Some(cached) = updates.next().await {
+            publish(cached);
+        }
+        // A one-time fetch also supports servers without the profiles extension.
+        // Sync profile updates supersede an in-flight fetch.
+        let account = client.account();
+        tokio::select! {
+            result = account.fetch_user_profile() => {
+                if let Ok(profile) = result { publish(profile.data); }
+            }
+            Some(profile) = updates.next() => publish(profile),
+        }
+        while let Some(profile) = updates.next().await {
+            publish(profile);
+        }
+    }
+    pending::<()>().await;
 }
 
 async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
@@ -1474,6 +1525,62 @@ mod tests {
                 .count(),
             5
         );
+    }
+
+    #[tokio::test]
+    async fn account_profile_loads_without_an_open_room_or_profiles_extension() {
+        for (body, name, avatar) in [
+            (
+                json!({"displayname":"Test Person", "avatar_url":"mxc://example.org/account"}),
+                "Test Person",
+                Some("mxc://example.org/account"),
+            ),
+            (json!({"displayname":"Test Person"}), "Test Person", None),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/_matrix/client/versions"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path("/_matrix/client/v3/profile/@test:example.org"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let client = Client::builder()
+                .homeserver_url(server.uri())
+                .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+                .build()
+                .await
+                .unwrap();
+            client
+                .matrix_auth()
+                .restore_session(
+                    serde_json::from_value::<MatrixSession>(json!({
+                        "user_id":"@test:example.org", "device_id":"TEST", "access_token":"fake"
+                    }))
+                    .unwrap(),
+                    Default::default(),
+                )
+                .await
+                .unwrap();
+            let (state, mut updates) = watch::channel(Model::default());
+            let profile = account_profile_updates(&client, &state);
+            tokio::pin!(profile);
+            tokio::time::timeout(Duration::from_secs(5), async {
+                tokio::select! {
+                    _ = &mut profile => panic!("profile subscription must remain pending"),
+                    result = updates.wait_for(|snapshot| {
+                        snapshot.account_name == name
+                            && snapshot.account_avatar_url.as_deref().map(|uri| uri.as_str()) == avatar
+                    }) => { result.unwrap(); },
+                }
+            }).await.unwrap();
+        }
     }
 
     #[tokio::test]
