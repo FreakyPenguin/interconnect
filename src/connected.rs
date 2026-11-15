@@ -18,11 +18,7 @@ pub struct Selection {
     pub shutdown: bool,
 }
 
-#[derive(Clone, Debug)]
-pub struct RoomEntry {
-    pub id: String,
-    pub name: String,
-}
+pub use crate::navigation::{RoomEntry, SpaceEntry};
 
 #[derive(Clone, Debug)]
 pub struct MessageRow {
@@ -135,6 +131,8 @@ pub struct Model {
     pub diagnostics: Arc<crate::diagnostics::Diagnostics>,
     pub status: String,
     pub rooms: Arc<Vec<RoomEntry>>,
+    pub spaces: Arc<Vec<SpaceEntry>>,
+    pub navigation_error: Option<String>,
     pub room: Option<Pane>,
     pub thread: Option<Pane>,
 }
@@ -144,6 +142,8 @@ impl Default for Model {
             diagnostics: Arc::default(),
             status: "Restoring saved session…".into(),
             rooms: Arc::default(),
+            spaces: Arc::default(),
+            navigation_error: None,
             room: None,
             thread: None,
         }
@@ -209,7 +209,8 @@ async fn connected(
     selection: &mut watch::Receiver<Selection>,
     state: &watch::Sender<Model>,
 ) -> anyhow::Result<()> {
-    refresh_rooms(client, state);
+    let navigation = navigation_updates(client, state);
+    tokio::pin!(navigation);
     let mut sync_states = sync.state();
     let mut room_states = sync.room_list_service().state();
     let mut session_changes = client.subscribe_to_session_changes();
@@ -258,11 +259,12 @@ async fn connected(
             active = next;
             tokio::select! {
                 changed = selection.changed() => { if changed.is_err() { break; } }
+                _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
                 _ = &mut room_view => room_view = inactive(),
                 _ = &mut thread_view => thread_view = inactive(),
                 event = room_states.next() => {
                     if event.is_none() { anyhow::bail!("room-list stream ended"); }
-                    refresh_rooms(client, state);
+
                 }
                 event = session_changes.recv() => match event {
                     Ok(matrix_sdk::SessionChange::UnknownToken(_)) => anyhow::bail!("The server rejected this session. Sign-in is required; saved credentials retained."),
@@ -287,27 +289,43 @@ async fn connected(
     result
 }
 
-fn refresh_rooms(client: &Client, state: &watch::Sender<Model>) {
-    let mut rooms: Vec<_> = client
-        .joined_rooms()
-        .into_iter()
-        .map(|r| RoomEntry {
-            id: r.room_id().to_string(),
-            name: r.name().unwrap_or_else(|| r.room_id().to_string()),
-        })
-        .collect();
-    rooms.sort_by_cached_key(|r| (r.name.to_lowercase(), r.id.clone()));
-    state.send_if_modified(|s| {
-        let changed = s.rooms.len() != rooms.len()
-            || s.rooms
-                .iter()
-                .zip(&rooms)
-                .any(|(a, b)| a.id != b.id || a.name != b.name);
-        if changed {
-            s.rooms = Arc::new(rooms);
+async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
+    // Subscribe before reading the cache so startup changes cannot be missed.
+    let mut rooms = client.subscribe_to_all_room_updates();
+    let mut metadata = client.room_info_notable_update_receiver();
+    loop {
+        match crate::navigation::snapshot(client).await {
+            Ok((rooms, spaces)) => {
+                state.send_if_modified(|s| {
+                    if *s.rooms == rooms && *s.spaces == spaces && s.navigation_error.is_none() {
+                        return false;
+                    }
+                    s.rooms = Arc::new(rooms);
+                    s.spaces = Arc::new(spaces);
+                    s.navigation_error = None;
+                    true
+                });
+            }
+            Err(_) => {
+                state.send_if_modified(|s| {
+                    let error =
+                        "Could not refresh room navigation. Retrying on the next account update.";
+                    if s.navigation_error.as_deref() == Some(error) {
+                        return false;
+                    }
+                    s.navigation_error = Some(error.into());
+                    true
+                });
+            }
         }
-        changed
-    });
+        tokio::select! {
+            event = rooms.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
+            event = metadata.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
+        }
+        // Superseded notifications need one fresh snapshot, not one DB scan each.
+        while rooms.try_recv().is_ok() {}
+        while metadata.try_recv().is_ok() {}
+    }
 }
 
 async fn view(
@@ -548,6 +566,164 @@ mod tests {
         assert!(tokio::runtime::Handle::try_current().is_err());
         drop(client);
         crate::shutdown_runtime(runtime, Duration::from_secs(5)).unwrap();
+    }
+
+    #[tokio::test]
+    async fn navigation_tracks_sdk_state_and_account_data_without_timelines() {
+        use matrix_sdk::config::SyncSettings;
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
+            .mount(&server)
+            .await;
+        let client = Client::builder()
+            .homeserver_url(server.uri())
+            .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+            .build()
+            .await
+            .unwrap();
+        client
+            .matrix_auth()
+            .restore_session(
+                serde_json::from_value::<MatrixSession>(
+                    json!({"user_id":"@test:example.org","device_id":"TEST","access_token":"fake"}),
+                )
+                .unwrap(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        let event = |kind: &str, key: &str, content: serde_json::Value| json!({"type":kind,"state_key":key,"sender":"@test:example.org","event_id":format!("${kind}-{key}"),"origin_server_ts":1,"content":content});
+        let room = |name: &str, space: bool, mut extra: Vec<serde_json::Value>| {
+            extra.extend([
+                event(
+                    "m.room.create",
+                    "",
+                    if space {
+                        json!({"creator":"@test:example.org","type":"m.space"})
+                    } else {
+                        json!({"creator":"@test:example.org"})
+                    },
+                ),
+                event(
+                    "m.room.member",
+                    "@test:example.org",
+                    json!({"membership":"join"}),
+                ),
+                event("m.room.name", "", json!({"name":name})),
+            ]);
+            json!({"state":{"events":extra},"timeline":{"events":[],"limited":false},"account_data":{"events":[]}})
+        };
+        let mut conversation = room("Conversation", false, vec![]);
+        conversation["account_data"] = json!({"events":[{"type":"m.tag","content":{"tags":{"m.favourite":{}}}},{"type":"m.marked_unread","content":{"unread":true}}]});
+        let first = json!({"next_batch":"one","rooms":{"join":{
+            "!space:example.org": room("Space",true,vec![event("m.space.child","!nested:example.org",json!({"via":["example.org"]}))]),
+            "!nested:example.org": room("Nested",true,vec![event("m.space.child","!room:example.org",json!({"via":["example.org"]}))]),
+            "!other:example.org": room("Other",true,vec![event("m.space.child","!room:example.org",json!({"via":["example.org"]}))]),
+            "!room:example.org": conversation
+        }},"account_data":{"events":[{"type":"m.direct","content":{"@peer:example.org":["!room:example.org"]}}]}});
+        let response = Arc::new(std::sync::Mutex::new(first));
+        let body = response.clone();
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/v3/sync"))
+            .respond_with(move |_: &wiremock::Request| {
+                ResponseTemplate::new(200).set_body_json(body.lock().unwrap().clone())
+            })
+            .mount(&server)
+            .await;
+        let (state, mut snapshots) = watch::channel(Model::default());
+        let watched = client.clone();
+        let task = tokio::spawn(async move { navigation_updates(&watched, &state).await });
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        let first = tokio::time::timeout(
+            Duration::from_secs(5),
+            snapshots.wait_for(|s| {
+                s.spaces.len() == 3
+                    && s.rooms.len() == 1
+                    && s.rooms[0].favorite
+                    && s.rooms[0].direct
+                    && s.rooms[0].unread
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .clone();
+        let members = crate::navigation::members(
+            &crate::navigation::Scope::Space("!space:example.org".into()),
+            &first.spaces,
+        )
+        .unwrap();
+        assert!(members.contains("!room:example.org"));
+        assert!(first.room.is_none() && first.thread.is_none());
+        // Global and room account-data updates must work without a room-list lifecycle transition.
+        *response.lock().unwrap() = json!({"next_batch":"two","account_data":{"events":[{"type":"m.direct","content":{}}]},"rooms":{"join":{
+            "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
+            "!nested:example.org":{"state":{"events":[event("m.space.child","!room:example.org",json!({}))]}}
+        }}});
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        let updated = tokio::time::timeout(
+            Duration::from_secs(5),
+            snapshots.wait_for(|s| {
+                s.rooms.len() == 1
+                    && s.rooms[0].name == "Renamed"
+                    && !s.rooms[0].favorite
+                    && !s.rooms[0].direct
+                    && !s.rooms[0].unread
+                    && s.spaces
+                        .iter()
+                        .any(|s| s.id == "!nested:example.org" && s.children.is_empty())
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .clone();
+        assert!(
+            !crate::navigation::members(
+                &crate::navigation::Scope::Space("!space:example.org".into()),
+                &updated.spaces
+            )
+            .unwrap()
+            .contains("!room:example.org")
+        );
+        assert!(
+            crate::navigation::members(
+                &crate::navigation::Scope::Space("!other:example.org".into()),
+                &updated.spaces
+            )
+            .unwrap()
+            .contains("!room:example.org")
+        );
+        *response.lock().unwrap() = json!({"next_batch":"three","rooms":{"leave":{"!room:example.org":{"timeline":{"events":[event("m.room.member","@test:example.org",json!({"membership":"leave"}))]}}}}});
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            snapshots.wait_for(|s| s.rooms.is_empty()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        task.abort();
+        let _ = task.await;
+        assert!(
+            !server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r.url.path().contains("/messages"))
+        );
     }
 
     #[tokio::test]

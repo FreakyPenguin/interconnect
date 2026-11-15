@@ -1,5 +1,6 @@
 //! Presentation only: no SDK state or polling belongs in this module.
-use super::{App, Message, demo};
+use super::{App, Message};
+use chatclient::navigation::{self, Scope};
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Theme, font,
     widget::{self, button, column, container, row, scrollable, text, text_editor, text_input},
@@ -15,7 +16,7 @@ const LINE: Color = Color::from_rgb8(228, 232, 237);
 const SELECTED: Color = Color::from_rgb8(226, 234, 247);
 
 pub struct State {
-    pub space: usize,
+    pub space: Scope,
     pub collapsed: HashSet<String>,
     pub query: String,
     pub navigation: bool,
@@ -23,7 +24,7 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            space: 1,
+            space: Scope::All,
             collapsed: HashSet::new(),
             query: String::new(),
             navigation: true,
@@ -169,22 +170,36 @@ pub fn empty_state<'a>(heading: &'a str, detail: &'a str) -> Element<'a, Message
     .into()
 }
 impl App {
+    pub(super) fn section_key(&self, section: &str) -> String {
+        format!("{:?}/{section}", self.shell.space)
+    }
     pub(super) fn visible_rooms(&self) -> Vec<String> {
-        self.model
+        let members = navigation::members(&self.shell.space, &self.model.spaces);
+        let mut rooms: Vec<_> = self
+            .model
             .rooms
             .iter()
             .filter(|room| {
-                (self.demo.is_none()
-                    || demo::ROOMS.iter().any(|r| {
-                        r.id == room.id && (self.shell.space == 0 || r.space == self.shell.space)
-                    }))
+                navigation::includes(&self.shell.space, &members, room)
                     && room
                         .name
                         .to_lowercase()
                         .contains(&self.shell.query.to_lowercase())
             })
-            .map(|room| room.id.clone())
-            .collect()
+            .collect();
+        rooms.sort_by_cached_key(|r| {
+            (
+                match r.section() {
+                    "Favorites" => 0,
+                    "Direct messages" => 1,
+                    "Unread" => 2,
+                    _ => 3,
+                },
+                r.name.to_lowercase(),
+                r.id.clone(),
+            )
+        });
+        rooms.into_iter().map(|r| r.id.clone()).collect()
     }
 
     pub(super) fn shell_view(&self) -> Element<'_, Message> {
@@ -238,36 +253,46 @@ impl App {
         ]
         .spacing(10)
         .align_x(Alignment::Center);
-        let entries: &[(&str, &str)] = if self.demo.is_some() {
-            &[
-                ("All", "All rooms"),
-                ("S", "Studio"),
-                ("C", "Community"),
-                ("H", "Home"),
-            ]
-        } else {
-            &[("All", "All rooms")]
-        };
-        for (index, (initial, name)) in entries.iter().enumerate() {
-            let selected = if self.demo.is_some() {
-                self.shell.space == index
-            } else {
-                true
-            };
-            let control = button(container(title(initial, 14)).center_x(38).center_y(38))
+        let mut entries = vec![
+            (Scope::All, "All".to_owned(), "All rooms".to_owned()),
+            (Scope::Direct, "DM".to_owned(), "Direct messages".to_owned()),
+        ];
+        entries.extend(self.model.spaces.iter().map(|s| {
+            (
+                Scope::Space(s.id.clone()),
+                s.name
+                    .chars()
+                    .next()
+                    .unwrap_or('#')
+                    .to_uppercase()
+                    .collect(),
+                s.name.clone(),
+            )
+        }));
+        let mut rail = column![].spacing(10).align_x(Alignment::Center);
+        for (scope, initial, name) in entries {
+            let selected = self.shell.space == scope;
+            let mut control = button(container(text(initial).size(14)).center_x(38).center_y(38))
                 .padding(0)
-                .style(move |_, status| navigation_button(selected, status))
-                .on_press(Message::Space(index));
-            spaces = spaces.push(widget::tooltip(
+                .style(move |_, status| navigation_button(selected, status));
+            if !self.closing && !self.stopped {
+                control = control.on_press(Message::Space(scope));
+            }
+            rail = rail.push(widget::tooltip(
                 control,
-                container(text(*name).size(12))
+                container(text(name).size(12))
                     .padding(8)
                     .style(container::rounded_box),
                 widget::tooltip::Position::Right,
             ));
         }
+        spaces = spaces.push(
+            scrollable(rail)
+                .direction(scrollbar())
+                .style(scroll_style)
+                .height(Length::Fill),
+        );
         spaces = spaces
-            .push(widget::space().height(Length::Fill))
             .push(widget::tooltip(
                 button("☰")
                     .padding(10)
@@ -293,10 +318,15 @@ impl App {
             .into()
     }
     fn room_navigation(&self) -> Element<'_, Message> {
-        let name = if self.demo.is_some() {
-            ["All rooms", "Studio", "Community", "Home"][self.shell.space]
-        } else {
-            "All rooms"
+        let name = match &self.shell.space {
+            Scope::All => "All rooms",
+            Scope::Direct => "Direct messages",
+            Scope::Space(id) => self
+                .model
+                .spaces
+                .iter()
+                .find(|s| &s.id == id)
+                .map_or("Space", |s| s.name.as_str()),
         };
         let search = text_input("Find a room…", &self.shell.query)
             .id("room-search")
@@ -307,38 +337,47 @@ impl App {
             .size(13)
             .padding(10);
         let mut rooms = column![].spacing(5);
-        let sections: &[&str] = if self.demo.is_some() {
-            &["Favorites", "Unread", "Rooms", "Direct messages"]
-        } else {
-            &["Rooms"]
-        };
+        let sections = ["Favorites", "Direct messages", "Unread", "Rooms"];
+        let visible = self.visible_rooms();
+        if let Some(error) = &self.model.navigation_error {
+            rooms = rooms.push(text(error).size(12).color(MUTED));
+        }
+        if let Scope::Space(id) = &self.shell.space
+            && let Some(space) = self.model.spaces.iter().find(|s| &s.id == id)
+        {
+            let children: Vec<_> = self
+                .model
+                .spaces
+                .iter()
+                .filter(|s| space.children.contains(&s.id))
+                .collect();
+            if !children.is_empty() {
+                rooms = rooms.push(container(title("Spaces", 11).color(MUTED)).padding([10, 8]));
+                for child in children {
+                    rooms = rooms.push(
+                        button(text(format!("› {}", child.name)).size(13))
+                            .width(Length::Fill)
+                            .padding([9, 10])
+                            .style(quiet_button)
+                            .on_press(Message::Space(Scope::Space(child.id.clone()))),
+                    );
+                }
+            }
+        }
         let mut matches = 0;
         for section in sections {
             let entries: Vec<_> = self
                 .model
                 .rooms
                 .iter()
-                .filter(|room| {
-                    let group = self.demo.is_none()
-                        || demo::ROOMS
-                            .iter()
-                            .find(|r| r.id == room.id)
-                            .is_some_and(|r| {
-                                (self.shell.space == 0 || r.space == self.shell.space)
-                                    && r.section == *section
-                            });
-                    group
-                        && room
-                            .name
-                            .to_lowercase()
-                            .contains(&self.shell.query.to_lowercase())
-                })
+                .filter(|r| visible.contains(&r.id) && r.section() == section)
                 .collect();
             if entries.is_empty() {
                 continue;
             }
             matches += entries.len();
-            let collapsed = self.shell.collapsed.contains(*section) && self.shell.query.is_empty();
+            let collapsed = self.shell.collapsed.contains(&self.section_key(section))
+                && self.shell.query.is_empty();
             rooms = rooms.push(
                 button(
                     row![
@@ -353,7 +392,7 @@ impl App {
                 .width(Length::Fill)
                 .padding([10, 8])
                 .style(quiet_button)
-                .on_press(Message::Section((*section).into())),
+                .on_press(Message::Section(section.into())),
             );
             if collapsed {
                 continue;
@@ -364,34 +403,31 @@ impl App {
                     .room
                     .as_ref()
                     .is_some_and(|(_, id)| id == &room.id);
-                let unread = if self.demo.is_some() {
-                    demo::ROOMS
-                        .iter()
-                        .find(|r| r.id == room.id)
-                        .map_or(0, |r| r.unread)
-                } else {
-                    0
-                };
+                let unread = room.unread_count;
                 let mut label = row![
-                    text(if *section == "Direct messages" {
-                        "·"
-                    } else {
-                        "#"
-                    })
-                    .color(MUTED)
-                    .size(16),
+                    text(if room.direct { "·" } else { "#" })
+                        .color(MUTED)
+                        .size(16),
                     text(&room.name).size(13).width(Length::Fill)
                 ]
                 .spacing(9)
                 .align_y(Alignment::Center);
-                if unread > 0 {
+                if room.unread {
                     label = label.push(
-                        container(text(unread).size(10).color(ACCENT))
-                            .padding([2, 6])
-                            .style(|_| container::Style {
-                                border: Border::default().rounded(8),
-                                ..surface(SELECTED)
-                            }),
+                        container(
+                            text(if unread > 0 {
+                                unread.to_string()
+                            } else {
+                                "•".into()
+                            })
+                            .size(10)
+                            .color(ACCENT),
+                        )
+                        .padding([2, 6])
+                        .style(|_| container::Style {
+                            border: Border::default().rounded(8),
+                            ..surface(SELECTED)
+                        }),
                     );
                 }
                 let mut control = button(label)

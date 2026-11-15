@@ -1,6 +1,6 @@
 //! Deterministic, memory-only fixtures. Demo mode never creates an SDK client.
 use super::DraftKey;
-use chatclient::connected::{History, MessageRow, Pane, RoomEntry};
+use chatclient::connected::{History, MessageRow, Pane, RoomEntry, SpaceEntry};
 use std::collections::HashMap;
 
 pub struct Room {
@@ -109,8 +109,31 @@ pub fn rooms() -> Vec<RoomEntry> {
         .map(|r| RoomEntry {
             id: r.id.into(),
             name: r.name.into(),
+            favorite: r.section == "Favorites",
+            direct: r.section == "Direct messages",
+            unread: r.unread > 0,
+            unread_count: r.unread as u64,
         })
         .collect()
+}
+pub fn spaces() -> Vec<SpaceEntry> {
+    [
+        ("studio-space", "Studio"),
+        ("community-space", "Community"),
+        ("home-space", "Home"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(index, (id, name))| SpaceEntry {
+        id: id.into(),
+        name: name.into(),
+        children: ROOMS
+            .iter()
+            .filter(|r| r.space == index + 1)
+            .map(|r| r.id.into())
+            .collect(),
+    })
+    .collect()
 }
 #[derive(Default)]
 pub struct Demo {

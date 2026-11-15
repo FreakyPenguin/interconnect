@@ -5,6 +5,7 @@ mod demo;
 mod shell;
 
 use chatclient::connected::{History, Model, Pane, RetrySend, Selection};
+use chatclient::navigation::Scope;
 use iced::{
     Element, Length, Subscription, Task,
     futures::SinkExt,
@@ -45,7 +46,7 @@ struct App {
 }
 #[derive(Clone, Debug)]
 enum Message {
-    Space(usize),
+    Space(Scope),
     Section(String),
     Search(String),
     SearchFocus,
@@ -94,6 +95,8 @@ impl App {
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
             app.model.rooms = demo::rooms().into();
+            app.model.spaces = demo::spaces().into();
+            app.shell.space = Scope::Space("studio-space".into());
             app.model.status = "Design preview · local sample data".into();
             let _ = app.update(Message::Room("studio".into()));
         }
@@ -111,18 +114,25 @@ impl App {
             _ => None,
         };
         match message {
-            Message::Space(space) => {
+            Message::Space(space) if !self.closing && !self.stopped => {
                 self.shell.space = space;
                 self.shell.query.clear();
-                if self.demo.is_some() {
-                    let room = demo::ROOMS
-                        .iter()
-                        .find(|r| space == 0 || r.space == space)
-                        .unwrap();
-                    return self.update(Message::Room(room.id.into()));
+                let rooms = self.visible_rooms();
+                if !self
+                    .selection
+                    .room
+                    .as_ref()
+                    .is_some_and(|(_, id)| rooms.contains(id))
+                {
+                    if let Some(room) = rooms.first() {
+                        return self.update(Message::Room(room.clone()));
+                    }
+                    self.selection.room = None;
+                    self.selection.thread = None;
                 }
             }
             Message::Section(section) => {
+                let section = self.section_key(&section);
                 if !self.shell.collapsed.remove(&section) {
                     self.shell.collapsed.insert(section);
                 }
@@ -272,7 +282,27 @@ impl App {
                 sender.send_replace(self.selection.clone());
                 self.control = Some(sender);
             }
-            Message::State(state) => self.model = state,
+            Message::State(state) => {
+                self.model = state;
+                if self.model.navigation_error.is_none() {
+                    if let Scope::Space(id) = &self.shell.space
+                        && !self.model.spaces.iter().any(|s| &s.id == id)
+                    {
+                        self.shell.space = Scope::All;
+                    }
+                    let members =
+                        chatclient::navigation::members(&self.shell.space, &self.model.spaces);
+                    if self.selection.room.as_ref().is_some_and(|(_, id)| {
+                        !self.model.rooms.iter().any(|r| {
+                            &r.id == id
+                                && chatclient::navigation::includes(&self.shell.space, &members, r)
+                        })
+                    }) {
+                        self.selection.room = None;
+                        self.selection.thread = None;
+                    }
+                }
+            }
             Message::Stopped(result) => {
                 self.stopped = true;
                 match result {
@@ -830,6 +860,8 @@ mod tests {
         let mut app = App::new();
         app.demo = Some(demo::Demo::default());
         app.model.rooms = demo::rooms().into();
+        app.model.spaces = demo::spaces().into();
+        app.shell.space = Scope::Space("studio-space".into());
         let _ = app.update(Message::Room("studio".into()));
         app
     }
@@ -856,7 +888,7 @@ mod tests {
         assert!(app.composer_for(&thread_key).is_none());
         assert!(app.drafts[&thread_key].content.text().trim().is_empty());
         assert_eq!(app.drafts[&room_key].content.text().trim(), "room draft");
-        let _ = app.update(Message::Space(3));
+        let _ = app.update(Message::Space(Scope::Space("home-space".into())));
         assert!(app.selection.thread.is_none());
         assert!(
             app.model
@@ -867,7 +899,7 @@ mod tests {
                 .iter()
                 .all(|r| r.body.trim() != "a local reply")
         );
-        let _ = app.update(Message::Space(1));
+        let _ = app.update(Message::Space(Scope::Space("studio-space".into())));
         let _ = app.update(Message::Thread("proposal".into()));
         assert_eq!(
             app.model
@@ -885,13 +917,37 @@ mod tests {
     }
 
     #[test]
+    fn live_metadata_preserves_space_identity_and_clears_removed_rooms() {
+        let mut app = demo_app();
+        app.demo = None;
+        let mut state = app.model.clone();
+        std::sync::Arc::make_mut(&mut state.spaces).reverse();
+        let _ = app.update(Message::State(state.clone()));
+        assert_eq!(app.shell.space, Scope::Space("studio-space".into()));
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "studio");
+        let _ = app.update(Message::Thread("root".into()));
+        state.rooms = state
+            .rooms
+            .iter()
+            .filter(|r| r.id != "studio")
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        let _ = app.update(Message::State(state.clone()));
+        assert!(app.selection.room.is_none() && app.selection.thread.is_none());
+        state.spaces = Default::default();
+        let _ = app.update(Message::State(state));
+        assert_eq!(app.shell.space, Scope::All);
+    }
+
+    #[test]
     fn search_and_keyboard_navigation_respect_selected_space() {
         let mut app = demo_app();
         let _ = app.update(Message::Search("MAYA".into()));
         assert_eq!(app.visible_rooms(), ["maya"]);
         let _ = app.update(Message::SearchOpen);
         assert_eq!(app.selection.room.as_ref().unwrap().1, "maya");
-        let _ = app.update(Message::Space(3));
+        let _ = app.update(Message::Space(Scope::Space("home-space".into())));
         assert!(app.shell.query.is_empty());
         assert_eq!(app.visible_rooms(), ["home", "alex"]);
         let _ = app.update(Message::AdjacentRoom(true));

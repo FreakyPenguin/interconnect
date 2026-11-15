@@ -33,7 +33,7 @@ pending. This does not yet include the full shell or keyboard workflows.
 The [design preview](validation/design-preview.md) adds a shared visual shell and
 an explicit `--demo` mode with sample spaces, collapsible room sections, search,
 and an adaptive thread pane. The connected app uses the same presentation with
-its real room list. Space/unread SDK wiring, complete keyboard access, timeline
+its real room list. Complete keyboard access, timeline
 selection, and scroll/virtualization acceptance remain pending.
 
 Exit evidence: runnable shell and recorded measurement procedure, hardware, and baseline results.
@@ -58,6 +58,11 @@ Exit evidence: sign in, verify, exchange encrypted messages, restart, and resume
 - [ ] Correctly represent a room shared by multiple spaces.
 - [ ] Persist selected space/room, section order, and collapsed state.
 - [ ] Navigate spaces and sections, switch rooms by typing their names, and move to unread conversations using only the keyboard.
+
+Connected navigation is implemented with SDK metadata for joined spaces, nested
+and shared membership, exclusive sections, and live room updates. The
+[connected navigation record](validation/connected-ui.md#connected-navigation--2026-11-15)
+defines grouping and documents local test evidence and pending live acceptance.
 
 Exit evidence: navigate a representative account with nested spaces and shared rooms; restart and recover the navigation state.
 

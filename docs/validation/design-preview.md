@@ -22,8 +22,8 @@ messages; see [connected UI validation](connected-ui.md).
 The rail contains All rooms, Studio, Community, and Home. Each sample space has
 Favorites, Unread, Rooms, and/or Direct messages sections. Click section headings
 to collapse them. Unread badges and membership are fixtures, not Matrix state.
-Connected mode truthfully shows All rooms with a single Rooms section until
-space membership and grouping are wired to the SDK.
+Connected mode uses the same projection with real joined spaces and SDK room
+metadata; see [connected navigation](connected-ui.md#connected-navigation--2026-11-15).
 
 Search filters the selected space; Enter opens its first match and focuses the
 room composer. Search temporarily expands matching sections. The rail's bottom
@@ -73,8 +73,9 @@ pagination and incoming messages, and virtualization for large histories. The
 150-message fixture is a usability probe, not a performance budget or evidence of
 bounded rendering. The presentation still renders every loaded row. Message
 formatting, display-name resolution, timestamps, grouping consecutive senders,
-media, nested spaces, saved navigation, and actual unread semantics remain future
-work. Demo memberships and sections are intentionally presentation fixtures.
+media, saved navigation, and complete unread/receipt semantics remain future
+work. Demo memberships and sections are intentionally presentation fixtures;
+connected mode now supports joined nested spaces and SDK unread metadata.
 
 The prototype is ready for visual feedback; aesthetic acceptance is the user's
 judgment. Completing this slice does not complete the Wayland-shell milestone or

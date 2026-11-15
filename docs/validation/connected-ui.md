@@ -21,14 +21,42 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
-## Visual shell — 2026-11-15
+## Connected navigation — 2026-11-15
 
-The connected app now shares the light desktop shell with the
-[design preview](design-preview.md). It includes room search, a collapsible Rooms
-section, avatars derived from sender labels, and a responsive thread pane. Live
-space membership and unread grouping are not yet exposed; use `--demo` to explore
-those organizational fixtures without opening the saved session. Existing
-connected send, retry, cancellation, and history behavior remains in place.
+The visual shell now projects joined spaces and rooms from SDK metadata. The
+rail includes All rooms, Direct messages, and every joined space. A space shows
+its joined child spaces plus joined conversation rooms reachable through them.
+Shared rooms can appear in multiple spaces; traversal deduplicates rooms and
+handles cycles. Removed/redacted child links are excluded. Unjoined spaces and
+rooms are not discovered or joined, so paths through unjoined spaces are not
+expanded. Space ordering and room ordering within a section are alphabetical
+with room IDs as stable tie-breakers; `m.space.child.order` is not yet applied.
+
+Sections are exclusive, with precedence Favorites → Direct messages → Unread →
+Rooms. Favorites keep their unread badge. The Direct messages rail entry includes
+all direct rooms, including favorites. The unread badge uses the SDK's local
+unread-message count; a dot represents a marked-unread room or SDK unread
+notifications without a positive message count. Counts are not a complete thread
+unread implementation. Selecting a room does not send receipts or mark it read.
+
+Room updates and notable SDK metadata updates trigger coalesced snapshots; there
+is no polling timer and navigation does not open timelines. Names, membership,
+favorites, direct status, unread state, and child links update independently of
+room-list service lifecycle transitions. Store errors preserve the last good
+snapshot and show a navigation error until a later update succeeds. UI selection
+uses stable room IDs and clears an inaccessible conversation/thread on membership
+or space-link changes. Collapsed sections are scoped to each navigation context.
+
+Local SDK/mock-server tests cover nested and shared spaces, child-link removal,
+room rename, favorite/direct/unread account data, leaving a room, and metadata
+updates without a `/messages` request. GUI tests cover stable space selection
+across reordering and clearing removed rooms. Live-account acceptance remains
+pending: compare spaces and sections with the other client, rename/tag/change
+unread state there, remove a test child link, and confirm navigation updates
+without selecting each affected room. Use dedicated test rooms for mutations.
+
+The [design preview](design-preview.md) still runs with `--demo`, now through the
+same navigation projection as the connected app.
 
 ## Interactive acceptance
 
