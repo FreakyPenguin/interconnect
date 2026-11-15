@@ -473,7 +473,7 @@ mod tests {
             }
         }
         fn inspect(app: &App, tree: &mut widget::Tree, set: bool) -> f32 {
-            let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
             let mut view = app.view();
             tree.diff(view.as_widget());
             let size = iced::Size::new(1240.0, 820.0);
@@ -515,7 +515,7 @@ mod tests {
         let mut app = super::super::tests::demo_app();
         let _ = app.settings_update(Event::Open);
         let mut view = app.view();
-        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         let mut tree = widget::Tree::new(&view);
         let size = iced::Size::new(640.0, 480.0);
         let node =

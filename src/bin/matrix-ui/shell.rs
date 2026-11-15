@@ -588,7 +588,7 @@ mod avatar_tests {
 
     #[test]
     fn decoded_images_keep_the_same_layout_as_initials() {
-        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         let handle = widget::image::Handle::from_rgba(64, 64, vec![160; 64 * 64 * 4]);
         for compact in [false, true] {
             let sizes: Vec<_> = [None, Some(&handle)]

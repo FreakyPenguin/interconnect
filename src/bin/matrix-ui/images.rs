@@ -340,7 +340,7 @@ mod tests {
     #[test]
     fn preview_reserves_the_same_space_before_and_after_loading_or_failure() {
         let mut app = sample();
-        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         for width in [160.0, 320.0] {
             app.model.images = super::super::demo::images();
             let mut sizes = Vec::new();
@@ -380,7 +380,7 @@ mod tests {
         let generation = app.selection.room.as_ref().unwrap().0;
         open(&mut app, generation);
         let mut view = app.view();
-        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         let mut tree = Tree::new(&view);
         let size = iced::Size::new(640.0, 480.0);
         let node =
@@ -440,7 +440,7 @@ mod tests {
         let large = image::Handle::from_rgba(2048, 2048, vec![160; 2048 * 2048 * 4]);
         Arc::make_mut(&mut app.model.images.ready).insert(key, large);
         open(&mut app, generation);
-        let mut renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         let mut tree = Tree::empty();
         let size = iced::Size::new(1000.0, 800.0);
         let mut pixels = tiny_skia::Pixmap::new(1000 * scale, 800 * scale).unwrap();
@@ -502,7 +502,10 @@ mod tests {
                     mouse::Cursor::Available(click.unwrap()),
                     &iced::Rectangle::with_size(size),
                 );
-                renderer.draw(
+                let iced::Renderer::Secondary(software) = &mut renderer else {
+                    panic!("software test renderer");
+                };
+                software.draw(
                     &mut pixels.as_mut(),
                     &mut mask,
                     &viewport,

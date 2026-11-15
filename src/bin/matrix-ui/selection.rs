@@ -539,7 +539,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 tree: Tree::empty(),
-                renderer: Renderer::new(iced::Font::DEFAULT, iced::Pixels(14.0)),
+                renderer: crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0)),
                 clipboard: ClipboardText::default(),
             }
         }

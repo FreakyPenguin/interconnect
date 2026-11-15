@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn viewport_reports_layout_and_page_changes_once_without_timers() {
-        let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         let mut tree = Tree::empty();
         for (revision, ready, height, expected) in [
             (1, true, 400.0, true),
@@ -535,7 +535,7 @@ mod tests {
     fn avatar_visibility_follows_room_and_thread_viewports_without_repeated_reports() {
         use iced::widget::{column, container, scrollable, space};
         for thread in [false, true] {
-            let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
             let mut tree = Tree::empty();
             for (offset, expected) in [
                 (0.0, Some(vec!["b", "c"])),
@@ -624,7 +624,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 tree: Tree::empty(),
-                renderer: Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0)),
+                renderer: crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0)),
             }
         }
         fn render(

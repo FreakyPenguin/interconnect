@@ -29,6 +29,44 @@ no saved session and sends no Matrix messages. See the [design preview guide](va
 for shortcuts, fixtures, and known interaction gaps. Normal `matrix-ui` launches
 use the same visual shell with the saved Matrix session.
 
+## Renderer selection
+
+`matrix-ui` builds both Iced renderers. Startup tries **wgpu** first and falls
+back to **tiny-skia** if wgpu initialization fails. The application defaults
+`WGPU_POWER_PREF` to `low`, preferring an integrated/low-power adapter when one
+is available. An explicit environment value (`low`, `high`, or `none`) wins.
+This preference does not guarantee a particular device or lower power use.
+
+To compare the renderers with isolated sample data:
+
+```sh
+# Force CPU rendering without attempting wgpu.
+ICED_BACKEND=tiny-skia cargo run --locked --bin matrix-ui -- --demo
+
+# Require wgpu; initialization errors are reported instead of falling back.
+ICED_BACKEND=wgpu cargo run --locked --bin matrix-ui -- --demo
+```
+
+Unset `ICED_BACKEND` for the normal wgpu-first/software-fallback behavior, or
+set it to `wgpu,tiny-skia` explicitly. This is a startup choice; device loss
+after initialization does not dynamically switch the running renderer.
+`WGPU_BACKEND=vulkan` selects a graphics API within wgpu, rather than selecting
+Iced's software renderer.
+
+For adapter diagnostics, use
+`RUST_LOG=iced_wgpu=info cargo run --locked --bin matrix-ui -- --demo` and inspect
+the `Selected: AdapterInfo` record. An adapter named llvmpipe/lavapipe with device
+type `Cpu` uses software rendering through wgpu. In a container, expose `/dev/dri`
+and the appropriate device permissions to try actual hardware acceleration.
+Normal rendering remains event-driven; enabling wgpu adds no application frame
+timer. Native-host checks are required to compare GPU memory, battery use,
+hidden-window behavior, and suspend/resume.
+
+The low-power default is set by a one-time Unix re-exec before Tokio/Iced starts,
+preserving PID, working directory, arguments, and inherited environment. This
+avoids changing process environment variables while threads may read them.
+The same default applies to direct `target/debug/matrix-ui` launches.
+
 ## Settings
 
 The desktop has a TOML-backed settings dialog. See [application settings](settings.md)

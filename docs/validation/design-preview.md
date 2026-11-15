@@ -27,6 +27,14 @@ failed states; drafts and reading positions should survive opening and closing
 the viewer. The ready image is a deterministic pixel fixture generated once at
 startup; no image files, SDK clients, saved profiles, or network requests are used.
 
+The default launch tries wgpu with a low-power adapter preference and software
+fallback. Repeat the image/scroll/selection checks with
+`ICED_BACKEND=tiny-skia cargo run --locked --bin matrix-ui -- --demo` to force
+the CPU renderer, and `ICED_BACKEND=wgpu` to require wgpu. See
+[renderer selection](../development.md#renderer-selection) for adapter logs and
+overrides. Check that the selected wgpu adapter is a hardware device before
+attributing performance or battery differences to GPU acceleration.
+
 The rail contains All rooms, Studio, Community, and Home. Each sample space has
 Favorites, Unread, Rooms, and/or Direct messages sections. Click section headings
 to collapse them. Unread badges and membership are fixtures, not Matrix state.

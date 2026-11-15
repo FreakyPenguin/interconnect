@@ -299,7 +299,7 @@ mod tests {
             body: Cow::Borrowed("hello world café 👋"),
             appearance: Appearance::Message,
         };
-        let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
         let node = view.layout(
             &mut tree,
@@ -398,7 +398,7 @@ mod tests {
         .anchor_bottom()
         .height(200)
         .into();
-        let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         let mut tree = Tree::new(&element);
         let node = element.as_widget_mut().layout(
             &mut tree,

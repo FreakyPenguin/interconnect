@@ -23,6 +23,56 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
+## wgpu with software fallback — 2026-11-15
+
+The GUI now enables both Iced renderer features. With no `ICED_BACKEND` override,
+Iced attempts wgpu first and tiny-skia if initialization fails. `matrix-ui`
+defaults to `WGPU_POWER_PREF=low` while preserving explicit `low`, `high`, or
+`none` values. The default is applied by re-executing the Unix process before
+starting Tokio/Iced, preserving PID, arguments, working directory, and inherited
+environment without mutating it while other threads run.
+
+Force `ICED_BACKEND=tiny-skia` to select software directly. Force
+`ICED_BACKEND=wgpu` to require wgpu and expose initialization failures, or use
+`ICED_BACKEND=wgpu,tiny-skia` for an explicit ordered fallback. This fallback
+operates during startup, not after a running GPU device is lost. See
+[renderer selection](../development.md#renderer-selection) for demo commands and
+adapter diagnostics. No account stores, media budgets, synchronization tasks,
+or application redraw timers are changed.
+
+Widget/layout tests construct the software variant of Iced's combined renderer,
+keeping the suite independent of GPU/display access. The real rasterization
+regression still runs through tiny-skia at 1× and 2× scale. A subprocess test
+checks that unset power preference becomes `low` and explicit overrides survive
+startup. GPU visual output and performance require separate desktop acceptance.
+
+The locked dependency graph adds the necessary graphics/API packages without
+changing any existing package versions. The direct test dependency
+`iced_tiny_skia` uses the already pinned 0.14.1 release; vendored Iced files are
+unchanged.
+
+Local validation: all 48 regular library tests and 61 GUI tests passed, along
+with formatting, Clippy with warnings denied, and the locked GUI build. The
+opt-in 100-cycle stress test was not run. Demo checks use only in-memory sample
+data. The container has no `/dev/dri`; its Vulkan/GL adapter is llvmpipe (CPU), so
+hardware GPU performance, idle power, suspend/resume, and native-host visual
+acceptance remain unmeasured. No connected profile was opened or restarted by
+these validation runs.
+
+Demo smoke evidence: the default launch logged selection of the Vulkan
+llvmpipe CPU adapter and exited with status 0. Forced `ICED_BACKEND=tiny-skia`
+stayed running for eight seconds without wgpu initialization logs. With
+`ICED_BACKEND` unset and `WGPU_BACKEND=dx12` (unavailable on this Linux setup),
+wgpu reported no adapters and the application stayed running through software
+fallback for eight seconds. The latter two runs were stopped by timeout
+(status 124); they establish startup behavior, not graceful closing or visual
+acceptance.
+
+Host acceptance: launch the demo with each renderer, inspect the wgpu selected
+adapter, open/close images repeatedly, scroll rooms/threads, select/copy text,
+resize, hide/unhide, and suspend/resume. Compare settled idle CPU/wakeups and
+active image/scroll behavior using [idle validation](idle-resources.md).
+
 ## Image messages — 2026-11-15
 
 ### Image-viewer responsiveness correction

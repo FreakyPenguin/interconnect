@@ -431,3 +431,24 @@ as mouse press/redraw/release handling at 1× and 2× scale, including an interv
 model update. See [responsiveness validation](../validation/connected-ui.md#image-viewer-responsiveness-correction)
 for measured costs and pending desktop confirmation. No vendor patch, new
 animation/polling task, release-profile change, or key-store change is involved.
+
+## wgpu with software fallback — 2026-11-15
+
+Enable Iced's `wgpu` and `tiny-skia` features together. Its combined renderer
+tries wgpu first and tiny-skia on initialization failure. `ICED_BACKEND` can
+force a renderer or provide an ordered list. Runtime device loss does not
+switch a running renderer to software. Keep the existing application-driven
+redraw scheduling and single Tokio runtime.
+
+Iced 0.14 reads GPU power preference only from `WGPU_POWER_PREF` and otherwise
+defaults to high performance. `matrix-ui` supplies `low` when unset via a
+one-time Unix re-exec before initialization. This preserves PID, working
+directory, arguments, and inherited environment and avoids unsafe environment
+mutation in a threaded process. Explicit preferences remain authoritative.
+
+Headless widget tests explicitly instantiate the software variant of the same
+combined renderer; they do not initialize a GPU. Package versions and vendored
+code remain unchanged. See [renderer validation](../validation/connected-ui.md#wgpu-with-software-fallback--2026-11-15)
+for available smoke evidence and native-host checks. A wgpu CPU adapter such as
+llvmpipe is distinct from tiny-skia fallback and does not establish hardware
+acceleration or battery efficiency.

@@ -8,7 +8,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-iced = { version = "=0.14.0", default-features = false, features = ["tokio", "wayland", "tiny-skia", "advanced", "image-without-codecs"] }
+iced = { version = "=0.14.0", default-features = false, features = ["tokio", "wayland", "wgpu", "tiny-skia", "advanced", "image-without-codecs"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 matrix-sdk = { version = "=0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs", "sso-login"] }
 matrix-sdk-common = { version = "=0.19.1", default-features = false }
@@ -26,6 +26,7 @@ rand = "0.9"
 zeroize = "1"
 
 [dev-dependencies]
+iced_tiny_skia = { version = "=0.14.1", default-features = false }
 matrix-sdk-crypto = { version = "=0.19.1", default-features = false }
 tempfile = "3"
 tiny-skia = { version = "=0.11.4", default-features = false }

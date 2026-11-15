@@ -1771,6 +1771,7 @@ fn profile_argument(arguments: impl Iterator<Item = String>) -> String {
 }
 
 fn main() -> anyhow::Result<()> {
+    configure_graphics_environment()?;
     chatclient::init_tracing();
     let mut arguments = std::env::args().skip(1);
     let mut config = None;
@@ -1801,10 +1802,78 @@ fn main() -> anyhow::Result<()> {
     })
 }
 
+/// Iced 0.14 reads adapter preference from the environment. Re-exec before
+/// starting Tokio/Iced instead of mutating the process environment while other
+/// threads may read it. exec preserves PID, arguments, working directory, and
+/// inherited display/session variables. Explicit user preferences take priority.
+fn configure_graphics_environment() -> anyhow::Result<()> {
+    use std::os::unix::process::CommandExt;
+    if std::env::var_os("WGPU_POWER_PREF").is_none() {
+        let error = std::process::Command::new(std::env::current_exe()?)
+            .args(std::env::args_os().skip(1))
+            .env("WGPU_POWER_PREF", "low")
+            .exec();
+        return Err(
+            anyhow::Error::new(error).context("Could not configure renderer power preference")
+        );
+    }
+    Ok(())
+}
+
+/// Widget/layout tests stay headless and deterministic with the same software
+/// renderer variant used by the application's real fallback path.
+#[cfg(test)]
+fn test_renderer(font: iced::Font, size: iced::Pixels) -> iced::Renderer {
+    iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(font, size))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn graphics_environment_child() {
+        if std::env::var_os("CHATCLIENT_TEST_GRAPHICS_CHILD").is_none() {
+            return;
+        }
+        configure_graphics_environment().unwrap();
+        println!(
+            "graphics-power-preference={}",
+            std::env::var("WGPU_POWER_PREF").unwrap()
+        );
+    }
+
+    #[test]
+    fn graphics_launch_defaults_to_low_power_and_preserves_overrides() {
+        for (preference, expected) in [
+            (None, "low"),
+            (Some("high"), "high"),
+            (Some("none"), "none"),
+        ] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child
+                .args([
+                    "--exact",
+                    "tests::graphics_environment_child",
+                    "--nocapture",
+                ])
+                .env("CHATCLIENT_TEST_GRAPHICS_CHILD", "1");
+            if let Some(value) = preference {
+                child.env("WGPU_POWER_PREF", value);
+            } else {
+                child.env_remove("WGPU_POWER_PREF");
+            }
+            let output = child.output().unwrap();
+            assert!(output.status.success(), "{:?}", output.status);
+            assert!(
+                String::from_utf8(output.stdout)
+                    .unwrap()
+                    .contains(&format!("graphics-power-preference={expected}"))
+            );
+        }
+    }
+
     pub(super) fn demo_app() -> App {
         let mut app = App::new();
         app.demo = Some(demo::Demo::default());
@@ -2073,7 +2142,7 @@ mod tests {
         }
         let mut app = demo_app();
         let _ = app.update(Message::Room("activity".into()));
-        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         for width in [320.0, 720.0] {
             for thread in [false, true] {
                 if thread {
@@ -2186,7 +2255,7 @@ mod tests {
             reply.event_id = Some(format!("reply-{index}-extra"));
             rows.push(reply);
         }
-        let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         let mut pane = app.pane(true);
         let mut tree = widget::Tree::new(&pane);
         let node = pane.as_widget_mut().layout(
@@ -2466,7 +2535,7 @@ mod tests {
             tree: &mut widget::Tree,
             set_offset: Option<f32>,
         ) -> (f32, Option<(widget::Id, f32)>) {
-            let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
             let mut pane = app.pane(false);
             tree.diff(pane.as_widget());
             let node = pane.as_widget_mut().layout(
@@ -2528,7 +2597,7 @@ mod tests {
             let mut editor = iced::widget::text_input("Find a room", "fixture")
                 .on_input(std::convert::identity)
                 .cursor_blinking(blinking);
-            let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
             let mut tree =
                 widget::Tree::new(&editor as &dyn Widget<String, iced::Theme, iced::Renderer>);
             tree.state
@@ -2582,7 +2651,7 @@ mod tests {
             let mut editor = text_editor(&content)
                 .on_action(std::convert::identity)
                 .cursor_blinking(blinking);
-            let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
             let mut tree = widget::Tree::new(
                 &editor as &dyn Widget<text_editor::Action, iced::Theme, iced::Renderer>,
             );
