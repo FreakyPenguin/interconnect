@@ -359,6 +359,8 @@ connected client. Each room/thread draft can stage one file, display its
 filename/size, remove or replace it, and add a caption. Demo **Send** appends only
 the filename/caption to its in-memory conversation; it neither reads file contents
 nor uploads anything. Picker cancellation preserves an existing staged file.
-Clipboard files and drop input are not yet supported. See
+Clipboard files and images can be pasted with Ctrl+V (Cmd+V on macOS) into
+either composer. Native image pixels remain in memory; demo sends still use only
+the filename/caption. Drop input is not yet supported. See
 [attachment validation](connected-ui.md#sending-attachments--2026-11-15) for
 coverage and native-host limits.

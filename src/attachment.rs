@@ -1,5 +1,5 @@
 //! Local attachment preparation. All filesystem and image-header work stays off the UI thread.
-use std::{io::Read, path::PathBuf};
+use std::{io::Read, path::PathBuf, sync::Arc};
 
 use matrix_sdk::attachment::{
     AttachmentInfo, BaseAudioInfo, BaseFileInfo, BaseImageInfo, BaseVideoInfo, Thumbnail,
@@ -9,9 +9,23 @@ pub const MAX_ATTACHMENT_BYTES: u64 = 50 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct Attachment {
-    path: PathBuf,
+    source: Source,
     pub filename: String,
     pub size: u64,
+}
+
+#[derive(Clone)]
+enum Source {
+    File(PathBuf),
+    Memory(Arc<[u8]>),
+}
+impl std::fmt::Debug for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::File(_) => "File",
+            Self::Memory(_) => "Memory",
+        })
+    }
 }
 
 impl Attachment {
@@ -26,7 +40,7 @@ impl Attachment {
                 .ok_or("The filename is not valid Unicode.")?
                 .to_owned();
             Ok(Self {
-                path,
+                source: Source::File(path),
                 filename,
                 size: metadata.len(),
             })
@@ -35,23 +49,42 @@ impl Attachment {
         .map_err(|_| "File preparation failed.".to_owned())?
     }
 
+    /// Clipboard images stay in memory with the draft, without temporary files.
+    pub(crate) fn from_png(bytes: Vec<u8>) -> Result<Self, String> {
+        if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+            return Err("Attachments must be 50 MiB or smaller.".into());
+        }
+        Ok(Self {
+            size: bytes.len() as u64,
+            source: Source::Memory(bytes.into()),
+            filename: "clipboard.png".into(),
+        })
+    }
+
     pub(crate) async fn read(self) -> Result<Prepared, String> {
         tokio::task::spawn_blocking(move || {
-            let metadata =
-                std::fs::metadata(&self.path).map_err(|_| "Could not access this file.")?;
-            validate_file(&metadata)?;
-            let file = std::fs::File::open(&self.path).map_err(|_| "Could not open this file.")?;
-            let mut bytes = Vec::new();
-            file.take(MAX_ATTACHMENT_BYTES + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|_| "Could not read this file.")?;
-            if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
-                return Err("Attachments must be 50 MiB or smaller.".into());
-            }
+            let bytes = match self.source {
+                Source::File(path) => {
+                    let metadata =
+                        std::fs::metadata(&path).map_err(|_| "Could not access this file.")?;
+                    validate_file(&metadata)?;
+                    let file =
+                        std::fs::File::open(&path).map_err(|_| "Could not open this file.")?;
+                    let mut bytes = Vec::new();
+                    file.take(MAX_ATTACHMENT_BYTES + 1)
+                        .read_to_end(&mut bytes)
+                        .map_err(|_| "Could not read this file.")?;
+                    if bytes.len() as u64 > MAX_ATTACHMENT_BYTES {
+                        return Err("Attachments must be 50 MiB or smaller.".into());
+                    }
+                    bytes
+                }
+                Source::Memory(bytes) => bytes.to_vec(),
+            };
             let mime = image::guess_format(&bytes)
                 .ok()
                 .and_then(|format| format.to_mime_type().parse().ok())
-                .unwrap_or_else(|| mime_guess::from_path(&self.path).first_or_octet_stream());
+                .unwrap_or_else(|| mime_guess::from_path(&self.filename).first_or_octet_stream());
             let size = (bytes.len() as u64).try_into().ok();
             let info = match mime.type_().as_str() {
                 "image" => {

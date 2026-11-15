@@ -105,6 +105,7 @@ struct App {
     reaction_error: Option<(reaction_picker::Target, String)>,
     composer_picker: Option<composer_picker::State>,
     attachment_picker: Option<attachments::Target>,
+    clipboard_paste: Option<attachments::Paste>,
     emoji_completion: emoji_completion::State,
     topic_editor: Option<topic::State>,
     pinning: HashSet<reaction_picker::Target>,
@@ -218,6 +219,7 @@ impl App {
             reaction_error: None,
             composer_picker: None,
             attachment_picker: None,
+            clipboard_paste: None,
             emoji_completion: emoji_completion::State::default(),
             topic_editor: None,
             pinning: HashSet::new(),
@@ -1862,6 +1864,9 @@ impl App {
                     .on_action(move |action| Message::Edit(edit_key.clone(), action))
                     .key_binding(move |press| {
                         self.emoji_completion_binding(&send_key, *generation, &press)
+                            .or_else(|| {
+                                self.attachment_paste_binding(&send_key, *generation, &press)
+                            })
                             .or_else(|| composer_binding(press, composing, &send_key, shortcut))
                     });
             }
@@ -1917,6 +1922,12 @@ impl App {
             ]
             .spacing(4)
             .align_y(iced::Alignment::Center);
+            if self.clipboard_pasting(&key) {
+                content = content.push(
+                    container(text("Reading clipboard…").size(12).color(shell::MUTED))
+                        .padding([0, 24]),
+                );
+            }
             if let Some(chip) = self.attachment_chip(&key, *generation) {
                 content = content.push(container(chip).padding([0, 24]));
             }

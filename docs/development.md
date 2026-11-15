@@ -270,7 +270,8 @@ replaced by picking another file. Composer text becomes its caption. Attachment
 paths and captions remain in memory with their room/thread draft across
 navigation; selection cancellation leaves an existing attachment intact. Files
 are read when **Send** is pressed, so later edits to a selected file are included.
-Clipboard attachments and drag/drop are not implemented.
+Clipboard files and images can also be pasted into a focused composer (see below).
+Drag/drop is not implemented.
 
 `src/attachment.rs` checks metadata and prepares bounded file bytes, image
 header metadata, and an optional static PNG thumbnail on blocking workers. Image
@@ -291,3 +292,41 @@ In a development container using the host's portal, the chosen file path must be
 accessible at the same location inside the container. Sharing the session bus
 alone does not expose host files. An unavailable path produces an inline file
 access error; native builds use the local filesystem directly.
+
+
+## Clipboard attachments
+
+Use **Ctrl+V** (**Cmd+V** on macOS) in a focused room or thread composer. Native
+file-list data takes priority over images, then ordinary text. One copied file
+replaces the staged attachment. Pasting multiple files shows an inline error;
+the existing file/caption is retained. A plain-text path or URL stays text.
+Nothing is uploaded until the usual send action.
+
+`src/clipboard.rs` uses pinned `arboard` for native file lists and images. It
+reads only on paste, on a blocking worker, and creates no clipboard observer or
+idle subscription. Linux prefers Wayland data-control (the compositor must
+support it), with X11 fallback; macOS uses its native pasteboard. Iced's window
+clipboard remains a text fallback if native access is unavailable. The new
+provider adds TIFF decoding for macOS pasteboard images through its dependency;
+no existing dependency versions were upgraded.
+
+Clipboard image RGBA dimensions/length are validated before our PNG encoding:
+up to 4096×4096 pixels, within the existing 50 MiB encoded attachment limit.
+Native retrieval/decoding itself uses the clipboard provider's limits. PNG bytes
+remain in an `Arc` with the draft instead of a temporary file, preserve alpha,
+and use the same thumbnail/encrypted send path as picked files. Cloning UI
+messages does not copy the image bytes. Native file copies retain a local path
+and get the same file validation/read-at-send behavior as picker attachments.
+Container access to copied host files requires matching accessible paths.
+
+The adapter captures the conversation/account/view generation, caret/selection,
+and initial text. Navigation, shutdown and account changes reject obsolete
+results. Text results additionally require unchanged text and selection, so a
+slow clipboard owner cannot overwrite intervening typing. Reading media does not
+block editing the caption. Only one clipboard read or file picker can run at a
+time; send/removal/replacement controls wait until it finishes. **Reading
+clipboard…** provides feedback without an animation timer. Other text fields and
+middle-button primary-selection behavior continue to use Iced's existing input.
+
+See [clipboard validation](validation/connected-ui.md#clipboard-files-and-images--2026-11-15)
+for automated evidence and native acceptance steps.

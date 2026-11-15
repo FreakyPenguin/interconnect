@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 pub mod attachment;
+pub mod clipboard;
 pub mod connected;
 pub mod diagnostics;
 mod event_text;

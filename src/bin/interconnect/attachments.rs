@@ -4,7 +4,7 @@ use iced::{
     Element, Task,
     widget::{button, container, row, text, tooltip},
 };
-use interconnect::attachment::Attachment;
+use interconnect::{attachment::Attachment, clipboard};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
@@ -13,9 +13,17 @@ pub struct Target {
     account: Option<String>,
 }
 
+pub struct Paste {
+    target: Target,
+    text: String,
+    cursor: iced::advanced::text::editor::Cursor,
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Pick(Target),
+    Paste(Target),
+    Pasted(Target, Result<clipboard::Content, clipboard::Error>),
     Picked(Target, Result<Option<Attachment>, String>),
     Remove(Target),
 }
@@ -62,6 +70,7 @@ impl App {
         match event {
             Event::Pick(target)
                 if self.attachment_picker.is_none()
+                    && self.clipboard_paste.is_none()
                     && !self.composing
                     && self.attachment_target_valid(&target) =>
             {
@@ -84,6 +93,47 @@ impl App {
                     |(target, result)| Message::Attachment(Event::Picked(target, result)),
                 );
             }
+            Event::Paste(target)
+                if self.attachment_picker.is_none()
+                    && self.clipboard_paste.is_none()
+                    && !self.composing
+                    && self.attachment_target_valid(&target) =>
+            {
+                let draft = &self.drafts[&target.key];
+                self.clipboard_paste = Some(Paste {
+                    target: target.clone(),
+                    text: draft.content.text(),
+                    cursor: draft.content.cursor(),
+                });
+                self.emoji_completion.clear();
+                return Task::perform(clipboard::read(), move |result| {
+                    Message::Attachment(Event::Pasted(target.clone(), result))
+                });
+            }
+            Event::Pasted(target, result)
+                if self
+                    .clipboard_paste
+                    .as_ref()
+                    .is_some_and(|paste| paste.target == target) =>
+            {
+                if self.attachment_target_valid(&target)
+                    && matches!(result, Err(clipboard::Error::Unavailable))
+                {
+                    // Preserve normal text paste when the window clipboard works
+                    // but the native file/image provider is unavailable.
+                    return iced::clipboard::read().map(move |text| {
+                        Message::Attachment(Event::Pasted(
+                            target.clone(),
+                            text.map(clipboard::Content::Text).ok_or_else(|| {
+                                clipboard::Error::Invalid(
+                                    "Could not read clipboard files or images.".into(),
+                                )
+                            }),
+                        ))
+                    });
+                }
+                self.finish_paste(target, result);
+            }
             Event::Picked(target, result) if self.attachment_picker.as_ref() == Some(&target) => {
                 self.attachment_picker = None;
                 if self.attachment_target_valid(&target) {
@@ -103,7 +153,9 @@ impl App {
                     });
                 }
             }
-            Event::Remove(target) if self.attachment_target_valid(&target) => {
+            Event::Remove(target)
+                if self.clipboard_paste.is_none() && self.attachment_target_valid(&target) =>
+            {
                 let draft = self.drafts.get_mut(&target.key).unwrap();
                 draft.attachment = None;
                 draft.error = None;
@@ -117,6 +169,75 @@ impl App {
         self.attachment_picker
             .as_ref()
             .is_some_and(|target| &target.key == key)
+            || self.clipboard_pasting(key)
+    }
+
+    pub(super) fn clipboard_pasting(&self, key: &DraftKey) -> bool {
+        self.clipboard_paste
+            .as_ref()
+            .is_some_and(|paste| &paste.target.key == key)
+    }
+
+    fn finish_paste(
+        &mut self,
+        target: Target,
+        result: Result<clipboard::Content, clipboard::Error>,
+    ) {
+        let Some(paste) = self.clipboard_paste.take() else {
+            return;
+        };
+        if !self.attachment_target_valid(&target) || self.composing {
+            return;
+        }
+        let draft = self.drafts.get_mut(&target.key).unwrap();
+        match result {
+            Ok(clipboard::Content::Attachment(attachment)) => {
+                draft.attachment = Some(attachment);
+                draft.error = None;
+            }
+            Ok(clipboard::Content::Text(text)) => {
+                // A slow clipboard owner must not overwrite intervening typing
+                // or move the user's selection back to an obsolete caret.
+                if draft.content.text() == paste.text && draft.content.cursor() == paste.cursor {
+                    draft
+                        .content
+                        .perform(iced::widget::text_editor::Action::Edit(
+                            iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
+                        ));
+                    draft.error = None;
+                    self.refresh_emoji_completion(&target.key);
+                } else {
+                    draft.error = Some("Draft changed before paste completed. Paste again.".into());
+                }
+            }
+            Ok(clipboard::Content::Empty) => {}
+            Err(clipboard::Error::Invalid(error)) => draft.error = Some(error),
+            Err(clipboard::Error::Unavailable) => {
+                draft.error = Some("Could not read the clipboard.".into())
+            }
+        }
+    }
+
+    pub(super) fn attachment_paste_binding(
+        &self,
+        key: &DraftKey,
+        generation: u64,
+        press: &iced::widget::text_editor::KeyPress,
+    ) -> Option<iced::widget::text_editor::Binding<Message>> {
+        use iced::widget::text_editor::Binding;
+        if self.composing || !self.attachment_target_valid(&self.attachment_target(key, generation))
+        {
+            return None;
+        }
+        matches!(
+            Binding::<Message>::from_key_press(press.clone()),
+            Some(Binding::Paste)
+        )
+        .then(|| {
+            Binding::Custom(Message::Attachment(Event::Paste(
+                self.attachment_target(key, generation),
+            )))
+        })
     }
 
     fn attachment_target(&self, key: &DraftKey, generation: u64) -> Target {
@@ -145,6 +266,7 @@ impl App {
         .padding(0)
         .style(shell::icon_button);
         if self.attachment_picker.is_none()
+            && self.clipboard_paste.is_none()
             && !self.composing
             && self.attachment_target_valid(&target)
         {
@@ -171,7 +293,7 @@ impl App {
         let mut remove = button(text("×").size(16))
             .padding([2, 6])
             .style(shell::icon_button);
-        if self.attachment_target_valid(&target) {
+        if self.clipboard_paste.is_none() && self.attachment_target_valid(&target) {
             remove = remove.on_press(Message::Attachment(Event::Remove(target)));
         }
         Some(
@@ -324,5 +446,214 @@ mod tests {
         ));
         assert!(app.drafts[&room.key].attachment.is_none());
         assert!(app.drafts[&room.key].content.text().trim().is_empty());
+    }
+    fn begin_paste(app: &mut App, target: &Target) {
+        // Drop the task without polling: unit tests never access the OS clipboard.
+        let _ = app.update(Message::Attachment(Event::Paste(target.clone())));
+        assert!(app.clipboard_paste.is_some());
+    }
+
+    #[tokio::test]
+    async fn pasted_media_is_staged_in_only_its_room_or_thread_and_keeps_the_caption() {
+        let (_dir, attachment) = fixture().await;
+        let mut app = demo_app();
+        let room = target(&app, false);
+        app.drafts.get_mut(&room.key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("caption");
+        begin_paste(&mut app, &room);
+        let _ = app.update(Message::Send(room.key.clone()));
+        assert_eq!(app.drafts[&room.key].content.text().trim(), "caption");
+        let _ = app.update(Message::Attachment(Event::Pasted(
+            room.clone(),
+            Ok(clipboard::Content::Attachment(attachment.clone())),
+        )));
+        assert!(app.clipboard_paste.is_none());
+        assert!(app.drafts[&room.key].attachment.is_some());
+        assert_eq!(app.drafts[&room.key].content.text().trim(), "caption");
+        let _ = app.update(Message::Thread("$kickoff".into()));
+        let thread = target(&app, true);
+        begin_paste(&mut app, &thread);
+        let _ = app.update(Message::Attachment(Event::Pasted(
+            thread.clone(),
+            Ok(clipboard::Content::Attachment(attachment)),
+        )));
+        assert!(app.drafts[&thread.key].attachment.is_some());
+        assert!(app.drafts[&room.key].attachment.is_some());
+        assert_eq!(app.pending_ops, 0);
+    }
+
+    #[tokio::test]
+    async fn paste_rejects_navigation_accounts_and_late_text_but_keeps_existing_attachments_on_error()
+     {
+        let (_dir, attachment) = fixture().await;
+        let mut app = demo_app();
+        let room = target(&app, false);
+        begin_paste(&mut app, &room);
+        let _ = app.update(Message::Room("threads".into()));
+        let _ = app.update(Message::Attachment(Event::Pasted(
+            room.clone(),
+            Ok(clipboard::Content::Attachment(attachment.clone())),
+        )));
+        assert!(app.drafts[&room.key].attachment.is_none());
+        let current = target(&app, false);
+        begin_paste(&mut app, &current);
+        app.account_id = Some("@different:example.org".into());
+        let _ = app.update(Message::Attachment(Event::Pasted(
+            current.clone(),
+            Ok(clipboard::Content::Attachment(attachment.clone())),
+        )));
+        assert!(app.drafts[&current.key].attachment.is_none());
+        let current = target(&app, false);
+        app.drafts.get_mut(&current.key).unwrap().attachment = Some(attachment);
+        begin_paste(&mut app, &current);
+        let _ = app.update(Message::Edit(
+            current.key.clone(),
+            iced::widget::text_editor::Action::Edit(iced::widget::text_editor::Edit::Insert('x')),
+        ));
+        let _ = app.update(Message::Attachment(Event::Pasted(
+            current.clone(),
+            Ok(clipboard::Content::Text("old paste".into())),
+        )));
+        assert_eq!(app.drafts[&current.key].content.text().trim(), "x");
+        assert!(app.drafts[&current.key].attachment.is_some());
+        begin_paste(&mut app, &current);
+        let _ = app.update(Message::Attachment(Event::Pasted(
+            current.clone(),
+            Err(clipboard::Error::Invalid("fixture failure".into())),
+        )));
+        assert!(app.drafts[&current.key].attachment.is_some());
+        assert_eq!(
+            app.drafts[&current.key].error.as_deref(),
+            Some("fixture failure")
+        );
+    }
+
+    #[test]
+    fn text_paste_replaces_selection_and_native_failure_uses_window_clipboard() {
+        use iced::advanced::text::editor::{Cursor, Position};
+        let mut app = demo_app();
+        let room = target(&app, false);
+        let draft = app.drafts.get_mut(&room.key).unwrap();
+        draft.content = iced::widget::text_editor::Content::with_text("hello world");
+        draft.content.move_to(Cursor {
+            position: Position {
+                line: 0,
+                column: 11,
+            },
+            selection: Some(Position { line: 0, column: 6 }),
+        });
+        begin_paste(&mut app, &room);
+        let _ = app.update(Message::Attachment(Event::Pasted(
+            room.clone(),
+            Err(clipboard::Error::Unavailable),
+        )));
+        assert!(app.clipboard_paste.is_some());
+        let _ = app.update(Message::Attachment(Event::Pasted(
+            room.clone(),
+            Ok(clipboard::Content::Text("🌍\nnext line".into())),
+        )));
+        assert_eq!(
+            app.drafts[&room.key].content.text().trim_end(),
+            "hello 🌍\nnext line"
+        );
+        assert!(app.drafts[&room.key].attachment.is_none());
+        assert!(app.clipboard_paste.is_none());
+    }
+
+    #[test]
+    fn paste_shortcut_requires_composer_focus_and_respects_ime() {
+        use iced::widget::text_editor::{Binding, KeyPress, Status};
+        let mut app = demo_app();
+        let room = target(&app, false);
+        let mut press = KeyPress {
+            key: iced::keyboard::Key::Character("v".into()),
+            modified_key: iced::keyboard::Key::Character("v".into()),
+            physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyV),
+            modifiers: iced::keyboard::Modifiers::COMMAND,
+            text: None,
+            status: Status::Focused { is_hovered: false },
+        };
+        assert!(matches!(
+            app.attachment_paste_binding(&room.key, room.generation, &press),
+            Some(Binding::Custom(Message::Attachment(Event::Paste(_))))
+        ));
+        app.composing = true;
+        assert!(
+            app.attachment_paste_binding(&room.key, room.generation, &press)
+                .is_none()
+        );
+        app.composing = false;
+        press.status = Status::Active;
+        assert!(
+            app.attachment_paste_binding(&room.key, room.generation, &press)
+                .is_none()
+        );
+    }
+    #[test]
+    fn real_room_and_thread_editors_route_paste_once_without_reading_text_synchronously() {
+        use iced::advanced::{
+            Layout, Shell, layout, mouse,
+            widget::{self, Tree},
+        };
+        for thread in [false, true] {
+            let mut app = demo_app();
+            let _ = app.update(Message::Thread("$kickoff".into()));
+            let expected = target(&app, thread);
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let size = iced::Size::new(600.0, 700.0);
+            let mut pane = app.pane(thread);
+            let mut tree = Tree::new(&pane);
+            let node =
+                pane.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            pane.as_widget_mut().operate(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &mut widget::operation::focusable::focus(
+                    if thread {
+                        "thread-composer"
+                    } else {
+                        "room-composer"
+                    }
+                    .into(),
+                ),
+            );
+            let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Character("v".into()),
+                modified_key: iced::keyboard::Key::Character("v".into()),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyV),
+                modifiers: iced::keyboard::Modifiers::COMMAND,
+                location: iced::keyboard::Location::Standard,
+                text: None,
+                repeat: false,
+            });
+            let mut messages = Vec::new();
+            pane.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &iced::Rectangle::with_size(size),
+            );
+            drop(pane);
+            assert_eq!(messages.iter().filter(|message| matches!(message, Message::Attachment(Event::Paste(target)) if target == &expected)).count(), 1);
+            assert!(
+                !messages
+                    .iter()
+                    .any(|message| matches!(message, Message::Edit(..) | Message::Send(_)))
+            );
+            for message in messages {
+                let _ = app.update(message);
+            }
+            assert!(
+                app.clipboard_paste
+                    .as_ref()
+                    .is_some_and(|paste| paste.target == expected)
+            );
+        }
     }
 }

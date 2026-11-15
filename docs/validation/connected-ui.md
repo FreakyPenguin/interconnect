@@ -1656,7 +1656,8 @@ and thread composers. Pick one file (up to 50 MiB), optionally add a caption,
 then use the normal send button/shortcut. The staged filename/size and **×**
 remove action appear above the composer. Picking another file replaces it;
 cancelling preserves it. Drafts, including attachments, stay with each
-conversation. Clipboard files and drag/drop remain pending.
+conversation. Clipboard files/images now use the normal paste shortcut (see the
+clipboard section below); drag/drop remains pending.
 
 Automated coverage includes file validation and missing-file rechecks, image
 MIME detection/dimensions, room/thread draft isolation, picker cancellation,
@@ -1736,3 +1737,81 @@ existing stress test ignored), and the locked desktop build passed. After refini
 the protocol fixture to cover an image-only room send as well as a captioned
 thread send, both attachment fixtures and Clippy passed again. No connected
 client was restarted and no account message was sent during this follow-up.
+
+
+## Clipboard files and images — 2026-11-15
+
+Ctrl+V (Cmd+V on macOS) in the room/thread composer can stage a copied file or
+clipboard image. Images become `clipboard.png` in memory, preserving alpha, and
+get the same thumbnail and encrypted send treatment as picked images. One file
+can be staged at a time; multiple-file paste shows an error rather than silently
+losing files. File lists take priority over image/text alternatives. Text paths
+and URLs remain plain text. The existing attachment/caption survives invalid or
+unsupported paste data. No message is sent by the paste action itself.
+
+Ordinary text paste still replaces the current selection. Native clipboard
+failure falls back to Iced's text clipboard. An empty clipboard is a no-op.
+Results are rejected after navigation, account change, shutdown, or IME
+composition; stale text results additionally check the original text and cursor.
+Typing a caption can continue while media is being read. Clipboard access is
+single-flight and only runs on demand; no polling, monitor, animation or
+persistent clipboard history was added.
+
+Automated tests use fixture readers for file/image/text priority, multiple-file
+and remote-file refusal, text URI preservation, empty clipboard, invalid RGBA and
+image limits. A memory-image round trip checks alpha, cloning, metadata and
+thumbnail generation. UI tests cover room/thread targeting, caption preservation,
+selection replacement, native-provider text fallback, blocked send while reading,
+and obsolete results after navigation/account changes or intervening typing.
+Real Iced room/thread editor tests also verify the paste key emits exactly one
+attachment action and does not insert clipboard text or send synchronously.
+Regular tests never access the system clipboard.
+
+The ignored `clipboard::tests::native_wayland_files_images_and_text` fixture is
+only for a **private, headless Sway compositor**. It requires
+`INTERCONNECT_CLIPBOARD_FIXTURE_RUNTIME` to match a dedicated `XDG_RUNTIME_DIR`
+containing `interconnect-clipboard-`, a `WAYLAND_DISPLAY` socket owned by that
+compositor, and no `DISPLAY` fallback. It sets synthetic pixels, a temporary file
+with spaces and `#` in its name, plain-text URI content, and multiple files, then
+reads them through the actual native adapter. Do not run it on a user's display.
+The local harness is under ignored `artifacts/clipboard-2026-11-15/`.
+
+Once inside that isolated compositor environment, run:
+
+```sh
+INTERCONNECT_CLIPBOARD_FIXTURE_RUNTIME="$XDG_RUNTIME_DIR" \
+  cargo test --locked --lib clipboard::tests::native_wayland_files_images_and_text \
+  -- --ignored --nocapture
+```
+
+Native acceptance still required separately:
+
+1. In `--demo`, copy a PNG/JPEG file from a file manager and paste into each
+   composer. Check its name/size, replacement, **×**, caption, and cancellation
+   by navigating away while a clipboard owner is slow. Copy a directory or
+   several files and verify the inline error preserves the existing draft.
+2. Copy screenshot/image pixels, including transparency, and paste. Check
+   `clipboard.png`, remove/retry, distinct room/thread drafts and demo send.
+   An image above 4096 pixels in either dimension should produce a size error.
+3. Paste Unicode/multiline text over a selection, including a literal `file://`
+   URL. Check that it inserts once, keeps ordinary editor focus/IME behavior,
+   and does not turn the text into a file attachment. Try paste in search and
+   Settings fields to check their ordinary text behavior.
+4. Check clipboard data-control support on the target Linux compositor, X11
+   fallback and native macOS file/image paste independently. Containers must
+   expose both the clipboard connection and any copied file's path.
+5. With authorization in a dedicated encrypted room/thread, send a pasted image
+   and a copied file; verify caption, alpha, preview and decryption with a peer.
+   A pasted image must remain sendable after the source clipboard is replaced.
+
+Live account sends, macOS/X11 native paste, file-manager MIME variations, and
+resource measurements remain untested for this change.
+
+Validation result: formatting, locked workspace Clippy with warnings denied,
+`cargo test --locked --workspace` (83 library and 132 GUI tests passed; the
+existing stress test and native clipboard fixture were ignored in the regular
+run), and the locked desktop build passed. The native clipboard fixture also
+passed when run explicitly on a separate headless Sway compositor, including
+native image alpha, file URI decoding, text and empty clipboard, and multiple-file
+refusal. The private compositor was terminated after the check. The user's
+clipboard and connected client were not changed; no account messages were sent.

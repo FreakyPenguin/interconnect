@@ -28,6 +28,7 @@ rand = "0.9"
 zeroize = "1"
 rfd = { version = "0.15", default-features = false, features = ["tokio", "xdg-portal"] }
 mime_guess = "2"
+arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 notify-rust = { version = "=4.19.0", default-features = false, features = ["z-with-tokio"] }
