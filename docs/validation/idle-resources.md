@@ -338,7 +338,8 @@ All listed captures have stable endpoint TID sets and zero `sched_wakeup_new`
 events. The first new visible sample included eight redraws, so the settled
 repeat provides the quiet visible observation (964×887 after scratchpad restore).
 An unsuccessful intermediate repeat was excluded. All listed samples had zero
-UI updates. The matched hidden pair shows about 99.1% fewer scheduler wakeups
+UI updates. The matched hidden pair shows about 99.1% fewer wakeups to the initial thread
+set (not the whole process; see the residual-activity correction below)
 and 95.4% less sampled CPU time; the quiet new visible observation agrees.
 These are short development-build measurements, not battery/power estimates.
 
@@ -347,3 +348,54 @@ calls on `matrix-sdk-crypto.sqlite3-wal` before the change and zero calls after.
 This A/B result confirms that removing SDK multiprocess lease renewal removes
 most of the measured idle work while ongoing sync remains connected. Background
 network/sync work remains; the goal is not zero wakeups under all conditions.
+
+
+## Residual activity and counting correction — 2026-11-14
+
+The approximately 1.6/s result above counts only threads present at the beginning
+of each `perf stat` window. Stable endpoint TID sets missed transient SQLite
+blocking workers: a new requester-stack capture recorded two workers being born
+and exiting about 10.5 seconds later, both between the endpoint snapshots.
+Therefore the earlier approximately 99% reduction applies to the fixed thread
+set, not the whole process. `measure-idle.py` now labels its output scope as
+`initial_thread_set` and explicitly warns that stable endpoints do not establish
+whole-process coverage. CPU time from `/proc/<pid>/stat` still covers the process.
+
+A 60-second requester-stack capture of those initial threads recorded 103
+`sched_waking` events. They formed two bursts of 51 and 52 events, starting
+30.077 seconds apart and lasting 0.47 and 0.57 seconds. Stacks show TCP receive,
+Tokio scheduling/handoffs, SQLite key/value reads and writes, and crypto-store
+`save_changes`. No `try_take_leased_lock` path appeared, and diagnostic counters
+showed no redraws or UI updates. This is consistent with ordinary Matrix sync
+responses and persistence, rather than a continuous 50 ms lock heartbeat.
+
+To include transient workers, a second recording admitted target threads named
+`tokio-rt-worker` plus the original client TIDs, then used recorded
+`PERF_RECORD_FORK`/`EXIT` metadata to retain only targets belonging to this client,
+including new threads while they existed. Other processes' events were excluded
+from the client totals. An initial stack-rich broad recording reported lost data
+and was not used for the definitive rate. A lower-overhead recording without
+stacks, with larger perf buffers (`-m 1024`), captured both `sched_waking` and
+`sched_wakeup` for a requested 60 seconds with no lost records:
+
+| Measure | Result |
+| --- | ---: |
+| Client wakeups, including transient workers | 177 |
+| Of those, targets in the initial thread set | 105 |
+| Targets in transient workers | 72 |
+| Wake requests (`sched_waking`) | 177 |
+| Recorder wall time including setup/teardown | 61.61 s |
+| Approximate full-process rate | 2.9/s (about 3/s) |
+
+Of the 177 wakeups, 170 occurred in two bursts of 86 and 84 events, about 30.1
+seconds apart. This reinforces sync-response processing as the main residual
+source. The other seven events were scattered outside those bursts; not every
+individual event has been causally assigned. Compared with the earlier roughly
+170/s baseline, this is approximately a 98% reduction rather than the previously
+quoted 99% full-process interpretation. These remain short observations under
+this account's traffic, not a fixed rate guaranteed in all rooms or networks.
+
+Raw evidence and summaries are in the ignored local directory
+`artifacts/residual-idle-2026-11-14/`. The existing `perf stat` helper is useful for
+fixed-thread comparisons, but transient-thread accounting is required before
+calling its result a whole-process rate.

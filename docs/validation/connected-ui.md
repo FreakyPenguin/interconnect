@@ -323,8 +323,10 @@ and GUI build passed. The subprocess regression verifies exclusion through late
 SDK handles and cleanup timeout, followed by acquisition after owner exit.
 SDK outage/reconnect and encrypted sending fixtures run in the new mode.
 
-The host A/B check reduced quiet idle scheduler wakeups from approximately 170/s
-to 1.6/s, with CPU dropping from 3.6–3.8% to 0.17% of one core. Separate three-second
+The host A/B check reduced initial-thread-set wakeups from approximately 170/s
+to 1.6/s, with CPU dropping from 3.6–3.8% to 0.17% of one core. A follow-up
+that accounts for transient SQLite worker threads measured about 3 wakeups/s
+for the whole client, mostly in sync-response bursts every 30 seconds. Separate three-second
 traces found 51 crypto-store flushes before and none after. See
 [the measurement report](idle-resources.md#single-process-fix-and-ab-check--2026-11-14)
 for capture conditions and limits. No live messages were sent during this check.

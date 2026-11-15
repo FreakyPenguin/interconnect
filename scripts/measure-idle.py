@@ -86,11 +86,12 @@ def main():
         "cpu_percent_one_core": 100 * (after["ticks"] - before["ticks"]) / os.sysconf("SC_CLK_TCK") / elapsed,
         "initial_tids": initial_tids, "final_tids": final_tids,
         "thread_set_stable_at_endpoints": stable_threads,
+        "wakeup_scope": "initial_thread_set",
         "wakeup_status": "unmeasured" if perf is None else "captured" if valid_capture else "invalid",
         "wakeup_counts": counts if valid_capture else None,
         "wakeups_per_second": sum(counts.values()) / elapsed if valid_capture else None,
         "perf_output": None if perf is None else perf.stderr,
-        "limitations": "Wakeup filter covers initial threads only. Use a settled process; endpoint checks cannot detect transient threads. Counts are scheduler wakeups, not hardware CPU idle exits. CPU time is quantized to procfs clock ticks.",
+        "limitations": "Wakeup filter covers initial threads only. Use a settled process; endpoint checks cannot detect transient threads. Stable endpoints do not establish whole-process coverage, especially when blocking workers start and retire between snapshots. Counts are scheduler wakeups, not hardware CPU idle exits. CPU time is quantized to procfs clock ticks.",
     }
     print(json.dumps(result, indent=2))
     if perf is not None and not valid_capture:
