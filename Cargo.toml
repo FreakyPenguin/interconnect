@@ -8,6 +8,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+emojis = "=0.9.1"
 iced = { version = "=0.14.0", default-features = false, features = ["tokio", "wayland", "wgpu", "tiny-skia", "advanced", "image-without-codecs"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 matrix-sdk = { version = "=0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs", "sso-login"] }
@@ -17,6 +18,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "syn
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+unicode-segmentation = "=1.13.3"
 
 secret-service = { version = "=5.1.0", features = ["rt-tokio-crypto-rust"] }
 serde = { version = "1", features = ["derive"] }

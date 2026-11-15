@@ -1,6 +1,6 @@
 //! Read-only message text, using Iced's Unicode-aware selection engine.
 //! Selection lives in the widget tree, never in SDK snapshots or drafts.
-use super::{Message, shell};
+use super::{Message, emoji, shell};
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
     widget::{self, Tree},
@@ -88,8 +88,9 @@ fn normalize_selection(content: &mut text_editor::Content) {
 fn editor(
     content: &text_editor::Content,
     appearance: Appearance,
-) -> text_editor::TextEditor<'_, iced::advanced::text::highlighter::PlainText, Action> {
+) -> text_editor::TextEditor<'_, emoji::Highlighter, Action> {
     iced::widget::text_editor(content)
+        .highlight_fonts_with::<emoji::Highlighter>(emoji::font(), |font| *font)
         .size(match appearance {
             Appearance::Message => 14,
             Appearance::Activity => 12,
@@ -163,13 +164,13 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         if was_selected && !state.selected {
             tree.children[0]
                 .state
-                .downcast_mut::<text_editor::State<iced::advanced::text::highlighter::PlainText>>()
+                .downcast_mut::<text_editor::State<emoji::Highlighter>>()
                 .unfocus();
         }
         if state.selected {
             tree.children[0]
                 .state
-                .downcast_mut::<text_editor::State<iced::advanced::text::highlighter::PlainText>>()
+                .downcast_mut::<text_editor::State<emoji::Highlighter>>()
                 .focus();
         }
     }

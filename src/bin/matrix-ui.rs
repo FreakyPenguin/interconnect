@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 #[path = "matrix-ui/demo.rs"]
 mod demo;
+#[path = "matrix-ui/emoji.rs"]
+mod emoji;
 #[path = "matrix-ui/images.rs"]
 mod images;
 #[path = "matrix-ui/presentation.rs"]
@@ -1019,7 +1021,7 @@ impl App {
             &latest.display_name
         };
         let mut heading = row![
-            text(format!("{author} replied to {topic}"))
+            emoji::preview(format!("{author} replied to {topic}"))
                 .size(12)
                 .color(shell::MUTED)
                 .width(Length::Fill),
@@ -1041,7 +1043,7 @@ impl App {
         }
         let mut details = column![
             heading,
-            text(thread_activity::excerpt(&latest.body, 120))
+            emoji::preview(thread_activity::excerpt(&latest.body, 120))
                 .size(12)
                 .color(shell::MUTED)
         ]
@@ -1558,6 +1560,7 @@ impl App {
                 } else {
                     "room-composer"
                 })
+                .highlight_fonts_with::<emoji::Highlighter>(emoji::font(), |font| *font)
                 .cursor_blinking(false)
                 .height(80)
                 .size(14)

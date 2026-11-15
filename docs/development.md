@@ -8,10 +8,10 @@ Included native dependencies cover Wayland, X11 fallback, font availability, Vul
 
 The container installs `fonts-noto-color-emoji` for Unicode emoji fallback
 alongside DejaVu. Rebuild the container to apply this addition. Confirm the font
-is installed with `fc-list ':family=Noto Color Emoji' family file`. Visual
-acceptance remains pending: check emoji color, joined sequences, wrapping, and
-selection in demo mode with both renderers; installing the font alone does not
-verify fallback priority or rendering correctness.
+is installed with `fc-list ':family=Noto Color Emoji' family file`. The UI selects
+the color emoji font for recognized emoji sequences in messages, composers, and
+thread excerpts; see [emoji validation](validation/connected-ui.md#unicode-emoji--2026-11-15)
+for coverage and platform limits.
 
 Run the repository checks:
 

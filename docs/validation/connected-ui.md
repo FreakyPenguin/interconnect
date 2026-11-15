@@ -1100,3 +1100,38 @@ Real-widget regressions exercise forward/backward copy, body-only sources,
 partial endpoints, Unicode/whitespace fidelity, stable IDs across append/prepend,
 focus/navigation invalidation, and both auto-scroll directions including their
 idle boundaries. No new SDK requests or subscriptions are involved.
+
+## Unicode emoji — 2026-11-15
+
+Read-only message/activity text, both composers, and thread excerpts explicitly
+select an installed color emoji font for recognized emoji graphemes. The app
+prefers Noto Color Emoji on Linux, Apple Color Emoji on macOS, and Segoe UI Emoji
+on Windows, trying the other names when available. If none is installed, normal
+Iced fallback remains in use. Font coverage still limits supported emoji.
+The `emojis` and `unicode-segmentation` dependencies reuse versions already in
+the lockfile. Custom Matrix image emoji remain separate work.
+
+The text stays Unicode: modifiers, flags, keycaps, and joined sequences receive
+a single font span; explicit VS15 requests are left in text presentation.
+Thread-excerpt limits now count graphemes so they cannot cut those sequences.
+Ordinary text keeps its existing typography. The small vendored editor API
+applies font spans before layout measurements, avoiding a post-layout change in
+wrapping, selection coordinates, or timeline scroll metrics. Line-change
+tracking caches the formatting work; there are no new timers or subscriptions.
+
+Automated checks cover complete byte ranges, text presentation, missing-font
+behavior, clearing spans after edits, color glyph rasterization and single-glyph
+shaping for common sequences, stable first-layout height at 75/300 logical pixels,
+software-rendered colored pixels, and exact Unicode selection/copy. Font-dependent
+raster checks skip with a diagnostic when no supported emoji font is installed;
+they ran with Noto Color Emoji in this container. Existing draft, timeline-scroll,
+and idle-caret regressions are retained.
+
+Native Wayland demo captures were inspected at 636×1162 with tiny-skia and wgpu
+on Intel RKL integrated graphics via Vulkan/Mesa 22.3.6. Faces/hearts, joined
+replies, pinned originals, and the populated room composer rendered in color.
+The wgpu launch used the documented `NODEVICE_SELECT=1` workaround. Captures and
+temporary capture hooks are local validation artifacts, excluded from source.
+No connected session was opened or restarted. macOS/Windows rendering, connected
+desktop acceptance, interactive drag-selection with emoji, and new idle-resource
+measurements remain pending.

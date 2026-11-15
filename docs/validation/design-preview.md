@@ -19,6 +19,15 @@ uses the same shell, timeline presentation, and composers as the connected app.
 Running without `--demo` still restores the real saved session and sends real
 messages; see [connected UI validation](connected-ui.md).
 
+**Studio → Emoji preview** contains faces, hearts, flags, skin tones, keycaps,
+joined profession/family sequences, and explicit text-presentation examples.
+Open the first message's thread to compare its pinned original and replies.
+Select/copy the wrapping example and paste it into each composer. Check at
+narrow widths with both renderers: recognized emoji should be colored while
+VS15 text-presentation examples stay text, ordinary digits/punctuation stay in
+Inter, and copying preserves the original Unicode sequences. Thread excerpts
+use the same emoji fonts and truncate at grapheme boundaries.
+
 **Studio → Images** contains a ready preview, a failed-preview example, and a
 click-to-play animation fixture. Open
 each image, close it with Escape or **Close**, and check the viewer at narrow

@@ -676,6 +676,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "emojis",
  "iced",
  "iced_tiny_skia",
  "image",
@@ -694,6 +695,7 @@ dependencies = [
  "toml_edit",
  "tracing",
  "tracing-subscriber",
+ "unicode-segmentation",
  "wiremock",
  "zeroize",
 ]

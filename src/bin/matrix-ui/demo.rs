@@ -68,6 +68,13 @@ pub const ROOMS: &[Room] = &[
         unread: 0,
     },
     Room {
+        id: "emoji",
+        name: "Emoji preview",
+        space: 1,
+        section: "Rooms",
+        unread: 0,
+    },
+    Room {
         id: "threads",
         name: "Thread activity",
         space: 1,
@@ -344,6 +351,12 @@ impl Demo {
                 message("review", "Alex Rivera", "That sounds right. Try opening a thread here — we can work through the details together."),
                 reply("review-reply-1", "review", "Maya Chen", "Yes — a little more breathing room makes a big difference."),
                 reply("review-reply-2", "review", "Jamie Davis", "Agreed. Let’s keep the details quiet and the conversation in focus."),
+            ],
+            "emoji" => vec![
+                root("emoji-original", "Maya Chen", "Faces and symbols: 😀 😂 ☺ ❤ ❤️ ♥ ☀️ ✈️ ☎️ ☕", 1),
+                reply("emoji-reply", "emoji-original", "Alex Rivera", "Joined sequences: 👍🏽 🇩🇪 👩🏽‍💻 👨‍👩‍👧‍👦 1️⃣ #️⃣"),
+                message("emoji-text", "Jamie Davis", "Explicit text presentation: ☺\u{fe0e} ❤\u{fe0e}\nOrdinary text: café # * 123"),
+                message("emoji-wrap", "Maya Chen", "Try selecting and copying this whole message at narrow widths: café ☺ ❤ ❤️ 👍🏽 🇩🇪 👩🏽‍💻 👨‍👩‍👧‍👦 1️⃣. Paste it into the composer to compare."),
             ],
             "long" => vec![message("long-body", "Maya Chen", &format!("Some deliberately difficult content to try at narrow widths.\n\n{}\n\nhttps://example.org/a/very/long/reference/with-many-details-and-a-descriptive-name\n\n日本語のメッセージ · Bonjour · Grüß dich", "Good reading rhythm depends on line length, spacing, and a stable layout. ".repeat(12)))],
             "activity" => vec![

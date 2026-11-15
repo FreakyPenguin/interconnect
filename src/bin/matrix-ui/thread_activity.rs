@@ -78,12 +78,13 @@ pub fn project<'a>(rows: &'a [MessageRow], thread: Option<&str>) -> Vec<Row<'a>>
 }
 
 pub fn excerpt(body: &str, limit: usize) -> String {
-    let mut chars = body
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut graphemes = body
         .split_whitespace()
-        .flat_map(|word| std::iter::once(' ').chain(word.chars()))
+        .flat_map(|word| std::iter::once(" ").chain(word.graphemes(true)))
         .skip(1);
-    let mut result: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() {
+    let mut result: String = graphemes.by_ref().take(limit).collect();
+    if graphemes.next().is_some() {
         result.push('…');
     }
     result
@@ -275,6 +276,7 @@ mod tests {
     fn excerpts_normalize_whitespace_and_truncate_on_unicode_boundaries() {
         assert_eq!(excerpt("  Hello\n\tworld  ", 30), "Hello world");
         assert_eq!(excerpt("é🙂日本語", 3), "é🙂日…");
+        assert_eq!(excerpt("👨‍👩‍👧‍👦🇩🇪👍🏽 next", 2), "👨‍👩‍👧‍👦🇩🇪…");
         assert_eq!(excerpt("   ", 10), "");
     }
 }

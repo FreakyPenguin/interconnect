@@ -1,4 +1,4 @@
-# Iced editor caret option
+# Iced widget patches
 
 Upstream: crates.io `iced_widget` 0.14.2, repository commit
 `54abf81d13fec06d4d9ac754b03ce2c3313e8a1f`, `widget/`.
@@ -32,3 +32,15 @@ regression across multiple blink phases. The search field opts out of blinking.
 `show-cursor.patch`. This only hides the caret, retaining range highlights.
 The app's read-only message widget uses it with blinking disabled, filters edit
 bindings/actions and IME requests, and leaves wheel events to the timeline.
+
+`src/text_editor.rs` adds opt-in `highlight_fonts_with` for theme-independent
+font spans. It uses the existing highlighter's line-change tracking and applies
+fonts during layout, before measuring height and hit-testing. Its draw path
+does not reformat text or restart highlighting for theme changes. The ordinary
+theme-dependent highlighter path is unchanged. Formatter/settings changes reset
+the tracked range as usual. See `emoji-fonts.patch` for this incremental patch.
+The application uses this for complete emoji graphemes in read-only messages,
+activity text, and both composers. This avoids changing emoji widths after
+layout, which would invalidate wrapping, selection, and timeline scroll metrics.
+The GUI regressions check glyph color, joined sequences, first-layout stability,
+Unicode-preserving selection/copy, and the existing idle-caret behavior.

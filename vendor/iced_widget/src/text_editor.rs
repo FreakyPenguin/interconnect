@@ -127,6 +127,7 @@ pub struct TextEditor<
         &Highlighter::Highlight,
         &Theme,
     ) -> highlighter::Format<Renderer::Font>,
+    highlighter_font: Option<fn(&Highlighter::Highlight) -> Renderer::Font>,
     last_status: Option<Status>,
     cursor_blinking: bool,
     show_cursor: bool,
@@ -160,6 +161,7 @@ where
             highlighter_format: |_highlight, _theme| {
                 highlighter::Format::default()
             },
+            highlighter_font: None,
             last_status: None,
             cursor_blinking: true,
             show_cursor: true,
@@ -321,10 +323,27 @@ where
             on_edit: self.on_edit,
             highlighter_settings: settings,
             highlighter_format: to_format,
+            highlighter_font: None,
             last_status: self.last_status,
             cursor_blinking: self.cursor_blinking,
             show_cursor: self.show_cursor,
         }
+    }
+
+    /// Selects fonts for highlighted ranges before measuring the editor.
+    ///
+    /// Unlike theme-dependent highlighting during drawing, this ensures that
+    /// wrapping, height, and hit testing use the selected fonts on first layout.
+    pub fn highlight_fonts_with<H: text::Highlighter>(
+        self,
+        settings: H::Settings,
+        to_font: fn(&H::Highlight) -> Renderer::Font,
+    ) -> TextEditor<'a, H, Message, Theme, Renderer> {
+        let mut editor = self.highlight_with::<H>(settings, |_, _| {
+            highlighter::Format::default()
+        });
+        editor.highlighter_font = Some(to_font);
+        editor
     }
 
     /// Sets the closure to produce key bindings on key presses.
@@ -551,6 +570,7 @@ pub struct State<Highlighter: text::Highlighter> {
     highlighter: RefCell<Highlighter>,
     highlighter_settings: Highlighter::Settings,
     highlighter_format_address: usize,
+    highlighter_font_address: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -629,6 +649,9 @@ where
             )),
             highlighter_settings: self.highlighter_settings.clone(),
             highlighter_format_address: self.highlighter_format as usize,
+            highlighter_font_address: self
+                .highlighter_font
+                .map(|format| format as usize),
         })
     }
 
@@ -649,10 +672,14 @@ where
         let state = tree.state.downcast_mut::<State<Highlighter>>();
 
         if state.highlighter_format_address != self.highlighter_format as usize
+            || state.highlighter_font_address
+                != self.highlighter_font.map(|format| format as usize)
         {
             state.highlighter.borrow_mut().change_line(0);
 
             state.highlighter_format_address = self.highlighter_format as usize;
+            state.highlighter_font_address =
+                self.highlighter_font.map(|format| format as usize);
         }
 
         if state.highlighter_settings != self.highlighter_settings {
@@ -678,6 +705,25 @@ where
             self.wrapping,
             state.highlighter.borrow_mut().deref_mut(),
         );
+
+        if let Some(to_font) = self.highlighter_font {
+            let mut highlighter = state.highlighter.borrow_mut();
+            loop {
+                let current_line = highlighter.current_line();
+                internal.editor.highlight(
+                    self.font.unwrap_or_else(|| renderer.default_font()),
+                    highlighter.deref_mut(),
+                    |highlight| highlighter::Format {
+                        color: None,
+                        font: Some(to_font(highlight)),
+                    },
+                );
+                // Narrower glyphs can bring more lines into the viewport.
+                if highlighter.current_line() <= current_line {
+                    break;
+                }
+            }
+        }
 
         match self.height {
             Length::Fill | Length::FillPortion(_) | Length::Fixed(_) => {
@@ -977,22 +1023,25 @@ where
 
         let theme_name = theme.name();
 
-        if state
-            .last_theme
-            .borrow()
-            .as_ref()
-            .is_none_or(|last_theme| last_theme != theme_name)
+        if self.highlighter_font.is_none()
+            && state
+                .last_theme
+                .borrow()
+                .as_ref()
+                .is_none_or(|last_theme| last_theme != theme_name)
         {
             state.highlighter.borrow_mut().change_line(0);
             let _ =
                 state.last_theme.borrow_mut().replace(theme_name.to_owned());
         }
 
-        internal.editor.highlight(
-            font,
-            state.highlighter.borrow_mut().deref_mut(),
-            |highlight| (self.highlighter_format)(highlight, theme),
-        );
+        if self.highlighter_font.is_none() {
+            internal.editor.highlight(
+                font,
+                state.highlighter.borrow_mut().deref_mut(),
+                |highlight| (self.highlighter_format)(highlight, theme),
+            );
+        }
 
         let style = theme
             .style(&self.class, self.last_status.unwrap_or(Status::Active));
