@@ -5,6 +5,8 @@ mod composer_picker;
 mod demo;
 #[path = "matrix-ui/emoji.rs"]
 mod emoji;
+#[path = "matrix-ui/emoji_completion.rs"]
+mod emoji_completion;
 #[path = "matrix-ui/emoji_picker.rs"]
 mod emoji_picker;
 #[path = "matrix-ui/images.rs"]
@@ -86,6 +88,7 @@ struct App {
     reaction_sends: HashSet<reaction_picker::Sending>,
     reaction_error: Option<(reaction_picker::Target, String)>,
     composer_picker: Option<composer_picker::State>,
+    emoji_completion: emoji_completion::State,
 }
 #[derive(Clone, Debug)]
 enum Message {
@@ -93,6 +96,7 @@ enum Message {
     Image(images::Event),
     Reaction(reaction_picker::Event),
     ComposerEmoji(composer_picker::Event),
+    EmojiCompletion(emoji_completion::Event),
     Space(Scope),
     Section(String),
     Search(String),
@@ -185,6 +189,7 @@ impl App {
             reaction_sends: HashSet::new(),
             reaction_error: None,
             composer_picker: None,
+            emoji_completion: emoji_completion::State::default(),
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -206,6 +211,7 @@ impl App {
             if matches!(event, settings::Event::Open) {
                 self.reaction_picker = None;
                 self.composer_picker = None;
+                self.emoji_completion.clear();
             }
             let task = self.settings_update(event);
             self.publish_notification_context();
@@ -213,6 +219,23 @@ impl App {
         }
         if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_settings() {
             return Task::none();
+        }
+        if matches!(
+            message,
+            Message::Room(_)
+                | Message::Thread(_)
+                | Message::CloseThread
+                | Message::AdjacentRoom(_)
+                | Message::OpenLastThread
+                | Message::OpenThreadLatest(_)
+                | Message::SearchFocus
+                | Message::Focus(_)
+                | Message::Close
+                | Message::Exit
+                | Message::Send(_)
+                | Message::WindowFocused(false)
+        ) {
+            self.emoji_completion.clear();
         }
         if matches!(message, Message::Escape)
             && let Some(state) = &self.composer_picker
@@ -223,6 +246,11 @@ impl App {
             && let Some(state) = &self.reaction_picker
         {
             return self.update(state.dismiss());
+        }
+        if matches!(message, Message::Escape)
+            && let Some(dismiss) = self.emoji_completion.dismiss()
+        {
+            return self.update(dismiss);
         }
         if self.settings.draft.is_some()
             || self.image_view.is_some()
@@ -291,6 +319,7 @@ impl App {
         match message {
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
+            Message::EmojiCompletion(event) => action_task = self.emoji_completion_event(event),
             Message::Image(event) => self.image_event(event),
             Message::RowsVisible {
                 thread,
@@ -534,14 +563,23 @@ impl App {
                 }
             }
 
-            Message::Composing(active) => self.composing = active,
+            Message::Composing(active) => {
+                self.composing = active;
+                if !active && let Some(key) = self.emoji_completion.editing.clone() {
+                    self.refresh_emoji_completion(&key);
+                }
+            }
             Message::Edit(key, action) if !self.closing && !self.stopped => {
                 if (self.draft_key(false).as_ref() == Some(&key)
                     || self.draft_key(true).as_ref() == Some(&key))
                     && let Some(draft) = self.drafts.get_mut(&key)
                     && !draft.pending
                 {
+                    let refresh_completion = !matches!(action, text_editor::Action::Scroll { .. });
                     draft.content.perform(action);
+                    if refresh_completion {
+                        self.refresh_emoji_completion(&key);
+                    }
                 }
             }
             Message::Send(key)
@@ -724,6 +762,7 @@ impl App {
         }
         self.validate_reaction_picker();
         self.validate_composer_picker();
+        self.validate_emoji_completion();
         if self.closing && self.pending_ops == 0 {
             if self.stopped {
                 return iced::exit();
@@ -952,6 +991,8 @@ impl App {
             // otherwise also close the thread after dismissing the picker.
             if self.composing || self.reaction_picker.is_some() || self.composer_picker.is_some() {
                 Subscription::none()
+            } else if self.emoji_completion.is_active() {
+                iced::event::listen_with(emoji_completion::shortcut)
             } else {
                 iced::event::listen_with(|event, _, _| {
                     if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
@@ -1672,7 +1713,8 @@ impl App {
                 editor = editor
                     .on_action(move |action| Message::Edit(edit_key.clone(), action))
                     .key_binding(move |press| {
-                        composer_binding(press, composing, &send_key, shortcut)
+                        self.emoji_completion_binding(&send_key, *generation, &press)
+                            .or_else(|| composer_binding(press, composing, &send_key, shortcut))
                     });
             }
             let mut send = button(

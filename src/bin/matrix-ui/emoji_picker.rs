@@ -15,19 +15,7 @@ pub fn panel<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Eleme
         .padding(12)
         .width(320)
         .height(400)
-        .style(|_| iced::widget::container::Style {
-            border: iced::Border {
-                color: iced::Color::from_rgb8(228, 232, 237),
-                width: 1.0,
-                radius: 10.0.into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::BLACK.scale_alpha(0.15),
-                offset: iced::Vector::new(0.0, 3.0),
-                blur_radius: 12.0,
-            },
-            ..shell::surface(iced::Color::WHITE)
-        })
+        .style(surface)
         .into()
 }
 
@@ -45,6 +33,12 @@ pub struct Catalog {
     entries: Vec<Entry>,
     search: Vec<String>,
     categories: Vec<Category>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Suggestion {
+    pub key: String,
+    pub shortcode: String,
+    pub glyph: String,
 }
 impl Catalog {
     pub fn new(entries: Vec<Entry>) -> Self {
@@ -71,6 +65,60 @@ impl Catalog {
     }
     pub fn get(&self, key: &str) -> Option<&Entry> {
         self.entries.iter().find(|entry| entry.key == key)
+    }
+    /// Bounded inline results, sharing the catalog's keys and display glyphs.
+    pub fn suggest(&self, query: &str, limit: usize) -> Vec<Suggestion> {
+        let query = query.to_ascii_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let rank = |alias: &str| {
+            if alias == query {
+                0
+            } else if alias.starts_with(&query) {
+                1
+            } else {
+                2
+            }
+        };
+        let mut matches: Vec<_> = self
+            .entries
+            .iter()
+            .filter_map(|entry| {
+                let alias = entry
+                    .aliases
+                    .iter()
+                    .map(|alias| alias.to_ascii_lowercase())
+                    .filter(|alias| alias.contains(&query))
+                    .min_by(|a, b| (rank(a), a).cmp(&(rank(b), b)))?;
+                Some(Suggestion {
+                    key: entry.key.clone(),
+                    shortcode: alias,
+                    glyph: entry.glyph.clone(),
+                })
+            })
+            .collect();
+        matches.sort_by(|a, b| {
+            (rank(&a.shortcode), &a.shortcode).cmp(&(rank(&b.shortcode), &b.shortcode))
+        });
+        matches.truncate(limit);
+        matches
+    }
+}
+
+pub fn surface(_: &iced::Theme) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        border: iced::Border {
+            color: iced::Color::from_rgb8(228, 232, 237),
+            width: 1.0,
+            radius: 10.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: iced::Color::BLACK.scale_alpha(0.15),
+            offset: iced::Vector::new(0.0, 3.0),
+            blur_radius: 12.0,
+        },
+        ..shell::surface(iced::Color::WHITE)
     }
 }
 
@@ -354,6 +402,52 @@ mod tests {
         Layout, Shell, layout, mouse,
         widget::{self, Tree},
     };
+
+    #[test]
+    fn shortcode_suggestions_rank_exact_and_prefix_matches_and_keep_catalog_keys() {
+        let catalog = Catalog::new(vec![
+            Entry {
+                key: "custom:sea".into(),
+                name: "Sea mascot".into(),
+                glyph: "★".into(),
+                category: "Workspace".into(),
+                aliases: vec!["sea".into(), "seaside".into()],
+            },
+            Entry {
+                key: "suffix".into(),
+                name: "Suffix".into(),
+                glyph: "x".into(),
+                category: "Workspace".into(),
+                aliases: vec!["confused".into()],
+            },
+            Entry {
+                key: "prefix".into(),
+                name: "Prefix".into(),
+                glyph: "y".into(),
+                category: "Workspace".into(),
+                aliases: vec!["seal".into()],
+            },
+        ]);
+        let choices = catalog.suggest("SE", 2);
+        assert_eq!(
+            choices
+                .iter()
+                .map(|choice| choice.shortcode.as_str())
+                .collect::<Vec<_>>(),
+            ["sea", "seal"]
+        );
+        assert_eq!(choices[0].key, "custom:sea");
+        assert_eq!(choices[0].glyph, "★");
+        assert_eq!(catalog.suggest("sea", 6)[0].shortcode, "sea");
+        assert_eq!(
+            catalog.suggest("se", 6).len(),
+            3,
+            "one alias per catalog entry"
+        );
+        assert!(catalog.suggest("", 6).is_empty());
+        assert!(catalog.suggest("se", 0).is_empty());
+        assert_eq!(unicode().suggest("rocket", 6)[0].key, "🚀");
+    }
 
     #[test]
     fn search_categories_pages_and_exact_unicode_keep_selection_keys_separate() {

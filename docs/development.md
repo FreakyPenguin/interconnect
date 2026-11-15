@@ -74,6 +74,16 @@ reaction adapter still uses catalog keys for Matrix annotations, independently
 of the composer's inserted text. Custom emoji text insertion will need its own
 text/shortcode representation when image-backed entries are introduced.
 
+`emoji_completion.rs` shares `Catalog::suggest` for up to six inline shortcode
+matches. It derives a token from editor caret/text on edit or cursor actions,
+keeps keyboard focus in the editor, and uses a non-modal `popover::suggestions`
+host above the composer. Unlike the full picker, that host forwards keyboard,
+IME, and outside-click input. The editor handles Up/Down, Enter/Tab, and Escape
+before ordinary send/navigation bindings; captured Tab/Escape do not produce a
+second global shortcut. Token, draft-key, and view-generation checks reject
+obsolete mouse/keyboard selections. There is no debounce timer, polling task,
+SDK request, or persistent recent-emoji state.
+
 ## Renderer selection
 
 `matrix-ui` builds both Iced renderers. **Settings → Graphics** controls the

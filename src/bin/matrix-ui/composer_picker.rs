@@ -165,7 +165,7 @@ impl App {
             .composer_picker
             .as_ref()
             .filter(|state| &state.target.key == key && state.target.generation == generation);
-        let (popup, dismiss) = state.map_or((None, Message::Escape), |state| {
+        if let Some(state) = state {
             let picker =
                 emoji_picker::view(&state.picker, emoji_picker::unicode(), true, |event| {
                     Message::ComposerEmoji(Event::Picker {
@@ -173,14 +173,19 @@ impl App {
                         event,
                     })
                 });
-            (Some(emoji_picker::panel(picker)), state.dismiss())
-        });
-        popover::view(
-            composer,
-            Some(iced::advanced::widget::Id::new("composer-emoji")),
-            popup,
-            dismiss,
-        )
+            return popover::view(
+                composer,
+                Some(iced::advanced::widget::Id::new("composer-emoji")),
+                Some(emoji_picker::panel(picker)),
+                state.dismiss(),
+            );
+        }
+        let (popup, dismiss) = self
+            .emoji_completion_popup(key, generation)
+            .map_or((None, Message::Escape), |(popup, dismiss)| {
+                (Some(popup), dismiss)
+            });
+        popover::suggestions(composer, popup, dismiss)
     }
 }
 

@@ -81,6 +81,13 @@ stays clear of editable text. The room/reply label and shortcut footer
 are removed; hover over the arrow for **Send message (Ctrl+Enter)** or
 **Send reply (Ctrl+Enter)**. The arrow becomes an ellipsis while queueing.
 
+Both composers also suggest emoji inline after `:` and two shortcode characters,
+such as `:se`. Keep typing to narrow the list, use Up/Down to highlight a result,
+and Enter/Tab or a click to replace the shortcode with its emoji. Escape leaves
+the typed text intact and dismisses the list. Editor focus stays in the draft;
+Enter accepts a suggestion even with Enter-to-send enabled. URLs and times do
+not trigger suggestions. See [inline validation](connected-ui.md#inline-emoji-completion--2026-11-15).
+
 Hover over a room message to reveal a small action panel at its top right.
 The reply arrow opens its thread; the tooltip says **Reply in thread**.
 The panel overlays the full-width message without changing wrapping or height.

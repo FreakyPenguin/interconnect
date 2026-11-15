@@ -1334,3 +1334,53 @@ only the intended draft changes, typing resumes after the inserted emoji, and
 the conversation's reading position stays intact. Cancel a selection, resize
 with a picker open, and repeat with Enter-to-send enabled; choosing an emoji
 must not send. No connected client was restarted or real Matrix events sent.
+
+## Inline emoji completion — 2026-11-15
+
+Room and thread composers display up to six shortcode suggestions after `:`
+and two ASCII shortcode characters at the caret. The token must start a line
+or follow whitespace/an opening bracket or quote; URLs, room IDs, escaped
+colons, and times do not activate it. Letters, digits, underscores, `+`, and `-`
+are accepted, with case-insensitive matching. Exact shortcode matches rank
+first, then prefixes, then substring matches. Each emoji appears once.
+
+Continue typing or deleting to update the list without leaving the composer.
+Up/Down changes the highlighted result; plain Enter or Tab accepts it, and a
+click chooses a visible row. Acceptance replaces the whole shortcode token,
+including its suffix and optional closing colon when editing in the middle.
+Complete Unicode sequences are inserted and typing resumes after the emoji.
+Plain Enter accepts before Enter-to-send; explicit send shortcuts retain their
+ordinary behavior. Typing a closing colon alone leaves the literal shortcode
+unchanged rather than automatically expanding it.
+
+Escape dismisses suggestions without deleting the typed text or closing a
+thread. The same token stays dismissed until text/caret changes. Outside
+clicks dismiss and still reach their target, so navigation/editing needs one
+click. No matches, a selection, focus loss, navigation, IME composition,
+pending draft sends, hidden/removed panes, or another picker/dialog hide the
+list. Stale results cannot replace a changed token or another conversation's
+draft. Existing drafts, message scroll behavior, and the full emoji picker are
+preserved. Updates are event-driven, with no timer or SDK operation.
+
+Automated checks cover trigger boundaries and threshold, prefix/exact ranking,
+catalog keys independent of display text, complete-token replacement, Unicode,
+room/thread isolation, stale results, dismissal, IME, focus loss, missing panes,
+and modal exclusion. Real composer widgets exercise continued typing through
+an open popup, Up/Down, Enter and Tab with Enter-to-send, typing after insertion,
+Escape without a second global action, mouse selection, narrow layout, and
+absence of scheduled redraws. Popup checks verify input/IME/outside-click
+forwarding. A 500×640 software-rendered demo capture was inspected for the
+list/header/highlight above the composer; temporary capture hooks were removed
+and the PNG stays ignored under `artifacts/emoji-completion/`.
+
+Validation passed: formatting, locked workspace Clippy with warnings denied,
+all 100 GUI tests, and the locked GUI build. Backend behavior was unchanged;
+the library suite and opt-in lifecycle stress test were not repeated.
+
+Native desktop/IME and connected-account acceptance remain pending. Manual
+acceptance in `--demo`: type `:se` in both drafts, continue narrowing it, choose
+with mouse/Enter/Tab, and dismiss with Escape. Try editing `:rocket:` in the
+middle, typing times/URLs, and changing rooms/spaces or opening the full picker.
+Verify Enter never sends while accepting a suggestion and subsequent typing
+stays in the intended draft. No connected client was restarted or real Matrix
+events sent.

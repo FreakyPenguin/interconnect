@@ -11,11 +11,30 @@ pub fn view<'a, Message: Clone + 'a>(
     content: Option<Element<'a, Message>>,
     dismiss: Message,
 ) -> Element<'a, Message> {
+    make_view(base, anchor_id, content, dismiss, true)
+}
+
+/// Suggestions leave keyboard/IME input and outside clicks with the editor.
+pub fn suggestions<'a, Message: Clone + 'a>(
+    base: impl Into<Element<'a, Message>>,
+    content: Option<Element<'a, Message>>,
+    dismiss: Message,
+) -> Element<'a, Message> {
+    make_view(base, None, content, dismiss, false)
+}
+fn make_view<'a, Message: Clone + 'a>(
+    base: impl Into<Element<'a, Message>>,
+    anchor_id: Option<widget::Id>,
+    content: Option<Element<'a, Message>>,
+    dismiss: Message,
+    modal: bool,
+) -> Element<'a, Message> {
     Element::new(Popover {
         base: base.into(),
         anchor_id,
         content,
         dismiss,
+        modal,
     })
 }
 struct Popover<'a, Message> {
@@ -23,6 +42,7 @@ struct Popover<'a, Message> {
     anchor_id: Option<widget::Id>,
     content: Option<Element<'a, Message>>,
     dismiss: Message,
+    modal: bool,
 }
 impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
     fn tag(&self) -> widget::tree::Tag {
@@ -167,6 +187,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
                 tree: &mut tree.children[1],
                 anchor: bounds + translation,
                 dismiss: self.dismiss.clone(),
+                modal: self.modal,
             })))
         } else {
             self.base.as_widget_mut().overlay(
@@ -184,6 +205,7 @@ struct Popup<'a, 'b, Message> {
     tree: &'a mut Tree,
     anchor: Rectangle,
     dismiss: Message,
+    modal: bool,
 }
 impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_, Message> {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
@@ -198,8 +220,12 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
             &layout::Limits::new(Size::ZERO, available),
         );
         let size = node.size();
-        let x = (self.anchor.x + self.anchor.width - size.width)
-            .clamp(8.0, (bounds.width - size.width - 8.0).max(8.0));
+        let x = (if self.modal {
+            self.anchor.x + self.anchor.width - size.width
+        } else {
+            self.anchor.x
+        })
+        .clamp(8.0, (bounds.width - size.width - 8.0).max(8.0));
         let below = self.anchor.y + self.anchor.height + 4.0;
         let y = if below + size.height <= bounds.height - 8.0 {
             below
@@ -231,6 +257,9 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
     ) {
+        if !self.modal && matches!(event, Event::Keyboard(_) | Event::InputMethod(_)) {
+            return;
+        }
         let panel = layout.children().next().unwrap();
         let outside_press = match event {
             Event::Mouse(mouse::Event::ButtonPressed(_)) => !cursor.is_over(panel.bounds()),
@@ -240,16 +269,19 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
             _ => false,
         };
         if outside_press
-            || matches!(
-                event,
-                Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
-                    ..
-                })
-            )
+            || (self.modal
+                && matches!(
+                    event,
+                    Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        ..
+                    })
+                ))
         {
             shell.publish(self.dismiss.clone());
-            shell.capture_event();
+            if self.modal {
+                shell.capture_event();
+            }
             return;
         }
         self.content.as_widget_mut().update(
@@ -262,10 +294,12 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
             shell,
             &panel.bounds(),
         );
-        if matches!(
-            event,
-            Event::Mouse(_) | Event::Touch(_) | Event::Keyboard(_) | Event::InputMethod(_)
-        ) {
+        if (self.modal || cursor.is_over(panel.bounds()))
+            && matches!(
+                event,
+                Event::Mouse(_) | Event::Touch(_) | Event::Keyboard(_) | Event::InputMethod(_)
+            )
+        {
             shell.capture_event();
         }
     }
@@ -323,6 +357,64 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
 mod tests {
     use super::*;
     use iced::widget::{button, container, space};
+
+    #[test]
+    fn suggestions_pass_editor_input_and_outside_clicks_through() {
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut popup = suggestions(
+            button("editor").on_press(false),
+            Some(container(space()).width(100).height(100).into()),
+            true,
+        );
+        let mut tree = Tree::new(&popup);
+        let size = Size::new(300.0, 400.0);
+        let node = popup.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, size),
+        );
+        let mut element = popup
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &Rectangle::with_size(size),
+                Vector::ZERO,
+            )
+            .unwrap();
+        let overlay = element.as_overlay_mut();
+        let node = overlay.layout(&renderer, size);
+        for (event, dismiss) in [
+            (
+                Event::InputMethod(iced::advanced::input_method::Event::Commit("s".into())),
+                false,
+            ),
+            (
+                Event::Mouse(mouse::Event::WheelScrolled {
+                    delta: mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+                }),
+                false,
+            ),
+            (
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                true,
+            ),
+        ] {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            overlay.update(
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Available(iced::Point::new(1.0, 1.0)),
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+            );
+            assert!(!shell.is_event_captured());
+            assert_eq!(messages, if dismiss { vec![true] } else { vec![] });
+        }
+    }
 
     #[test]
     fn popup_uses_inner_anchor_and_scroll_translation_instead_of_the_message_bounds() {
