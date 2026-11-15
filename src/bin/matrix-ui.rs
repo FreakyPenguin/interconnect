@@ -7,6 +7,8 @@ mod presentation;
 mod selectable;
 #[path = "matrix-ui/selection.rs"]
 mod selection;
+#[path = "matrix-ui/settings.rs"]
+mod settings;
 #[path = "matrix-ui/shell.rs"]
 mod shell;
 #[path = "matrix-ui/thread_activity.rs"]
@@ -40,6 +42,7 @@ struct Draft {
 const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
+    settings: settings::State,
     profile: String,
     model: Model,
     selection: Selection,
@@ -65,6 +68,7 @@ struct App {
 }
 #[derive(Clone, Debug)]
 enum Message {
+    Settings(settings::Event),
     Space(Scope),
     Section(String),
     Search(String),
@@ -121,9 +125,8 @@ enum Message {
 impl App {
     fn new() -> Self {
         let mut app = Self {
-            profile: std::env::args()
-                .nth(1)
-                .unwrap_or_else(|| ".matrix-spike".into()),
+            settings: settings::State::default(),
+            profile: profile_argument(std::env::args().skip(1)),
             model: Model::default(),
             selection: Selection::default(),
             control: None,
@@ -158,6 +161,41 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         chatclient::diagnostics::update();
+        if let Message::Settings(event) = message {
+            return self.settings_update(event);
+        }
+        if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_settings() {
+            return Task::none();
+        }
+        if self.settings.draft.is_some() {
+            if matches!(message, Message::Escape) {
+                return self.settings_update(settings::Event::Cancel);
+            }
+            if matches!(
+                message,
+                Message::Space(_)
+                    | Message::Section(_)
+                    | Message::Search(_)
+                    | Message::SearchFocus
+                    | Message::SearchOpen
+                    | Message::AdjacentRoom(_)
+                    | Message::OpenLastThread
+                    | Message::ToggleNavigation
+                    | Message::Focus(_)
+                    | Message::Room(_)
+                    | Message::Thread(_)
+                    | Message::OpenThreadLatest(_)
+                    | Message::CloseThread
+                    | Message::Edit(..)
+                    | Message::Send(_)
+                    | Message::Retry(_)
+                    | Message::JumpToNewest { .. }
+                    | Message::Scrolled { .. }
+                    | Message::ThreadVisible { .. }
+            ) {
+                return Task::none();
+            }
+        }
         if matches!(
             &message,
             Message::Space(_) | Message::Room(_) | Message::Section(_)
@@ -365,11 +403,15 @@ impl App {
                 }
             }
             Message::SearchFocus => {
+                self.settings.navigation_touched = true;
                 self.shell.navigation = true;
                 return iced::widget::operation::focus("room-search")
                     .chain(iced::widget::operation::select_all("room-search"));
             }
-            Message::ToggleNavigation => self.shell.navigation = !self.shell.navigation,
+            Message::ToggleNavigation => {
+                self.settings.navigation_touched = true;
+                self.shell.navigation = !self.shell.navigation;
+            }
             Message::Focus(backwards) => {
                 return if backwards {
                     iced::widget::operation::focus_previous()
@@ -766,7 +808,11 @@ impl App {
         ])
     }
     fn view(&self) -> Element<'_, Message> {
-        self.shell_view()
+        let mut layers = iced::widget::stack![self.shell_view()];
+        if self.settings.draft.is_some() {
+            layers = layers.push(self.settings_view());
+        }
+        layers.into()
     }
     fn refresh_demo(&mut self) {
         if let Some(demo) = &mut self.demo {
@@ -1332,6 +1378,7 @@ impl App {
             let edit_key = key.clone();
             let send_key = key.clone();
             let composing = self.composing;
+            let shortcut = self.settings.current.composer.send_shortcut;
             let mut editor = text_editor(&draft.content)
                 .id(if thread {
                     "thread-composer"
@@ -1354,10 +1401,12 @@ impl App {
                 } else {
                     "Write a message…"
                 });
-            if !self.closing && !self.stopped && !draft.pending {
+            if !self.closing && !self.stopped && !draft.pending && self.settings.draft.is_none() {
                 editor = editor
                     .on_action(move |action| Message::Edit(edit_key.clone(), action))
-                    .key_binding(move |press| composer_binding(press, composing, &send_key));
+                    .key_binding(move |press| {
+                        composer_binding(press, composing, &send_key, shortcut)
+                    });
             }
             let mut send = button(
                 container(text(if draft.pending { "…" } else { "↑" }).size(18))
@@ -1382,9 +1431,19 @@ impl App {
                     text(if draft.pending {
                         "Queueing message…"
                     } else if thread {
-                        "Send reply (Ctrl+Enter)"
+                        match shortcut {
+                            chatclient::settings::SendShortcut::CtrlEnter => {
+                                "Send reply (Ctrl+Enter)"
+                            }
+                            chatclient::settings::SendShortcut::Enter => "Send reply (Enter)",
+                        }
                     } else {
-                        "Send message (Ctrl+Enter)"
+                        match shortcut {
+                            chatclient::settings::SendShortcut::CtrlEnter => {
+                                "Send message (Ctrl+Enter)"
+                            }
+                            chatclient::settings::SendShortcut::Enter => "Send message (Enter)",
+                        }
                     })
                     .size(12),
                 )
@@ -1426,6 +1485,9 @@ fn shell_shortcut(
 ) -> Option<Message> {
     use iced::keyboard::{Key, key::Named};
     match key.as_ref() {
+        Key::Character(",") if modifiers.command() => {
+            Some(Message::Settings(settings::Event::Open))
+        }
         Key::Named(Named::Tab) => Some(Message::Focus(modifiers.shift())),
         Key::Named(Named::Escape) => Some(Message::Escape),
         Key::Named(Named::ArrowUp) if modifiers.alt() => Some(Message::AdjacentRoom(true)),
@@ -1440,13 +1502,16 @@ fn composer_binding(
     press: text_editor::KeyPress,
     composing: bool,
     key: &DraftKey,
+    shortcut: chatclient::settings::SendShortcut,
 ) -> Option<text_editor::Binding<Message>> {
     if shell_shortcut(&press.key, press.modifiers).is_some() {
         return None;
     }
     if matches!(press.status, text_editor::Status::Focused { .. })
         && press.key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter)
-        && press.modifiers == iced::keyboard::Modifiers::CTRL
+        && (press.modifiers == iced::keyboard::Modifiers::CTRL
+            || (shortcut == chatclient::settings::SendShortcut::Enter
+                && press.modifiers.is_empty()))
     {
         return (!composing).then(|| text_editor::Binding::Custom(Message::Send(key.clone())));
     }
@@ -1528,10 +1593,32 @@ fn run_ui(run: impl FnOnce() -> iced::Result) -> anyhow::Result<()> {
     cleanup
 }
 
+fn profile_argument(arguments: impl Iterator<Item = String>) -> String {
+    let mut arguments = arguments;
+    while let Some(argument) = arguments.next() {
+        if argument == "--config" {
+            arguments.next();
+        } else if !argument.starts_with("--") {
+            return argument;
+        }
+    }
+    ".matrix-spike".into()
+}
+
 fn main() -> anyhow::Result<()> {
     chatclient::init_tracing();
+    let mut arguments = std::env::args().skip(1);
+    let mut config = None;
+    while let Some(argument) = arguments.next() {
+        if argument == "--config" {
+            config =
+                Some(std::path::PathBuf::from(arguments.next().ok_or_else(
+                    || anyhow::anyhow!("--config requires a file path"),
+                )?));
+        }
+    }
     run_ui(|| {
-        iced::application(App::new, App::update, App::view)
+        iced::application(move || App::boot(config.clone()), App::update, App::view)
             .title("Matrix")
             .theme(shell::theme())
             .default_font(iced::Font::with_name("Inter"))
@@ -1552,7 +1639,7 @@ fn main() -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn demo_app() -> App {
+    pub(super) fn demo_app() -> App {
         let mut app = App::new();
         app.demo = Some(demo::Demo::default());
         app.model.rooms = demo::rooms().into();
@@ -2398,18 +2485,40 @@ mod tests {
             status: text_editor::Status::Focused { is_hovered: false },
         };
         assert!(matches!(
-            composer_binding(press.clone(), false, &key),
+            composer_binding(press.clone(), false, &key, Default::default()),
             Some(text_editor::Binding::Custom(Message::Send(_)))
         ));
-        assert!(composer_binding(press.clone(), true, &key).is_none());
+        assert!(composer_binding(press.clone(), true, &key, Default::default()).is_none());
         let mut unfocused = press.clone();
         unfocused.status = text_editor::Status::Active;
-        assert!(composer_binding(unfocused, false, &key).is_none());
-        let mut plain = press;
+        assert!(composer_binding(unfocused, false, &key, Default::default()).is_none());
+        let mut plain = press.clone();
         plain.modifiers = iced::keyboard::Modifiers::empty();
         assert!(matches!(
-            composer_binding(plain, false, &key),
+            composer_binding(plain.clone(), false, &key, Default::default()),
             Some(text_editor::Binding::Enter)
+        ));
+        use chatclient::settings::SendShortcut::Enter;
+        assert!(matches!(
+            composer_binding(plain.clone(), false, &key, Enter),
+            Some(text_editor::Binding::Custom(Message::Send(_)))
+        ));
+        assert!(composer_binding(plain.clone(), true, &key, Enter).is_none());
+        plain.modifiers = iced::keyboard::Modifiers::SHIFT;
+        assert!(matches!(
+            composer_binding(plain, false, &key, Enter),
+            Some(text_editor::Binding::Enter)
+        ));
+        assert!(matches!(
+            composer_binding(press, false, &key, Enter),
+            Some(text_editor::Binding::Custom(Message::Send(_)))
+        ));
+        assert!(matches!(
+            shell_shortcut(
+                &iced::keyboard::Key::Character(",".into()),
+                iced::keyboard::Modifiers::COMMAND
+            ),
+            Some(Message::Settings(settings::Event::Open))
         ));
     }
 

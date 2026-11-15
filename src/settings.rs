@@ -1,0 +1,291 @@
+//! Application settings, separate from credentials and per-account navigation.
+//! Call file operations on a blocking worker, never on the UI thread.
+use anyhow::{Context, bail, ensure};
+use serde::{Deserialize, Serialize};
+use std::{
+    fs,
+    io::{Read, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
+};
+use toml_edit::DocumentMut;
+
+const MAX_BYTES: u64 = 65_536;
+const TEMPLATE: &str = include_str!("../config.example.toml");
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Settings {
+    pub version: u32,
+    pub navigation: Navigation,
+    pub composer: Composer,
+}
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            navigation: Navigation::default(),
+            composer: Composer::default(),
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Navigation {
+    pub show_room_list: bool,
+}
+impl Default for Navigation {
+    fn default() -> Self {
+        Self {
+            show_room_list: true,
+        }
+    }
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Composer {
+    pub send_shortcut: SendShortcut,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SendShortcut {
+    #[default]
+    CtrlEnter,
+    Enter,
+}
+impl std::fmt::Display for SendShortcut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::CtrlEnter => "Ctrl+Enter",
+            Self::Enter => "Enter",
+        })
+    }
+}
+impl SendShortcut {
+    fn config_value(self) -> &'static str {
+        match self {
+            Self::CtrlEnter => "ctrl_enter",
+            Self::Enter => "enter",
+        }
+    }
+}
+
+/// Resolve without creating directories or touching an account profile.
+pub fn default_path() -> anyhow::Result<PathBuf> {
+    default_path_from(
+        std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        std::env::var_os("HOME").map(PathBuf::from),
+    )
+}
+fn default_path_from(xdg: Option<PathBuf>, home: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    let root = home
+        .context("HOME is unavailable; use --config PATH")?
+        .join("Library/Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let root = xdg
+        .filter(|path| path.is_absolute())
+        .map(Ok)
+        .unwrap_or_else(|| {
+            home.map(|path| path.join(".config"))
+                .context("No configuration directory is available; use --config PATH")
+        })?;
+    #[cfg(target_os = "macos")]
+    let _ = xdg;
+    Ok(root.join("chatclient/settings.toml"))
+}
+
+#[derive(Clone, Debug)]
+pub struct Store {
+    path: PathBuf,
+    source: Option<String>,
+}
+impl Store {
+    /// Missing files use defaults and are created only on explicit Save.
+    pub fn load(path: PathBuf) -> anyhow::Result<(Self, Settings)> {
+        let source = read(&path)?;
+        let settings = decode(source.as_deref().unwrap_or(""))?;
+        Ok((Self { path, source }, settings))
+    }
+
+    /// Preserve comments and unknown keys; reject edits made since the last load.
+    /// The temporary file and atomic replacement live in the same directory.
+    pub fn save(&mut self, settings: &Settings) -> anyhow::Result<()> {
+        ensure!(settings.version == 1, "Unsupported settings version");
+        let mut document = self
+            .source
+            .as_deref()
+            .unwrap_or(TEMPLATE)
+            .parse::<DocumentMut>()?;
+        replace(&mut document["version"], 1_i64.into());
+        replace(
+            &mut document["navigation"]["show_room_list"],
+            settings.navigation.show_room_list.into(),
+        );
+        replace(
+            &mut document["composer"]["send_shortcut"],
+            settings.composer.send_shortcut.config_value().into(),
+        );
+        let contents = document.to_string();
+        ensure!(
+            contents.len() as u64 <= MAX_BYTES,
+            "Settings file is too large"
+        );
+        let directory = self
+            .path
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        fs::create_dir_all(directory).context("Could not create the configuration directory")?;
+        let temporary = directory.join(format!(".settings-{:016x}.tmp", rand::random::<u64>()));
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)
+            .context("Could not create the settings temporary file")?;
+        let result = (|| {
+            file.write_all(contents.as_bytes())?;
+            file.sync_all()?;
+            ensure!(
+                read(&self.path)? == self.source,
+                "Settings changed on disk. Reload before saving."
+            );
+            fs::rename(&temporary, &self.path).context("Could not replace the settings file")?;
+            fs::File::open(directory)?.sync_all()?;
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        } else {
+            self.source = Some(contents);
+        }
+        result
+    }
+}
+fn replace(item: &mut toml_edit::Item, mut value: toml_edit::Value) {
+    if let Some(previous) = item.as_value() {
+        *value.decor_mut() = previous.decor().clone();
+    }
+    *item = toml_edit::Item::Value(value);
+}
+fn decode(source: &str) -> anyhow::Result<Settings> {
+    let settings: Settings =
+        toml_edit::de::from_str(source).context("Could not parse settings TOML")?;
+    ensure!(
+        settings.version == 1,
+        "Unsupported settings version {}; expected 1",
+        settings.version
+    );
+    Ok(settings)
+}
+fn read(path: &Path) -> anyhow::Result<Option<String>> {
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error).context("Could not inspect the settings file"),
+        Ok(meta) => ensure!(
+            meta.is_file() && !meta.file_type().is_symlink() && meta.len() <= MAX_BYTES,
+            "Settings must be a regular file of at most 64 KiB (symlinks are not supported)"
+        ),
+    }
+    let mut source = String::new();
+    fs::File::open(path)?
+        .take(MAX_BYTES + 1)
+        .read_to_string(&mut source)?;
+    if source.len() as u64 > MAX_BYTES {
+        bail!("Settings file is too large");
+    }
+    Ok(Some(source))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_partial_files_and_schema_validation() {
+        assert_eq!(decode("").unwrap(), Settings::default());
+        assert_eq!(decode(TEMPLATE).unwrap(), Settings::default());
+        let settings = decode("[composer]\nsend_shortcut = 'enter'").unwrap();
+        assert_eq!(settings.composer.send_shortcut, SendShortcut::Enter);
+        assert!(settings.navigation.show_room_list);
+        for invalid in [
+            "version = 2",
+            "[composer]\nsend_shortcut = 'return'",
+            "[navigation]\nshow_room_list = 1",
+            "[navigation",
+            "composer = false",
+        ] {
+            assert!(decode(invalid).is_err(), "accepted {invalid}");
+        }
+    }
+
+    #[test]
+    fn save_round_trip_preserves_comments_unknown_keys_and_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("nested/settings.toml");
+        let (mut store, mut settings) = Store::load(path.clone()).unwrap();
+        assert!(!path.exists());
+        settings.composer.send_shortcut = SendShortcut::Enter;
+        settings.navigation.show_room_list = false;
+        store.save(&settings).unwrap();
+        assert_eq!(Store::load(path.clone()).unwrap().1, settings);
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let source = fs::read_to_string(&path).unwrap().replace(
+            "send_shortcut = \"enter\"",
+            "send_shortcut = 'enter' # my shortcut",
+        );
+        fs::write(
+            &path,
+            format!("# my settings\n{source}\n[future]\nvalue = 42\n"),
+        )
+        .unwrap();
+        let (mut store, mut settings) = Store::load(path.clone()).unwrap();
+        settings.composer.send_shortcut = SendShortcut::CtrlEnter;
+        store.save(&settings).unwrap();
+        let saved = fs::read_to_string(path).unwrap();
+        assert!(saved.starts_with("# my settings\n"));
+        assert!(saved.contains("# my shortcut"));
+        assert!(saved.contains("[future]\nvalue = 42"));
+    }
+
+    #[test]
+    fn external_changes_invalid_files_and_symlinks_are_not_overwritten() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.toml");
+        let (mut store, settings) = Store::load(path.clone()).unwrap();
+        fs::write(&path, "# another writer\n").unwrap();
+        assert!(store.save(&settings).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "# another writer\n");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+        let (mut store, _) = Store::load(path.clone()).unwrap();
+        fs::write(&path, "invalid = [").unwrap();
+        assert!(store.save(&settings).is_err());
+        assert!(Store::load(path.clone()).is_err());
+        fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink("missing-target", &path).unwrap();
+        assert!(Store::load(path.clone()).is_err());
+        assert!(store.save(&settings).is_err());
+        fs::remove_file(&path).unwrap();
+        fs::write(&path, " ".repeat(MAX_BYTES as usize + 1)).unwrap();
+        assert!(Store::load(path).is_err());
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn config_path_follows_xdg_and_ignores_relative_overrides() {
+        assert_eq!(
+            default_path_from(Some("/config".into()), None).unwrap(),
+            PathBuf::from("/config/chatclient/settings.toml")
+        );
+        assert_eq!(
+            default_path_from(Some("relative".into()), Some("/users/me".into())).unwrap(),
+            PathBuf::from("/users/me/.config/chatclient/settings.toml")
+        );
+        assert!(default_path_from(None, None).is_err());
+    }
+}

@@ -23,6 +23,12 @@ no saved session and sends no Matrix messages. See the [design preview guide](va
 for shortcuts, fixtures, and known interaction gaps. Normal `matrix-ui` launches
 use the same visual shell with the saved Matrix session.
 
+## Settings
+
+The desktop has a TOML-backed settings dialog. See [application settings](settings.md)
+for paths, `--config`, defaults, manual editing/reload, and extending the schema.
+Demo settings remain in memory and never read the saved configuration.
+
 ## Running on the host Wayland desktop
 
 For a local Linux Docker host, launch VS Code from a terminal with `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` set. Add the following top-level properties to `.devcontainer/devcontainer.json` and rebuild:

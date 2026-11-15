@@ -243,3 +243,50 @@ All demo runs exited normally. No real messages were sent and the user's
 connected client was not restarted. Native pointer/wheel interaction and
 live-account acceptance remain pending; automated widget tests exercise the
 same open/jump commands, focus gates, actual viewport IDs, and reading anchors.
+
+
+## Settings infrastructure — 2026-11-15
+
+Open Settings from the bottom bar or Ctrl+, (Command+, on macOS). Demo settings
+remain in memory. The dialog offers startup room-list visibility and the send
+shortcut, with Save, Cancel, and Use defaults. Escape closes it before acting on
+search or threads. See [configuration details](../settings.md).
+
+Manual acceptance:
+
+1. With room and thread drafts and a scrolled timeline, open Settings. Try room
+   navigation shortcuts and scroll over the backdrop; the conversation should
+   stay in place. Cancel and verify drafts, thread, search, and scroll position.
+2. Save Enter-to-send in demo mode. Enter should send a local sample in either
+   composer, Shift+Enter should insert a newline, and Ctrl+Enter should still send.
+   Cancel a later shortcut change and verify the saved choice remains active.
+3. At 640×480, verify the card fits and scrolls to every control. Repeat with a
+   long config path and an error. No setting introduces a periodic UI timer.
+4. In a separately authorized connected run with a temporary `--config` path,
+   Save to create TOML. Edit it externally, then Reload file. Check comments and
+   unknown keys survive subsequent saves; external changes before Save should
+   prompt a reload. Invalid TOML should retain active values and block saving
+   until repaired and reloaded. Restart to check startup visibility.
+
+Connected acceptance and native IME behavior remain pending; automated storage
+and UI state/widget tests cover the persistence and modal behavior separately.
+
+Validation passed: all 38 regular library tests and all 49 final GUI tests,
+workspace Clippy with warnings denied, formatting, and the locked GUI build.
+The existing opt-in lifecycle stress test was not run. New tests cover TOML
+validation/defaults, comment and unknown-key retention, file permissions,
+external-edit conflicts, failed saves, stale completions, shutdown during save,
+modal input blocking, send shortcuts, and the actual timeline widget offset
+across opening/closing the dialog.
+
+Native Wayland demo screenshots were inspected at 1920×1200 and 636×1162,
+including an error banner. The compositor tiled the requested 640×480 window to
+the latter size; exact minimum-size layout/backdrop handling is tested through
+Iced widget layout, not claimed as native desktop acceptance. Demo launches with
+an explicit `--config` left that path absent. Temporary screenshot hooks were
+removed and the ordinary binary rebuilt. Screenshots and capture scripts remain
+under ignored `artifacts/settings/`. No saved account was opened, no real
+messages were sent, and the user's connected client was not restarted.
+Native pointer/keyboard acceptance, connected configuration acceptance, macOS,
+and idle-resource measurements remain pending. The settings code adds no timer,
+polling loop, or subscription.

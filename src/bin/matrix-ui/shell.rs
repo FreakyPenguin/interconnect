@@ -298,6 +298,16 @@ impl App {
                 text(if self.demo.is_some() { "○" } else { "·" }).color(ACCENT),
                 text(&self.model.status).size(11).color(MUTED),
                 widget::space().width(Length::Fill),
+                button(
+                    text(if self.settings.error.is_some() {
+                        "Settings · needs attention"
+                    } else {
+                        "Settings"
+                    })
+                    .size(11)
+                )
+                .style(quiet_button)
+                .on_press(Message::Settings(super::settings::Event::Open)),
                 button(text("Find room").size(11))
                     .style(quiet_button)
                     .on_press(Message::SearchFocus),
@@ -401,14 +411,17 @@ impl App {
                 .find(|s| &s.id == id)
                 .map_or("Space", |s| s.name.as_str()),
         };
-        let search = text_input("Find a room…", &self.shell.query)
+        let mut search = text_input("Find a room…", &self.shell.query)
             .id("room-search")
             .cursor_blinking(false)
             .style(search_style)
-            .on_input(Message::Search)
-            .on_submit(Message::SearchOpen)
             .size(13)
             .padding([7, 10]);
+        if self.settings.draft.is_none() {
+            search = search
+                .on_input(Message::Search)
+                .on_submit(Message::SearchOpen);
+        }
         let mut rooms = column![].spacing(2);
         let sections = ["Favorites", "Direct messages", "Unread", "Rooms"];
         let visible = self.visible_rooms();

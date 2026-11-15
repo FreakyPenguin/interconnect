@@ -1,0 +1,11 @@
+# Chatclient settings. Reload in Settings after editing this file.
+version = 1
+
+[navigation]
+# Initial visibility only; the room-list button still toggles it during use.
+show_room_list = true
+
+[composer]
+# "ctrl_enter": Enter inserts a newline; Ctrl+Enter sends.
+# "enter": Enter sends; Shift+Enter inserts a newline. Ctrl+Enter also sends.
+send_shortcut = "ctrl_enter"

@@ -6,6 +6,7 @@ pub mod live;
 pub mod navigation;
 pub mod navigation_preferences;
 pub mod session;
+pub mod settings;
 pub mod sso;
 
 use tokio::{sync::mpsc, task::JoinHandle};
