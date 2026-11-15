@@ -118,7 +118,7 @@ impl App {
 
         let navigation = matches!(
             &message,
-            Message::Room(_) | Message::Thread(_) | Message::CloseThread
+            Message::Space(_) | Message::Room(_) | Message::Thread(_) | Message::CloseThread
         );
         let scroll_target = match &message {
             Message::Room(_) => Some("room-timeline"),
@@ -136,9 +136,6 @@ impl App {
                     .as_ref()
                     .is_some_and(|(_, id)| rooms.contains(id))
                 {
-                    if let Some(room) = rooms.first() {
-                        return self.update(Message::Room(room.clone()));
-                    }
                     self.selection.room = None;
                     self.selection.thread = None;
                 }
@@ -159,19 +156,17 @@ impl App {
             Message::AdjacentRoom(previous) => {
                 let rooms = self.visible_rooms();
                 if !rooms.is_empty() {
-                    let index = rooms
-                        .iter()
-                        .position(|id| {
-                            self.selection
-                                .room
-                                .as_ref()
-                                .is_some_and(|(_, selected)| selected == id)
-                        })
-                        .unwrap_or(0);
-                    let next = if previous {
-                        (index + rooms.len() - 1) % rooms.len()
-                    } else {
-                        (index + 1) % rooms.len()
+                    let index = rooms.iter().position(|id| {
+                        self.selection
+                            .room
+                            .as_ref()
+                            .is_some_and(|(_, selected)| selected == id)
+                    });
+                    let next = match (index, previous) {
+                        (Some(index), true) => (index + rooms.len() - 1) % rooms.len(),
+                        (Some(index), false) => (index + 1) % rooms.len(),
+                        (None, true) => rooms.len() - 1,
+                        (None, false) => 0,
                     };
                     return self.update(Message::Room(rooms[next].clone()));
                 }
@@ -346,7 +341,9 @@ impl App {
                     .entry(self.draft_key(false).unwrap())
                     .or_default();
             }
-            Message::Thread(id) if !self.closing && !self.stopped => {
+            Message::Thread(id)
+                if !self.closing && !self.stopped && self.selection.room.is_some() =>
+            {
                 self.generation += 1;
                 self.selection.thread = Some((self.generation, id));
                 if let Some(key) = self.draft_key(true) {
@@ -950,16 +947,10 @@ mod tests {
         assert_eq!(app.drafts[&room_key].content.text().trim(), "room draft");
         let _ = app.update(Message::Space(Scope::Space("home-space".into())));
         assert!(app.selection.thread.is_none());
-        assert!(
-            app.model
-                .room
-                .as_ref()
-                .unwrap()
-                .rows
-                .iter()
-                .all(|r| r.body.trim() != "a local reply")
-        );
+        assert!(app.selection.room.is_none());
+        assert!(app.model.room.is_none());
         let _ = app.update(Message::Space(Scope::Space("studio-space".into())));
+        let _ = app.update(Message::Room("studio".into()));
         let _ = app.update(Message::Thread("proposal".into()));
         assert_eq!(
             app.model
@@ -1056,6 +1047,31 @@ mod tests {
         state.spaces = Default::default();
         let _ = app.update(Message::State(Box::new(state)));
         assert_eq!(app.shell.space, Scope::All);
+    }
+
+    #[test]
+    fn space_clicks_filter_without_opening_rooms() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Thread("proposal".into()));
+        let selected = app.selection.clone();
+        let _ = app.update(Message::Space(Scope::All));
+        assert_eq!(
+            app.selection, selected,
+            "keep a conversation included in the new scope"
+        );
+        let _ = app.update(Message::Space(Scope::Space("home-space".into())));
+        assert!(app.selection.room.is_none());
+        assert!(app.selection.thread.is_none());
+        assert!(!app.visible_rooms().is_empty());
+        let _ = app.update(Message::Thread("stale-thread".into()));
+        assert!(app.selection.thread.is_none());
+        let _ = app.update(Message::Space(Scope::Space("studio-space".into())));
+        assert!(
+            app.selection.room.is_none(),
+            "returning to a space must not open a room"
+        );
+        let _ = app.update(Message::AdjacentRoom(false));
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "studio");
     }
 
     #[test]

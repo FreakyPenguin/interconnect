@@ -26,6 +26,9 @@ messages appear in the window.
 The visual shell now projects joined spaces and rooms from SDK metadata. The
 rail includes All rooms, Direct messages, and every joined space. A space shows
 its joined child spaces plus joined conversation rooms reachable through them.
+Clicking a space or Direct messages filters navigation without opening a room.
+The current room/thread stays open if included in the new context; otherwise the
+conversation clears until a room is explicitly selected.
 Shared rooms can appear in multiple spaces; traversal deduplicates rooms and
 handles cycles. Removed/redacted child links are excluded. Unjoined spaces and
 rooms are not discovered or joined, so paths through unjoined spaces are not
