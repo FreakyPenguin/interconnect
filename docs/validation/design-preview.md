@@ -53,6 +53,12 @@ busy thread at the newest reply. Long originals scroll independently within a
 **No replies yet**. The current room supplies the original while the thread loads.
 The header's muted × button closes the thread; its tooltip is **Close thread**.
 
+Connected history loads automatically, using the measured viewport plus three
+screens of older content (at least 1,200 pixels of buffer). Scrolling up fetches
+more. Threads initially fetch up to approximately 500 events or ten pages, then
+use the same buffer. Only errors show a retry action. Demo histories remain
+memory-only and already loaded; SDK mock-server tests exercise actual pagination.
+
 Shortcuts:
 
 - Ctrl+K: focus room search and select the current query (Command+K on macOS).

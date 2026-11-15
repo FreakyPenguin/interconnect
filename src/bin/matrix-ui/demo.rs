@@ -222,6 +222,7 @@ impl Demo {
                 History::End
             },
             load_older: None,
+            history_revision: 0,
             composer: None,
         }
     }

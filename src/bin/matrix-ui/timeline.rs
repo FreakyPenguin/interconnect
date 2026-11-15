@@ -9,13 +9,35 @@ use iced::advanced::{
 use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector};
 use std::collections::HashMap;
 
+#[cfg(test)]
 pub fn view(
     generation: u64,
     keys: Vec<Option<String>>,
     content: Element<'_, Message>,
 ) -> Element<'_, Message> {
+    make_view(generation, keys, content, None)
+}
+
+pub fn history_view(
+    generation: u64,
+    keys: Vec<Option<String>>,
+    content: Element<'_, Message>,
+    thread: bool,
+    revision: u64,
+    ready: bool,
+) -> Element<'_, Message> {
+    make_view(generation, keys, content, Some((thread, revision, ready)))
+}
+
+fn make_view(
+    generation: u64,
+    keys: Vec<Option<String>>,
+    content: Element<'_, Message>,
+    history: Option<(bool, u64, bool)>,
+) -> Element<'_, Message> {
     Element::new(Timeline {
         generation,
+        history,
         keys: keys
             .into_iter()
             .enumerate()
@@ -26,24 +48,28 @@ pub fn view(
 }
 struct Timeline<'a> {
     generation: u64,
+    history: Option<(bool, u64, bool)>,
     keys: HashMap<widget::Id, String>,
     content: Element<'a, Message>,
 }
 pub fn row_id(index: usize) -> widget::Id {
     widget::Id::from(format!("timeline-row-{index}"))
 }
-#[derive(Clone, Default)]
-struct Metrics {
-    height: f32,
-    content_height: f32,
-    translation: f32,
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Metrics {
+    pub height: f32,
+    pub content_height: f32,
+    pub translation: f32,
 }
 impl Metrics {
-    fn maximum(&self) -> f32 {
+    pub fn maximum(&self) -> f32 {
         (self.content_height - self.height).max(0.0)
     }
     fn distance_from_bottom(&self) -> f32 {
         self.maximum() - self.translation
+    }
+    pub fn buffer(&self) -> f32 {
+        (self.height * 3.0).max(1200.0)
     }
 }
 #[derive(Clone)]
@@ -61,6 +87,7 @@ struct Identity {
     selection: super::selection::Selection,
     generation: u64,
     snapshot: Option<Snapshot>,
+    reported: Option<(Metrics, u64, bool)>,
 }
 
 struct Measure<'a> {
@@ -157,6 +184,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         widget::tree::State::new(Identity {
             generation: self.generation,
             snapshot: None,
+            reported: None,
             selection: Default::default(),
         })
     }
@@ -168,6 +196,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         if identity.generation != self.generation {
             identity.generation = self.generation;
             identity.snapshot = None;
+            identity.reported = None;
             identity.selection = Default::default();
             tree.children = self.children();
         } else {
@@ -268,6 +297,22 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             self.generation,
         );
         self.remember_scroll(tree, layout, renderer);
+        if let Some((thread, revision, ready)) = self.history {
+            let identity = tree.state.downcast_mut::<Identity>();
+            if let Some(snapshot) = &identity.snapshot {
+                let metrics = snapshot.metrics;
+                let report = (metrics, revision, ready);
+                if metrics.height > 0.0 && identity.reported != Some(report) {
+                    identity.reported = Some(report);
+                    shell.publish(Message::TimelineMeasured {
+                        thread,
+                        generation: self.generation,
+                        revision,
+                        metrics,
+                    });
+                }
+            }
+        }
     }
     fn draw(
         &self,
@@ -327,6 +372,63 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
 mod tests {
     use super::*;
     use iced::widget::{column, container, scrollable, space};
+
+    #[test]
+    fn viewport_reports_layout_and_page_changes_once_without_timers() {
+        let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut tree = Tree::empty();
+        for (revision, ready, height, expected) in [
+            (1, true, 400.0, true),
+            (1, true, 400.0, false),
+            (1, false, 400.0, true),
+            (2, true, 400.0, true), // A page with no visible rows still advances demand.
+            (2, true, 400.0, false),
+            (2, true, 600.0, true),
+            (2, true, 600.0, false),
+        ] {
+            let mut timeline = history_view(
+                7,
+                vec![],
+                scrollable(space().height(1000))
+                    .height(Length::Fill)
+                    .anchor_bottom()
+                    .into(),
+                false,
+                revision,
+                ready,
+            );
+            tree.diff(timeline.as_widget());
+            let node = timeline.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(300.0, height)),
+            );
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            timeline.as_widget_mut().update(
+                &mut tree,
+                &Event::Window(iced::window::Event::RedrawRequested(
+                    iced::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+                &Rectangle::with_size(Size::new(300.0, height)),
+            );
+            assert!(!matches!(
+                shell.redraw_request(),
+                iced::window::RedrawRequest::At(_)
+            ));
+            assert_eq!(messages.len(), usize::from(expected));
+            if expected {
+                assert!(matches!(&messages[0], Message::TimelineMeasured {
+                    thread: false, generation: 7, revision: current, metrics,
+                } if *current == revision && metrics.height == height));
+            }
+        }
+    }
 
     struct Harness {
         tree: Tree,

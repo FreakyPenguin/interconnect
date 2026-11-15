@@ -120,13 +120,18 @@ pub enum History {
     Failed(String),
 }
 
+const HISTORY_PAGE_SIZE: u16 = 50;
+const INITIAL_THREAD_PAGES: usize = 10;
+const INITIAL_THREAD_EVENTS: usize = 500;
+
 #[derive(Clone, Debug)]
 pub struct Pane {
     pub generation: u64,
     pub rows: Arc<Vec<MessageRow>>,
     pub error: Option<String>,
     pub history: History,
-    pub load_older: Option<mpsc::Sender<()>>,
+    pub history_revision: u64,
+    pub load_older: Option<mpsc::Sender<u64>>,
     pub composer: Option<Composer>,
 }
 
@@ -414,22 +419,36 @@ async fn view(
         let (_, updates) = timeline.subscribe().await;
         let mut updates: BoxStream<'_, _> = Box::pin(updates);
         let (load_older, mut requests) = mpsc::channel(1);
-        let mut history = if is_thread { History::Ready } else {
-            load_room_history(&timeline, generation, &mut updates, &state, &load_older).await?
-        };
-        publish(&timeline, generation, is_thread, &history, &state, &load_older).await;
+        let mut history = History::Ready;
+        let mut revision = 0;
+        // Typical threads load completely; long threads switch to viewport demand.
+        for _ in 0..if is_thread { INITIAL_THREAD_PAGES } else { 1 } {
+            revision += 1;
+            history = load_history(
+                &timeline, generation, is_thread, revision, &mut updates, &state, &load_older,
+            ).await?;
+            let loaded_events = timeline.items().await.iter()
+                .filter(|item| item.as_event().is_some()).count();
+            if !matches!(history, History::Ready)
+                || loaded_events >= INITIAL_THREAD_EVENTS
+            {
+                break;
+            }
+        }
+        publish(&timeline, generation, is_thread, revision, &history, &state, &load_older).await;
         loop {
             tokio::select! {
                 update = updates.next() => {
                     ensure!(update.is_some(), "Timeline subscription ended");
                 }
-                Some(()) = requests.recv() => {
-                    if !is_thread && !matches!(history, History::End) {
-                        history = load_room_history(&timeline, generation, &mut updates, &state, &load_older).await?;
+                Some(requested_revision) = requests.recv() => {
+                    if requested_revision == revision && !matches!(history, History::End) {
+                        revision += 1;
+                        history = load_history(&timeline, generation, is_thread, revision, &mut updates, &state, &load_older).await?;
                     }
                 }
             }
-            publish(&timeline, generation, is_thread, &history, &state, &load_older).await;
+            publish(&timeline, generation, is_thread, revision, &history, &state, &load_older).await;
         }
     }
     .await;
@@ -445,6 +464,7 @@ async fn view(
                 rows: Arc::default(),
                 error: Some(format!("{error:#}")),
                 history: History::Ready,
+                history_revision: 0,
                 load_older: None,
                 composer: None,
             });
@@ -454,23 +474,29 @@ async fn view(
 
 // Owned by the view: room switches and shutdown cancel an in-flight page.
 // Live snapshots continue during each fetch, including retries.
-async fn load_room_history(
+async fn load_history(
     timeline: &Arc<Timeline>,
     generation: u64,
+    thread: bool,
+    revision: u64,
     updates: &mut (impl iced::futures::Stream + Unpin),
     state: &watch::Sender<Model>,
-    load_older: &mpsc::Sender<()>,
+    load_older: &mpsc::Sender<u64>,
 ) -> anyhow::Result<History> {
     publish(
         timeline,
         generation,
-        false,
+        thread,
+        revision,
         &History::Loading,
         state,
         load_older,
     )
     .await;
-    let page = tokio::time::timeout(Duration::from_secs(30), timeline.paginate_backwards(20));
+    let page = tokio::time::timeout(
+        Duration::from_secs(30),
+        timeline.paginate_backwards(HISTORY_PAGE_SIZE),
+    );
     tokio::pin!(page);
     loop {
         tokio::select! {
@@ -482,7 +508,7 @@ async fn load_room_history(
             }),
             update = updates.next() => {
                 ensure!(update.is_some(), "Timeline subscription ended");
-                publish(timeline, generation, false, &History::Loading, state, load_older).await;
+                publish(timeline, generation, thread, revision, &History::Loading, state, load_older).await;
             }
         }
     }
@@ -492,9 +518,10 @@ async fn publish(
     timeline: &Arc<Timeline>,
     generation: u64,
     thread: bool,
+    revision: u64,
     history: &History,
     state: &watch::Sender<Model>,
-    load_older: &mpsc::Sender<()>,
+    load_older: &mpsc::Sender<u64>,
 ) {
     let items = timeline.items().await;
     let rows = items
@@ -566,8 +593,9 @@ async fn publish(
             rows: Arc::new(rows),
             error: None,
             history: history.clone(),
+            history_revision: revision,
             composer: Some(Composer(RuntimeOwned::new(timeline.clone()))),
-            load_older: (!thread && matches!(history, History::Ready | History::Failed(_)))
+            load_older: matches!(history, History::Ready | History::Failed(_))
                 .then(|| load_older.clone()),
         });
     });
@@ -791,17 +819,22 @@ mod tests {
 
     #[tokio::test]
     async fn sdk_views_switch_and_shutdown_without_ui_consumption() {
-        history_fixture(false, false, 3).await;
+        history_fixture(false, false, 3, 3).await;
+    }
+
+    #[tokio::test]
+    async fn long_threads_stop_eager_loading_and_continue_on_demand() {
+        history_fixture(false, false, 1, 12).await;
     }
 
     #[tokio::test]
     async fn shutdown_cancels_pending_initial_history() {
-        history_fixture(true, false, 3).await;
+        history_fixture(true, false, 3, 3).await;
     }
 
     #[tokio::test]
     async fn offline_views_recover_and_can_send_without_restarting_ui() {
-        history_fixture(false, true, 3).await;
+        history_fixture(false, true, 3, 3).await;
     }
 
     #[tokio::test]
@@ -854,21 +887,25 @@ mod tests {
         assert!(error.to_string().contains("Sign-in is required"));
     }
 
-    async fn request_page(snapshots: &mut watch::Receiver<Model>) -> Pane {
-        let sender = snapshots
-            .borrow_and_update()
-            .room
-            .as_ref()
-            .unwrap()
-            .load_older
-            .clone()
-            .unwrap();
-        sender.try_send(()).unwrap();
+    async fn request_page(snapshots: &mut watch::Receiver<Model>, thread: bool) -> Pane {
+        let pane = if thread {
+            snapshots.borrow().thread.clone()
+        } else {
+            snapshots.borrow().room.clone()
+        }
+        .unwrap();
+        let revision = pane.history_revision;
+        pane.load_older.unwrap().try_send(revision).unwrap();
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 snapshots.changed().await.unwrap();
-                let pane = snapshots.borrow_and_update().room.clone().unwrap();
-                if !matches!(pane.history, History::Loading) {
+                let pane = if thread {
+                    snapshots.borrow_and_update().thread.clone()
+                } else {
+                    snapshots.borrow_and_update().room.clone()
+                }
+                .unwrap();
+                if pane.history_revision > revision && !matches!(pane.history, History::Loading) {
                     return pane;
                 }
             }
@@ -877,7 +914,12 @@ mod tests {
         .unwrap()
     }
 
-    async fn history_fixture(cancel_history: bool, reconnect: bool, cycles: u64) {
+    async fn history_fixture(
+        cancel_history: bool,
+        reconnect: bool,
+        cycles: u64,
+        thread_pages: usize,
+    ) {
         let server = MockServer::start().await;
         let online = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let versions_online = online.clone();
@@ -954,9 +996,25 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(root))
             .mount(&server)
             .await;
+        let relation_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let relation_count = relation_calls.clone();
+        let replies_per_page = if thread_pages > 10 { 50 } else { 5 };
         Mock::given(method("GET"))
             .and(path_regex(".*/relations/.*"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[]})))
+            .respond_with(move |request: &wiremock::Request| {
+                relation_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let page = request.url.query_pairs().find(|(key, _)| key == "from")
+                    .map_or(0, |(_, value)| value.parse::<usize>().unwrap());
+                let chunk: Vec<_> = (0..replies_per_page).map(|i| {
+                    let index = page * replies_per_page + i;
+                    json!({"type":"m.room.message", "event_id":format!("$thread-{index}"), "sender":"@test:example.org", "origin_server_ts":(thread_pages * replies_per_page - index + 10), "content":{"msgtype":"m.text", "body":format!("thread history {index}"), "m.relates_to":{"rel_type":"m.thread","event_id":"$root","is_falling_back":true,"m.in_reply_to":{"event_id":"$root"}}}})
+                }).collect();
+                let mut response = json!({"chunk":chunk});
+                if page + 1 < thread_pages {
+                    response["next_batch"] = json!((page + 1).to_string());
+                }
+                ResponseTemplate::new(200).set_body_json(response)
+            })
             .mount(&server)
             .await;
         Mock::given(method("GET")).and(path_regex(".*/members"))
@@ -1060,14 +1118,14 @@ mod tests {
             assert!(pane.error.is_none(), "{:?}", pane.error);
             assert!(pane.rows.iter().any(|r| r.body == "fixture root"));
             if generation == 1 {
-                let page = request_page(&mut snapshots).await;
+                let page = request_page(&mut snapshots, false).await;
                 assert!(matches!(page.history, History::Ready));
                 assert!(!page.rows.iter().any(|r| r.body == "hidden reply"));
                 assert!(
                     page.load_older.is_some(),
                     "a hidden-only page must allow further pagination"
                 );
-                let page = request_page(&mut snapshots).await;
+                let page = request_page(&mut snapshots, false).await;
                 assert!(page.rows.iter().any(|r| r.body == "older visible message"));
                 assert!(matches!(page.history, History::End));
                 assert!(page.load_older.is_none());
@@ -1088,6 +1146,34 @@ mod tests {
             let thread_pane = model.thread.unwrap();
             assert!(thread_pane.error.is_none());
             if generation == 1 {
+                assert_eq!(
+                    relation_calls.load(std::sync::atomic::Ordering::SeqCst),
+                    thread_pages.min(10)
+                );
+                if thread_pages > 10 {
+                    assert!(matches!(thread_pane.history, History::Ready));
+                    let page = request_page(&mut snapshots, true).await;
+                    assert!(matches!(page.history, History::Ready));
+                    let page = request_page(&mut snapshots, true).await;
+                    assert!(matches!(page.history, History::End));
+                } else {
+                    assert!(matches!(thread_pane.history, History::End));
+                }
+                tokio::time::timeout(
+                    Duration::from_secs(5),
+                    snapshots.wait_for(|s| {
+                        s.thread.as_ref().is_some_and(|p| {
+                            p.rows
+                                .iter()
+                                .filter(|r| r.body.starts_with("thread history "))
+                                .count()
+                                == thread_pages * replies_per_page
+                        })
+                    }),
+                )
+                .await
+                .unwrap()
+                .unwrap();
                 let room_composer = snapshots
                     .borrow()
                     .room
@@ -1325,6 +1411,6 @@ mod tests {
     #[tokio::test]
     #[ignore = "100-cycle SDK lifecycle stress check; run explicitly"]
     async fn repeated_navigation_releases_timelines() {
-        history_fixture(false, false, 100).await;
+        history_fixture(false, false, 100, 1).await;
     }
 }

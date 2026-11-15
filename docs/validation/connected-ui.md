@@ -2,10 +2,10 @@
 
 The `matrix-ui` binary connects Iced to the existing persistent session. It restores
 credentials without browser login, lists joined rooms, and displays SDK room and
-thread timelines. Opening a room explicitly requests an initial history page of
-20 events through SDK back-pagination while continuing to display live updates.
-Room and thread text composers are implemented. Thread-pagination controls,
-verification UI, recovery UI, receipts, and automatic read marking remain pending.
+thread timelines. History loads automatically in 50-event batches, filling the
+viewport and an older-message buffer while continuing to display live updates.
+Room and thread text composers are implemented. Verification UI,
+recovery UI, receipts, and automatic read marking remain pending.
 Use an already verified profile with access to the test room's keys.
 
 Close `session-live` or any other process using the profile first. Keep the host
@@ -99,9 +99,9 @@ button. Scroll positions are not written to the profile or restored after exit.
 
 Iced's bottom anchor handles messages arriving after the initial empty view.
 A small widget wrapper gives scroll state the lifetime of the selected view;
-remembered positions are then restored explicitly. History controls occupy a
-stable widget slot so switching between loading/ready/end states does not reset
-the timeline. Scroll notifications and jump actions carry the view generation,
+remembered positions are then restored explicitly. History status occupies a
+stable slot inside the scrolling content; changing loading/ready/end states
+preserves the visible message anchor. Scroll notifications and jump actions carry the view generation,
 so queued events from a previous room cannot change the current position. There
 is no scroll polling or animation timer.
 
@@ -136,10 +136,12 @@ send messages or restart the user's connected app.
    an explicit error.
 2. Confirm existing messages load without sending a new message. Then send
    messages from the second client and verify arrival, ordering, sender, and
-   decryption in the room timeline. Use **Load older** to request additional pages.
-   A page containing only hidden thread replies may add no visible rows; continue
-   until older messages appear or **Beginning of history reached** is shown.
-   The button disables while loading; failures offer **Retry loading history**.
+   decryption in the room timeline. Scroll upward to request additional history;
+   there is no **Load older** link. The app keeps three viewport heights of older
+   content buffered, with a 1,200-pixel minimum, and continues through pages that
+   contain only hidden thread replies. At the start it shows **Beginning of
+   conversation**. Failures preserve loaded messages and offer **Retry loading
+   history** at the top of the loaded history.
    Missing keys should appear as decryption
    failures rather than a login failure.
 3. Use a message's reply arrow or existing reply-count link to open its thread.
@@ -224,7 +226,7 @@ A second regression checks shutdown while initial history is pending. Live-serve
 confirmation of this correction remains pending.
 
 
-### Manual room pagination — 2026-11-14
+### Manual room pagination — 2026-11-14 (superseded)
 
 The user confirmed that repeated CLI pagination reveals the pre-login messages.
 The GUI now provides **Load older**, using a bounded, view-owned request channel
@@ -237,6 +239,42 @@ retry. Thread pagination controls remain outside this change.
 The mock-server integration covers an initial history page, a hidden-thread-reply
 page, and an older visible message on a subsequent page, followed by the end of
 history. UI tests reject stale-room clicks and immediate duplicate requests.
+
+### Automatic history loading — 2026-11-15
+
+Rooms start with a 50-event page. After layout, the UI measures the actual
+message viewport and loads more until the visible area plus three viewport
+heights of older messages is available (the buffer is at least 1,200 pixels).
+Scrolling toward the top, resizing, and new page results replenish this buffer.
+The buffer is a prefetch target, not a limit on retained/rendered messages.
+Only the SDK's reached-start result ends pagination; hidden-only pages continue.
+
+Threads eagerly paginate to the start, stopping at approximately 500 events or
+ten pages before switching to the same viewport-driven loading. Each page asks
+for 50 events; server-side page sizes and non-message events can affect counts.
+This bounds initial work for long threads. The pinned original is excluded from
+reply measurements and appears only once. Saved scroll positions wait for enough
+history and buffer before restoration, or restore within available content after
+reaching the start or a fetch error.
+
+Viewport reports are emitted only when geometry or pagination state changes.
+There is no polling, animation, or idle retry timer. Generation and page-revision
+checks reject stale/duplicate requests; the view owns the bounded request channel
+and fetch future. Live updates continue during each page, each fetch retains its
+30-second timeout, and navigation/shutdown cancel pending view work. Failures
+stop automatic requests until explicit retry, preserving loaded content. Existing
+message-ID anchoring keeps the reading position steady while history is prepended.
+
+Validation passed: 59 workspace tests (32 GUI tests), formatting, workspace
+Clippy with warnings denied, and the locked GUI build. One existing 100-cycle
+stress test remains opt-in. Real-widget tests cover changed viewport/page reports
+without timer scheduling, buffer fill/scroll/resize decisions, delayed saved
+position restoration, failed-fetch retry gates, stale/duplicate requests, and
+stable visible anchors through history-status changes. SDK mock-server tests
+cover hidden-only room pages, a fully loaded three-page thread, a 600-reply thread
+that stops after ten initial pages and completes on demand, and cancellation,
+send/retry, reconnection, and shutdown. Native/connected desktop acceptance and
+new idle-resource measurements remain pending.
 
 
 ## GUI text sending — 2026-11-14

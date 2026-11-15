@@ -56,6 +56,7 @@ struct App {
     pending_navigation: Option<Preferences>,
     scroll_positions: HashMap<DraftKey, f32>,
     pending_scroll: [Option<f32>; 2],
+    timeline_metrics: [Option<(u64, u64, timeline::Metrics)>; 2],
 }
 #[derive(Clone, Debug)]
 enum Message {
@@ -84,7 +85,17 @@ enum Message {
         generation: u64,
         offset: f32,
     },
-    LoadOlder(u64),
+    TimelineMeasured {
+        thread: bool,
+        generation: u64,
+        revision: u64,
+        metrics: timeline::Metrics,
+    },
+    LoadOlder {
+        thread: bool,
+        generation: u64,
+        revision: u64,
+    },
     Close,
     Exit,
     Edit(DraftKey, text_editor::Action),
@@ -117,6 +128,7 @@ impl App {
             pending_navigation: None,
             scroll_positions: HashMap::new(),
             pending_scroll: [None, None],
+            timeline_metrics: [None, None],
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -142,6 +154,45 @@ impl App {
             Message::Room(_) | Message::Thread(_) | Message::CloseThread
         );
         match message {
+            Message::TimelineMeasured {
+                thread,
+                generation,
+                revision,
+                metrics,
+            } => {
+                let selected = if thread {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                };
+                let snapshot = if thread {
+                    &self.model.thread
+                } else {
+                    &self.model.room
+                };
+                if selected
+                    .as_ref()
+                    .is_some_and(|(current, _)| *current == generation)
+                    && let Some(pane) = current_pane(snapshot, generation)
+                    && pane.history_revision == revision
+                    && metrics.height.is_finite()
+                    && metrics.height > 0.0
+                    && metrics.content_height.is_finite()
+                    && metrics.translation.is_finite()
+                {
+                    self.timeline_metrics[usize::from(thread)] =
+                        Some((generation, revision, metrics));
+                    let top = self.pending_scroll[usize::from(thread)]
+                        .map_or(metrics.translation, |offset| metrics.maximum() - offset);
+                    if matches!(pane.history, History::Ready) && top < metrics.buffer() {
+                        return self.update(Message::LoadOlder {
+                            thread,
+                            generation,
+                            revision,
+                        });
+                    }
+                }
+            }
             Message::JumpToNewest { thread, generation } => {
                 let selected = if thread {
                     &self.selection.thread
@@ -390,19 +441,29 @@ impl App {
                     self.drafts.entry(key).or_default();
                 }
             }
-            Message::LoadOlder(generation) if !self.closing && !self.stopped => {
-                if self
-                    .selection
-                    .room
+            Message::LoadOlder {
+                thread,
+                generation,
+                revision,
+            } if !self.closing && !self.stopped => {
+                let selected = if thread {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                };
+                let snapshot = if thread {
+                    &mut self.model.thread
+                } else {
+                    &mut self.model.room
+                };
+                if selected
                     .as_ref()
                     .is_some_and(|(current, _)| *current == generation)
-                    && let Some(pane) = self
-                        .model
-                        .room
-                        .as_mut()
-                        .filter(|p| p.generation == generation)
+                    && let Some(pane) = snapshot.as_mut().filter(|p| p.generation == generation)
+                    && pane.history_revision == revision
+                    && matches!(pane.history, History::Ready | History::Failed(_))
                     && let Some(sender) = &pane.load_older
-                    && sender.try_send(()).is_ok()
+                    && sender.try_send(revision).is_ok()
                 {
                     pane.history = History::Loading;
                     pane.load_older = None;
@@ -471,6 +532,14 @@ impl App {
                 && let Some(pane) = current_pane(snapshot, *generation)
                 && pane.error.is_none()
                 && !matches!(pane.history, History::Loading)
+                && (offset == 0.0
+                    || pane.load_older.is_none()
+                    || matches!(pane.history, History::Failed(_))
+                    || self.timeline_metrics[index].is_some_and(|(view, revision, metrics)| {
+                        view == *generation
+                            && revision == pane.history_revision
+                            && metrics.maximum() - offset >= metrics.buffer()
+                    }))
             {
                 self.pending_scroll[index] = None;
                 tasks.push(iced::widget::operation::scroll_to(
@@ -779,12 +848,35 @@ impl App {
         let mut history_controls = column![].spacing(6);
         match &pane.history {
             History::Loading => {
-                history_controls = history_controls.push(text("Loading room history…"))
+                history_controls = history_controls.push(
+                    text(if thread {
+                        "Loading replies…"
+                    } else {
+                        "Loading messages…"
+                    })
+                    .size(12)
+                    .color(shell::MUTED),
+                )
             }
             History::Failed(error) => {
-                history_controls = history_controls.push(text(format!(
-                    "Could not load history: {error}. Live messages remain active."
-                )))
+                history_controls = history_controls.push(
+                    text(format!(
+                        "Could not load history: {error}. Live messages remain active."
+                    ))
+                    .size(12)
+                    .color(shell::MUTED),
+                );
+                let mut retry = button(text("Retry loading history").size(12))
+                    .padding([4, 0])
+                    .style(shell::quiet_button);
+                if pane.load_older.is_some() && !self.closing && !self.stopped {
+                    retry = retry.on_press(Message::LoadOlder {
+                        thread,
+                        generation: *generation,
+                        revision: pane.history_revision,
+                    });
+                }
+                history_controls = history_controls.push(retry);
             }
             History::End if !thread => {
                 history_controls = history_controls.push(
@@ -793,31 +885,18 @@ impl App {
                             .size(11)
                             .color(shell::MUTED),
                     )
-                    .padding([12, 24])
+                    .padding([12, 0])
                     .center_x(Length::Fill),
                 )
             }
             History::Ready | History::End => {}
         }
-        if !thread && !matches!(pane.history, History::End) {
-            let label = match pane.history {
-                History::Loading => "Loading…",
-                History::Failed(_) => "Retry loading history",
-                _ => "Load older",
-            };
-            let mut control = button(label).style(shell::quiet_button);
-            if pane.load_older.is_some() && !self.closing && !self.stopped {
-                control = control.on_press(Message::LoadOlder(*generation));
-            }
-            history_controls = history_controls.push(control);
-        }
-        content = content.push(history_controls);
         let rows: Vec<_> = pane
             .rows
             .iter()
             .filter(|message| !thread || message.event_id.as_ref() != Some(selected_id))
             .collect();
-        let mut messages = column![].spacing(0).padding([16, 24]);
+        let mut messages = column![history_controls].spacing(0).padding([16, 24]);
         for (index, message) in rows.iter().copied().enumerate() {
             let previous = index.checked_sub(1).map(|i| rows[i]);
             let grouped = presentation::grouped(previous, message);
@@ -946,10 +1025,13 @@ impl App {
             .height(Length::Fill);
         // New view identity resets the scroll state; async rows retain that
         // state and a zero distance from the bottom follows loaded history.
-        let mut message_area = iced::widget::stack![timeline::view(
+        let mut message_area = iced::widget::stack![timeline::history_view(
             *generation,
             rows.iter().map(|row| row.event_id.clone()).collect(),
-            timeline.into()
+            timeline.into(),
+            thread,
+            pane.history_revision,
+            matches!(pane.history, History::Ready),
         )];
         // Keep the timeline in the same widget slot as this overlay appears and
         // disappears. The one-pixel tolerance accounts for layout rounding.
@@ -1549,6 +1631,7 @@ mod tests {
             rows: Default::default(),
             error: None,
             history: History::Loading,
+            history_revision: 0,
             load_older: None,
             composer: None,
         });
@@ -1584,6 +1667,8 @@ mod tests {
         struct Probe {
             distance: Option<f32>,
             translation: f32,
+            viewport_top: f32,
+            anchor: Option<(widget::Id, f32)>,
         }
         impl widget::Operation for Probe {
             fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
@@ -1600,10 +1685,24 @@ mod tests {
                 if id == Some(&widget::Id::new("room-timeline")) {
                     self.distance = Some((content.height - bounds.height).max(0.0) - translation.y);
                     self.translation = translation.y;
+                    self.viewport_top = bounds.y;
+                }
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                let y = bounds.y - self.viewport_top - self.translation;
+                if self.anchor.is_none()
+                    && y + bounds.height > 0.0
+                    && let Some(id) = id
+                {
+                    self.anchor = Some((id.clone(), y));
                 }
             }
         }
-        fn inspect(app: &App, tree: &mut widget::Tree, set_offset: Option<f32>) -> (f32, f32) {
+        fn inspect(
+            app: &App,
+            tree: &mut widget::Tree,
+            set_offset: Option<f32>,
+        ) -> (f32, Option<(widget::Id, f32)>) {
             let renderer = iced::Renderer::new(iced::Font::DEFAULT, iced::Pixels(16.0));
             let mut pane = app.pane(false);
             tree.diff(pane.as_widget());
@@ -1629,10 +1728,12 @@ mod tests {
             let mut probe = Probe {
                 distance: None,
                 translation: 0.0,
+                viewport_top: 0.0,
+                anchor: None,
             };
             pane.as_widget_mut()
                 .operate(tree, layout::Layout::new(&node), &renderer, &mut probe);
-            (probe.distance.unwrap(), probe.translation)
+            (probe.distance.unwrap(), probe.anchor)
         }
         let mut app = demo_app();
         let _ = app.update(Message::Room("busy".into()));
@@ -1646,9 +1747,11 @@ mod tests {
         assert!((inspect(&app, &mut tree, Some(120.0)).0 - 120.0).abs() < 1.0);
         app.model.room.as_mut().unwrap().history = History::Loading;
         assert!((inspect(&app, &mut tree, None).0 - 120.0).abs() < 1.0);
-        let top = inspect(&app, &mut tree, None).1;
+        let anchor = inspect(&app, &mut tree, None).1.unwrap();
         app.model.room.as_mut().unwrap().history = History::Ready;
-        assert!((inspect(&app, &mut tree, None).1 - top).abs() < 1.0);
+        let after = inspect(&app, &mut tree, None).1.unwrap();
+        assert_eq!(after.0, anchor.0);
+        assert!((after.1 - anchor.1).abs() < 1.0);
         // Replacing a view cannot inherit another view's internal widget offset.
         let _ = app.update(Message::Room("busy".into()));
         assert!(inspect(&app, &mut tree, None).0.abs() < 1.0);
@@ -1876,6 +1979,7 @@ mod tests {
             rows: Default::default(),
             error: None,
             history: History::Ready,
+            history_revision: 0,
             load_older: None,
             composer: None,
         });
@@ -1893,19 +1997,177 @@ mod tests {
             rows: Default::default(),
             error: None,
             history: History::Ready,
+            history_revision: 0,
             load_older: Some(sender),
             composer: None,
         });
-        let _ = app.update(Message::LoadOlder(generation + 1));
+        let _ = app.update(Message::LoadOlder {
+            thread: false,
+            generation: generation + 1,
+            revision: 0,
+        });
         assert!(requests.try_recv().is_err());
-        let _ = app.update(Message::LoadOlder(generation));
+        let _ = app.update(Message::LoadOlder {
+            thread: false,
+            generation,
+            revision: 0,
+        });
         assert!(matches!(
             app.model.room.as_ref().unwrap().history,
             History::Loading
         ));
-        assert_eq!(requests.try_recv(), Ok(()));
-        let _ = app.update(Message::LoadOlder(generation));
+        assert_eq!(requests.try_recv(), Ok(0));
+        let _ = app.update(Message::LoadOlder {
+            thread: false,
+            generation,
+            revision: 0,
+        });
         assert!(requests.try_recv().is_err());
+    }
+
+    #[test]
+    fn automatic_history_buffers_rooms_and_threads_and_stops_on_failure() {
+        for thread in [false, true] {
+            let mut app = App::new();
+            let _ = app.update(Message::Room("!room:example.org".into()));
+            if thread {
+                let _ = app.update(Message::Thread("$root".into()));
+            }
+            let generation = if thread {
+                app.selection.thread.as_ref()
+            } else {
+                app.selection.room.as_ref()
+            }
+            .unwrap()
+            .0;
+            let (sender, mut requests) = tokio::sync::mpsc::channel(1);
+            let pane = Pane {
+                generation,
+                rows: Default::default(),
+                error: None,
+                history: History::Ready,
+                history_revision: 1,
+                load_older: Some(sender.clone()),
+                composer: None,
+            };
+            if thread {
+                app.model.thread = Some(pane);
+            } else {
+                app.model.room = Some(pane);
+            }
+            let measured =
+                |revision, height, content_height, translation| Message::TimelineMeasured {
+                    thread,
+                    generation,
+                    revision,
+                    metrics: timeline::Metrics {
+                        height,
+                        content_height,
+                        translation,
+                    },
+                };
+            // Fill one screen plus three screens of older history, rejecting old pages.
+            let _ = app.update(measured(0, 500.0, 1000.0, 500.0));
+            assert!(requests.try_recv().is_err());
+            let _ = app.update(measured(1, 500.0, 1000.0, 500.0));
+            assert_eq!(requests.try_recv(), Ok(1));
+            let _ = app.update(measured(1, 500.0, 1000.0, 500.0));
+            assert!(requests.try_recv().is_err());
+            let pane = if thread {
+                app.model.thread.as_mut()
+            } else {
+                app.model.room.as_mut()
+            }
+            .unwrap();
+            pane.history = History::Ready;
+            pane.history_revision = 2;
+            pane.load_older = Some(sender.clone());
+            let _ = app.update(measured(2, 500.0, 3000.0, 2500.0));
+            assert!(requests.try_recv().is_err(), "a sufficient buffer settles");
+            // Scrolling toward the top consumes the buffer and fetches the next page.
+            let _ = app.update(measured(2, 500.0, 3000.0, 1400.0));
+            assert_eq!(requests.try_recv(), Ok(2));
+            let pane = if thread {
+                app.model.thread.as_mut()
+            } else {
+                app.model.room.as_mut()
+            }
+            .unwrap();
+            pane.history = History::Failed("offline".into());
+            pane.history_revision = 3;
+            pane.load_older = Some(sender);
+            let _ = app.update(measured(3, 500.0, 3000.0, 0.0));
+            assert!(
+                requests.try_recv().is_err(),
+                "failures do not retry in a loop"
+            );
+            let _ = app.update(Message::LoadOlder {
+                thread,
+                generation,
+                revision: 2,
+            });
+            assert!(requests.try_recv().is_err());
+            let _ = app.update(Message::LoadOlder {
+                thread,
+                generation,
+                revision: 3,
+            });
+            assert_eq!(requests.try_recv(), Ok(3));
+        }
+    }
+
+    #[test]
+    fn history_refills_for_resizing_and_before_restoring_a_distant_position() {
+        let mut app = App::new();
+        let _ = app.update(Message::Room("!room:example.org".into()));
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let (sender, mut requests) = tokio::sync::mpsc::channel(1);
+        app.model.room = Some(Pane {
+            generation,
+            rows: Default::default(),
+            error: None,
+            history: History::Ready,
+            history_revision: 1,
+            load_older: Some(sender.clone()),
+            composer: None,
+        });
+        let measured = |revision, height, content_height| Message::TimelineMeasured {
+            thread: false,
+            generation,
+            revision,
+            metrics: timeline::Metrics {
+                height,
+                content_height,
+                translation: content_height - height,
+            },
+        };
+        let _ = app.update(measured(1, 400.0, 2000.0));
+        assert!(requests.try_recv().is_err());
+        let _ = app.update(measured(1, 800.0, 2000.0));
+        assert_eq!(
+            requests.try_recv(),
+            Ok(1),
+            "a larger viewport needs more buffer"
+        );
+        app.pending_scroll[0] = Some(3200.0);
+        let pane = app.model.room.as_mut().unwrap();
+        pane.history = History::Ready;
+        pane.history_revision = 2;
+        pane.load_older = Some(sender.clone());
+        let _ = app.update(measured(2, 500.0, 4500.0));
+        assert_eq!(requests.try_recv(), Ok(2));
+        assert_eq!(
+            app.pending_scroll[0],
+            Some(3200.0),
+            "do not clamp a saved position before fetching it"
+        );
+        let pane = app.model.room.as_mut().unwrap();
+        pane.history = History::Ready;
+        pane.history_revision = 3;
+        pane.load_older = Some(sender);
+        let _ = app.update(measured(3, 500.0, 6500.0));
+        assert!(requests.try_recv().is_err());
+        assert!(app.pending_scroll[0].is_none());
     }
 
     #[test]
