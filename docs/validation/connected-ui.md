@@ -23,6 +23,34 @@ An optional profile-directory argument follows the binary name. The default is
 not create a new session, replace a device, or log out. Room names and decrypted
 messages appear in the window.
 
+## GPU passthrough startup stall — 2026-11-15
+
+After exposing `/dev/dri`, the Intel render node was accessible to the container
+user, and Wayland registry discovery succeeded. Default demo startup stopped
+before adapter selection; standalone `vulkaninfo --summary` also exceeded an
+eight-second timeout. A trace showed a successful X11 DRI3 open reply on the
+forwarded `DISPLAY=:0` without the expected descriptor, followed by a blocked
+read. The installed Mesa 22.3.6 device-selection layer was implicated by the
+following comparisons:
+
+- `NODEVICE_SELECT=1 vulkaninfo --summary` completed and enumerated Intel RKL GT1
+  integrated graphics and llvmpipe.
+- With `NODEVICE_SELECT=1`, the isolated demo selected the Intel Vulkan adapter,
+  acknowledged surface configuration, attached buffers, and received Wayland
+  frame callbacks. It remained running until the ten-second test timeout.
+- Removing `DISPLAY` also allowed Intel Vulkan initialization. Selecting
+  `WGPU_BACKEND=gl` selected the Intel OpenGL adapter. Forced tiny-skia remained
+  running until its test timeout.
+
+The container configuration now sets `NODEVICE_SELECT=1`, matching the disable
+switch in its installed Vulkan layer manifest. GPU access and X11/Wayland
+forwarding remain enabled. See [development setup](../development.md#running-on-the-host-wayland-desktop)
+for the immediate launch command and rebuild instructions. The workaround was
+tested through per-process environment overrides; a rebuilt container has not
+yet been checked. Build and JSON syntax checks passed. No account was opened or
+existing connected process stopped. Pixel appearance, hardware power use, and
+native-host behavior remain unvalidated.
+
 ## Graphics settings — 2026-11-15
 
 **Settings → Graphics** now exposes **Use GPU rendering** and **Prefer a low-power

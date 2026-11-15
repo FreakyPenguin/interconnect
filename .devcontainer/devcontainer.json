@@ -21,7 +21,8 @@
     "source=${localEnv:XDG_RUNTIME_DIR}/bus,target=/tmp/host-session-bus,type=bind"
   ],
   "containerEnv": {
-    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/host-session-bus"
+    "DBUS_SESSION_BUS_ADDRESS": "unix:path=/tmp/host-session-bus",
+    "NODEVICE_SELECT": "1"
   },
   "runArgs": [
     "--device=/dev/dri:/dev/dri",

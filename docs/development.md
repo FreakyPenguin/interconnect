@@ -101,6 +101,29 @@ The absolute Wayland socket path lets the application connect while its runtime 
 
 Mesa software rendering is available without GPU passthrough. For hardware rendering on a Linux host with `/dev/dri`, add `"runArgs": ["--device=/dev/dri"]`. If device access is denied, include `"--group-add=<host-render-group-gid>"` in that array, using the numeric group owning the render device. Proprietary NVIDIA setups may require additional host-specific configuration.
 
+The checked-in container sets `NODEVICE_SELECT=1` to disable Mesa's implicit
+Vulkan device-selection layer. With GPU passthrough and VS Code's forwarded
+`DISPLAY=:0`, this layer was observed hanging on an X11 DRI3 reply before the
+first window appeared, even though the application uses Wayland. Disabling the
+layer keeps both display variables available and lets wgpu select the adapter
+using its configured power preference. This is a container workaround; native
+launches do not set it automatically. The installed
+`/usr/share/vulkan/implicit_layer.d/VkLayer_MESA_device_select.json` declares this
+disable switch.
+
+Rebuild the container to apply the environment change. In an existing terminal,
+test it immediately without accessing a saved account:
+
+```sh
+NODEVICE_SELECT=1 cargo run --locked --bin matrix-ui -- --demo
+```
+
+If startup stalls before an adapter is selected, compare `vulkaninfo --summary`
+with `NODEVICE_SELECT=1 vulkaninfo --summary`. Removing `DISPLAY` for a Wayland
+launch (`env -u DISPLAY ...`) also bypassed the observed stall, as did
+`WGPU_BACKEND=gl`. Startup fallback only handles an initialization error; it
+cannot recover while a driver call remains blocked.
+
 Only the display socket is shared by these instructions. Desktop notifications, portal-based browser opening for SSO, and secret-service integration also need a deliberate host session D-Bus setup or native-host testing. A browser SSO callback must be reachable from the host browser once its port and return mechanism are chosen. Do not assume that displaying a window validates those integrations.
 
 Use native-host runs with hardware rendering for representative battery and suspend/resume measurements; container software rendering is a functional development aid.
