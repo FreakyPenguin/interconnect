@@ -22,6 +22,7 @@ pub struct RoomEntry {
     pub member_count: u64,
     pub can_edit_topic: bool,
     pub can_pin: bool,
+    pub can_invite: bool,
     pub pinned_events: Vec<String>,
     pub favorite: bool,
     pub direct: bool,
@@ -116,6 +117,9 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<(Vec<RoomEntry>, Vec<Sp
                         matrix_sdk::ruma::events::StateEventType::RoomTopic,
                     )
                 }),
+                can_invite: levels
+                    .as_ref()
+                    .is_some_and(|levels| levels.user_can_invite(room.own_user_id())),
                 can_pin: levels.as_ref().is_some_and(|levels| {
                     levels.user_can_send_state(
                         room.own_user_id(),

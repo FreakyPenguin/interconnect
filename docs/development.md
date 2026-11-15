@@ -362,3 +362,22 @@ The macOS coordinate path is included but requires native-host acceptance.
 
 See [drop validation](validation/connected-ui.md#file-drops--2026-11-15) for
 coverage, the private Wayland fixture, and remaining acceptance steps.
+
+## People search and invitations
+
+`src/people.rs` exposes a room-independent `Directory`, `Person`, `SearchResults`,
+and `parse_user_id`. `Directory::new(client)` is constructed inside the client's
+Tokio runtime; its SDK client has runtime-safe destruction. Existing room
+composers expose `people_directory()` using their originating runtime handle.
+The wrapper calls the SDK's authenticated homeserver user-directory endpoint,
+keeps ranking, bounds results, and applies a 15-second search deadline. It is
+usable by future direct-chat creation without depending on invitation logic.
+
+`src/bin/interconnect/people_picker.rs` provides a reusable picker `State`,
+`Event`, and `view`. Its host supplies a directory handle, avatar cache, and demo
+flag, maps returned tasks/events, and decides what Submit does. Edit debounces
+and cancels previous searches; selection supplies a `Person` and full Matrix ID.
+Each host must also namespace picker events by its form generation when replacing
+one form with another. `invite.rs` hosts the picker for room invitations, owns
+permissions/send feedback, and keeps server writes separate from selection.
+See [invitation validation](validation/connected-ui.md#room-invitations-and-directory-search--2026-11-15).

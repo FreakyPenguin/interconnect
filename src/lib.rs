@@ -10,6 +10,7 @@ pub mod media;
 pub mod navigation;
 pub mod navigation_preferences;
 pub mod notifications;
+pub mod people;
 pub mod session;
 pub mod settings;
 pub mod sso;

@@ -178,6 +178,21 @@ impl App {
         .align_y(iced::Alignment::Center);
         let mut content =
             column![container(header).padding([18, 24]), rule::horizontal(1)].spacing(0);
+        if self.can_invite() {
+            if self.invite.is_some() {
+                return content
+                    .push(
+                        scrollable(self.invite_view())
+                            .id("room-invite-form")
+                            .direction(shell::scrollbar())
+                            .style(shell::scroll_style)
+                            .height(Length::Fill),
+                    )
+                    .height(Length::Fill)
+                    .into();
+            }
+            content = content.push(self.invite_view());
+        }
         let snapshot = self.members_snapshot();
         if snapshot.is_none_or(|s| s.loading) {
             return content

@@ -15,10 +15,14 @@ mod emoji_picker;
 mod file_drop;
 #[path = "interconnect/images.rs"]
 mod images;
+#[path = "interconnect/invite.rs"]
+mod invite;
 #[path = "interconnect/login.rs"]
 mod login;
 #[path = "interconnect/members.rs"]
 mod members;
+#[path = "interconnect/people_picker.rs"]
+mod people_picker;
 #[path = "interconnect/pin_action.rs"]
 mod pin_action;
 #[path = "interconnect/pinned.rs"]
@@ -113,6 +117,8 @@ struct App {
     emoji_completion: emoji_completion::State,
     topic_editor: Option<topic::State>,
     members: members::State,
+    invite: Option<invite::State>,
+    inviting: HashSet<String>,
     pinning: HashSet<reaction_picker::Target>,
     pin_error: Option<(reaction_picker::Target, String)>,
 }
@@ -121,6 +127,7 @@ enum Message {
     Pin(pin_action::Event),
     Topic(topic::Event),
     Members(members::Event),
+    Invite(invite::Event),
     Login(login::Event),
     Verification(verification::Event),
     Settings(settings::Event),
@@ -229,6 +236,8 @@ impl App {
             emoji_completion: emoji_completion::State::default(),
             topic_editor: None,
             members: members::State::default(),
+            invite: None,
+            inviting: HashSet::new(),
             pinning: HashSet::new(),
             pin_error: None,
         };
@@ -336,6 +345,18 @@ impl App {
                     | Message::OpenThreadLatest(_)
                     | Message::CloseThread
                     | Message::Members(_)
+                    | Message::Invite(
+                        invite::Event::Open
+                            | invite::Event::Picker(
+                                _,
+                                people_picker::Event::Edit(_)
+                                    | people_picker::Event::Select(_)
+                                    | people_picker::Event::Retry
+                                    | people_picker::Event::Submit
+                            )
+                            | invite::Event::Submit
+                            | invite::Event::Cancel
+                    )
                     | Message::Edit(..)
                     | Message::Send(_)
                     | Message::Retry(_)
@@ -346,6 +367,9 @@ impl App {
             ) {
                 return Task::none();
             }
+        }
+        if matches!(message, Message::Escape) && self.invite.is_some() {
+            return self.update(Message::Invite(invite::Event::Cancel));
         }
         if matches!(message, Message::Escape) && self.topic_editor.is_some() {
             return self.update(Message::Topic(topic::Event::Cancel));
@@ -370,7 +394,7 @@ impl App {
             navigation || matches!(&message, Message::State(_) | Message::DemoThreadReply);
         let opening_image = matches!(&message, Message::Image(images::Event::Open { .. }));
         let closing_image = matches!(&message, Message::Image(images::Event::Close));
-        let refresh_media = matches!(&message, Message::Members(_))
+        let refresh_media = matches!(&message, Message::Members(_) | Message::Invite(_))
             || navigation
             || matches!(
                 &message,
@@ -387,6 +411,7 @@ impl App {
             Message::Pin(event) => action_task = self.pin_event(event),
             Message::Topic(event) => action_task = self.topic_event(event),
             Message::Members(event) => action_task = self.members_event(event),
+            Message::Invite(event) => action_task = self.invite_event(event),
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::Attachment(event) => action_task = self.attachment_event(event),
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
@@ -886,6 +911,7 @@ impl App {
         if self.selection.room.is_none() || self.closing || self.stopped {
             self.selection.members = None;
         }
+        self.validate_invite();
         self.validate_pin_error();
         self.validate_topic_editor();
         self.validate_reaction_picker();
@@ -954,6 +980,13 @@ impl App {
         if let Some(view) = &self.image_view {
             self.selection.images.push(view.original.clone());
             return;
+        }
+        for uri in self.invite_avatars() {
+            if !self.selection.avatars.contains(&uri)
+                && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED
+            {
+                self.selection.avatars.push(uri);
+            }
         }
         for uri in self
             .visible_members()

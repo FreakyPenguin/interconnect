@@ -266,23 +266,23 @@ pub fn editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::
     };
     style
 }
-pub fn avatar<'a>(
+pub fn avatar<'a, M: 'a>(
     sender: &'a str,
     image: Option<&iced::widget::image::Handle>,
-) -> Element<'a, Message> {
+) -> Element<'a, M> {
     avatar_view(sender, false, image)
 }
-pub fn activity_avatar<'a>(
+pub fn activity_avatar<'a, M: 'a>(
     sender: &'a str,
     image: Option<&iced::widget::image::Handle>,
-) -> Element<'a, Message> {
+) -> Element<'a, M> {
     avatar_view(sender, true, image)
 }
-fn avatar_view<'a>(
+fn avatar_view<'a, M: 'a>(
     sender: &'a str,
     compact: bool,
     image: Option<&iced::widget::image::Handle>,
-) -> Element<'a, Message> {
+) -> Element<'a, M> {
     if let Some(handle) = image {
         let size = if compact { 16 } else { 32 };
         return widget::image(handle.clone())
@@ -696,7 +696,7 @@ mod avatar_tests {
             let sizes: Vec<_> = [None, Some(&handle)]
                 .into_iter()
                 .map(|image| {
-                    let mut avatar = avatar_view("Sample person", compact, image);
+                    let mut avatar = avatar_view::<Message>("Sample person", compact, image);
                     let mut tree = Tree::new(&avatar);
                     avatar
                         .as_widget_mut()

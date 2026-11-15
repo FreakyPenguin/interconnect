@@ -105,15 +105,18 @@ fn reactions(content: &TimelineItemContent, own_user: &matrix_sdk::ruma::UserId)
 /// Keep their final drop inside the originating runtime context, including when
 /// a queued snapshot or retry message is discarded rather than handled.
 #[derive(Debug)]
-struct RuntimeOwned<T> {
+pub(crate) struct RuntimeOwned<T> {
     value: Option<T>,
     runtime: tokio::runtime::Handle,
 }
 impl<T> RuntimeOwned<T> {
-    fn new(value: T) -> Arc<Self> {
+    pub(crate) fn new(value: T) -> Arc<Self> {
+        Self::with_runtime(value, tokio::runtime::Handle::current())
+    }
+    pub(crate) fn with_runtime(value: T, runtime: tokio::runtime::Handle) -> Arc<Self> {
         Arc::new(Self {
             value: Some(value),
-            runtime: tokio::runtime::Handle::current(),
+            runtime,
         })
     }
 }
@@ -141,6 +144,58 @@ impl std::fmt::Debug for Composer {
     }
 }
 impl Composer {
+    pub fn people_directory(&self) -> crate::people::Directory {
+        crate::people::Directory::from_runtime(
+            self.0.room().client().clone(),
+            self.0.runtime.clone(),
+        )
+    }
+
+    /// Explicit writes finish against the captured room, even after navigation.
+    pub async fn invite_member(self, input: String) -> Result<(), String> {
+        let user = crate::people::parse_user_id(&input)?;
+        let invite = async {
+            use matrix_sdk::ruma::events::room::member::MembershipState;
+            let room = self.0.room();
+            let levels = room
+                .power_levels()
+                .await
+                .map_err(|error| error.to_string())?;
+            if room.state() != matrix_sdk::RoomState::Joined
+                || !levels.user_can_invite(room.own_user_id())
+            {
+                return Err("You no longer have permission to invite people to this room.".into());
+            }
+            if let Some(member) = room
+                .get_member_no_sync(&user)
+                .await
+                .map_err(|error| error.to_string())?
+            {
+                match member.membership() {
+                    MembershipState::Join => {
+                        return Err("This person is already a room member.".into());
+                    }
+                    MembershipState::Invite => {
+                        return Err("This person already has an invitation.".into());
+                    }
+                    MembershipState::Ban => {
+                        return Err("This person is banned from the room.".into());
+                    }
+                    _ => {}
+                }
+            }
+            room.invite_user_by_id(&user)
+                .await
+                .map_err(|error| error.to_string())
+        };
+        tokio::time::timeout(Duration::from_secs(30), invite)
+            .await
+            .map_err(|_| {
+                "The invitation timed out and may have been sent. Check membership before retrying."
+                    .to_owned()
+            })?
+    }
+
     /// Read current server state so successive local pin changes preserve one another
     /// while the sync stream is still catching up. Callers serialize writes per room.
     pub async fn set_message_pinned(self, event: String, pinned: bool) -> Result<(), String> {
@@ -1939,6 +1994,7 @@ mod tests {
                     && s.rooms[0].topic == "Initial topic"
                     && s.rooms[0].can_edit_topic
                     && s.rooms[0].can_pin
+                    && s.rooms[0].can_invite
                     && s.rooms[0].pinned_events == ["$cached-pin"]
                     && s.rooms[0].favorite
                     && s.rooms[0].direct
@@ -1972,6 +2028,35 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
+        Mock::given(method("POST"))
+            .and(path_regex(".*/rooms/[^/]+/invite"))
+            .and(wiremock::matchers::body_json(
+                json!({"user_id":"@invite:remote.example"}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(
+            composer
+                .clone()
+                .invite_member("not a Matrix ID".into())
+                .await
+                .is_err()
+        );
+        assert!(
+            composer
+                .clone()
+                .invite_member("@test:example.org".into())
+                .await
+                .unwrap_err()
+                .contains("already")
+        );
+        composer
+            .clone()
+            .invite_member(" @invite:remote.example ".into())
+            .await
+            .unwrap();
         composer
             .clone()
             .set_topic("Saved topic".into())
@@ -2031,7 +2116,7 @@ mod tests {
         assert_eq!(*pins.lock().unwrap(), vec!["$existing", "$pin-two"]);
         // Global and room account-data updates must work without a room-list lifecycle transition.
         *response.lock().unwrap() = json!({"next_batch":"two","account_data":{"events":[{"type":"m.direct","content":{}}]},"rooms":{"join":{
-            "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"})), event("m.room.topic","",json!({"topic":""})), event("m.room.pinned_events","",json!({"pinned":["$existing","$pin-one","$pin-two"]})), event("m.room.power_levels","",json!({"users":{"@test:example.org":50},"state_default":50,"events":{"m.room.topic":100,"m.room.pinned_events":100}}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
+            "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"})), event("m.room.topic","",json!({"topic":""})), event("m.room.pinned_events","",json!({"pinned":["$existing","$pin-one","$pin-two"]})), event("m.room.power_levels","",json!({"users":{"@test:example.org":50},"invite":100,"state_default":50,"events":{"m.room.topic":100,"m.room.pinned_events":100}}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
             "!nested:example.org":{"state":{"events":[event("m.space.child","!room:example.org",json!({}))]}}
         }}});
         client
@@ -2045,6 +2130,7 @@ mod tests {
                     && s.rooms[0].topic.is_empty()
                     && !s.rooms[0].can_edit_topic
                     && !s.rooms[0].can_pin
+                    && !s.rooms[0].can_invite
                     && s.rooms[0].pinned_events.contains(&"$pin-two".to_owned())
                     && s.rooms[0].name == "Renamed"
                     && !s.rooms[0].favorite
@@ -2059,6 +2145,14 @@ mod tests {
         .unwrap()
         .unwrap()
         .clone();
+        assert!(
+            composer
+                .clone()
+                .invite_member("@forbidden:remote.example".into())
+                .await
+                .unwrap_err()
+                .contains("permission")
+        );
         assert!(
             composer
                 .clone()

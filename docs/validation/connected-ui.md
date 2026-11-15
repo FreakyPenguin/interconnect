@@ -1911,8 +1911,8 @@ People lists joined users only, with names, Matrix IDs, avatars (or initials),
 and the SDK's suggested Creator/Admin/Moderator role. Invitations, departed and
 banned users are excluded. Search matches names and Matrix IDs without case
 sensitivity. Lists are paged in groups of 50; avatar demand is bounded to the
-current page and uses the existing media cache. This is a membership display;
-inviting or changing members is outside its scope.
+current page and uses the existing media cache. Room invitations are available through the Invite people button described below;
+changing roles or removing members remains outside this panel’s scope.
 
 The badge uses the SDK's cached joined-member summary, without fetching a roster
 for unopened panels. Opening People loads complete membership asynchronously,
@@ -1952,3 +1952,64 @@ normally. Captures/logs remain ignored under `artifacts/members-2026-11-15/`;
 the explicit demo config path remained absent. No saved account or connected
 client was opened or restarted. Real-server, macOS, and measured idle-resource
 acceptance remain pending.
+
+## Room invitations and directory search — 2026-11-15
+
+People includes an **Invite people** button when the account has permission to
+invite. The inline form searches the account's homeserver user directory by name
+or Matrix ID. Results show display names, full Matrix IDs, and cached avatars or
+initials. Selecting a result fills the recipient; **Send invitation** (or Enter
+in the recipient field) explicitly sends. A full `@name:server` can also be typed
+or pasted, even when the directory fails or omits that user. Directory search
+covers people known to the homeserver, not an exhaustive federated user list.
+
+Search starts after two characters and a 300 ms pause, returns up to 20 ranked,
+deduplicated results, and prompts for a more specific query when truncated.
+Editing, selection, form closure, panel closure, navigation, loss of permission,
+and shutdown cancel obsolete search tasks. Request and form generations reject
+late results. Search and invite inputs use static carets; no polling is added.
+Directory errors have a Retry search button and leave direct-ID entry available.
+
+Invitations recheck joined-room status and cached SDK power levels before
+sending; the homeserver also enforces authorization. Cached joined, invited, or
+banned recipients are rejected. Sends serialize per room and participate in
+shutdown's pending-operation accounting. Closing or navigating away after Send
+does not undo an already-submitted invitation; it finishes against the captured
+room, and its result cannot overwrite another form. A send has a 30-second
+deadline; timeout feedback warns that the invitation may already have been sent.
+Success keeps the joined-member count unchanged until that person actually joins.
+
+Demo mode provides local directory matches for Taylor Brooks, Jordan Lee, and
+Jamie Davis. Invitations show simulated success without opening an account,
+using the network, or adding a joined member.
+
+Manual acceptance:
+
+1. Run `cargo run --locked --bin interconnect -- --demo`. Open People → Invite
+   people. Search `Taylor`, choose the result, then Send invitation. Check the
+   success feedback and unchanged member count. Try an unknown full Matrix ID,
+   a malformed ID, and an already-joined member.
+2. Type quickly, clear the input, close/reopen the form, change rooms, and replace
+   People with a thread. Old search results and invite feedback must not appear
+   in the new form. Escape first closes the form, then the People panel.
+3. At narrow widths, verify result selection, sending, feedback, and closing fit.
+4. In a separately authorized connected session, search by a real display name
+   and Matrix ID. Send only an intended invitation and verify receipt in the
+   other client. Check directory failure/retry, permission revocation, server
+   errors, and navigation/shutdown during requests. Real-server invitation,
+   macOS, and measured idle-resource acceptance remain pending.
+
+Validation passed: locked workspace tests (86 library tests; two existing opt-in
+tests ignored), all 143 final GUI tests, workspace Clippy with warnings denied,
+formatting, and the locked desktop build. Local HTTP fixtures check directory
+query/limit, rank/profile preservation, duplicate suppression, errors and
+cancellation; the room fixture checks the invitation body, invalid/existing
+recipients, and permission revocation. UI tests check selected/raw recipients,
+stale results, navigation, duplicate submissions, permissions, unchanged drafts
+and joined counts, and a focused search with no scheduled caret redraws.
+Native Wayland demo checks covered searching Taylor, selecting a result, explicit
+simulated sending, raw-ID sending, invalid-ID feedback, Escape returning to the
+member list, and a 760×480 requested window. Captures/logs are ignored under
+`artifacts/invites-2026-11-15/`. The demo closed normally, its explicit config
+path remained absent, and no saved account, connected client, or real invitation
+was used.

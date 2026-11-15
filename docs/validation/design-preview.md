@@ -374,3 +374,9 @@ roles and initials render without network or saved-account access. Opening a
 thread replaces People, and Escape/× closes it. At narrow widths the panel
 replaces the conversation until closed. See the membership acceptance checklist
 in [connected UI validation](connected-ui.md#room-membership--2026-11-15).
+
+The People panel's Invite people form uses local directory fixtures: search
+`Taylor` or `Jordan`, select a result, and Send invitation for simulated feedback.
+Direct Matrix ID entry is also accepted. The joined-member count does not change,
+and no server invitation is sent. The Release notes fixture hides Invite because
+it denies invite permission.
