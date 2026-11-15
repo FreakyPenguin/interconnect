@@ -16,10 +16,10 @@ for coverage and platform limits.
 Run the repository checks:
 
 ```sh
-cargo build
+cargo build --locked --bin interconnect
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 ```
 
 Development/test builds optimize `iced_tiny_skia` and `tiny-skia` at level 2.
@@ -27,6 +27,21 @@ Raster conversion, compositing, and scaling execute on the UI thread; leaving
 these crates unoptimized made large image views stall input during redraws.
 Application code retains the normal development profile, and release settings
 are unchanged. Rebuilding picks up these package-specific profile settings.
+
+## Linux continuous integration
+
+[Linux CI](../.github/workflows/linux.yml) runs the checks above on Ubuntu 24.04
+for pushes and pull requests, daily at 04:23 UTC, and via **Actions → Linux CI →
+Run workflow**. Scheduled runs use the default branch and begin once the workflow
+is on that branch. CI follows the repository's stable Rust toolchain, installs
+the native build dependencies and test fonts, and caches Cargo downloads.
+
+The build and default workspace tests run headlessly; ignored tests requiring
+an isolated desktop fixture remain opt-in. A passing job does not validate
+connected accounts, desktop integration, rendering, or idle resource usage;
+continue using the relevant validation guides for those checks. The workflow
+does not launch the client or publish binaries. Its first hosted run is still
+needed to confirm the runner setup.
 
 ## Design preview
 
