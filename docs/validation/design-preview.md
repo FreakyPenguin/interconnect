@@ -73,8 +73,11 @@ no subtitle or workspace footer label, leaving more height for rooms. Long room
 names can still wrap.
 
 Room and thread composers share a compact 80-pixel frame, with a small send
-arrow at the bottom right. The bottom action row stays clear of editable text
-and leaves space for future controls. The room/reply label and shortcut footer
+arrow at the bottom right and a muted smiley immediately to its left. The smiley
+opens the shared emoji picker; choosing an emoji inserts it at the caret or
+replaces selected text, then restores composer focus. It does not send. Escape
+or a click outside cancels without changing the draft. The bottom action row
+stays clear of editable text. The room/reply label and shortcut footer
 are removed; hover over the arrow for **Send message (Ctrl+Enter)** or
 **Send reply (Ctrl+Enter)**. The arrow becomes an ellipsis while queueing.
 

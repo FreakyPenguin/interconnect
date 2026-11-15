@@ -3,7 +3,7 @@ use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, emoji_picker, sh
 use chatclient::connected::{Composer, MessageRow};
 use iced::{
     Element, Task,
-    widget::{column, container, text},
+    widget::{column, text},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -216,6 +216,7 @@ impl App {
                 && self.pending_ops < MAX_PENDING_OPERATIONS
                 && self.settings.draft.is_none()
                 && self.image_view.is_none()
+                && self.composer_picker.is_none()
                 && self.reaction_picker.is_none() =>
             {
                 if !self
@@ -285,6 +286,7 @@ impl App {
                     && !self.stopped
                     && self.settings.draft.is_none()
                     && self.image_view.is_none()
+                    && self.composer_picker.is_none()
                     && self.reaction_picker.is_none() =>
             {
                 if self.reaction_row(&target).is_some() {
@@ -442,24 +444,7 @@ impl App {
             content = content.push(text(error).size(12));
         }
         Some((
-            container(content)
-                .padding(12)
-                .width(320)
-                .height(400)
-                .style(|_| iced::widget::container::Style {
-                    border: iced::Border {
-                        color: iced::Color::from_rgb8(228, 232, 237),
-                        width: 1.0,
-                        radius: 10.0.into(),
-                    },
-                    shadow: iced::Shadow {
-                        color: iced::Color::BLACK.scale_alpha(0.15),
-                        offset: iced::Vector::new(0.0, 3.0),
-                        blur_radius: 12.0,
-                    },
-                    ..shell::surface(iced::Color::WHITE)
-                })
-                .into(),
+            emoji_picker::panel(content),
             message(Event::Picker {
                 target: state.target.clone(),
                 event: emoji_picker::Event::Close,

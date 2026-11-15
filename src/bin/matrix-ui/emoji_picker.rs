@@ -9,6 +9,28 @@ use std::sync::OnceLock;
 const PAGE_SIZE: usize = 48;
 pub const SEARCH_ID: &str = "emoji-picker-search";
 
+/// A shared surface for picker hosts, including any host-specific status text.
+pub fn panel<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .padding(12)
+        .width(320)
+        .height(400)
+        .style(|_| iced::widget::container::Style {
+            border: iced::Border {
+                color: iced::Color::from_rgb8(228, 232, 237),
+                width: 1.0,
+                radius: 10.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::BLACK.scale_alpha(0.15),
+                offset: iced::Vector::new(0.0, 3.0),
+                blur_radius: 12.0,
+            },
+            ..shell::surface(iced::Color::WHITE)
+        })
+        .into()
+}
+
 /// The key is the selected value, independent of the display name and glyph.
 /// A future custom catalog can supply its own keys and image-backed rendering
 /// in `entry_view` without changing picker events or its consumers.

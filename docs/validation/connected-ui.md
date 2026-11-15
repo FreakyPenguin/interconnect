@@ -1292,3 +1292,45 @@ or real Matrix events sent.
 Validation passed: formatting, locked workspace Clippy with warnings denied,
 all 88 GUI tests, and the locked GUI build. Backend behavior was unchanged;
 the library suite and opt-in lifecycle stress test were not repeated.
+
+## Composer emoji insertion — 2026-11-15
+
+Room and thread composers have a muted smiley button immediately left of Send,
+with an **Insert emoji** tooltip. It opens the same searchable/category-based
+picker used by reactions, anchored above the button when space below is short.
+Picking an emoji inserts the full Unicode sequence at the saved caret or
+replaces the saved selection, then restores focus to that composer. Enter in
+picker search selects the first result; it never sends the draft, including
+when Enter-to-send is enabled. Escape, ×, or an outside click cancels without
+changing the draft or selection.
+
+The adapter captures the draft key and view generation. Background editing,
+sending, and navigation shortcuts are blocked while the popup is open; stale
+events cannot insert into another conversation. A draft awaiting send, settings, the
+image viewer, a reaction picker, and active IME composition cannot open the
+composer picker. A removed/failed pane, shutdown, or a responsive layout hiding
+its room composer invalidates it. Selection during IME composition is ignored.
+The existing static caret and event-driven popup add no polling or animation
+subscription. Demo insertion stays entirely in memory and sends no events.
+
+Automated checks cover complete emoji sequences, caret insertion, selection
+replacement, independent room/thread drafts, cancellation retaining selection,
+stale/blocked input, hidden/missing panes, picker exclusivity, actual button
+placement/clicks at a 300×480 pane size, and mouse/Enter insertion with
+Enter-to-send enabled. Existing picker, scrolling, and caret regressions remain.
+Software-rendered room/thread captures at 300×480 were inspected for the muted
+button and action-row spacing. Temporary capture hooks were removed; the PNGs
+are ignored under `artifacts/composer-picker/`. Native desktop/IME and
+connected-account acceptance remain pending.
+
+Formatting, locked workspace Clippy with warnings denied, all 92 GUI tests, and
+the locked GUI build passed. Backend behavior was unchanged; the library suite
+and opt-in lifecycle stress test were not repeated.
+
+Manual acceptance in `--demo`: open both room and thread drafts, position a
+caret in the middle of text or select a word, then use the smiley to insert an
+emoji. Search a name or shortcode and choose by mouse and Enter. Check that
+only the intended draft changes, typing resumes after the inserted emoji, and
+the conversation's reading position stays intact. Cancel a selection, resize
+with a picker open, and repeat with Enter-to-send enabled; choosing an emoji
+must not send. No connected client was restarted or real Matrix events sent.

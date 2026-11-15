@@ -65,6 +65,15 @@ targets, pending sends, errors, and demo behavior. Reuse the picker directly in
 another surface, or pair it with the same popup host. Search uses a static caret;
 emoji-name tooltips use Iced's ordinary one-shot hover delay.
 
+`composer_picker.rs` reuses the same catalog, generic view, `panel` surface, and
+popup host to insert Unicode glyphs into room/thread drafts. Its target captures
+the draft key, view generation, and editor cursor/selection before search takes
+focus. Selection applies an ordinary editor paste action and focuses the
+originating composer; it does not call the SDK or enqueue a message. The
+reaction adapter still uses catalog keys for Matrix annotations, independently
+of the composer's inserted text. Custom emoji text insertion will need its own
+text/shortcode representation when image-backed entries are introduced.
+
 ## Renderer selection
 
 `matrix-ui` builds both Iced renderers. **Settings → Graphics** controls the

@@ -1,4 +1,6 @@
 #![recursion_limit = "256"]
+#[path = "matrix-ui/composer_picker.rs"]
+mod composer_picker;
 #[path = "matrix-ui/demo.rs"]
 mod demo;
 #[path = "matrix-ui/emoji.rs"]
@@ -83,12 +85,14 @@ struct App {
     reaction_picker: Option<reaction_picker::State>,
     reaction_sends: HashSet<reaction_picker::Sending>,
     reaction_error: Option<(reaction_picker::Target, String)>,
+    composer_picker: Option<composer_picker::State>,
 }
 #[derive(Clone, Debug)]
 enum Message {
     Settings(settings::Event),
     Image(images::Event),
     Reaction(reaction_picker::Event),
+    ComposerEmoji(composer_picker::Event),
     Space(Scope),
     Section(String),
     Search(String),
@@ -180,6 +184,7 @@ impl App {
             reaction_picker: None,
             reaction_sends: HashSet::new(),
             reaction_error: None,
+            composer_picker: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.demo = Some(demo::Demo::default());
@@ -200,6 +205,7 @@ impl App {
             }
             if matches!(event, settings::Event::Open) {
                 self.reaction_picker = None;
+                self.composer_picker = None;
             }
             let task = self.settings_update(event);
             self.publish_notification_context();
@@ -209,6 +215,11 @@ impl App {
             return Task::none();
         }
         if matches!(message, Message::Escape)
+            && let Some(state) = &self.composer_picker
+        {
+            return self.update(state.dismiss());
+        }
+        if matches!(message, Message::Escape)
             && let Some(state) = &self.reaction_picker
         {
             return self.update(state.dismiss());
@@ -216,6 +227,7 @@ impl App {
         if self.settings.draft.is_some()
             || self.image_view.is_some()
             || self.reaction_picker.is_some()
+            || self.composer_picker.is_some()
         {
             if matches!(message, Message::Escape) {
                 if self.image_view.is_some() {
@@ -278,6 +290,7 @@ impl App {
         let mut action_task = Task::none();
         match message {
             Message::Reaction(event) => action_task = self.reaction_event(event),
+            Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
             Message::Image(event) => self.image_event(event),
             Message::RowsVisible {
                 thread,
@@ -710,6 +723,7 @@ impl App {
                 .observe(room, &pane.rows, &pane.history);
         }
         self.validate_reaction_picker();
+        self.validate_composer_picker();
         if self.closing && self.pending_ops == 0 {
             if self.stopped {
                 return iced::exit();
@@ -936,7 +950,7 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.composing || self.reaction_picker.is_some() {
+            if self.composing || self.reaction_picker.is_some() || self.composer_picker.is_some() {
                 Subscription::none()
             } else {
                 iced::event::listen_with(|event, _, _| {
@@ -1676,7 +1690,7 @@ impl App {
                 && (pane.composer.is_some() || self.demo.is_some())
                 && !draft.content.text().trim().is_empty()
             {
-                send = send.on_press(Message::Send(key));
+                send = send.on_press(Message::Send(key.clone()));
             }
             let send = iced::widget::tooltip(
                 send,
@@ -1704,15 +1718,22 @@ impl App {
                 .style(container::rounded_box),
                 iced::widget::tooltip::Position::Top,
             );
-            let actions = row![iced::widget::space().width(Length::Fill), send]
-                .align_y(iced::Alignment::Center);
+            let actions = row![
+                iced::widget::space().width(Length::Fill),
+                self.composer_emoji_button(&key, *generation),
+                container(send).id("composer-send")
+            ]
+            .spacing(4)
+            .align_y(iced::Alignment::Center);
             let composer = iced::widget::stack![
                 editor,
                 container(actions)
                     .align_bottom(Length::Fill)
                     .padding([4, 6]),
             ];
-            content = content.push(container(composer).padding([10, 24]));
+            content = content.push(
+                container(self.composer_emoji_host(composer, &key, *generation)).padding([10, 24]),
+            );
             if let Some(error) = &draft.error {
                 content = content.push(text(error));
             }

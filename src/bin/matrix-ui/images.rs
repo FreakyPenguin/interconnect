@@ -113,6 +113,7 @@ impl App {
                 row,
             } if self.image_view.is_none()
                 && self.reaction_picker.is_none()
+                && self.composer_picker.is_none()
                 && self.settings.draft.is_none()
                 && !self.closing
                 && !self.stopped =>
