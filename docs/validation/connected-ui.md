@@ -1556,7 +1556,9 @@ uses the existing textual event description in this first display-only pass.
 The section has its own scroll area capped at 144 pixels; it stays above the
 conversation as history scrolls. Rooms without pins reserve no space. Thread
 panes keep their original-message section and do not duplicate the room's pins.
-There are no pin/unpin, jump, media-opening, or manual-reload controls yet.
+The message hover panel offers **Pin message** when the user can change the
+room's pinned messages, and **Unpin message** for messages already pinned.
+Jump, media-opening, and manual-reload controls remain pending.
 
 The selected room owns an asynchronous pins presentation using the SDK's
 `TimelineFocus::PinnedEvents`. This loads pins outside the visible history,
@@ -1593,3 +1595,39 @@ For an authorized connected test, use a room with an older pinned event outside
 the loaded history and compare the display to another Matrix client. Check live
 pin/unpin, edit, redaction, and encrypted-key availability changes there. Do not
 modify a real room's pins without authorization.
+
+
+### Pin and unpin message actions — 2026-11-15
+
+The message hover panel places a pin button beside **Add reaction** and **Reply
+in thread**. It also works on thread replies and the thread's original message.
+It changes to **Unpin message** (a pin with a minus sign) for already-pinned
+messages. Both actions are hidden unless the current SDK power levels allow
+`m.room.pinned_events`, and are hidden for local messages without event IDs,
+unsupported content that is not already pinned, stopped/closing sessions, and
+rooms with a pin write in flight. Redacted pinned messages can still be unpinned. Topic-editing permission does not determine pinning permission.
+Permission and pinned-list changes use the existing metadata subscription.
+
+A click captures the room, event, pane, generation, and requested pinned state.
+Repeated pin/unpin clicks are idempotent. The UI rejects stale
+clicks and modal-background actions, bounds pending operations, and serializes
+pin writes per room. The asynchronous operation reads the latest server pin
+list, rechecks membership and permissions, adds the event if absent or removes
+all matching IDs for unpin, and sends `m.room.pinned_events` only if changed,
+with a 30-second deadline. Reading fresh state
+preserves earlier local pins even before sync catches up; Matrix's state API
+still permits races with simultaneous edits from other clients. Sync supplies
+the connected pinned strip. Failures appear by the originating message and
+allow retry; late failures cannot move to another conversation. Shutdown waits
+for the existing bounded pending-operation path. Demo pins stay in memory.
+
+Automated checks cover the actual hover-button click and placement, permission
+hiding/revocation, pin/unpin state and stale targets, thread pin/unpin, per-room
+serialization, duplicate completions, error scoping, shutdown, and draft/scroll
+preservation. The local Matrix server test checks existing-pin preservation,
+consecutive pins before sync, pin/unpin idempotence and preservation of other
+pins, and refusal to pin or unpin after permission revocation. The UI test clicks
+both buttons and checks the pinned strip. Native visual checks and real-account
+pin/unpin writes remain untested.
+Use **Design studio** in `--demo` to pin another message and see it appear above
+the timeline; **Release notes** has no pin permission and shows no pin button.

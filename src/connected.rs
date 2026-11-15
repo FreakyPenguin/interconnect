@@ -137,6 +137,60 @@ impl std::fmt::Debug for Composer {
     }
 }
 impl Composer {
+    /// Read current server state so successive local pin changes preserve one another
+    /// while the sync stream is still catching up. Callers serialize writes per room.
+    pub async fn set_message_pinned(self, event: String, pinned: bool) -> Result<(), String> {
+        let update = async {
+            use matrix_sdk::ruma::events::{
+                StateEventType, room::pinned_events::RoomPinnedEventsEventContent,
+            };
+            let event: matrix_sdk::ruma::OwnedEventId = event
+                .parse()
+                .map_err(|error: matrix_sdk::ruma::IdParseError| error.to_string())?;
+            let room = self.0.room();
+            let mut pins = room
+                .load_pinned_events()
+                .await
+                .map_err(|error| error.to_string())?
+                .unwrap_or_default();
+            let levels = room
+                .power_levels()
+                .await
+                .map_err(|error| error.to_string())?;
+            if room.state() != matrix_sdk::RoomState::Joined
+                || !levels.user_can_send_state(room.own_user_id(), StateEventType::RoomPinnedEvents)
+            {
+                return Err(
+                    "You no longer have permission to change pinned messages in this room.".into(),
+                );
+            }
+            let changed = if pinned {
+                if pins.contains(&event) {
+                    false
+                } else {
+                    pins.push(event);
+                    true
+                }
+            } else {
+                let previous = pins.len();
+                pins.retain(|id| id != &event);
+                pins.len() != previous
+            };
+            if changed {
+                room.send_state_event(RoomPinnedEventsEventContent::new(pins))
+                    .await
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        };
+        tokio::time::timeout(Duration::from_secs(30), update)
+            .await
+            .map_err(|_| {
+                "Updating pinned messages timed out. Check pinned messages before retrying."
+                    .to_owned()
+            })?
+    }
+
     /// Use the captured room, rechecking current state permissions before sending.
     pub async fn set_topic(self, topic: String) -> Result<(), String> {
         let update = async {
@@ -1796,9 +1850,14 @@ mod tests {
             vec![
                 event("m.room.topic", "", json!({"topic":"Initial topic"})),
                 event(
+                    "m.room.pinned_events",
+                    "",
+                    json!({"pinned":["$cached-pin"]}),
+                ),
+                event(
                     "m.room.power_levels",
                     "",
-                    json!({"users":{"@test:example.org":50},"state_default":100,"events":{"m.room.topic":50}}),
+                    json!({"users":{"@test:example.org":50},"state_default":100,"events":{"m.room.topic":50,"m.room.pinned_events":50}}),
                 ),
             ],
         );
@@ -1832,6 +1891,8 @@ mod tests {
                     && s.rooms.len() == 1
                     && s.rooms[0].topic == "Initial topic"
                     && s.rooms[0].can_edit_topic
+                    && s.rooms[0].can_pin
+                    && s.rooms[0].pinned_events == ["$cached-pin"]
                     && s.rooms[0].favorite
                     && s.rooms[0].direct
                     && s.rooms[0].unread
@@ -1869,9 +1930,61 @@ mod tests {
             .set_topic("Saved topic".into())
             .await
             .unwrap();
+        let pins = Arc::new(std::sync::Mutex::new(vec!["$existing".to_owned()]));
+        let current = pins.clone();
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.pinned_events/?"))
+            .respond_with(move |_: &wiremock::Request| {
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"pinned":current.lock().unwrap().clone()}))
+            })
+            .mount(&server)
+            .await;
+        let current = pins.clone();
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/state/m.room.pinned_events/?"))
+            .respond_with(move |request: &wiremock::Request| {
+                let content: serde_json::Value = request.body_json().unwrap();
+                *current.lock().unwrap() =
+                    serde_json::from_value(content["pinned"].clone()).unwrap();
+                ResponseTemplate::new(200).set_body_json(json!({"event_id":"$pins"}))
+            })
+            .expect(3)
+            .mount(&server)
+            .await;
+        composer
+            .clone()
+            .set_message_pinned("$pin-one".into(), true)
+            .await
+            .unwrap();
+        composer
+            .clone()
+            .set_message_pinned("$pin-two".into(), true)
+            .await
+            .unwrap();
+        composer
+            .clone()
+            .set_message_pinned("$pin-two".into(), true)
+            .await
+            .unwrap();
+        assert_eq!(
+            *pins.lock().unwrap(),
+            vec!["$existing", "$pin-one", "$pin-two"]
+        );
+        composer
+            .clone()
+            .set_message_pinned("$pin-one".into(), false)
+            .await
+            .unwrap();
+        composer
+            .clone()
+            .set_message_pinned("$pin-one".into(), false)
+            .await
+            .unwrap();
+        assert_eq!(*pins.lock().unwrap(), vec!["$existing", "$pin-two"]);
         // Global and room account-data updates must work without a room-list lifecycle transition.
         *response.lock().unwrap() = json!({"next_batch":"two","account_data":{"events":[{"type":"m.direct","content":{}}]},"rooms":{"join":{
-            "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"})), event("m.room.topic","",json!({"topic":""})), event("m.room.power_levels","",json!({"users":{"@test:example.org":50},"state_default":50,"events":{"m.room.topic":100}}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
+            "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"})), event("m.room.topic","",json!({"topic":""})), event("m.room.pinned_events","",json!({"pinned":["$existing","$pin-one","$pin-two"]})), event("m.room.power_levels","",json!({"users":{"@test:example.org":50},"state_default":50,"events":{"m.room.topic":100,"m.room.pinned_events":100}}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
             "!nested:example.org":{"state":{"events":[event("m.space.child","!room:example.org",json!({}))]}}
         }}});
         client
@@ -1884,6 +1997,8 @@ mod tests {
                 s.rooms.len() == 1
                     && s.rooms[0].topic.is_empty()
                     && !s.rooms[0].can_edit_topic
+                    && !s.rooms[0].can_pin
+                    && s.rooms[0].pinned_events.contains(&"$pin-two".to_owned())
                     && s.rooms[0].name == "Renamed"
                     && !s.rooms[0].favorite
                     && !s.rooms[0].direct
@@ -1899,7 +2014,24 @@ mod tests {
         .clone();
         assert!(
             composer
+                .clone()
                 .set_topic("Must not be sent".into())
+                .await
+                .unwrap_err()
+                .contains("permission")
+        );
+        assert!(
+            composer
+                .clone()
+                .set_message_pinned("$forbidden".into(), true)
+                .await
+                .unwrap_err()
+                .contains("permission")
+        );
+        assert!(
+            composer
+                .clone()
+                .set_message_pinned("$existing".into(), false)
                 .await
                 .unwrap_err()
                 .contains("permission")

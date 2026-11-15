@@ -19,6 +19,8 @@ pub struct RoomEntry {
     pub name: String,
     pub topic: String,
     pub can_edit_topic: bool,
+    pub can_pin: bool,
+    pub pinned_events: Vec<String>,
     pub favorite: bool,
     pub direct: bool,
     pub unread: bool,
@@ -99,17 +101,30 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<(Vec<RoomEntry>, Vec<Sp
             spaces.push(SpaceEntry { id, name, children });
         } else {
             let unread_count = room.num_unread_messages();
+            let levels = room.power_levels().await.ok();
             rooms.push(RoomEntry {
                 id,
                 name,
                 topic: room.topic().unwrap_or_default(),
-                // Incomplete cached room state must not hide the conversation.
-                can_edit_topic: room.power_levels().await.is_ok_and(|levels| {
+                // Incomplete cached permissions must not hide the conversation.
+                can_edit_topic: levels.as_ref().is_some_and(|levels| {
                     levels.user_can_send_state(
                         room.own_user_id(),
                         matrix_sdk::ruma::events::StateEventType::RoomTopic,
                     )
                 }),
+                can_pin: levels.as_ref().is_some_and(|levels| {
+                    levels.user_can_send_state(
+                        room.own_user_id(),
+                        matrix_sdk::ruma::events::StateEventType::RoomPinnedEvents,
+                    )
+                }),
+                pinned_events: room
+                    .pinned_event_ids()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|id| id.to_string())
+                    .collect(),
                 favorite: room.is_favourite(),
                 direct: room.is_direct().await?,
                 unread: room.is_marked_unread()

@@ -6,7 +6,7 @@ use iced::{
 };
 use interconnect::connected::{Composer, MessageRow};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Target {
     pub room: String,
     pub thread: bool,
@@ -130,7 +130,7 @@ impl App {
             event: row.event_id.clone()?,
         })))
     }
-    fn reaction_row(&self, target: &Target) -> Option<&MessageRow> {
+    pub(super) fn message_row(&self, target: &Target) -> Option<&MessageRow> {
         if self.selection.room.as_ref()?.1 != target.room {
             return None;
         }
@@ -147,7 +147,7 @@ impl App {
                 .thread_original_in_room()
                 .filter(|row| row.event_id.as_ref() == Some(&target.event))
         {
-            return row.can_react.then_some(row);
+            return Some(row);
         }
         let pane = if target.thread {
             &self.model.thread
@@ -165,9 +165,11 @@ impl App {
                     .flatten()
                     .filter(|row| row.event_id.as_ref() == Some(&target.event))
             })
-            .filter(|row| row.can_react)
     }
-    fn reaction_composer(&self, target: &Target) -> Option<Composer> {
+    pub(super) fn reaction_row(&self, target: &Target) -> Option<&MessageRow> {
+        self.message_row(target).filter(|row| row.can_react)
+    }
+    pub(super) fn reaction_composer(&self, target: &Target) -> Option<Composer> {
         // Root reactions live in the room timeline when the root is loaded there.
         if target.thread
             && let Some(row) = self.thread_original_in_room()

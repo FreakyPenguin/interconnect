@@ -395,6 +395,7 @@ mod tests {
                 Some(Message::Thread("$one".into())),
                 None,
                 None,
+                None,
             )
         ])
         .anchor_bottom()

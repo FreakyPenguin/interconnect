@@ -138,9 +138,10 @@ pub fn message_actions<'a>(
     body: impl Into<Element<'a, Message>>,
     reply: Option<Message>,
     reaction: Option<Message>,
+    pin: Option<Message>,
     popup: Option<(Element<'a, Message>, Message)>,
 ) -> Element<'a, Message> {
-    if reply.is_none() && reaction.is_none() && popup.is_none() {
+    if reply.is_none() && reaction.is_none() && pin.is_none() && popup.is_none() {
         return body.into();
     }
     let (content, dismiss) = popup.map_or((None, Message::Escape), |(content, dismiss)| {
@@ -175,6 +176,39 @@ pub fn message_actions<'a>(
             container(text("Reply in thread").size(12))
                 .padding(8)
                 .style(container::rounded_box),
+            widget::tooltip::Position::Top,
+        ));
+    }
+    if let Some(pin) = pin {
+        let unpin = matches!(&pin, Message::Pin(super::pin_action::Event::Set(_, false)));
+        controls = controls.push(widget::tooltip(
+            container(
+                button(
+                    container(
+                        super::emoji::preview(if unpin { "📌−" } else { "📌" }.into()).size(14),
+                    )
+                    .center_x(28)
+                    .center_y(20),
+                )
+                .padding(0)
+                .style(icon_button)
+                .on_press(pin),
+            )
+            .id(if unpin {
+                "unpin-message"
+            } else {
+                "pin-message"
+            }),
+            container(
+                text(if unpin {
+                    "Unpin message"
+                } else {
+                    "Pin message"
+                })
+                .size(12),
+            )
+            .padding(8)
+            .style(container::rounded_box),
             widget::tooltip::Position::Top,
         ));
     }

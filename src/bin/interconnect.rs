@@ -13,6 +13,8 @@ mod emoji_picker;
 mod images;
 #[path = "interconnect/login.rs"]
 mod login;
+#[path = "interconnect/pin_action.rs"]
+mod pin_action;
 #[path = "interconnect/pinned.rs"]
 mod pinned;
 #[path = "interconnect/popover.rs"]
@@ -101,9 +103,12 @@ struct App {
     composer_picker: Option<composer_picker::State>,
     emoji_completion: emoji_completion::State,
     topic_editor: Option<topic::State>,
+    pinning: HashSet<reaction_picker::Target>,
+    pin_error: Option<(reaction_picker::Target, String)>,
 }
 #[derive(Clone, Debug)]
 enum Message {
+    Pin(pin_action::Event),
     Topic(topic::Event),
     Login(login::Event),
     Verification(verification::Event),
@@ -209,6 +214,8 @@ impl App {
             composer_picker: None,
             emoji_completion: emoji_completion::State::default(),
             topic_editor: None,
+            pinning: HashSet::new(),
+            pin_error: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.model.authentication = None;
@@ -354,6 +361,7 @@ impl App {
             );
         let mut action_task = Task::none();
         match message {
+            Message::Pin(event) => action_task = self.pin_event(event),
             Message::Topic(event) => action_task = self.topic_event(event),
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
@@ -820,6 +828,7 @@ impl App {
             self.thread_activity
                 .observe(room, &pane.rows, &pane.history);
         }
+        self.validate_pin_error();
         self.validate_topic_editor();
         self.validate_reaction_picker();
         self.validate_composer_picker();
@@ -1151,21 +1160,14 @@ impl App {
                 )
             });
             self.model.pinned = self.selection.room.as_ref().and_then(|(generation, room)| {
-                if room != "studio" {
+                let entry = self.model.rooms.iter().find(|entry| &entry.id == room)?;
+                if entry.pinned_events.is_empty() {
                     return None;
                 }
-                let rows: Vec<_> = self
-                    .model
-                    .room
-                    .as_ref()?
-                    .rows
-                    .iter()
-                    .filter(|row| row.key == "direction" || row.key == "proposal")
-                    .cloned()
-                    .collect();
+                let rows = demo.pinned_rows(room, &entry.pinned_events);
                 Some(interconnect::connected::Pinned {
                     generation: *generation,
-                    total: rows.len(),
+                    total: entry.pinned_events.len(),
                     rows: rows.into(),
                     loading: false,
                     error: None,
@@ -1361,9 +1363,10 @@ impl App {
         let original = if let Some(message) = self.thread_original() {
             let generation = self.selection.thread.as_ref().expect("thread original").0;
             shell::message_actions(
-                original,
+                self.pin_feedback(original, message, true, generation),
                 None,
                 self.reaction_action(message, true, generation),
+                self.pin_action(message, true, generation),
                 self.reaction_popup(
                     true,
                     generation,
@@ -1704,9 +1707,10 @@ impl App {
                 let reply = (!thread && !self.closing && !self.stopped)
                     .then(|| Message::Thread(id.clone()));
                 shell::message_actions(
-                    body,
+                    self.pin_feedback(body.into(), message, thread, *generation),
                     reply,
                     self.reaction_action(message, thread, *generation),
+                    self.pin_action(message, thread, *generation),
                     self.reaction_popup(thread, *generation, id),
                 )
             } else {

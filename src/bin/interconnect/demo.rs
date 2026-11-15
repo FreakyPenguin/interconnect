@@ -145,6 +145,12 @@ pub fn rooms() -> Vec<RoomEntry> {
                 String::new()
             },
             can_edit_topic: r.section != "Direct messages" && r.id != "release",
+            can_pin: r.section != "Direct messages" && r.id != "release",
+            pinned_events: if r.id == "studio" {
+                vec!["direction".into(), "proposal".into()]
+            } else {
+                Vec::new()
+            },
             favorite: r.section == "Favorites",
             direct: r.section == "Direct messages",
             unread: r.unread > 0,
@@ -407,6 +413,18 @@ impl Demo {
             "release" => vec![message("release", "Maya Chen", "The new preview is ready to explore. Room navigation, a quieter timeline, and space for threads."), message("release2", "Alex Rivera", "I’ll try it with a longer conversation this afternoon.")],
             _ => vec![message("hello", "Maya Chen", "A fresh space for ideas, questions, and the occasional good link."), message("hello2", "Jamie Davis", "Glad to be here. What are we working on today?")],
         }
+    }
+    pub fn pinned_rows(&self, room: &str, ids: &[String]) -> Vec<MessageRow> {
+        ids.iter()
+            .filter_map(|id| {
+                self.conversations
+                    .iter()
+                    .filter(|(key, _)| key.room == room)
+                    .flat_map(|(_, rows)| rows)
+                    .find(|row| row.event_id.as_ref() == Some(id))
+                    .cloned()
+            })
+            .collect()
     }
     pub fn pane(&mut self, key: DraftKey, generation: u64) -> Pane {
         if !self.conversations.contains_key(&key) {
