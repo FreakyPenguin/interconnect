@@ -525,3 +525,16 @@ date, with ordered timestamps at most five minutes apart. Unknown timestamps
 never group. Grouping retains each message's scroll-anchor ID. Demo data includes
 a consecutive-message group. UI regressions cover grouping boundaries and the
 existing real-layout scroll-follow/anchor behavior.
+
+Quieter message actions (2026-11-15): the per-message reply link is now a hover
+control in a reserved right gutter, so it does not cover text or change wrapping.
+Existing threads retain a visible reply-count link supplied by the SDK summary.
+Successful sends no longer repeat “Sent”; pending/error states and retry remain
+visible. The demo has one existing thread and updates its count for local replies.
+A real-widget regression selects and copies part of a message inside a scrolled
+hover row and opens its reply action. The full workspace suite passed (the
+existing 100-cycle lifecycle stress test remains opt-in), as did the demo scroll
+smoke. Desktop capture confirmed partial selection; automated desktop clipboard
+verification was interrupted by a focus change. Controlled widget tests verify
+clipboard contents. No actual-account messages were sent or client restarted.
+Hover actions do not yet provide a complete keyboard navigation workflow.

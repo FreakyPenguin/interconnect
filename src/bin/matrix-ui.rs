@@ -753,7 +753,7 @@ impl App {
                 ]
                 .spacing(6)
             };
-            if !message.send_state.is_empty() {
+            if !message.send_state.is_empty() && message.send_state != "Sent" {
                 entry = entry.push(text(&message.send_state).size(12));
             }
             if let Some(retry) = &message.retry {
@@ -771,16 +771,21 @@ impl App {
                 }
             }
             if !thread
-                && !self.closing
-                && !self.stopped
+                && message.thread_replies > 0
                 && let Some(id) = &message.event_id
             {
-                entry = entry.push(
-                    button(text("Reply in thread  ›").size(12))
-                        .style(shell::quiet_button)
-                        .padding([4, 0])
-                        .on_press(Message::Thread(id.clone())),
-                );
+                let label = if message.thread_replies == 1 {
+                    "1 reply  ›".into()
+                } else {
+                    format!("{} replies  ›", message.thread_replies)
+                };
+                let mut replies = button(text(label).size(12))
+                    .style(shell::quiet_button)
+                    .padding([4, 0]);
+                if !self.closing && !self.stopped {
+                    replies = replies.on_press(Message::Thread(id.clone()));
+                }
+                entry = entry.push(replies);
             }
             let avatar: Element<'_, Message> = if grouped {
                 iced::widget::space().width(32).into()
@@ -799,14 +804,34 @@ impl App {
                     .padding([12, 0]),
                 );
             }
-            message_row = message_row.push(
-                container(row![avatar, entry.width(Length::Fill)].spacing(12)).padding(
-                    iced::Padding {
-                        top: if grouped { 5.0 } else { 18.0 },
-                        ..iced::Padding::ZERO
-                    },
-                ),
-            );
+            let body: Element<'_, Message> =
+                row![avatar, entry.width(Length::Fill)].spacing(12).into();
+            let body = if !thread && let Some(id) = &message.event_id {
+                let mut reply = button(text("Reply").size(11))
+                    .style(shell::quiet_button)
+                    .padding([3, 5]);
+                if !self.closing && !self.stopped {
+                    reply = reply.on_press(Message::Thread(id.clone()));
+                }
+                // Reserve a small gutter so revealing actions cannot cover text,
+                // change wrapping, or shift the reader's scroll position.
+                iced::widget::hover(
+                    row![body, iced::widget::space().width(50)],
+                    container(iced::widget::tooltip(
+                        reply,
+                        text("Reply in thread").size(12),
+                        iced::widget::tooltip::Position::Top,
+                    ))
+                    .align_right(Length::Fill)
+                    .align_top(Length::Fill),
+                )
+            } else {
+                body
+            };
+            message_row = message_row.push(container(body).padding(iced::Padding {
+                top: if grouped { 5.0 } else { 18.0 },
+                ..iced::Padding::ZERO
+            }));
             messages = messages.push(container(message_row).id(timeline::row_id(index)));
         }
         if pane.rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
@@ -1118,6 +1143,18 @@ mod tests {
         app.drafts.get_mut(&thread_key).unwrap().content =
             text_editor::Content::with_text("a local reply");
         let _ = app.update(Message::Send(thread_key.clone()));
+        assert_eq!(
+            app.model
+                .room
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|row| row.event_id.as_deref() == Some("proposal"))
+                .unwrap()
+                .thread_replies,
+            1
+        );
         assert_eq!(app.pending_ops, 0);
         assert!(app.control.is_none());
         assert!(app.composer_for(&thread_key).is_none());

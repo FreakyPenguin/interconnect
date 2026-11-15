@@ -27,6 +27,7 @@ pub struct MessageRow {
     pub sender: String,
     pub display_name: String,
     pub timestamp_ms: Option<i64>,
+    pub thread_replies: u32,
     pub body: String,
     pub send_state: String,
     pub retry: Option<RetrySend>,
@@ -520,6 +521,9 @@ async fn publish(
                     _ => event.sender().to_string(),
                 },
                 timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
+                thread_replies: content
+                    .thread_summary()
+                    .map_or(0, |summary| summary.num_replies),
                 body: if content.is_unable_to_decrypt() {
                     "Unable to decrypt — keys unavailable".into()
                 } else {

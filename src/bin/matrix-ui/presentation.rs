@@ -39,6 +39,7 @@ mod tests {
             sender: sender.into(),
             display_name: "Same name".into(),
             timestamp_ms,
+            thread_replies: 0,
             body: String::new(),
             send_state: String::new(),
             retry: None,

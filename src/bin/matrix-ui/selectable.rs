@@ -269,4 +269,95 @@ mod tests {
                 .is_none()
         );
     }
+    #[test]
+    fn selection_and_reply_work_inside_a_scrolled_hover_row() {
+        use iced::widget::{button, column, container, hover, row, scrollable, space, text};
+        let mut element: Element<'_, Message> = scrollable(column![
+            space().height(400),
+            hover(
+                row![view("$one", "hello world café 👋"), space().width(50)],
+                container(
+                    button(text("Reply").size(11))
+                        .padding(0)
+                        .on_press(Message::Thread("$one".into()))
+                )
+                .align_right(Length::Fill)
+                .align_top(Length::Fill)
+            )
+        ])
+        .anchor_bottom()
+        .height(200)
+        .into();
+        let renderer = Renderer::new(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&element);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(300.0, 200.0)),
+        );
+        let mut clipboard = ClipboardText::default();
+        let mut messages = Vec::new();
+        let mut dispatch = |event, point| {
+            let mut shell = Shell::new(&mut messages);
+            element.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Available(point),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &Rectangle::with_size(Size::new(300.0, 200.0)),
+            );
+        };
+        let start = iced::Point::new(1.0, 191.0);
+        let end = iced::Point::new(32.0, 191.0);
+        dispatch(
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            start,
+        );
+        dispatch(
+            Event::Mouse(mouse::Event::CursorMoved { position: end }),
+            end,
+        );
+        dispatch(
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            end,
+        );
+        dispatch(
+            Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Character("c".into()),
+                modified_key: iced::keyboard::Key::Character("c".into()),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::COMMAND,
+                text: Some("c".into()),
+                repeat: false,
+            }),
+            end,
+        );
+        let reply = iced::Point::new(280.0, 189.0);
+        dispatch(
+            Event::Mouse(mouse::Event::CursorMoved { position: reply }),
+            reply,
+        );
+        dispatch(
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            reply,
+        );
+        dispatch(
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            reply,
+        );
+        assert!(!clipboard.0.is_empty());
+        assert!("hello world café 👋".starts_with(&clipboard.0));
+        assert!(clipboard.0.len() < "hello world café 👋".len());
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::Thread(id) if id == "$one"))
+        );
+    }
 }

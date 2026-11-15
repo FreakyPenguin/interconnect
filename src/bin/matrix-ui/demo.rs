@@ -146,6 +146,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         sender: sender.into(),
         display_name: sender.into(),
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
+        thread_replies: if id == "review" { 2 } else { 0 },
         body: body.into(),
         send_state: String::new(),
         retry: None,
@@ -162,20 +163,25 @@ impl Demo {
                 })
                 .and_then(|rows| rows.iter().find(|r| r.event_id.as_ref() == Some(root)))
                 .cloned();
+            let reply_count = source.as_ref().map_or(0, |row| row.thread_replies);
             return source
                 .into_iter()
-                .chain([
-                    message(
-                        "reply-1",
-                        "Alex Rivera",
-                        "Yes — a little more breathing room makes a big difference.",
-                    ),
-                    message(
-                        "reply-2",
-                        "Maya Chen",
-                        "Agreed. Let’s keep the details quiet and the conversation in focus.",
-                    ),
-                ])
+                .chain(
+                    [
+                        message(
+                            "reply-1",
+                            "Alex Rivera",
+                            "Yes — a little more breathing room makes a big difference.",
+                        ),
+                        message(
+                            "reply-2",
+                            "Maya Chen",
+                            "Agreed. Let’s keep the details quiet and the conversation in focus.",
+                        ),
+                    ]
+                    .into_iter()
+                    .take(reply_count as usize),
+                )
                 .collect();
         }
         match key.room.as_str() {
@@ -220,6 +226,20 @@ impl Demo {
         }
     }
     pub fn send(&mut self, key: &DraftKey, body: String) {
+        if let Some(root) = &key.root
+            && let Some(row) = self
+                .conversations
+                .get_mut(&DraftKey {
+                    room: key.room.clone(),
+                    root: None,
+                })
+                .and_then(|rows| {
+                    rows.iter_mut()
+                        .find(|row| row.event_id.as_ref() == Some(root))
+                })
+        {
+            row.thread_replies += 1;
+        }
         self.next_message += 1;
         self.conversations
             .entry(key.clone())
