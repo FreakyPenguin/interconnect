@@ -134,6 +134,46 @@ pub fn send_button(theme: &Theme, status: button::Status) -> button::Style {
     style.border = Border::default().rounded(5);
     style
 }
+pub fn message_actions<'a>(
+    body: impl Into<Element<'a, Message>>,
+    event_id: &str,
+    enabled: bool,
+) -> Element<'a, Message> {
+    let mut reply = button(container(text("↩").size(16)).center_x(28).center_y(20))
+        .padding(0)
+        .style(send_button);
+    if enabled {
+        reply = reply.on_press(Message::Thread(event_id.to_owned()));
+    }
+    let actions = container(row![widget::tooltip(
+        reply,
+        container(text("Reply in thread").size(12))
+            .padding(8)
+            .style(container::rounded_box),
+        widget::tooltip::Position::Top,
+    )])
+    .padding(1)
+    .style(|_| container::Style {
+        border: Border {
+            color: LINE,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: Color::BLACK.scale_alpha(0.08),
+            offset: iced::Vector::new(0.0, 1.0),
+            blur_radius: 4.0,
+        },
+        ..surface(Color::WHITE)
+    });
+    // Hover only paints the panel; the message keeps its full layout width.
+    widget::hover(
+        body,
+        container(actions)
+            .align_right(Length::Fill)
+            .align_top(Length::Fill),
+    )
+}
 fn search_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let mut style = text_input::default(theme, status);
     style.border = Border {

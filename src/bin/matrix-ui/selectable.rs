@@ -353,18 +353,16 @@ mod tests {
     }
     #[test]
     fn selection_and_reply_work_inside_a_scrolled_hover_row() {
-        use iced::widget::{button, column, container, hover, row, scrollable, space, text};
+        use iced::widget::{column, container, scrollable, space};
         let mut element: Element<'_, Message> = scrollable(column![
             space().height(400),
-            hover(
-                row![view("$one", "hello world café 👋"), space().width(50)],
-                container(
-                    button(text("Reply").size(11))
-                        .padding(0)
-                        .on_press(Message::Thread("$one".into()))
-                )
-                .align_right(Length::Fill)
-                .align_top(Length::Fill)
+            shell::message_actions(
+                container(view("$one", "hello world café 👋")).padding(iced::Padding {
+                    top: 5.0,
+                    ..iced::Padding::ZERO
+                }),
+                "$one",
+                true,
             )
         ])
         .anchor_bottom()
@@ -377,6 +375,27 @@ mod tests {
             &renderer,
             &layout::Limits::new(Size::ZERO, Size::new(300.0, 200.0)),
         );
+        struct BodyBounds(Option<Rectangle>);
+        impl widget::Operation for BodyBounds {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn custom(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: Rectangle,
+                state: &mut dyn std::any::Any,
+            ) {
+                if state.is::<State>() {
+                    self.0 = Some(bounds);
+                }
+            }
+        }
+        let mut bounds = BodyBounds(None);
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+        assert_eq!(bounds.0.unwrap().width, 300.0, "actions reserve no gutter");
         let mut clipboard = ClipboardText::default();
         let mut messages = Vec::new();
         let mut dispatch = |event, point| {
@@ -436,10 +455,13 @@ mod tests {
         assert!(!clipboard.0.is_empty());
         assert!("hello world café 👋".starts_with(&clipboard.0));
         assert!(clipboard.0.len() < "hello world café 👋".len());
-        assert!(
+        assert_eq!(
             messages
                 .iter()
-                .any(|message| matches!(message, Message::Thread(id) if id == "$one"))
+                .filter(|message| matches!(message, Message::Thread(id) if id == "$one"))
+                .count(),
+            1,
+            "the floating action opens exactly one thread"
         );
     }
 }

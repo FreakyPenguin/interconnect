@@ -526,7 +526,9 @@ a consecutive-message group. UI regressions cover grouping boundaries and the
 existing real-layout scroll-follow/anchor behavior.
 
 Quieter message actions (2026-11-15): the per-message reply link is now a hover
-control in a reserved right gutter, so it does not cover text or change wrapping.
+panel with a reply-arrow control at the message's top right. The panel overlays
+the message; no right gutter is reserved. Hovering leaves wrapping and row height
+unchanged. The tooltip identifies **Reply in thread**.
 Existing threads retain a visible reply-count link supplied by the SDK summary.
 Successful sends no longer repeat “Sent”; pending/error states and retry remain
 visible. The demo has one existing thread and updates its count for local replies.
@@ -537,6 +539,12 @@ smoke. Desktop capture confirmed partial selection; automated desktop clipboard
 verification was interrupted by a focus change. Controlled widget tests verify
 clipboard contents. No actual-account messages were sent or client restarted.
 Hover actions do not yet provide a complete keyboard navigation workflow.
+
+The overlay follow-up passed formatting, workspace Clippy with warnings denied,
+all 27 GUI tests, and the locked GUI build. The scrolled-row regression now uses
+the production action panel and verifies full-width text, partial selection/copy,
+and exactly one thread-open event from its button. Desktop inspection of the
+overlay remains pending; the desktop observations above predate this follow-up.
 
 
 Cross-message selection (2026-11-15): drag in either direction from a message

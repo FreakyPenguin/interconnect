@@ -807,34 +807,18 @@ impl App {
                     .padding([12, 0]),
                 );
             }
-            let body: Element<'_, Message> =
-                row![avatar, entry.width(Length::Fill)].spacing(12).into();
-            let body = if !thread && let Some(id) = &message.event_id {
-                let mut reply = button(text("Reply").size(11))
-                    .style(shell::quiet_button)
-                    .padding([3, 5]);
-                if !self.closing && !self.stopped {
-                    reply = reply.on_press(Message::Thread(id.clone()));
-                }
-                // Reserve a small gutter so revealing actions cannot cover text,
-                // change wrapping, or shift the reader's scroll position.
-                iced::widget::hover(
-                    row![body, iced::widget::space().width(50)],
-                    container(iced::widget::tooltip(
-                        reply,
-                        text("Reply in thread").size(12),
-                        iced::widget::tooltip::Position::Top,
-                    ))
-                    .align_right(Length::Fill)
-                    .align_top(Length::Fill),
-                )
+            let body = container(row![avatar, entry.width(Length::Fill)].spacing(12)).padding(
+                iced::Padding {
+                    top: if grouped { 5.0 } else { 18.0 },
+                    ..iced::Padding::ZERO
+                },
+            );
+            let body: Element<'_, Message> = if !thread && let Some(id) = &message.event_id {
+                shell::message_actions(body, id, !self.closing && !self.stopped)
             } else {
-                body
+                body.into()
             };
-            message_row = message_row.push(container(body).padding(iced::Padding {
-                top: if grouped { 5.0 } else { 18.0 },
-                ..iced::Padding::ZERO
-            }));
+            message_row = message_row.push(body);
             messages = messages.push(container(message_row).id(timeline::row_id(index)));
         }
         if pane.rows.is_empty() && matches!(pane.history, History::Ready | History::End) {

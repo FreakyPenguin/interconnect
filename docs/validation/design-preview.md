@@ -42,6 +42,10 @@ and leaves space for future controls. The room/reply label and shortcut footer
 are removed; hover over the arrow for **Send message (Ctrl+Enter)** or
 **Send reply (Ctrl+Enter)**. The arrow becomes an ellipsis while queueing.
 
+Hover over a room message to reveal a small action panel at its top right.
+The reply arrow opens its thread; the tooltip says **Reply in thread**.
+The panel overlays the full-width message without changing wrapping or height.
+
 Shortcuts:
 
 - Ctrl+K: focus room search and select the current query (Command+K on macOS).
@@ -79,6 +83,12 @@ Shortcuts:
    it. Text, caret, and selection should stay above the send arrow. Check the
    tooltip, empty-draft disabled state, and sending by click and Ctrl+Enter in
    demo mode. Repeat at the 640×480 minimum. This composer-specific desktop
+   check remains pending.
+8. Hover short, grouped, and multiline messages, including the first/last visible
+   row after scrolling. Check that the reply panel appears at the top right,
+   remains clickable, and disappears on leaving. Wrapping and scroll position
+   should stay fixed. Select/copy text away from the panel and open a thread
+   through its arrow. Repeat at the minimum width. This overlay-specific desktop
    check remains pending.
 
 ## Feasibility findings and scope
