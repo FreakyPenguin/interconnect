@@ -36,6 +36,10 @@ first explicit Save. The dialog displays the selected path. See the commented
 ```toml
 version = 1
 
+[notifications]
+enabled = true
+show_preview = true
+
 [navigation]
 show_room_list = true
 
@@ -53,6 +57,8 @@ gif_seconds = 5
 
 | Setting | Default | Effect |
 | --- | --- | --- |
+| `notifications.enabled` | `true` | Desktop message alerts following Matrix push rules while the app runs. Applies on Save/Reload. |
+| `notifications.show_preview` | `true` | Include room, sender, and text; `false` sends a generic private alert. Applies on Save/Reload. |
 | `navigation.show_room_list` | `true` | Initial room-list visibility on the next launch. The existing button still toggles it during use. |
 | `composer.send_shortcut` | `"ctrl_enter"` | Enter inserts a newline; Ctrl+Enter sends in room and thread composers. Set `"enter"` to send with Enter and use Shift+Enter for a newline. Ctrl+Enter still sends. IME composition suppresses sending. |
 | `graphics.gpu_enabled` | `true` | **Use GPU rendering**. On the next launch, try wgpu with software fallback. Set to `false` to force the CPU renderer, including when `ICED_BACKEND` requests wgpu. |
@@ -65,6 +71,12 @@ Open an image, then click **Play GIF** or the image itself to animate it. Click
 frame; another Play starts from the beginning. Closing or unfocusing the viewer
 stops playback. Reopening it always starts still. GIF settings apply on Save
 without restarting; **Once** is the default. Previews and avatars remain static.
+
+**Settings → Notifications → Send sample notification** sends fixed sample text
+without using an account, including in demo mode and when automatic alerts are
+disabled. Linux needs the desktop session D-Bus notification service; macOS needs
+an app bundle and permission. See [notification setup and validation](validation/notifications.md)
+for the bundle script, focus policy, errors, and current limits.
 
 Graphics controls are in **Settings → Graphics** and require restarting the
 application after saving. The low-power checkbox is disabled while GPU rendering

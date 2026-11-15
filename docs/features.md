@@ -10,6 +10,12 @@ navigation (including nested/shared membership), SDK-driven room sections and
 metadata updates, and profile-local navigation restoration are now implemented.
 Live acceptance of those navigation workflows remains pending.
 
+Desktop notification delivery now uses Linux session D-Bus and a bundled macOS
+UserNotifications backend, with live enable/preview settings. Automated Linux
+checks pass; native acceptance and notification click navigation remain pending.
+See [notification validation](validation/notifications.md), including the existing
+macOS saved-account limitation.
+
 ## Platform and architecture
 
 - [ ] Native, lightweight Rust GUI client for Linux/Wayland laptops.

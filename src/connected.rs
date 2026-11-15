@@ -23,6 +23,8 @@ pub struct Selection {
     pub avatars: Vec<matrix_sdk::ruma::OwnedMxcUri>,
     pub images: Vec<crate::image_media::Key>,
     pub image_retry: u64,
+    pub notifications: crate::settings::Notifications,
+    pub conversation_visible: bool,
 }
 
 pub use crate::navigation::{RoomEntry, SpaceEntry};
@@ -179,6 +181,7 @@ pub struct Model {
     pub avatars: Arc<crate::media::Images>,
     pub images: crate::media::Snapshot<crate::image_media::Key>,
     pub media_error: Option<String>,
+    pub notification_error: Option<String>,
     pub room: Option<Pane>,
     pub thread: Option<Pane>,
 }
@@ -195,6 +198,7 @@ impl Default for Model {
             avatars: Arc::default(),
             images: Default::default(),
             media_error: None,
+            notification_error: None,
             room: None,
             thread: None,
         }
@@ -243,7 +247,17 @@ pub async fn run(
         preferences,
         stop_preferences.clone(),
     );
-    let connection = connected(&restored.client, &sync, &mut selection, &state);
+    // Register before starting sync. Delivery runs independently of UI snapshots
+    // and never holds up SDK sync processing on a desktop service.
+    let notifications =
+        crate::notifications::Service::install(&restored.client, selection.clone(), state.clone())
+            .await;
+    let connection = async {
+        tokio::select! {
+            result = connected(&restored.client, &sync, &mut selection, &state) => result,
+            _ = notifications.run() => anyhow::bail!("Notification worker ended"),
+        }
+    };
     let outcome = {
         tokio::pin!(persistence, connection);
         let mut writer_finished = false;
@@ -268,6 +282,9 @@ pub async fn run(
 async fn build_sync(client: Client) -> anyhow::Result<SyncService> {
     Ok(SyncService::builder(client)
         .with_offline_mode()
+        // The SDK default of one event can hide a mention behind a later
+        // message in an unselected room. Retain a bounded live burst for alerts.
+        .with_room_list_timeline_limit(20)
         .build()
         .await?)
 }

@@ -180,7 +180,9 @@ impl App {
             if self.image_view.is_some() && matches!(event, settings::Event::Open) {
                 return Task::none();
             }
-            return self.settings_update(event);
+            let task = self.settings_update(event);
+            self.publish_notification_context();
+            return task;
         }
         if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_settings() {
             return Task::none();
@@ -190,7 +192,7 @@ impl App {
                 if self.image_view.is_some() {
                     return self.update(Message::Image(images::Event::Close));
                 }
-                return self.settings_update(settings::Event::Cancel);
+                return self.update(Message::Settings(settings::Event::Cancel));
             }
             if matches!(
                 message,
@@ -694,6 +696,7 @@ impl App {
         if refresh_media {
             self.refresh_media_demand();
         }
+        self.update_notification_context();
         if let Some(control) = &self.control {
             // Navigation represents desired state, so superseded selections can be replaced.
             control.send_if_modified(|s| {

@@ -27,12 +27,21 @@ toml_edit = { version = "0.25", features = ["serde"] }
 rand = "0.9"
 zeroize = "1"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = { version = "=4.19.0", default-features = false, features = ["z-with-tokio"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+notify-rust = { version = "=4.19.0", default-features = false, features = ["preview-macos-un"] }
+
 [dev-dependencies]
 iced_tiny_skia = { version = "=0.14.1", default-features = false }
 matrix-sdk-crypto = { version = "=0.19.1", default-features = false }
 tempfile = "3"
 tiny-skia = { version = "=0.11.4", default-features = false }
 wiremock = "0.6"
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+zbus = { version = "6.3", default-features = false, features = ["tokio", "service"] }
 
 [profile.dev]
 debug = 0

@@ -89,6 +89,16 @@ The desktop has a TOML-backed settings dialog. See [application settings](settin
 for paths, `--config`, defaults, manual editing/reload, and extending the schema.
 Demo settings remain in memory and never read the saved configuration.
 
+## Desktop notifications
+
+Linux notifications use `notify-rust` over desktop session D-Bus. The existing
+host Secret Service bus mount also carries notification requests. The macOS
+backend uses UserNotifications with a bundled app; `./scripts/bundle-macos.sh`
+builds a local development bundle on a Mac. Use **Settings → Notifications →
+Send sample notification** in `--demo` for an account-independent check. See
+[notification validation](validation/notifications.md) for permissions, automated
+evidence, native acceptance checks, and macOS account-port limitations.
+
 ## Running on the host Wayland desktop
 
 For a local Linux Docker host, launch VS Code from a terminal with `XDG_RUNTIME_DIR` and `WAYLAND_DISPLAY` set. Add the following top-level properties to `.devcontainer/devcontainer.json` and rebuild:

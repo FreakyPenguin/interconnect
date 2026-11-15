@@ -21,6 +21,7 @@ pub struct Settings {
     pub composer: Composer,
     pub graphics: Graphics,
     pub media: Media,
+    pub notifications: Notifications,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -30,6 +31,21 @@ impl Default for Settings {
             composer: Composer::default(),
             graphics: Graphics::default(),
             media: Media::default(),
+            notifications: Notifications::default(),
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Notifications {
+    pub enabled: bool,
+    pub show_preview: bool,
+}
+impl Default for Notifications {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            show_preview: true,
         }
     }
 }
@@ -188,6 +204,14 @@ impl Store {
             .parse::<DocumentMut>()?;
         replace(&mut document["version"], 1_i64.into());
         replace(
+            &mut document["notifications"]["enabled"],
+            settings.notifications.enabled.into(),
+        );
+        replace(
+            &mut document["notifications"]["show_preview"],
+            settings.notifications.show_preview.into(),
+        );
+        replace(
             &mut document["navigation"]["show_room_list"],
             settings.navigation.show_room_list.into(),
         );
@@ -306,6 +330,8 @@ mod tests {
             "[media]\ngif_seconds = 0",
             "[media]\ngif_seconds = 301",
             "[media]\ngif_seconds = '5'",
+            "[notifications]\nenabled = 'true'",
+            "[notifications]\nshow_preview = 1",
         ] {
             assert!(decode(invalid).is_err(), "accepted {invalid}");
         }
@@ -324,6 +350,8 @@ mod tests {
         settings.graphics.low_power = false;
         settings.media.gif_playback = GifPlayback::Duration;
         settings.media.gif_seconds = 17;
+        settings.notifications.enabled = false;
+        settings.notifications.show_preview = false;
         store.save(&settings).unwrap();
         assert_eq!(Store::load(path.clone()).unwrap().1, settings);
         assert_eq!(

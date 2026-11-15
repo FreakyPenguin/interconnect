@@ -1,5 +1,8 @@
 # Connected Iced prototype
 
+Desktop notification setup, behavior, test evidence, and native acceptance steps
+are documented in [notification validation](notifications.md).
+
 The `matrix-ui` binary connects Iced to the existing persistent session. It restores
 credentials without browser login, lists joined rooms, and displays SDK room and
 thread timelines in encrypted and unencrypted rooms. History loads automatically

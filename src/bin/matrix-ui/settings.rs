@@ -25,6 +25,8 @@ pub struct State {
     close_after_save: bool,
     launched_graphics: Graphics,
     gif_seconds_input: String,
+    notification_test_busy: bool,
+    notification_test_result: Option<Result<(), String>>,
 }
 impl State {
     pub(super) fn graphics_restart_required(&self) -> bool {
@@ -76,6 +78,10 @@ pub enum Event {
     GifSeconds(String),
     GpuEnabled(bool),
     LowPower(bool),
+    NotificationsEnabled(bool),
+    NotificationPreview(bool),
+    TestNotification,
+    NotificationTested(Result<(), String>),
     Defaults,
     Reload,
     Save,
@@ -87,6 +93,27 @@ fn message(event: Event) -> Message {
     Message::Settings(event)
 }
 impl App {
+    pub(super) fn update_notification_context(&mut self) {
+        self.selection.notifications = self.settings.current.notifications.clone();
+        self.selection.conversation_visible = self.window_focused
+            && self.settings.draft.is_none()
+            && self.image_view.is_none()
+            && !self.closing
+            && !self.stopped;
+    }
+    pub(super) fn publish_notification_context(&mut self) {
+        self.update_notification_context();
+        if let Some(control) = &self.control {
+            control.send_if_modified(|selection| {
+                if *selection == self.selection {
+                    false
+                } else {
+                    *selection = self.selection.clone();
+                    true
+                }
+            });
+        }
+    }
     fn valid_gif_seconds(&self) -> bool {
         self.settings
             .draft
@@ -107,6 +134,7 @@ impl App {
         app.settings.path = startup.path;
         app.settings.busy = true;
         let task = app.settings_update(Event::Loaded(0, loaded));
+        app.update_notification_context();
         (app, task)
     }
     fn load_settings(&mut self) -> Task<Message> {
@@ -131,6 +159,27 @@ impl App {
     }
     pub(super) fn settings_update(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::NotificationsEnabled(enabled) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.notifications.enabled = enabled;
+                }
+            }
+            Event::NotificationPreview(show) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.notifications.show_preview = show;
+                }
+            }
+            Event::TestNotification if !self.settings.notification_test_busy && !self.closing => {
+                self.settings.notification_test_busy = true;
+                self.settings.notification_test_result = None;
+                return Task::perform(chatclient::notifications::test_notification(), |result| {
+                    message(Event::NotificationTested(result))
+                });
+            }
+            Event::NotificationTested(result) => {
+                self.settings.notification_test_busy = false;
+                self.settings.notification_test_result = Some(result);
+            }
             Event::Open if self.settings.draft.is_none() && !self.closing => {
                 self.settings.gif_seconds_input =
                     self.settings.current.media.gif_seconds.to_string();
@@ -290,6 +339,24 @@ impl App {
     fn settings_card(&self, size: iced::Size) -> Element<'_, Message> {
         let draft = self.settings.draft.as_ref().expect("open dialog");
         let available = !self.settings.busy;
+        let mut notifications =
+            checkbox(draft.notifications.enabled).label("Enable desktop notifications");
+        let mut previews =
+            checkbox(draft.notifications.show_preview).label("Show room, sender, and message text");
+        if available {
+            notifications =
+                notifications.on_toggle(|value| message(Event::NotificationsEnabled(value)));
+            previews = previews.on_toggle(|value| message(Event::NotificationPreview(value)));
+        }
+        let mut notification_test = button(if self.settings.notification_test_busy {
+            "Sending sample…"
+        } else {
+            "Send sample notification"
+        })
+        .style(shell::quiet_button);
+        if !self.settings.notification_test_busy {
+            notification_test = notification_test.on_press(message(Event::TestNotification));
+        }
         let mut visibility =
             checkbox(draft.navigation.show_room_list).label("Show room list at startup");
         if available {
@@ -343,11 +410,37 @@ impl App {
             }
             gif_controls = gif_controls.push(seconds).push(text("seconds").size(14));
         }
+        let mut notification_controls = column![
+            notifications,
+            previews,
+            text("Alerts follow your Matrix notification rules. The conversation you are viewing stays quiet.").size(12).color(shell::MUTED),
+            notification_test,
+            text("The sample uses no account or message content. On macOS, allow notifications when prompted.").size(12).color(shell::MUTED),
+        ].spacing(12);
+        if let Some(result) = &self.settings.notification_test_result {
+            notification_controls = notification_controls.push(
+                text(match result {
+                    Ok(()) => "Sample accepted by the desktop. Check your notification center.",
+                    Err(error) => error.as_str(),
+                })
+                .size(12),
+            );
+        }
+        if let Some(error) = &self.model.notification_error {
+            notification_controls = notification_controls.push(
+                text(error)
+                    .size(12)
+                    .color(iced::Color::from_rgb8(174, 73, 78)),
+            );
+        }
         let mut content = column![
             shell::title("Settings", 24),
             text("Changes apply when you save. Startup options apply on the next launch.")
                 .size(13)
                 .color(shell::MUTED),
+            iced::widget::rule::horizontal(1),
+            shell::title("Notifications", 15),
+            notification_controls,
             iced::widget::rule::horizontal(1),
             shell::title("Navigation", 15),
             visibility,
@@ -422,6 +515,33 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notification_preferences_and_focus_reach_backend_only_when_applied() {
+        let mut app = super::super::tests::demo_app();
+        let (control, backend) = tokio::sync::watch::channel(app.selection.clone());
+        app.control = Some(control);
+        let _ = app.update(Message::WindowFocused(true));
+        assert!(backend.borrow().conversation_visible);
+        let _ = app.update(message(Event::Open));
+        assert!(!backend.borrow().conversation_visible);
+        let _ = app.update(message(Event::NotificationsEnabled(false)));
+        let _ = app.update(message(Event::NotificationPreview(false)));
+        assert!(backend.borrow().notifications.enabled);
+        assert!(backend.borrow().notifications.show_preview);
+        let _ = app.update(Message::Escape);
+        assert!(backend.borrow().conversation_visible);
+        assert!(backend.borrow().notifications.enabled);
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::NotificationsEnabled(false)));
+        let _ = app.update(message(Event::NotificationPreview(false)));
+        let _ = app.update(message(Event::Save));
+        assert!(!backend.borrow().notifications.enabled);
+        assert!(!backend.borrow().notifications.show_preview);
+        assert!(backend.borrow().conversation_visible);
+        let _ = app.update(Message::WindowFocused(false));
+        assert!(!backend.borrow().conversation_visible);
+    }
 
     #[test]
     fn gif_settings_validate_duration_and_apply_only_on_save() {

@@ -1,5 +1,16 @@
 # Connected UI lifecycle and idle resources
 
+## Notification delivery — 2026-11-15
+
+Desktop notifications use a bounded SDK-event queue and async OS delivery, with
+no application polling, redraw subscription, or blocking action waiter. Deadline
+timers exist only during delivery/permission requests. The worker and pending
+request are dropped with the connection. Room-list sync now requests 20 recent
+events instead of one to cover live notification bursts; initial sync/cache cost
+can increase. The async cancellation/focus tests pass, but CPU/wakeups and memory
+have not been remeasured with this change. Earlier measurements below predate it.
+See [notification validation](notifications.md) for setup and delivery limits.
+
 ## Repeatable checks
 
 Run the normal suite and the longer SDK fixture separately:

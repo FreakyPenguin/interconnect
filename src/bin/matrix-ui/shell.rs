@@ -319,13 +319,16 @@ impl App {
                 text(&self.model.status).size(11).color(MUTED),
                 widget::space().width(Length::Fill),
                 button(
-                    text(if self.settings.error.is_some() {
-                        "Settings · needs attention"
-                    } else if self.demo.is_none() && self.settings.graphics_restart_required() {
-                        "Settings · restart required"
-                    } else {
-                        "Settings"
-                    })
+                    text(
+                        if self.settings.error.is_some() || self.model.notification_error.is_some()
+                        {
+                            "Settings · needs attention"
+                        } else if self.demo.is_none() && self.settings.graphics_restart_required() {
+                            "Settings · restart required"
+                        } else {
+                            "Settings"
+                        }
+                    )
                     .size(11)
                 )
                 .style(quiet_button)

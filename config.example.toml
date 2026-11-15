@@ -1,6 +1,12 @@
 # Chatclient settings. Reload in Settings after editing this file.
 version = 1
 
+[notifications]
+# Desktop alerts follow the account's Matrix push rules while the app is running.
+enabled = true
+# Include room, sender, and message text. false uses a generic private alert.
+show_preview = true
+
 [navigation]
 # Initial visibility only; the room-list button still toggles it during use.
 show_room_list = true
