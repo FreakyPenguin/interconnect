@@ -686,8 +686,28 @@ impl App {
                 .on_input(Message::Search)
                 .on_submit(Message::SearchOpen);
         }
+        let mut saved_messages = row![
+            text("☆").size(17),
+            text("Saved messages").size(13).width(Length::Fill),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        if self.model.bookmarks.complete {
+            saved_messages = saved_messages.push(
+                container(
+                    text(self.model.bookmarks.entries.len().to_string())
+                        .size(10)
+                        .color(ACCENT),
+                )
+                .padding([2, 6])
+                .style(|_| container::Style {
+                    border: Border::default().rounded(8),
+                    ..surface(SELECTED)
+                }),
+            );
+        }
         let mut rooms = column![
-            button(row![text("☆").size(17), text("Saved messages").size(13)].spacing(8))
+            button(saved_messages)
                 .width(Length::Fill)
                 .padding([8, 10])
                 .style(move |_, status| navigation_button(self.bookmarks.open, status))

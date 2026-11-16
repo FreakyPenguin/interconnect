@@ -5,6 +5,8 @@ remove its bookmark. **Saved messages** in the room list opens an account-wide
 view, independent of the selected space. It shows 20 messages per page, their
 source rooms and senders, and removal/open-conversation actions. **Back** or
 Escape restores the conversation; drafts and reading positions are retained.
+The sidebar badge shows the total saved-message count, including zero, once
+bookmark history is complete. It updates as bookmarks are added or removed.
 **Open conversation** opens the source room and, for a reply, its thread. It
 does not yet position the source timeline at the exact saved event.
 

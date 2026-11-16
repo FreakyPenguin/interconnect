@@ -660,6 +660,9 @@ Manual acceptance:
    a thread reply and its original, then open Saved messages. Remove from both
    the view and the message action panel. Confirm room/thread drafts and reading
    positions survive Back, Escape and sidebar navigation.
+   Check that the sidebar count follows saves/removals, includes bookmarks from
+   other spaces and pages, and reaches zero when all saved messages are removed.
+   In connected mode the count stays hidden until bookmark history is complete.
 2. In an independently authorized connected session, bookmark an existing
    message. Check that exactly one private encrypted Bookmarks room is created
    lazily and that its account-data pointer survives restart. No test message

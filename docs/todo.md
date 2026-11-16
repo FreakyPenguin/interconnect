@@ -10,7 +10,6 @@
 
 ## Other ideas
 
-- Bookmarks (MSC4482)
 - Dashboard
 - Custom emoji
 - Search in room (Ctrl+F)
