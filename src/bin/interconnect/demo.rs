@@ -331,6 +331,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         download: None,
         reactions: Vec::new(),
         can_react: true,
+        read_by: Vec::new(),
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         thread_replies: if id == "review" { 2 } else { 0 },
         thread_root: None,
@@ -518,6 +519,12 @@ impl Demo {
     pub fn pane(&mut self, key: DraftKey, generation: u64) -> Pane {
         if !self.conversations.contains_key(&key) {
             let mut rows = self.seed(&key);
+            if key.room == "studio"
+                && key.root.is_none()
+                && let Some(row) = rows.last_mut()
+            {
+                row.read_by = vec!["@alex:demo.invalid".into(), "@maya:demo.invalid".into()];
+            }
             let start = chrono::Local::now().timestamp_millis() - rows.len() as i64 * 60_000;
             // Thread fixtures reuse the original room events and timestamps.
             if key.root.is_none() {

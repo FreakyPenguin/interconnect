@@ -98,6 +98,54 @@ sections, unread indicators, and the last selected space/room use the navigation
 model. Selection generations prevent a late snapshot from a previous room/thread
 appearing in the current pane.
 
+## Read receipts and unread clearing
+
+A focused, unobscured room at the newest messages sends a public `m.read`
+receipt and moves `m.fully_read` to the last visible server event. Opening a
+room with a restored older position does not clear its unread badge. Empty rooms
+can clear a manual unread flag without an event receipt. The SDK clears
+`m.marked_unread` as part of an unthreaded receipt; badge/count changes follow SDK
+sync state rather than an optimistic local override. Demo badges clear in memory.
+
+Thread panes send public receipts for the last visible reply in that thread;
+they do not move the room's fully-read marker. Room timelines contain coalesced
+thread activity, so their receipts are unthreaded and can advance the server's
+read position across those replies. The separate local thread activity count
+still requires viewing replies in the thread pane.
+
+Room messages show **Read by N people** with Matrix IDs on hover, excluding the
+current account. These positions include the SDK's implicit sender receipts;
+they are read positions, not delivery or per-message acknowledgements. Thread
+reader labels are omitted because this SDK's timeline-item receipt API does not
+expose thread-specific readers. There is currently no receipt privacy setting.
+
+Requests are serialized per view, time-limited, and cancelled when their viewport
+is superseded, the window loses focus, an overlay obscures the conversation, or
+the view closes. A request already received by the server cannot be undone.
+Failures show an inline notice and retry on a new visible target or refocus;
+there is no recurring retry/animation timer. A newer SDK event never becomes a
+receipt target until the viewport reports it visible.
+
+Automated coverage uses local mock servers and memory-only demo state for receipt
+scope/payloads, manual-flag clearing requests, deduplication, failure/retry,
+reader projection, stale generations, focus/overlay gating, empty rooms, and
+saved scroll gating. Live homeserver and native desktop acceptance remain manual:
+
+1. In an authorized test room, compare the unread badge and your read position
+   in a second client before and after focusing the newest messages here.
+2. Scroll up, switch away and back, and receive a message from the other client.
+   Verify the restored position and unread badge persist until jumping to newest.
+3. Repeat while unfocused and with Settings or the image viewer open; verify no
+   new receipt until the conversation becomes visible and focused again.
+4. Read a thread and compare its receipt in the other client; verify its receipt
+   does not move this room's fully-read marker. Compare incoming room-reader
+   labels, including a receipt-only sync update with no new message.
+5. Test offline receipt failure, refocus after reconnecting, manual unread flags
+   from another client, closing during a pending request, and unchanged idle CPU.
+
+Demo Studio includes a sample reader label. Demo room badge clearing and receipt
+labels do not access saved accounts or send network requests.
+
 ## Sending and room management
 
 | Operation | Behavior and comparison points |
@@ -121,10 +169,15 @@ for dismissal.
 
 The [notification](notifications.md), [verification](verification.md), and
 [idle-resource](idle-resources.md) references cover native delivery, trust, and
-resource measurements. Notifications do not send read receipts; recovery UI,
-automatic read marking/receipts, and notification click navigation remain unfinished.
+resource measurements. Notifications do not send read receipts. Recovery UI and
+notification click navigation remain unfinished.
 
 ## Validation coverage
+
+November 16, 2026 read-receipt validation passed formatting, workspace Clippy,
+a locked desktop build, workspace tests, and the focused receipt and desktop
+suites after the final changes. The receipt checks used mock servers and demo
+state; no saved account or connected desktop was launched for this change.
 
 Recorded Linux checks through November 15, 2026 include formatting, workspace
 Clippy, locked builds, and mock protocol/UI tests. The room-creation change

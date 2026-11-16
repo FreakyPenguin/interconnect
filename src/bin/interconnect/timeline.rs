@@ -18,6 +18,7 @@ pub fn view(
     make_view(generation, keys, content, None, false)
 }
 
+#[cfg(test)]
 pub fn history_view(
     generation: u64,
     keys: Vec<Option<String>>,
@@ -32,6 +33,23 @@ pub fn history_view(
         content,
         Some((thread, revision, ready)),
         false,
+    )
+}
+
+pub fn room_history_view(
+    generation: u64,
+    keys: Vec<Option<String>>,
+    content: Element<'_, Message>,
+    revision: u64,
+    ready: bool,
+    observe_visible: bool,
+) -> Element<'_, Message> {
+    make_view(
+        generation,
+        keys,
+        content,
+        Some((false, revision, ready)),
+        observe_visible,
     )
 }
 
@@ -389,7 +407,8 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
                     .collect();
                 let report = (metrics, visible);
                 if identity.visible.as_ref() != Some(&report) {
-                    shell.publish(Message::ThreadVisible {
+                    shell.publish(Message::TimelineVisible {
+                        thread: self.history.is_some_and(|(thread, _, _)| thread),
                         generation: self.generation,
                         keys: report.1.clone(),
                         metrics,
@@ -741,7 +760,8 @@ mod tests {
             messages
                 .into_iter()
                 .filter_map(|message| match message {
-                    Message::ThreadVisible {
+                    Message::TimelineVisible {
+                        thread: true,
                         generation: 7,
                         keys,
                         ..

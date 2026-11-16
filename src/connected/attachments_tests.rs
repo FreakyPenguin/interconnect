@@ -117,12 +117,14 @@ async fn sends_attachments(encrypted: bool) {
         .await
         .unwrap();
     let (state, mut snapshots) = watch::channel(Model::default());
+    let (_selection_control, selection) = watch::channel(Selection::default());
     let room_worker = tokio::spawn(view(
         client.clone(),
         "!room:example.org".into(),
         None,
         1,
         state.clone(),
+        selection.clone(),
     ));
     let thread_worker = tokio::spawn(view(
         client.clone(),
@@ -130,6 +132,7 @@ async fn sends_attachments(encrypted: bool) {
         Some("$root".into()),
         2,
         state.clone(),
+        selection.clone(),
     ));
     let opened = tokio::time::timeout(
         Duration::from_secs(5),

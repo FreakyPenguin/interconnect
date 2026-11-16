@@ -8,7 +8,7 @@
 ## Account and navigation
 
 - Logout / account switching UI
-- Unread clearing, mark unread
+- Mark unread
 - Sections
 
 ## Infrastructure

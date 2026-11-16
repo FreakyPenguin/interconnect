@@ -14,6 +14,8 @@ use matrix_sdk_ui::{
 };
 use tokio::sync::{mpsc, watch};
 
+mod receipts;
+pub use receipts::ReadTarget;
 mod typing;
 pub use typing::{Activity as TypingActivity, Typing};
 mod members;
@@ -24,6 +26,7 @@ pub use pinned::Pinned;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     pub typing: Option<TypingActivity>,
+    pub read: [Option<ReadTarget>; 2],
     pub room: Option<(u64, String)>,
     pub thread: Option<(u64, String)>,
     /// Unique request generation; only load the selected room while People is open.
@@ -70,6 +73,7 @@ pub struct MessageRow {
     pub download: Option<crate::download::Attachment>,
     pub reactions: Vec<Reaction>,
     pub can_react: bool,
+    pub read_by: Vec<String>,
     pub timestamp_ms: Option<i64>,
     pub thread_replies: u32,
     pub thread_root: Option<String>,
@@ -563,6 +567,7 @@ pub struct Model {
     pub images: crate::media::Snapshot<crate::image_media::Key>,
     pub media_error: Option<String>,
     pub notification_error: Option<String>,
+    pub receipt_errors: [Option<(u64, String)>; 2],
     pub room: Option<Pane>,
     pub thread: Option<Pane>,
     pub pinned: Option<Pinned>,
@@ -589,6 +594,7 @@ impl Default for Model {
             images: Default::default(),
             media_error: None,
             notification_error: None,
+            receipt_errors: Default::default(),
             room: None,
             thread: None,
             pinned: None,
@@ -860,7 +866,7 @@ async fn connected(
                         _ = room_list.set_room_subscriptions(&ids) => {},
                         changed = selection.changed() => { changed.context("UI closed")?; typing_view = inactive(); sync.room_list_service().remove_room_subscriptions(&[&id]); active = Selection::default(); continue; }
                     }
-                    room_view = Box::pin(view(client.clone(), id.to_string(), None, *generation, state.clone()));
+                    room_view = Box::pin(view(client.clone(), id.to_string(), None, *generation, state.clone(), selection.clone()));
                     pinned_view = Box::pin(pinned::view(client.clone(), id.to_string(), *generation, state.clone()));
                 }
             }
@@ -868,7 +874,7 @@ async fn connected(
                 thread_view = inactive();
                 state.send_modify(|s| s.thread = None);
                 if let (Some((_, room)), Some((generation, root))) = (&next.room, &next.thread) {
-                    thread_view = Box::pin(view(client.clone(), room.clone(), Some(root.clone()), *generation, state.clone()));
+                    thread_view = Box::pin(view(client.clone(), room.clone(), Some(root.clone()), *generation, state.clone(), selection.clone()));
                 }
             }
             if active.members != next.members || active.room != next.room {
@@ -1044,6 +1050,7 @@ async fn view(
     root: Option<String>,
     generation: u64,
     state: watch::Sender<Model>,
+    selection: watch::Receiver<Selection>,
 ) {
     tracing::debug!(target: "interconnect", generation, thread = root.is_some(), "connected presentation view started");
     let diagnostics = state.borrow().diagnostics.clone();
@@ -1067,6 +1074,7 @@ async fn view(
             Ok::<_, anyhow::Error>(
                 TimelineBuilder::new(&room)
                     .with_focus(focus)
+                    .track_read_marker_and_receipts(matrix_sdk_ui::timeline::TimelineReadReceiptTracking::AllEvents)
                     .build()
                     .await?,
             )
@@ -1076,6 +1084,8 @@ async fn view(
             .context("Timeline loading timed out")??;
         let timeline = Arc::new(timeline);
         diagnostics.timeline(&timeline);
+        let receipts = receipts::run(timeline.clone(), selection, generation, is_thread, state.clone());
+        tokio::pin!(receipts);
         let (_, updates) = timeline.subscribe().await;
         let mut updates: BoxStream<'_, _> = Box::pin(updates);
         let (load_older, mut requests) = mpsc::channel(1);
@@ -1098,6 +1108,7 @@ async fn view(
         publish(&timeline, generation, is_thread, revision, &history, &state, &load_older).await;
         loop {
             tokio::select! {
+                _ = &mut receipts => break,
                 update = updates.next() => {
                     ensure!(update.is_some(), "Timeline subscription ended");
                 }
@@ -1110,6 +1121,7 @@ async fn view(
             }
             publish(&timeline, generation, is_thread, revision, &history, &state, &load_older).await;
         }
+        Ok(())
     }
     .await;
     if let Err(error) = result {
@@ -1268,6 +1280,16 @@ async fn timeline_rows_cached(
                     download: crate::download::Attachment::from_content(content),
                     reactions: reactions(content, &own_user),
                     can_react: event.event_id().is_some() && can_react(content),
+                    read_by: {
+                        let mut users: Vec<_> = event
+                            .read_receipts()
+                            .keys()
+                            .filter(|user| **user != own_user)
+                            .map(ToString::to_string)
+                            .collect();
+                        users.sort();
+                        users
+                    },
                     timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
                     thread_replies: content
                         .thread_summary()

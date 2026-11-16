@@ -47,6 +47,8 @@ mod presentation;
 mod reaction_picker;
 #[path = "interconnect/reactions.rs"]
 mod reactions;
+#[path = "interconnect/receipts.rs"]
+mod receipts;
 #[path = "interconnect/room_picker.rs"]
 mod room_picker;
 #[path = "interconnect/selectable.rs"]
@@ -199,7 +201,8 @@ enum Message {
     DemoThreadReply,
     WindowFocused(bool),
     WindowResized(f32),
-    ThreadVisible {
+    TimelineVisible {
+        thread: bool,
         generation: u64,
         keys: Vec<String>,
         metrics: timeline::Metrics,
@@ -458,7 +461,7 @@ impl App {
                     | Message::Retry(_)
                     | Message::JumpToNewest { .. }
                     | Message::Scrolled { .. }
-                    | Message::ThreadVisible { .. }
+                    | Message::TimelineVisible { .. }
                     | Message::RowsVisible { .. }
             ) {
                 return Task::none();
@@ -611,12 +614,15 @@ impl App {
                 }
             }
             Message::WindowResized(width) => self.window_width = Some(width),
-            Message::ThreadVisible {
+            Message::TimelineVisible {
+                thread,
                 generation,
                 keys,
                 metrics,
             } => {
-                if self.window_focused
+                self.read_visible(thread, generation, &keys, metrics);
+                if thread
+                    && self.selection.conversation_visible
                     && self.pending_scroll[1].is_none()
                     && let Some((current, root)) = &self.selection.thread
                     && *current == generation
@@ -1178,6 +1184,7 @@ impl App {
             self.refresh_media_demand();
         }
         self.update_notification_context();
+        self.validate_read_targets();
         if let Some(control) = &self.control {
             // Navigation represents desired state, so superseded selections can be replaced.
             control.send_if_modified(|s| {
@@ -1940,6 +1947,15 @@ impl App {
                 .into();
         }
         let mut history_controls = column![].spacing(6);
+        if let Some((current, _)) = &self.model.receipt_errors[usize::from(thread)]
+            && current == generation
+        {
+            history_controls = history_controls.push(
+                text("Could not mark as read. Refocus this conversation to retry.")
+                    .size(12)
+                    .color(shell::MUTED),
+            );
+        }
         match &pane.history {
             History::Loading => {
                 history_controls = history_controls.push(
@@ -2082,6 +2098,19 @@ impl App {
             if let Some(badges) = self.reaction_chips(message, thread, *generation) {
                 entry = entry.push(badges);
             }
+            if !thread && !message.read_by.is_empty() {
+                let count = message.read_by.len();
+                let label = if count == 1 {
+                    "Read by 1 person".to_owned()
+                } else {
+                    format!("Read by {count} people")
+                };
+                entry = entry.push(iced::widget::tooltip(
+                    text(label).size(11).color(shell::MUTED),
+                    text(message.read_by.join("\n")).size(12),
+                    iced::widget::tooltip::Position::Top,
+                ));
+            }
             if !message.send_state.is_empty() && message.send_state != "Sent" {
                 entry = entry.push(text(&message.send_state).size(12));
             }
@@ -2215,18 +2244,20 @@ impl App {
                 timeline.into(),
                 pane.history_revision,
                 matches!(pane.history, History::Ready),
-                self.window_focused
+                self.selection.conversation_visible
                     && self.pending_scroll[1].is_none()
                     && !matches!(pane.history, History::Loading),
             )
         } else {
-            timeline::history_view(
+            timeline::room_history_view(
                 *generation,
                 keys,
                 timeline.into(),
-                false,
                 pane.history_revision,
                 matches!(pane.history, History::Ready),
+                self.selection.conversation_visible
+                    && self.pending_scroll[0].is_none()
+                    && !matches!(pane.history, History::Loading),
             )
         };
         let mut message_area = iced::widget::stack![observed];
@@ -2977,7 +3008,8 @@ mod tests {
         assert_eq!(app.thread_activity.unread("threads", "thread-plan"), 2);
         let _ = app.update(Message::OpenThreadLatest("thread-plan".into()));
         let generation = app.selection.thread.as_ref().unwrap().0;
-        let visible = |generation, key: &str| Message::ThreadVisible {
+        let visible = |generation, key: &str| Message::TimelineVisible {
+            thread: true,
             generation,
             keys: vec![key.into()],
             metrics: timeline::Metrics {

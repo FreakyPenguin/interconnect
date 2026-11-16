@@ -164,6 +164,7 @@ mod tests {
             download: None,
             reactions: Vec::new(),
             can_react: true,
+            read_by: Vec::new(),
             timestamp_ms: Some(1),
             thread_replies: 0,
             thread_root: root.map(str::to_owned),

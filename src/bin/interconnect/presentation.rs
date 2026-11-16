@@ -47,6 +47,7 @@ mod tests {
             download: None,
             reactions: Vec::new(),
             can_react: true,
+            read_by: Vec::new(),
             timestamp_ms,
             thread_replies: 0,
             thread_root: None,
