@@ -233,8 +233,7 @@ pixels are in memory and no account/network access is required.
 - Reveal the spoiler. Its image enters layout/demand then; hidden images must not
   produce requests. Settled images must not schedule redraw deadlines or animate.
 - A local asset supplies RGBA pixels plus logical width/height/descent, without a
-  Matrix URI. This is the extension point for a later formula renderer; no math
-  parsing or formula generation is implemented in this step.
+  Matrix URI. Formula rendering also uses this embedded-object layout path.
 
 Automated checks cover exact dimensions, intrinsic aspect ratios, bounded extreme
 sizes, baseline descent, bidi wrapping, object hit-testing, software-rendered
@@ -252,4 +251,43 @@ arrival. A settled wgpu inline-image demo consumed zero CPU jiffies in a
 five-second `/proc` sample at 100 ticks/second; this short sample does not measure
 wakeups or power. Real-account media, hardware adapters and macOS remain separate
 acceptance checks. The connected client was not restarted and no Matrix test
+messages were sent.
+
+## Mathematical messages
+
+In `--demo`, open **Off the clock**, leave the composer in Markdown mode, and
+preview/send this sample locally:
+
+```text
+Inline $\frac{a}{b}$ and $\sqrt{x^2+y^2}$.
+
+$$\sum_{n=1}^{10}n$$
+```
+
+- Inline equations align to surrounding text; display equations have their own
+  centered block. Resize to 640×480 and check wrapping and adjacent lines.
+- Select across text and formulas: copy uses complete LaTeX sources, without
+  U+FFFC layout markers. Formula sources are atomic selection objects.
+- Code spans/blocks and Plain text mode keep dollar syntax literal. Unsupported
+  commands such as `$\unsupported{x}$` retain a readable source fallback.
+- Received Element messages use `data-mx-maths` attributes in formatted HTML.
+  Plain incoming dollar-delimited text stays literal. Live Element exchange and
+  native macOS appearance remain separate acceptance checks.
+
+Automated checks cover SDK sanitization of Element-compatible math markup,
+preview/wire serialization and escaping, inline/display layout, baseline metrics,
+source copying, spoilers, document reuse, fractions, roots, integrals, matrices,
+aligned equations, chemistry, malformed/recursive input, and source/pixel/count
+limits. Rendering is local with bundled fonts and introduces no redraw timer.
+
+November 16, 2026: formatting, workspace Clippy with warnings denied, a locked
+desktop build and workspace tests passed (113 library and 189 desktop tests;
+two existing opt-in library tests ignored). Isolated Wayland/tiny-skia demo checks
+covered inline fractions/roots, centered sums, on-demand preview and local send
+at 1100×800 and 640×480, plus dragging a selection across formulas. A settled
+formula timeline consumed zero CPU jiffies during a five-second `/proc` sample
+at 100 ticks/second; this does not measure wakeups or power. Clipboard export
+was not confirmed in the isolated virtual-input session; canonical copy text is
+covered by automated tests. Hardware rendering and live-account acceptance remain
+untested for this change. No connected client was restarted and no Matrix test
 messages were sent.

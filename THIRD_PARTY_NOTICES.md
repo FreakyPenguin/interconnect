@@ -14,6 +14,11 @@ assets retain their own copyright notices and licenses.
 - **Bundled Inter fonts** in `assets/fonts/` retain the upstream notices and
   licensing information recorded in [their license file](assets/fonts/LICENSE).
   The project's MIT license does not replace the font licenses.
+- **RaTeX** 0.1.16 is MIT licensed. Its `ratex-katex-fonts` dependency embeds
+  **KaTeX fonts** under the SIL Open Font License 1.1. See the copied
+  [font license](assets/licenses/katex/OFL.txt) and
+  [font provenance](assets/licenses/katex/FONT_NOTICE.txt). Fonts are bundled
+  through Cargo; no additional font installation or download is required.
 - **Winit fork**, fetched by Cargo rather than vendored, is licensed under
   Apache-2.0. See the [source and pinned revision](docs/architecture/winit-file-drops.md)
   and its [upstream license](https://github.com/FreakyPenguin/winit/blob/752d80adf83bca01e2992f7e2ff6c7baa78444a4/LICENSE).

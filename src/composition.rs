@@ -58,7 +58,7 @@ pub fn needs_conversion(source: &str, format: Format) -> bool {
         && (source.starts_with(char::is_whitespace)
             || source.contains([
                 '*', '_', '~', '`', '[', ']', '<', '>', '#', '\\', '&', '\n', '\r', '=', '-', '+',
-                '.', '!',
+                '.', '!', '$',
             ]))
 }
 pub async fn prepare(source: String, format: Format) -> Result<Prepared, String> {
@@ -89,7 +89,13 @@ fn convert(source: String) -> Result<Prepared, String> {
     let mut events = Vec::new();
     let mut depth = 0usize;
     let mut links = Vec::new();
-    for (count, event) in Parser::new_ext(&source, Options::ENABLE_STRIKETHROUGH).enumerate() {
+    let mut has_display_math = false;
+    for (count, event) in Parser::new_ext(
+        &source,
+        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_MATH,
+    )
+    .enumerate()
+    {
         if count >= 2048 {
             return Err(TOO_COMPLEX.into());
         }
@@ -103,6 +109,11 @@ fn convert(source: String) -> Result<Prepared, String> {
             depth = depth.saturating_sub(1);
         }
         let event = match event {
+            Event::InlineMath(latex) => Event::InlineHtml(math_html(&latex, false).into()),
+            Event::DisplayMath(latex) => {
+                has_display_math = true;
+                Event::Html(math_html(&latex, true).into())
+            }
             // Chat newlines are intentional. Raw HTML is literal source text.
             Event::SoftBreak => Event::HardBreak,
             Event::Html(text) | Event::InlineHtml(text) => Event::Text(text),
@@ -136,13 +147,31 @@ fn convert(source: String) -> Result<Prepared, String> {
     }
     let mut output = BoundedHtml(Vec::new());
     html::write_html_io(&mut output, events.into_iter()).map_err(|_| TOO_COMPLEX.to_owned())?;
-    let html = String::from_utf8(output.0).expect("CommonMark emits UTF-8");
-    let document = Document::parse(&html).ok_or_else(|| TOO_COMPLEX.to_owned())?;
+    let mut html = String::from_utf8(output.0).expect("CommonMark emits UTF-8");
+    if has_display_math {
+        // CommonMark math events can occur inside a paragraph. Normalize the
+        // fragment so Matrix's display-math div is never sent nested in a p.
+        html = matrix_sdk::ruma::html::Html::parse(&html).to_string();
+        if html.len() > MAX_BYTES {
+            return Err(TOO_COMPLEX.into());
+        }
+    }
+    let document = Document::parse_with_formulas(&html).ok_or_else(|| TOO_COMPLEX.to_owned())?;
     Ok(Prepared {
         source,
         html: Some(html),
         document: Some(Arc::new(document)),
     })
+}
+fn math_html(latex: &str, display: bool) -> String {
+    let escaped = latex
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;");
+    let tag = if display { "div" } else { "span" };
+    format!("<{tag} data-mx-maths=\"{escaped}\"><code>{escaped}</code></{tag}>")
 }
 struct BoundedHtml(Vec<u8>);
 impl Write for BoundedHtml {
@@ -163,6 +192,57 @@ mod tests {
     use super::*;
     use crate::message_document::{BlockKind, Inline};
     use std::collections::BTreeSet;
+
+    #[tokio::test]
+    async fn math_preview_and_payload_use_matrix_markup_and_literal_code_stays_literal() {
+        let source = "Inline $\\frac{a}{b}$ end.\n\n$$\\sum_{n=1}^{10} n$$\n\n`$literal$`\n\n```tex\n$x^2$\n```";
+        let prepared = prepare(source.into(), Format::Markdown).await.unwrap();
+        let html = prepared.html.as_ref().unwrap();
+        assert!(html.contains(r#"<span data-mx-maths="\frac{a}{b}">"#));
+        assert!(html.contains(r#"<div data-mx-maths="\sum_{n=1}^{10} n">"#));
+        assert!(!html.contains("<p><div"));
+        assert!(html.contains("<code>$literal$</code>"));
+        assert!(html.contains("$x^2$\n</code>"));
+        assert_eq!(prepared.message_content().body(), source);
+        assert!(
+            prepared
+                .document
+                .unwrap()
+                .blocks
+                .iter()
+                .any(|b| matches!(b.kind, BlockKind::Math))
+        );
+        assert!(
+            prepare(source.into(), Format::Plain)
+                .await
+                .unwrap()
+                .html
+                .is_none()
+        );
+        assert!(
+            prepare("$x$".into(), Format::Markdown)
+                .await
+                .unwrap()
+                .html
+                .unwrap()
+                .contains("data-mx-maths")
+        );
+    }
+
+    #[tokio::test]
+    async fn math_attributes_escape_untrusted_source_and_unsupported_math_keeps_fallback() {
+        let prepared = prepare(
+            r#"$\text{a" <b> & c}$ and $\unsupported{x}$"#.into(),
+            Format::Markdown,
+        )
+        .await
+        .unwrap();
+        let html = prepared.html.unwrap();
+        assert!(!html.contains("<b>"));
+        assert!(html.contains("&quot; &lt;b&gt; &amp; c"));
+        let text = prepared.document.unwrap().text(&BTreeSet::new());
+        assert!(text.contains(r"\unsupported{x}"));
+    }
     #[tokio::test]
     async fn commonmark_payload_and_preview_share_source_and_formatting() {
         let source = "# Title\n\n**bold _italic_** and ~~old~~ with `code`\nnext\n\n> quote\n\n3. third\n4. fourth\n\n```rust\nlet x = 1;\n  x\n```";

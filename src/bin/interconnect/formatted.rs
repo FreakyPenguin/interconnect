@@ -139,7 +139,18 @@ impl State {
                         .min(width / 3.0);
                 let code = matches!(block.kind, BlockKind::Code { .. });
                 let padding = if code { 8.0 } else { 0.0 };
-                let x = inset + padding;
+                let mut x = inset + padding;
+                let mut paragraph_width = (width - x - padding).max(1.0);
+                if matches!(block.kind, BlockKind::Math)
+                    && block
+                        .runs
+                        .iter()
+                        .any(|run| matches!(run.content, Inline::Image { .. }))
+                    && let Some(metrics) = self.image_metrics.get(image_index)
+                {
+                    x += (paragraph_width - metrics.size.width).max(0.0) / 2.0;
+                    paragraph_width = metrics.size.width;
+                }
                 let size = match block.kind {
                     BlockKind::Heading(level) => 23.0 - f32::from(level.min(6)),
                     _ => 14.0,
@@ -229,12 +240,8 @@ impl State {
                     spans.push(text::Span::new(""));
                     runs.push(0);
                 }
-                let paragraph = inline_image::Paragraph::with_spans(
-                    &spans,
-                    (width - x - padding).max(1.0),
-                    size,
-                    &objects,
-                );
+                let paragraph =
+                    inline_image::Paragraph::with_spans(&spans, paragraph_width, size, &objects);
                 let mut images = Vec::new();
                 for (object, run_index) in objects.iter().zip(object_runs) {
                     for line in paragraph.buffer().layout_runs() {
@@ -893,6 +900,51 @@ mod tests {
                 "local assets never enter Matrix demand"
             );
         }
+    }
+    #[test]
+    fn matrix_formulas_use_native_object_layout_copy_source_and_center_display_math() {
+        let doc = Document::parse_with_formulas(r#"<p>Before <span data-mx-maths="\frac{a}{b}"><code>fallback</code></span> after.</p><div data-mx-maths="\sum_{n=1}^{10}n"><code>sum</code></div><span data-mx-spoiler data-mx-maths="x^2">hidden</span>"#).unwrap();
+        let mut state = State::new(Arc::new(doc));
+        assert_eq!(
+            state.text(),
+            "Before \\frac{a}{b} after.\n\n\\sum_{n=1}^{10}n\n\n[Spoiler — click to reveal]"
+        );
+        for width in [400.0, 150.0, 30.0] {
+            state.layout(width);
+            assert_eq!(state.blocks[0].images.len(), 1);
+            assert_eq!(state.blocks[1].images.len(), 1);
+            assert!(state.blocks[2].images.is_empty());
+            let display = &state.blocks[1];
+            let image = &display.images[0];
+            let center = display.bounds.x + image.bounds.center_x();
+            assert!((center - width / 2.0).abs() < 0.01);
+            for block in &state.blocks[..2] {
+                for image in &block.images {
+                    assert!(image.bounds.width <= width);
+                    let handle = state.assets.handle(image.source.as_ref().unwrap()).unwrap();
+                    assert!(matches!(handle, iced::widget::image::Handle::Rgba { .. }));
+                    let point = block.bounds.position() + (image.bounds.center() - Point::ORIGIN);
+                    let hit = state.hit(point);
+                    let start = block.range.start + image.canonical.start;
+                    let end = block.range.start + image.canonical.end;
+                    assert!(hit == start || hit == end, "formula hit is atomic");
+                }
+            }
+            assert!(
+                state
+                    .image_requests(
+                        Point::ORIGIN,
+                        Rectangle::with_size(Size::new(width, 1000.0))
+                    )
+                    .is_empty()
+            );
+        }
+        let point = state.blocks[2].bounds.position() + Vector::new(2.0, 5.0);
+        assert!(state.activate(point, &mut |_| {}));
+        state.layout(400.0);
+        assert_eq!(state.blocks[2].images.len(), 1);
+        assert!(state.text().ends_with("x^2"));
+        assert!(!state.text().contains('\u{fffc}'));
     }
     #[test]
     fn missing_dimensions_relayout_once_from_intrinsics_and_spoilers_do_not_fetch() {

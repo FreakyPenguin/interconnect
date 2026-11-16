@@ -21,17 +21,20 @@ pub struct Style {
 }
 
 /// Image identities are independent of transport. Local assets are supplied by
-/// the application (e.g. a future formula renderer), never by incoming HTML.
+/// the application, never by incoming HTML. Formula assets are rendered offline
+/// on the projection/composition worker and owned by the document.
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum ImageSource {
     Matrix(matrix_sdk::ruma::OwnedMxcUri),
     Local(u64),
+    Formula(Arc<crate::formula::Image>),
 }
 impl std::fmt::Debug for ImageSource {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
             Self::Matrix(_) => "MatrixImage",
             Self::Local(_) => "LocalImage",
+            Self::Formula(_) => "FormulaImage",
         })
     }
 }
@@ -71,6 +74,8 @@ pub struct Run {
 pub enum BlockKind {
     #[default]
     Paragraph,
+    /// Display math gets its own centered block; inline math stays in its paragraph.
+    Math,
     Heading(u8),
     /// Language is deliberately independent of any syntax-highlighting library.
     Code {
@@ -103,7 +108,7 @@ impl Document {
         if let Some(previous) = previous.filter(|doc| doc.source == source) {
             return Some(previous.clone());
         }
-        Self::parse(source).map(Arc::new)
+        Self::parse_with_formulas(source).map(Arc::new)
     }
     pub(crate) fn html(message: &MessageType) -> Option<&str> {
         let formatted = match message {
@@ -116,11 +121,23 @@ impl Document {
     }
     /// Parse a fragment with hard input and traversal bounds; failure uses the event's plain fallback.
     pub fn parse(source: &str) -> Option<Self> {
+        Self::parse_inner(source, false)
+    }
+    /// Parse and typeset Matrix math on a blocking worker, never on the UI thread.
+    /// Unchanged documents should be reused, as in `from_message`.
+    pub fn parse_with_formulas(source: &str) -> Option<Self> {
+        Self::parse_inner(source, true)
+    }
+    fn parse_inner(source: &str, formulas: bool) -> Option<Self> {
         if source.len() > MAX_BYTES {
             return None;
         }
         let html = Html::parse(source);
-        let mut builder = Builder::default();
+        let mut builder = Builder {
+            formulas,
+            formula_pixels: crate::formula::MAX_DOCUMENT_PIXELS,
+            ..Default::default()
+        };
         for node in html.children() {
             builder.visit(&node, Style::default(), 0)?;
         }
@@ -217,6 +234,9 @@ struct Builder {
     lists: Vec<Option<u64>>,
     spoiler: usize,
     pre: usize,
+    formulas: bool,
+    formula_count: usize,
+    formula_pixels: usize,
 }
 impl Builder {
     fn flush(&mut self) {
@@ -386,8 +406,47 @@ impl Builder {
             self.spoiler += 1;
             style.spoilers.push(self.spoiler);
         }
+        let math = matches!(tag, "span" | "div")
+            .then(|| attr("data-mx-maths"))
+            .flatten()
+            .filter(|s| !s.trim().is_empty() && self.pre == 0 && !style.code);
+        if let Some(latex) = &math {
+            let display = tag == "div";
+            let image = if self.formulas && self.formula_count < crate::formula::MAX_FORMULAS {
+                self.formula_count += 1;
+                crate::formula::render(latex, display, &mut self.formula_pixels)
+            } else {
+                None
+            };
+            if let Some(image) = image {
+                if display {
+                    self.current.kind = BlockKind::Math;
+                }
+                self.push(
+                    Inline::Image {
+                        width: Some(image.width),
+                        height: Some(image.height),
+                        descent: image.descent,
+                        source: Some(ImageSource::Formula(image)),
+                        alt: latex.clone(),
+                    },
+                    style,
+                )?;
+                if display {
+                    self.flush();
+                }
+                return Some(());
+            }
+        }
+        let before = self.bytes;
         for child in node.children() {
             self.visit(&child, style.clone(), depth + 1)?;
+        }
+        // A sender may omit the fallback. Never lose the formula entirely.
+        if let Some(latex) = math
+            && self.bytes == before
+        {
+            self.text(&latex, style)?;
         }
         if block {
             self.flush();
@@ -424,6 +483,60 @@ pub fn block_ranges(blocks: &[Block]) -> impl Iterator<Item = Range<usize>> + '_
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matrix_math_uses_attribute_source_display_blocks_and_document_lifetime() {
+        use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
+        let html = r#"<p>Before <span data-mx-maths="\frac{a}{b}"><code>fallback</code></span> after.</p><div data-mx-maths="\sum_{n=1}^{10}n"><code>sum</code></div>End"#;
+        let message = MessageType::Text(TextMessageEventContent::html("fallback", html));
+        let doc = Document::from_message(&message, None).unwrap();
+        let again = Document::from_message(&message, Some(&doc)).unwrap();
+        assert!(Arc::ptr_eq(&doc, &again));
+        assert_eq!(
+            doc.text(&BTreeSet::new()),
+            "Before \\frac{a}{b} after.\n\n\\sum_{n=1}^{10}n\n\nEnd"
+        );
+        assert!(matches!(doc.blocks[1].kind, BlockKind::Math));
+        assert!(matches!(
+            doc.blocks[0].runs[1].content,
+            Inline::Image {
+                source: Some(ImageSource::Formula(_)),
+                ..
+            }
+        ));
+        assert!(
+            doc.image_keys().is_empty(),
+            "math never requests Matrix media"
+        );
+    }
+
+    #[test]
+    fn math_fallbacks_spoilers_and_formula_limits_preserve_readable_text() {
+        let doc = Document::parse_with_formulas(r#"<p><span data-mx-maths="\unsupported">readable <b>fallback</b></span> <span data-mx-maths="\unsupported"></span></p><span data-mx-spoiler data-mx-maths="x^2"><code>x squared</code></span>"#).unwrap();
+        let text = doc.text(&BTreeSet::new());
+        assert!(text.contains("readable fallback \\unsupported"));
+        assert!(!text.contains("x^2"));
+        assert!(doc.text(&BTreeSet::from([1])).contains("x^2"));
+        let html =
+            r#"<span data-mx-maths="x">fallback</span>"#.repeat(crate::formula::MAX_FORMULAS + 1);
+        let doc = Document::parse_with_formulas(&html).unwrap();
+        let rendered = doc
+            .blocks
+            .iter()
+            .flat_map(|b| &b.runs)
+            .filter(|r| {
+                matches!(
+                    r.content,
+                    Inline::Image {
+                        source: Some(ImageSource::Formula(_)),
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(rendered, crate::formula::MAX_FORMULAS);
+        assert!(doc.text(&BTreeSet::new()).ends_with("fallback"));
+    }
     #[test]
     fn plain_unknown_formats_and_formatting_only_edits_have_distinct_paths() {
         let message = |html: Option<&str>| -> MessageType {

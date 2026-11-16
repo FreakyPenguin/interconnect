@@ -13,6 +13,9 @@ bundle_path="$build_root/Interconnect.app"
 mkdir -p "$bundle_path/Contents/MacOS" "$bundle_path/Contents/Resources"
 cp "$build_root/debug/interconnect" "$bundle_path/Contents/MacOS/interconnect"
 cp packaging/macos/Info.plist "$bundle_path/Contents/Info.plist"
+mkdir -p "$bundle_path/Contents/Resources/licenses/katex"
+cp assets/licenses/katex/OFL.txt assets/licenses/katex/FONT_NOTICE.txt \
+    "$bundle_path/Contents/Resources/licenses/katex/"
 plutil -lint "$bundle_path/Contents/Info.plist"
 # Give local builds a stable app identity. Distribution requires proper signing
 # and notarization; ad-hoc signing is only for development on this machine.

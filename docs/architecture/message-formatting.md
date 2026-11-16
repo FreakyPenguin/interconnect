@@ -38,8 +38,8 @@ application-only `ImageSource::Local` identity, alternative text, optional width
 and height, and baseline descent. Incoming HTML can only produce Matrix sources;
 HTTP, file, data and local URLs are inert. Local producers supply decoded RGBA
 handles through `inline_image::Assets`; rendering never reads files or decodes
-bytes on the UI thread. A future formula renderer can insert local image runs
-and provide dimensions/descent without changing transport or layout APIs.
+bytes on the UI thread. `ImageSource::Formula` holds an already decoded local
+formula asset with dimensions/descent and uses the same layout and drawing path.
 
 Dimensions are logical pixels. Both declared dimensions take precedence over
 intrinsic pixels, so loading and failure do not change the reserved rectangle.
@@ -88,6 +88,32 @@ Tables, syntax highlighting, visual rich-text editing, and
 formatted media captions remain follow-up work. Room-list, pin and notification excerpts
 continue to use the plain SDK fallback.
 
+## Mathematical messages
+
+Matrix's `span[data-mx-maths]` and `div[data-mx-maths]` carry LaTeX source without
+delimiters. Inline formulas participate in native text wrapping/baseline layout;
+display formulas occupy a centered block and use display-style operators.
+`Document::parse_with_formulas` typesets them with RaTeX 0.1.16 and bundled KaTeX
+fonts on the existing projection/composition blocking worker. Ordinary `parse`
+only projects the sender's fallback, without invoking the renderer. Incoming
+plain text is never scanned for dollar signs.
+
+Successful formulas become document-owned decoded RGBA assets at twice their
+logical resolution, with transparent backgrounds and the message ink color.
+No media demand, external math service, TeX installation, timer or persistent
+formula cache is involved. Unchanged HTML reuses the previous document/assets;
+edits replace them under the existing cancellation and generation checks.
+Selection treats formulas as atomic objects and copies their LaTeX source;
+hidden spoilers retain the existing selection/copy protections.
+
+At most 16 formulas are attempted per document, each with at most 2048 source
+bytes. RaTeX bounds nesting/macro expansion and validates layout work before
+building drawing items. Rasterization is capped at 2048 pixels per dimension,
+256K pixels per formula and 512K pixels (2 MiB RGBA) per document. Oversized,
+malformed or unsupported formulas retain the sender's HTML fallback. Missing
+fallbacks show the attribute's LaTeX source. Sources/errors are never logged.
+This supports RaTeX's math subset, not arbitrary LaTeX documents or packages.
+
 ## Markdown composition
 
 Room and thread drafts default to Markdown. The composer mode button switches
@@ -100,6 +126,13 @@ headings, quotes, lists, inline/fenced code and links. Soft line breaks become
 explicit breaks for chat. Raw HTML is escaped as literal text; Markdown images
 produce their alternative text. Tables, task-list extensions, spoiler authoring,
 image authoring and code syntax highlighting remain follow-up work.
+
+Markdown mode additionally accepts `$…$` for inline math and `$$…$$` for display
+math through pulldown-cmark's math extension. These are serialized as Matrix
+`data-mx-maths` markup with escaped attribute/text fallbacks, rather than
+pulldown-cmark's presentation classes. Code spans/blocks and Plain text mode
+remain literal. Element's alternative `\(…\)`/`\[…\]` composer delimiters are
+not authoring syntax here; receiving their resulting Matrix HTML is supported.
 
 The explicit **Preview** button snapshots the source and runs the same conversion
 as Send. It uses the existing document renderer in a bounded panel above the

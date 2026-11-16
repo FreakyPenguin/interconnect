@@ -22,10 +22,14 @@ pub struct Assets {
     pub local: LocalImages,
 }
 impl Assets {
-    pub fn handle(&self, source: &ImageSource) -> Option<&iced::widget::image::Handle> {
+    pub fn handle<'a>(
+        &'a self,
+        source: &'a ImageSource,
+    ) -> Option<&'a iced::widget::image::Handle> {
         let handle = match source {
             ImageSource::Matrix(uri) => self.remote.ready.get(&Key::inline(uri.clone())),
             ImageSource::Local(id) => self.local.get(id),
+            ImageSource::Formula(image) => Some(&image.handle),
         }?;
         // An asset producer must decode first. Never let image layout read a file
         // or decode arbitrary bytes through Iced's synchronous image path.
@@ -59,7 +63,7 @@ impl Assets {
     pub fn failed(&self, source: &ImageSource) -> bool {
         match source {
             ImageSource::Matrix(uri) => self.remote.failed.contains(&Key::inline(uri.clone())),
-            ImageSource::Local(_) => false,
+            ImageSource::Local(_) | ImageSource::Formula(_) => false,
         }
     }
 }

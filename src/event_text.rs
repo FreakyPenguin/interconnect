@@ -284,6 +284,41 @@ mod tests {
         assert!(doc.blocks[0].runs[0].style.bold);
     }
     #[tokio::test]
+    async fn sdk_sanitization_preserves_element_math_markup_for_native_rendering() {
+        let (_server, room) = fixture().await;
+        let event = json!({"type":"m.room.message", "event_id":"$math", "sender":"@alice:example.org", "origin_server_ts":1,
+            "content":{"msgtype":"m.text", "body":"Equation: $x^2$", "format":"org.matrix.custom.html", "formatted_body":r#"<p>Equation: <span data-mx-maths="x^2"><code>x^2</code></span></p>"#}});
+        let content = TimelineItemContent::from_event(
+            &room,
+            TimelineEvent::from_plaintext(Raw::from_json_string(event.to_string()).unwrap()),
+        )
+        .await
+        .unwrap();
+        let TimelineItemContent::MsgLike(content) = content else {
+            panic!("message content");
+        };
+        let MsgLikeKind::Message(message) = content.kind else {
+            panic!("message");
+        };
+        let doc = crate::message_document::Document::from_message(message.msgtype(), None).unwrap();
+        assert!(
+            doc.blocks
+                .iter()
+                .flat_map(|block| &block.runs)
+                .any(|run| matches!(
+                    run.content,
+                    crate::message_document::Inline::Image {
+                        source: Some(crate::message_document::ImageSource::Formula(_)),
+                        ..
+                    }
+                ))
+        );
+        assert_eq!(
+            doc.text(&std::collections::BTreeSet::new()),
+            "Equation: x^2"
+        );
+    }
+    #[tokio::test]
     async fn sdk_event_kind_drives_activity_style_independently_of_message_text() {
         use crate::connected::RowKind;
         let (_server, room) = fixture().await;

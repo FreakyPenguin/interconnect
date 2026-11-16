@@ -25,6 +25,7 @@ primary platform and best-effort macOS builds.
   positions, send status, and retry.
 - Formatted messages with styled text, lists, quotes, code, links, spoilers, and
   inline images with explicit dimensions.
+- Matrix-compatible inline and display LaTeX math, rendered locally with RaTeX.
 - Markdown composition, on-demand previews, and a per-conversation plain-text mode.
 - People search, room creation, invitations, room topics, and pinned messages.
 - Reactions, emoji pickers and completion, image viewing, and click-to-play GIFs.

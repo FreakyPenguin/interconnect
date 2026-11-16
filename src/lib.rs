@@ -5,6 +5,7 @@ pub mod composition;
 pub mod connected;
 pub mod diagnostics;
 mod event_text;
+pub mod formula;
 pub mod image_media;
 pub mod live;
 pub mod media;

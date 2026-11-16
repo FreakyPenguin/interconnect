@@ -20,6 +20,5 @@
 - Bookmarks (MSC4482)
 - Dashboard
 - Custom emoji
-- Math
 - Search in room (Ctrl+F)
 - Search across rooms (Ctrl+Shift+F)
