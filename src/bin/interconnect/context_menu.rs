@@ -22,12 +22,18 @@ pub enum Event {
     Open(Target, Point),
     Dismiss,
     Choose(Target, String),
+    Move(Target, String),
+    Back,
 }
 pub struct State {
     target: Target,
     position: Point,
+    sections: bool,
+    pending: Option<u64>,
+    error: Option<String>,
 }
 enum Action {
+    Sections,
     Copy(String),
     Dispatch(Message),
 }
@@ -94,6 +100,7 @@ impl App {
                 }
                 vec![
                     ("Open room", Action::Dispatch(Message::Room(id.clone()))),
+                    ("Move to section…", Action::Sections),
                     ("Copy room ID", Action::Copy(id.clone())),
                 ]
             }
@@ -164,12 +171,71 @@ impl App {
         match event {
             Event::Open(target, position) => {
                 if !self.context_actions(&target).is_empty() {
-                    self.context_menu = Some(State { target, position });
+                    self.context_menu = Some(State {
+                        target,
+                        position,
+                        sections: false,
+                        pending: None,
+                        error: None,
+                    });
                     self.emoji_completion.clear();
                 }
             }
             Event::Dismiss => {
                 self.context_menu = None;
+            }
+            Event::Back => {
+                if let Some(state) = &mut self.context_menu
+                    && state.pending.is_none()
+                {
+                    state.sections = false;
+                    state.error = None;
+                }
+            }
+            Event::Move(target, destination) => {
+                if !self.context_menu_allowed()
+                    || !self.context_menu.as_ref().is_some_and(|state| {
+                        state.target == target && state.sections && state.pending.is_none()
+                    })
+                    || self.pending_ops >= super::MAX_PENDING_OPERATIONS
+                    || !self
+                        .move_destinations()
+                        .iter()
+                        .any(|(id, _)| id == &destination)
+                {
+                    return Task::none();
+                }
+                let Target::Room(room_id) = target else {
+                    return Task::none();
+                };
+                if !self.model.rooms.iter().any(|room| room.id == room_id) {
+                    return Task::none();
+                }
+                if self.demo.is_some() {
+                    let room = std::sync::Arc::make_mut(&mut self.model.rooms)
+                        .iter_mut()
+                        .find(|room| room.id == room_id)
+                        .unwrap();
+                    room.tags
+                        .retain(|tag| !interconnect::room_sections::is_section_tag(tag));
+                    if destination != "chats" {
+                        room.tags.push(destination.clone());
+                    }
+                    room.favorite = destination == "m.favourite";
+                    self.context_menu = None;
+                } else if let Some(directory) = self.model.people_directory.clone() {
+                    self.generation += 1;
+                    let request = self.generation;
+                    let account = self.account_id.clone();
+                    let state = self.context_menu.as_mut().unwrap();
+                    state.pending = Some(request);
+                    state.error = None;
+                    self.pending_ops += 1;
+                    return Task::perform(
+                        directory.move_room_to_section(room_id, destination),
+                        move |result| Message::RoomSectionMoved(account.clone(), request, result),
+                    );
+                }
             }
             Event::Choose(target, label) => {
                 if !self
@@ -179,20 +245,77 @@ impl App {
                 {
                     return Task::none();
                 }
-                self.context_menu = None;
+                if self
+                    .context_menu
+                    .as_ref()
+                    .is_some_and(|state| state.sections)
+                {
+                    return Task::none();
+                }
                 if let Some((_, action)) = self
                     .context_actions(&target)
                     .into_iter()
                     .find(|(name, _)| *name == label)
                 {
                     return match action {
-                        Action::Copy(value) => iced::clipboard::write(value),
-                        Action::Dispatch(action) => self.update(action),
+                        Action::Sections => {
+                            self.context_menu.as_mut().unwrap().sections = true;
+                            Task::none()
+                        }
+                        Action::Copy(value) => {
+                            self.context_menu = None;
+                            iced::clipboard::write(value)
+                        }
+                        Action::Dispatch(action) => {
+                            self.context_menu = None;
+                            self.update(action)
+                        }
                     };
                 }
             }
         }
         Task::none()
+    }
+    fn move_destinations(&self) -> Vec<(String, String)> {
+        self.model
+            .sections
+            .iter()
+            .filter_map(|section| {
+                if section.id == "Rooms" {
+                    Some(("chats".into(), "Default".into()))
+                } else if interconnect::room_sections::is_section_tag(&section.id) {
+                    Some((section.id.clone(), section.name.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+    pub(super) fn room_section_moved(
+        &mut self,
+        account: Option<String>,
+        request: u64,
+        result: Result<(), String>,
+    ) {
+        if account != self.account_id {
+            return;
+        }
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|state| state.pending == Some(request))
+        {
+            match result {
+                Ok(()) => self.context_menu = None,
+                Err(error) => {
+                    let state = self.context_menu.as_mut().unwrap();
+                    state.pending = None;
+                    state.error = Some(error);
+                }
+            }
+        } else if let Err(error) = result {
+            self.model.navigation_error = Some(error);
+        }
     }
     pub(super) fn context_menu_view<'a>(
         &'a self,
@@ -203,20 +326,74 @@ impl App {
             if actions.is_empty() {
                 return None;
             }
-            let items = actions
-                .into_iter()
-                .fold(column![].spacing(2), |items, (label, _)| {
-                    items.push(
+            let items = if state.sections {
+                let mut items = column![
+                    button(text("‹ Move to section").size(13))
+                        .padding([7, 10])
+                        .style(shell::quiet_button)
+                        .on_press_maybe(state.pending.is_none().then(|| message(Event::Back)))
+                ]
+                .spacing(2);
+                for (id, name) in self.move_destinations() {
+                    let current = match &state.target {
+                        Target::Room(room) => self
+                            .model
+                            .rooms
+                            .iter()
+                            .find(|entry| &entry.id == room)
+                            .is_some_and(|entry| {
+                                let section = entry.section_in(&self.model.sections);
+                                section == id
+                                    || (id == "chats"
+                                        && matches!(
+                                            section,
+                                            "Rooms" | "Unread" | "Direct messages"
+                                        ))
+                            }),
+                        _ => false,
+                    };
+                    let label = if current { format!("✓ {name}") } else { name };
+                    items = items.push(
                         button(text(label).size(13))
                             .width(iced::Length::Fill)
                             .padding([7, 10])
                             .style(shell::quiet_button)
-                            .on_press(message(Event::Choose(state.target.clone(), label.into()))),
-                    )
-                });
+                            .on_press_maybe(
+                                (state.pending.is_none()
+                                    && self.pending_ops < super::MAX_PENDING_OPERATIONS
+                                    && (self.demo.is_some()
+                                        || self.model.people_directory.is_some()))
+                                .then(|| message(Event::Move(state.target.clone(), id))),
+                            ),
+                    );
+                }
+                if state.pending.is_some() {
+                    items = items.push(text("Moving…").size(12));
+                }
+                if let Some(error) = &state.error {
+                    items = items.push(text(error).size(12));
+                }
+                items
+            } else {
+                actions
+                    .into_iter()
+                    .fold(column![].spacing(2), |items, (label, _)| {
+                        items.push(
+                            button(text(label).size(13))
+                                .width(iced::Length::Fill)
+                                .padding([7, 10])
+                                .style(shell::quiet_button)
+                                .on_press(message(Event::Choose(
+                                    state.target.clone(),
+                                    label.into(),
+                                ))),
+                        )
+                    })
+            };
             Some(
-                container(items)
-                    .width(200)
+                container(iced::widget::scrollable(items).height(iced::Length::Shrink))
+                    .max_height(360)
+                    .width(if state.sections { 240 } else { 200 })
                     .padding(5)
                     .style(|_| container::Style {
                         border: iced::Border {
@@ -269,6 +446,134 @@ mod tests {
     fn choose(app: &mut App, target: &Target, label: &str) {
         let _ = app.update(message(Event::Choose(target.clone(), label.into())));
     }
+    #[test]
+    fn room_moves_replace_membership_without_switching_conversation_or_disturbing_drafts() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Thread("review".into()));
+        let selected = app.selection.room.clone();
+        let thread = app.selection.thread.clone();
+        let draft = app.draft_key(true).unwrap();
+        app.drafts.get_mut(&draft).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Unsent");
+        app.scroll_positions.insert(draft.clone(), 91.0);
+        let target = Target::Room("general".into());
+        std::sync::Arc::make_mut(&mut app.model.rooms)
+            .iter_mut()
+            .find(|r| r.id == "general")
+            .unwrap()
+            .tags = vec![
+            "m.favourite".into(),
+            "element.io.section.orphan".into(),
+            "u.keep".into(),
+        ];
+        for destination in [
+            "element.io.section.demo-design",
+            "m.lowpriority",
+            "m.favourite",
+            "chats",
+        ] {
+            open(&mut app, &target);
+            choose(&mut app, &target, "Move to section…");
+            assert!(app.context_menu.as_ref().unwrap().sections);
+            let _ = app.update(message(Event::Move(target.clone(), destination.into())));
+            assert!(app.context_menu.is_none());
+            let room = app.model.rooms.iter().find(|r| r.id == "general").unwrap();
+            assert!(room.tags.contains(&"u.keep".into()));
+            assert!(!room.tags.contains(&"element.io.section.orphan".into()));
+            assert_eq!(room.favorite, destination == "m.favourite");
+            assert_eq!(
+                room.section_in(&app.model.sections),
+                if destination == "chats" {
+                    "Rooms"
+                } else {
+                    destination
+                }
+            );
+            assert_eq!(app.selection.room, selected);
+            assert_eq!(app.selection.thread, thread);
+            assert_eq!(app.drafts[&draft].content.text(), "Unsent");
+            assert_eq!(app.scroll_positions[&draft], 91.0);
+        }
+    }
+    #[test]
+    fn section_choices_reject_dismissal_removed_destinations_and_pending_or_modal_actions() {
+        let mut app = demo_app();
+        let target = Target::Room("general".into());
+        open(&mut app, &target);
+        choose(&mut app, &target, "Move to section…");
+        let before = app.model.rooms.clone();
+        let _ = app.update(Message::Escape);
+        let _ = app.update(message(Event::Move(target.clone(), "m.lowpriority".into())));
+        assert_eq!(app.model.rooms, before);
+        open(&mut app, &target);
+        choose(&mut app, &target, "Move to section…");
+        std::sync::Arc::make_mut(&mut app.model.sections)
+            .retain(|s| s.id != "element.io.section.demo-design");
+        let _ = app.update(message(Event::Move(
+            target.clone(),
+            "element.io.section.demo-design".into(),
+        )));
+        assert_eq!(app.model.rooms, before);
+        app.context_menu.as_mut().unwrap().pending = Some(77);
+        let _ = app.update(message(Event::Move(target.clone(), "m.lowpriority".into())));
+        assert_eq!(app.model.rooms, before);
+        app.context_menu.as_mut().unwrap().pending = None;
+        app.verification.open = true;
+        let _ = app.update(message(Event::Move(target, "m.lowpriority".into())));
+        assert_eq!(app.model.rooms, before);
+    }
+    #[test]
+    fn move_completion_rejects_other_accounts_keeps_new_menus_and_finishes_shutdown() {
+        let mut app = demo_app();
+        let target = Target::Room("general".into());
+        open(&mut app, &target);
+        choose(&mut app, &target, "Move to section…");
+        app.context_menu.as_mut().unwrap().pending = Some(77);
+        app.pending_ops = 1;
+        let _ = app.update(Message::RoomSectionMoved(
+            app.account_id.clone(),
+            77,
+            Err("Refused".into()),
+        ));
+        assert_eq!(app.pending_ops, 0);
+        assert_eq!(
+            app.context_menu.as_ref().unwrap().error.as_deref(),
+            Some("Refused")
+        );
+        app.pending_ops = 1;
+        let _ = app.update(Message::RoomSectionMoved(
+            Some("other account".into()),
+            77,
+            Ok(()),
+        ));
+        assert!(app.context_menu.is_some());
+        app.pending_ops = 1;
+        open(&mut app, &Target::Room("studio".into()));
+        let _ = app.update(Message::RoomSectionMoved(
+            app.account_id.clone(),
+            77,
+            Ok(()),
+        ));
+        assert_eq!(
+            app.context_menu.as_ref().unwrap().target,
+            Target::Room("studio".into())
+        );
+        app.pending_ops = 1;
+        app.closing = true;
+        let _ = app.update(Message::RoomSectionMoved(
+            app.account_id.clone(),
+            77,
+            Err("Failed after dismissal".into()),
+        ));
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.selection.shutdown);
+        assert!(app.context_menu.is_none());
+        assert_eq!(
+            app.model.navigation_error.as_deref(),
+            Some("Failed after dismissal")
+        );
+    }
+
     #[test]
     fn thread_summary_opens_its_thread_and_open_menus_block_attachment_drops() {
         let mut app = demo_app();

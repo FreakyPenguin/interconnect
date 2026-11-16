@@ -29,6 +29,7 @@ pub struct Directory(
     Arc<RuntimeOwned<Client>>,
     tokio::sync::broadcast::Sender<()>,
     Arc<tokio::sync::Mutex<std::collections::HashMap<String, matrix_sdk::ruma::OwnedRoomId>>>,
+    Arc<tokio::sync::Mutex<()>>,
 );
 impl Directory {
     /// Construct inside the client's Tokio runtime; final drop is runtime-safe.
@@ -37,12 +38,14 @@ impl Directory {
             RuntimeOwned::new(client),
             tokio::sync::broadcast::channel(1).0,
             Arc::default(),
+            Arc::default(),
         )
     }
     pub(crate) fn from_runtime(client: Client, runtime: tokio::runtime::Handle) -> Self {
         Self(
             RuntimeOwned::with_runtime(client, runtime),
             tokio::sync::broadcast::channel(1).0,
+            Arc::default(),
             Arc::default(),
         )
     }
@@ -106,6 +109,20 @@ impl Directory {
         let _ = self.1.send(());
         result
     }
+    /// Account-owned handle supports unopened rooms; serialize explicit moves until server ACK.
+    pub async fn move_room_to_section(
+        self,
+        room: String,
+        destination: String,
+    ) -> Result<(), String> {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let _guard = self.3.lock().await;
+            crate::room_sections::move_room(&self.0, &room, &destination).await
+        })
+        .await
+        .map_err(|_| "Moving the room timed out. Check its section before retrying.".to_owned())?
+    }
+
     pub async fn search(self, query: String) -> Result<SearchResults, String> {
         let query = query.trim();
         if query.is_empty() {

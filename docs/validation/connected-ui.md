@@ -40,7 +40,7 @@ see [renderer selection](../development.md#renderer-selection).
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
 | Room creation | Ctrl+Shift+N or **#+** opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
 | Drafts and scrolling | Room/thread drafts and reading positions survive navigation and dialogs. Jump-to-newest resumes following incoming messages. |
-| Context menus | Right-click a room entry for **Open room** and **Copy room ID**. Messages in rooms, thread originals, and replies offer **Copy text**, reactions, and permission-gated pin/unpin; room messages also offer **Reply in thread**. Thread summaries offer **Open thread** and **Copy thread ID**. Menus stay inside the window, dismiss on Escape/outside click/focus loss, and preserve drafts and reading positions. An outside click dismisses without activating the item underneath. |
+| Context menus | Right-click a room entry for **Open room**, **Move to section…**, and **Copy room ID**. The section picker includes empty custom sections, Favorites, Low priority, and Default; the current section is checked. Messages in rooms, thread originals, and replies offer **Copy text**, reactions, and permission-gated pin/unpin; room messages also offer **Reply in thread**. Thread summaries offer **Open thread** and **Copy thread ID**. Menus stay inside the window, dismiss on Escape/outside click/focus loss, and preserve drafts and reading positions. An outside click dismisses without activating the item underneath. |
 | Threads | The reply arrow or Alt+T opens a thread. Its original appears once above replies; long originals and replies scroll independently. |
 | Thread activity | Studio → Thread activity has interleaved replies. **New sample reply** updates the latest summary and new count for its thread. |
 | Event layout | Studio → Room activity contains compact activity rows, long topics, and selectable text across message types. |
@@ -82,7 +82,8 @@ and historical-key availability are separate from successful login.
 
 Protocol references: Element's [section schema and ordering](https://github.com/element-hq/element-web/blob/develop/apps/web/src/stores/room-list-v3/section.ts),
 [section membership](https://github.com/element-hq/element-web/blob/develop/apps/web/src/stores/room-list-v3/skip-list/filters/SectionFilter.ts),
-and [account settings storage](https://github.com/element-hq/element-web/blob/develop/apps/web/src/settings/handlers/AccountSettingsHandler.ts).
+[account settings storage](https://github.com/element-hq/element-web/blob/develop/apps/web/src/settings/handlers/AccountSettingsHandler.ts),
+and [room tag changes](https://github.com/element-hq/element-web/blob/develop/apps/web/src/utils/room/tagRoom.ts).
 
 Display reads `RoomList.CustomSectionData` and `RoomList.OrderedCustomSections`
 from global `im.vector.web.settings` account data. Room `m.tag` keys of the form
@@ -96,28 +97,63 @@ Direct messages/Unread grouping; multiple tags use the first displayed explicit
 section. Element's `chats` order slot retains this client's Unread and Rooms
 groups, and `im.vector.fake.direct` positions Direct messages. Empty sections are
 hidden, so `spaceId` does not limit nonempty sections: room membership in the
-selected space determines visibility. This display-only implementation does not
-write Element settings/tags or import Element's device-local expansion settings.
-Section management and Element's section/People visibility preferences are not
-implemented.
+selected space determines visibility.
+
+Right-click any joined room → **Move to section…** to move it to Favorites, a
+custom section (including an empty one), Low priority, or Default. Default clears
+explicit section tags, returning to inferred Direct messages/Unread/Rooms
+grouping. These inferred groups are not independent move destinations. Choices
+use stable IDs even when labels are duplicated. Selecting the current destination
+keeps the room there rather than toggling it out.
+
+An explicit move reads the server's current `m.tag` content, removes Favorites,
+Low priority, and all custom section tags (including orphaned tags), then sends a
+single replacement `m.tag` event. Unrelated tags, their metadata, and an existing
+destination's metadata are preserved. Custom destinations are checked against
+current server definitions. Reads that fail or return malformed tags abort the
+write; a missing `m.tag` event is treated as empty. Same-account moves serialize
+and have a 30-second deadline including the queue. Cross-client edits between
+GET and PUT can still race; the protocol has no conditional replacement.
+
+Submitted moves finish against the captured account after dismissal and
+participate in shutdown. Connected grouping follows sync; demo moves only edit
+memory. Pending choices are disabled, failures appear in the picker (or room-list
+feedback after dismissal), and obsolete completions cannot close a newer menu.
+Moving never selects the room or changes drafts/reading positions. No Element
+section definitions, visibility preferences, or device expansion settings are
+written. Section creation/rename/reorder/deletion and Element's section/People
+visibility preferences are not implemented.
 
 Automated coverage includes schema validation, duplicate labels and order entries,
 multiple-tag precedence, stale tags, room-tag sync, and settings-only syncs for
 creation, rename, reorder, and deletion. UI state tests cover stable collapse
-identity and space filtering. An isolated headless Sway demo with tiny-skia
-was visually checked for the Design header and its two rooms. Live Element
-interoperability and native desktop acceptance still require manual checks:
+identity and space filtering. Move fixtures cover full tag replacement, preserved
+metadata, repeated moves before sync, deleted destinations, malformed data,
+read/write failures, stale accounts/menus, shutdown, and draft/scroll preservation.
+An isolated headless Sway demo with tiny-skia was visually checked at 1280×900:
+right-clicking the unselected General room opened the menu, **Move to section…**
+showed the checked Favorites destination, and choosing Design moved General
+there while Design studio remained open. Live Element interoperability and
+native desktop acceptance still require manual checks:
 
 1. In Element on a dedicated test account, create two custom sections, move rooms
    (including a DM) into them, and reorder them around Chats. Open the same account
    here and compare names, membership, and order.
 2. Rename, reorder, and delete sections in Element while this client runs. Check
    updates without navigating or reopening, and that a deleted section's rooms
-   remain accessible. Confirm this client makes no section/tag writes.
+   remain accessible. Confirm this client makes no section/tag writes until an
+   explicit move is chosen.
 3. Check All rooms, Direct messages, and nested/shared spaces. Empty sections stay
    hidden; changing spaces preserves the conversation, thread, drafts, and scroll.
 4. Collapse a section, rename it remotely, and confirm it stays collapsed. Search
    exposes matching rooms temporarily; clearing search restores collapse state.
+
+5. Move a non-selected room here to each destination and compare in Element after
+   sync. Include a DM, an empty custom section, a room with unrelated tags, and
+   Default. Preserve an open room/thread draft and reading position throughout.
+6. Disconnect before choosing a destination; check pending/error feedback and
+   retry after reconnecting. Dismiss a pending move, open another menu, and close
+   the app; the completion must not close a newer menu or skip shutdown cleanup.
 
 ## Navigation and timelines
 
