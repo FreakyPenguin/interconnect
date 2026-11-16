@@ -1,4 +1,4 @@
-//! Explicit room-section moves. Read server tags before a single m.tag replacement.
+//! Element-compatible section settings and explicit room membership changes.
 use matrix_sdk::{
     Client, RoomState,
     ruma::{
@@ -83,6 +83,147 @@ pub(crate) async fn move_room(client: &Client, id: &str, destination: &str) -> R
     )
     .await
     .map_err(|_| "Could not move the room. Check its section before retrying.".to_owned())?;
+    Ok(())
+}
+
+/// A stable tag is allocated when the create form opens, so retries reuse its ID.
+#[derive(Clone, Debug)]
+pub enum Change {
+    Create {
+        tag: String,
+        name: String,
+        space_id: String,
+    },
+    Rename {
+        tag: String,
+        name: String,
+    },
+    Remove {
+        tag: String,
+    },
+}
+impl Change {
+    pub fn tag(&self) -> &str {
+        match self {
+            Self::Create { tag, .. } | Self::Rename { tag, .. } | Self::Remove { tag } => tag,
+        }
+    }
+}
+pub fn new_section_tag() -> String {
+    format!(
+        "element.io.section.{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        rand::random::<u32>(),
+        rand::random::<u16>(),
+        (rand::random::<u16>() & 0x0fff) | 0x4000,
+        (rand::random::<u16>() & 0x3fff) | 0x8000,
+        rand::random::<u64>() & 0xffffffffffff
+    )
+}
+
+/// Edit only the requested definition/order entries; preserve other clients' settings.
+pub fn change_settings(mut settings: Value, change: &Change) -> Result<Value, String> {
+    let tag = change.tag();
+    if !tag.starts_with("element.io.section.") {
+        return Err("Built-in sections cannot be edited.".into());
+    }
+    let name = match change {
+        Change::Create { name, .. } | Change::Rename { name, .. } => {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err("Enter a section name.".into());
+            }
+            Some(name)
+        }
+        Change::Remove { .. } => None,
+    };
+    let root = settings
+        .as_object_mut()
+        .ok_or("The server returned invalid settings. No changes were made.")?;
+    let definitions = root
+        .entry("RoomList.CustomSectionData")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("The server returned invalid section definitions. No changes were made.")?;
+    match change {
+        Change::Create { space_id, .. } => {
+            let entry = json!({"tag":tag,"name":name.unwrap(),"spaceId":space_id});
+            if let Some(existing) = definitions.get(tag) {
+                if existing["tag"] != tag
+                    || existing["name"] != name.unwrap()
+                    || existing["spaceId"] != *space_id
+                {
+                    return Err(
+                        "This section already exists. Reopen section management to refresh it."
+                            .into(),
+                    );
+                }
+            } else {
+                definitions.insert(tag.into(), entry);
+            }
+        }
+        Change::Rename { .. } => {
+            let entry = definitions
+                .get_mut(tag)
+                .and_then(Value::as_object_mut)
+                .filter(|entry| entry.get("tag").and_then(Value::as_str) == Some(tag))
+                .ok_or("This section no longer exists.")?;
+            entry.insert("name".into(), json!(name.unwrap()));
+        }
+        Change::Remove { .. } => {
+            definitions.remove(tag);
+        }
+    }
+    if !matches!(change, Change::Rename { .. }) {
+        let order = root
+            .entry("RoomList.OrderedCustomSections")
+            .or_insert_with(|| json!(["im.vector.fake.direct", "chats"]))
+            .as_array_mut()
+            .ok_or("The server returned invalid section order. No changes were made.")?;
+        match change {
+            Change::Create { .. } => {
+                if !order.iter().any(|value| value == "chats") {
+                    order.push(json!("chats"));
+                }
+                if !order.iter().any(|value| value == "im.vector.fake.direct") {
+                    order.insert(0, json!("im.vector.fake.direct"));
+                }
+                if !order.iter().any(|value| value == tag) {
+                    let index = order.iter().position(|value| value == "chats").unwrap();
+                    order.insert(index, json!(tag));
+                }
+            }
+            Change::Remove { .. } => order.retain(|value| value != tag),
+            _ => unreachable!(),
+        }
+    }
+    Ok(settings)
+}
+
+pub(crate) async fn change_section(client: &Client, change: Change) -> Result<(), String> {
+    let settings = client
+        .account()
+        .fetch_account_data(crate::navigation::ELEMENT_SETTINGS.into())
+        .await
+        .map_err(|_| "Could not load current section settings. No changes were made.")?
+        .map(|raw| serde_json::from_str::<Value>(raw.json().get()))
+        .transpose()
+        .map_err(|_| "The server returned invalid settings. No changes were made.")?
+        .unwrap_or_else(|| json!({}));
+    let replacement = change_settings(settings.clone(), &change)?;
+    if replacement != settings {
+        client
+            .account()
+            .set_account_data_raw(
+                crate::navigation::ELEMENT_SETTINGS.into(),
+                Raw::new(&replacement)
+                    .map_err(|_| "Could not prepare section settings.")?
+                    .cast_unchecked(),
+            )
+            .await
+            .map_err(|_| {
+                "Could not save the section. Check section management before retrying.".to_owned()
+            })?;
+    }
     Ok(())
 }
 
@@ -287,6 +428,225 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.contains("Could not move"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn section_management_reads_fresh_settings_and_atomically_preserves_other_data() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
+            .mount(&server)
+            .await;
+        let client = Client::builder()
+            .homeserver_url(server.uri())
+            .build()
+            .await
+            .unwrap();
+        client
+            .matrix_auth()
+            .restore_session(
+                serde_json::from_value::<MatrixSession>(json!({
+                    "user_id":"@test:example.org", "device_id":"TEST", "access_token":"fake"
+                }))
+                .unwrap(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        let settings = Arc::new(Mutex::new(json!({
+            "unrelated":{"preserve":true},
+            "RoomList.CustomSectionData":{"element.io.section.existing":{"tag":"element.io.section.existing","name":"Existing","extra":1}},
+            "RoomList.OrderedCustomSections":["chats","element.io.section.existing"]
+        })));
+        let read_status = Arc::new(std::sync::atomic::AtomicU16::new(200));
+        let write_status = Arc::new(std::sync::atomic::AtomicU16::new(200));
+        let settings_path =
+            "/_matrix/client/v3/user/@test:example.org/account_data/im.vector.web.settings";
+        let data = settings.clone();
+        let status = read_status.clone();
+        Mock::given(method("GET")).and(path(settings_path)).respond_with(move |_: &wiremock::Request| {
+            let code = status.load(std::sync::atomic::Ordering::SeqCst);
+            ResponseTemplate::new(code).set_body_json(if code == 200 { data.lock().unwrap().clone() }
+                else { json!({"errcode":if code == 404 {"M_NOT_FOUND"} else {"M_FORBIDDEN"},"error":"fixture"}) })
+        }).mount(&server).await;
+        let data = settings.clone();
+        let status = write_status.clone();
+        Mock::given(method("PUT"))
+            .and(path(settings_path))
+            .respond_with(move |req: &wiremock::Request| {
+                let code = status.load(std::sync::atomic::Ordering::SeqCst);
+                if code == 200 {
+                    *data.lock().unwrap() = req.body_json().unwrap();
+                }
+                ResponseTemplate::new(code).set_body_json(if code == 200 {
+                    json!({})
+                } else {
+                    json!({"errcode":"M_FORBIDDEN","error":"fixture"})
+                })
+            })
+            .mount(&server)
+            .await;
+        let directory = crate::people::Directory::new(client);
+        let tag = new_section_tag();
+        let change = Change::Create {
+            tag: tag.clone(),
+            name: "  Projects  ".into(),
+            space_id: "!space:example.org".into(),
+        };
+        directory
+            .clone()
+            .change_section(change.clone())
+            .await
+            .unwrap();
+        {
+            let data = settings.lock().unwrap();
+            assert_eq!(
+                data["RoomList.CustomSectionData"][&tag],
+                json!({"tag":tag,"name":"Projects","spaceId":"!space:example.org"})
+            );
+            assert_eq!(
+                data["RoomList.OrderedCustomSections"],
+                json!([
+                    "im.vector.fake.direct",
+                    tag,
+                    "chats",
+                    "element.io.section.existing"
+                ])
+            );
+        }
+        // Retry uses the same ID and performs no duplicate creation/write.
+        directory.clone().change_section(change).await.unwrap();
+        settings.lock().unwrap()["new_remote_setting"] = json!(123);
+        settings.lock().unwrap()["RoomList.CustomSectionData"][&tag]["extension"] =
+            json!({"keep":true});
+        directory
+            .clone()
+            .change_section(Change::Rename {
+                tag: tag.clone(),
+                name: "Renamed".into(),
+            })
+            .await
+            .unwrap();
+        {
+            let data = settings.lock().unwrap();
+            assert_eq!(
+                data["RoomList.CustomSectionData"][&tag]["spaceId"],
+                "!space:example.org"
+            );
+            assert_eq!(
+                data["RoomList.CustomSectionData"][&tag]["extension"],
+                json!({"keep":true})
+            );
+            assert_eq!(data["new_remote_setting"], 123);
+            assert_eq!(data["unrelated"], json!({"preserve":true}));
+        }
+        directory
+            .clone()
+            .change_section(Change::Remove { tag: tag.clone() })
+            .await
+            .unwrap();
+        directory
+            .clone()
+            .change_section(Change::Remove { tag: tag.clone() })
+            .await
+            .unwrap();
+        assert!(
+            settings.lock().unwrap()["RoomList.CustomSectionData"]
+                .get(&tag)
+                .is_none()
+        );
+        assert_eq!(
+            settings.lock().unwrap()["RoomList.OrderedCustomSections"],
+            json!([
+                "im.vector.fake.direct",
+                "chats",
+                "element.io.section.existing"
+            ])
+        );
+        assert!(
+            directory
+                .clone()
+                .change_section(Change::Rename {
+                    tag: tag.clone(),
+                    name: "Stale".into()
+                })
+                .await
+                .unwrap_err()
+                .contains("no longer exists")
+        );
+        *settings.lock().unwrap() = json!({"RoomList.CustomSectionData":[]});
+        assert!(
+            directory
+                .clone()
+                .change_section(Change::Create {
+                    tag: tag.clone(),
+                    name: "Bad".into(),
+                    space_id: "home-space".into()
+                })
+                .await
+                .unwrap_err()
+                .contains("invalid section definitions")
+        );
+        read_status.store(403, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            directory
+                .clone()
+                .change_section(Change::Remove { tag: tag.clone() })
+                .await
+                .unwrap_err()
+                .contains("Could not load")
+        );
+        let writes: Vec<_> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|req| req.method == "PUT")
+            .collect();
+        assert_eq!(writes.len(), 3);
+        assert!(writes.iter().all(|req| req.url.path() == settings_path));
+        read_status.store(404, std::sync::atomic::Ordering::SeqCst);
+        write_status.store(403, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            directory
+                .change_section(Change::Create {
+                    tag,
+                    name: "Refused".into(),
+                    space_id: "home-space".into()
+                })
+                .await
+                .unwrap_err()
+                .contains("Could not save")
+        );
+    }
+
+    #[test]
+    fn invalid_names_builtin_edits_and_malformed_order_never_replace_settings() {
+        for change in [
+            Change::Create {
+                tag: "element.io.section.test".into(),
+                name: "  ".into(),
+                space_id: "home-space".into(),
+            },
+            Change::Rename {
+                tag: "m.favourite".into(),
+                name: "No".into(),
+            },
+            Change::Remove {
+                tag: "m.lowpriority".into(),
+            },
+        ] {
+            assert!(change_settings(json!({}), &change).is_err());
+        }
+        let change = Change::Create {
+            tag: "element.io.section.test".into(),
+            name: "Test".into(),
+            space_id: "home-space".into(),
+        };
+        for settings in [json!([]), json!({"RoomList.OrderedCustomSections":{}})] {
+            assert!(change_settings(settings, &change).is_err());
+        }
     }
 
     #[test]

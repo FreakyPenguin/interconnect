@@ -158,6 +158,7 @@ struct App {
 enum Message {
     ContextMenu(context_menu::Event),
     RoomSectionMoved(Option<String>, u64, Result<(), String>),
+    SectionChanged(Option<String>, u64, Result<(), String>),
     OpenMessageLink(String),
     LinkOpened,
     QuickRoom(room_picker::Event),
@@ -985,6 +986,10 @@ impl App {
                         move |result| Message::Sent(key.clone(), account.clone(), result),
                     );
                 }
+            }
+            Message::SectionChanged(account, request, result) => {
+                self.pending_ops -= 1;
+                self.section_changed(account, request, result);
             }
             Message::RoomSectionMoved(account, request, result) => {
                 self.pending_ops -= 1;

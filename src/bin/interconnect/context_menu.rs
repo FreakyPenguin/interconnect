@@ -6,9 +6,13 @@ use iced::{
     widget::{button, column, container, text},
 };
 use interconnect::connected::MessageRow;
+#[path = "section_management.rs"]
+mod section_management;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
+    Sections,
+    Section(String),
     Room(String),
     Message(reaction_picker::Target),
     Thread {
@@ -24,15 +28,22 @@ pub enum Event {
     Choose(Target, String),
     Move(Target, String),
     Back,
+    EditSectionName(String),
+    SaveSection,
+    CancelSection,
 }
 pub struct State {
     target: Target,
     position: Point,
     sections: bool,
+    form: Option<section_management::Form>,
     pending: Option<u64>,
     error: Option<String>,
 }
 enum Action {
+    CreateSection,
+    RenameSection,
+    RemoveSection,
     Sections,
     Copy(String),
     Dispatch(Message),
@@ -94,6 +105,18 @@ impl App {
             return Vec::new();
         }
         match target {
+            Target::Sections => vec![("New section…", Action::CreateSection)],
+            Target::Section(tag) => {
+                if !tag.starts_with("element.io.section.")
+                    || !self.model.sections.iter().any(|section| &section.id == tag)
+                {
+                    return Vec::new();
+                }
+                vec![
+                    ("Rename section…", Action::RenameSection),
+                    ("Remove section…", Action::RemoveSection),
+                ]
+            }
             Target::Room(id) => {
                 if !self.model.rooms.iter().any(|room| &room.id == id) {
                     return Vec::new();
@@ -169,12 +192,16 @@ impl App {
     }
     pub(super) fn context_menu_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::EditSectionName(_) | Event::SaveSection | Event::CancelSection => {
+                return self.section_form_event(event);
+            }
             Event::Open(target, position) => {
                 if !self.context_actions(&target).is_empty() {
                     self.context_menu = Some(State {
                         target,
                         position,
                         sections: false,
+                        form: None,
                         pending: None,
                         error: None,
                     });
@@ -195,7 +222,10 @@ impl App {
             Event::Move(target, destination) => {
                 if !self.context_menu_allowed()
                     || !self.context_menu.as_ref().is_some_and(|state| {
-                        state.target == target && state.sections && state.pending.is_none()
+                        state.target == target
+                            && state.sections
+                            && state.form.is_none()
+                            && state.pending.is_none()
                     })
                     || self.pending_ops >= super::MAX_PENDING_OPERATIONS
                     || !self
@@ -245,11 +275,9 @@ impl App {
                 {
                     return Task::none();
                 }
-                if self
-                    .context_menu
-                    .as_ref()
-                    .is_some_and(|state| state.sections)
-                {
+                if self.context_menu.as_ref().is_some_and(|state| {
+                    state.sections || state.form.is_some() || state.pending.is_some()
+                }) {
                     return Task::none();
                 }
                 if let Some((_, action)) = self
@@ -258,6 +286,9 @@ impl App {
                     .find(|(name, _)| *name == label)
                 {
                     return match action {
+                        Action::CreateSection | Action::RenameSection | Action::RemoveSection => {
+                            self.open_section_form(action)
+                        }
                         Action::Sections => {
                             self.context_menu.as_mut().unwrap().sections = true;
                             Task::none()
@@ -326,7 +357,9 @@ impl App {
             if actions.is_empty() {
                 return None;
             }
-            let items = if state.sections {
+            let items = if state.form.is_some() {
+                column![self.section_form_view(state)]
+            } else if state.sections {
                 let mut items = column![
                     button(text("‹ Move to section").size(13))
                         .padding([7, 10])
@@ -375,25 +408,52 @@ impl App {
                 }
                 items
             } else {
-                actions
-                    .into_iter()
-                    .fold(column![].spacing(2), |items, (label, _)| {
-                        items.push(
-                            button(text(label).size(13))
+                let mut items =
+                    actions
+                        .into_iter()
+                        .fold(column![].spacing(2), |items, (label, _)| {
+                            items.push(
+                                button(text(label).size(13))
+                                    .width(iced::Length::Fill)
+                                    .padding([7, 10])
+                                    .style(shell::quiet_button)
+                                    .on_press(message(Event::Choose(
+                                        state.target.clone(),
+                                        label.into(),
+                                    ))),
+                            )
+                        });
+                if state.target == Target::Sections {
+                    for section in self
+                        .model
+                        .sections
+                        .iter()
+                        .filter(|section| section.id.starts_with("element.io.section."))
+                    {
+                        items = items.push(
+                            button(text(section.name.clone()).size(13))
                                 .width(iced::Length::Fill)
                                 .padding([7, 10])
                                 .style(shell::quiet_button)
-                                .on_press(message(Event::Choose(
-                                    state.target.clone(),
-                                    label.into(),
+                                .on_press(message(Event::Open(
+                                    Target::Section(section.id.clone()),
+                                    state.position,
                                 ))),
-                        )
-                    })
+                        );
+                    }
+                }
+                items
             };
             Some(
                 container(iced::widget::scrollable(items).height(iced::Length::Shrink))
                     .max_height(360)
-                    .width(if state.sections { 240 } else { 200 })
+                    .width(if state.form.is_some() {
+                        280
+                    } else if state.sections {
+                        240
+                    } else {
+                        200
+                    })
                     .padding(5)
                     .style(|_| container::Style {
                         border: iced::Border {

@@ -683,7 +683,9 @@ impl App {
                 .iter()
                 .filter(|r| visible.contains(&r.id) && r.section_in(sections) == section.id)
                 .collect();
-            if entries.is_empty() {
+            if entries.is_empty()
+                && (!self.shell.query.is_empty() || !section.show_empty(&self.shell.space))
+            {
                 continue;
             }
             matches += entries.len();
@@ -692,22 +694,28 @@ impl App {
                 .collapsed
                 .contains(&self.section_key(&section.id))
                 && self.shell.query.is_empty();
-            rooms = rooms.push(
-                button(
-                    row![
-                        text(if collapsed { "›" } else { "⌄" }).size(12),
-                        title(&section.name, 11).color(MUTED),
-                        widget::space().width(Length::Fill),
-                        text(entries.len()).size(10).color(MUTED)
-                    ]
-                    .spacing(7)
-                    .align_y(Alignment::Center),
+            let header = button(
+                row![
+                    text(if collapsed { "›" } else { "⌄" }).size(12),
+                    title(&section.name, 11).color(MUTED),
+                    widget::space().width(Length::Fill),
+                    text(entries.len()).size(10).color(MUTED)
+                ]
+                .spacing(7)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .padding([6, 8])
+            .style(quiet_button)
+            .on_press(Message::Section(section.id.clone()));
+            rooms = rooms.push(if section.id.starts_with("element.io.section.") {
+                super::context_menu::trigger(
+                    header,
+                    super::context_menu::Target::Section(section.id.clone()),
                 )
-                .width(Length::Fill)
-                .padding([6, 8])
-                .style(quiet_button)
-                .on_press(Message::Section(section.id.clone())),
-            );
+            } else {
+                header.into()
+            });
             if collapsed {
                 continue;
             }
@@ -805,6 +813,17 @@ impl App {
                         .width(Length::Fill),
                     new_chat,
                     create_room,
+                    widget::tooltip(
+                        button(text("⋯").size(16))
+                            .padding(2)
+                            .style(icon_button)
+                            .on_press(Message::ContextMenu(super::context_menu::Event::Open(
+                                super::context_menu::Target::Sections,
+                                iced::Point::new(280.0, 40.0)
+                            ))),
+                        "Manage sections",
+                        widget::tooltip::Position::Bottom
+                    ),
                 ]
                 .align_y(Alignment::Center),
                 search,

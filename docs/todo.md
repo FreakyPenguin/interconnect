@@ -8,7 +8,7 @@
 
 - Logout / account switching UI
 - mark unread
-- Custom sections: create, rename, reorder, and delete (Element-compatible display and room moves implemented)
+- Reorder custom sections 
 
 ## Other ideas
 

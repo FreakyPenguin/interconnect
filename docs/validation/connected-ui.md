@@ -34,7 +34,7 @@ see [renderer selection](../development.md#renderer-selection).
 
 | Area | Controls and expected behavior |
 | --- | --- |
-| Custom sections | Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
+| Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
 | Navigation | Space selection filters the room list without switching the open conversation. Sections collapse independently; search filters rooms. |
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
@@ -95,9 +95,11 @@ ignored. Unknown/deleted tags leave rooms in their usual groups.
 Favorites stays first and Low priority last. Explicit tags win over inferred
 Direct messages/Unread grouping; multiple tags use the first displayed explicit
 section. Element's `chats` order slot retains this client's Unread and Rooms
-groups, and `im.vector.fake.direct` positions Direct messages. Empty sections are
-hidden, so `spaceId` does not limit nonempty sections: room membership in the
-selected space determines visibility.
+groups, and `im.vector.fake.direct` positions Direct messages. Empty custom
+sections appear in their creation scope using Element's `spaceId` (`home-space`
+for All rooms/Direct messages); legacy sections without a scope default there.
+Search hides empty sections. Nonempty sections follow room membership in the
+selected space regardless of their creation scope.
 
 Right-click any joined room → **Move to section…** to move it to Favorites, a
 custom section (including an empty one), Low priority, or Default. Default clears
@@ -119,10 +121,27 @@ Submitted moves finish against the captured account after dismissal and
 participate in shutdown. Connected grouping follows sync; demo moves only edit
 memory. Pending choices are disabled, failures appear in the picker (or room-list
 feedback after dismissal), and obsolete completions cannot close a newer menu.
-Moving never selects the room or changes drafts/reading positions. No Element
-section definitions, visibility preferences, or device expansion settings are
-written. Section creation/rename/reorder/deletion and Element's section/People
-visibility preferences are not implemented.
+Moving never selects the room or changes drafts/reading positions.
+
+The **⋯ → New section…** menu beside the room-list heading creates sections. It
+also lists every custom section, including empty sections and sections outside
+the current space: select one to rename/remove it. Right-click a custom section
+header for the same actions. Built-in sections cannot be renamed or removed.
+Names are trimmed and must be nonempty; duplicate labels remain independent IDs.
+Removal asks for confirmation and removes only the definition and its order
+entries, leaving room tags and joined membership intact. Those rooms immediately
+fall back to their remaining valid tags or inferred groups after sync.
+
+Creation allocates an Element-format UUID v4 tag when the form opens and inserts
+it before `chats`. Rename preserves that tag, scope, order, unknown definition
+fields, and local collapse state. Edits read fresh global settings and update
+both definition/order keys in one account-data PUT while preserving unrelated
+settings. Malformed data aborts the write. Submitted edits share the room-move
+serialization/deadline and shutdown accounting; dismissed/stale results cannot
+close a newer menu. Retries reuse the creation tag to avoid duplicate sections.
+Demo changes remain in memory. Cross-client GET/PUT races remain possible.
+Section reordering and Element's visibility/device expansion settings remain
+unimplemented.
 
 Automated coverage includes schema validation, duplicate labels and order entries,
 multiple-tag precedence, stale tags, room-tag sync, and settings-only syncs for
@@ -130,10 +149,17 @@ creation, rename, reorder, and deletion. UI state tests cover stable collapse
 identity and space filtering. Move fixtures cover full tag replacement, preserved
 metadata, repeated moves before sync, deleted destinations, malformed data,
 read/write failures, stale accounts/menus, shutdown, and draft/scroll preservation.
+Section-management fixtures cover create/rename/removal without intervening sync,
+preserved remote settings and definition metadata, idempotent retries, deleted
+destinations, malformed settings, HTTP failures, empty-section scope visibility,
+confirmation/cancel, and conversation preservation.
 An isolated headless Sway demo with tiny-skia was visually checked at 1280×900:
 right-clicking the unselected General room opened the menu, **Move to section…**
 showed the checked Favorites destination, and choosing Design moved General
-there while Design studio remained open. Live Element interoperability and
+there while Design studio remained open. Section-management demo checks also
+created Projects via **⋯**, entered its name and submitted with Enter, renamed
+its empty header to Planning, and confirmed removal. The open Design studio
+conversation stayed selected throughout. Live Element interoperability and
 native desktop acceptance still require manual checks:
 
 1. In Element on a dedicated test account, create two custom sections, move rooms
@@ -142,9 +168,10 @@ native desktop acceptance still require manual checks:
 2. Rename, reorder, and delete sections in Element while this client runs. Check
    updates without navigating or reopening, and that a deleted section's rooms
    remain accessible. Confirm this client makes no section/tag writes until an
-   explicit move is chosen.
-3. Check All rooms, Direct messages, and nested/shared spaces. Empty sections stay
-   hidden; changing spaces preserves the conversation, thread, drafts, and scroll.
+   explicit move or section-management save is chosen.
+3. Check All rooms, Direct messages, and nested/shared spaces. Empty sections
+   appear in their creation scope and stay available in the management menu;
+   changing spaces preserves the conversation, thread, drafts, and scroll.
 4. Collapse a section, rename it remotely, and confirm it stays collapsed. Search
    exposes matching rooms temporarily; clearing search restores collapse state.
 
@@ -154,6 +181,12 @@ native desktop acceptance still require manual checks:
 6. Disconnect before choosing a destination; check pending/error feedback and
    retry after reconnecting. Dismiss a pending move, open another menu, and close
    the app; the completion must not close a newer menu or skip shutdown cleanup.
+
+7. Create sections here in All rooms and a space, including duplicate names;
+   compare IDs/names/order/scope in Element. Rename a collapsed section and confirm
+   collapse is preserved. Remove empty and populated sections; rooms stay joined
+   and accessible. Cancel/escape must leave settings unchanged. Test read/write
+   failures and dismissal/close during a pending save with a dedicated account.
 
 ## Navigation and timelines
 

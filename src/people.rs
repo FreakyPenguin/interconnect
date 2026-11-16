@@ -123,6 +123,18 @@ impl Directory {
         .map_err(|_| "Moving the room timed out. Check its section before retrying.".to_owned())?
     }
 
+    /// Serialize settings edits with room moves, against fresh server state.
+    pub async fn change_section(self, change: crate::room_sections::Change) -> Result<(), String> {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let _guard = self.3.lock().await;
+            crate::room_sections::change_section(&self.0, change).await
+        })
+        .await
+        .map_err(|_| {
+            "Saving the section timed out. Check section management before retrying.".to_owned()
+        })?
+    }
+
     pub async fn search(self, query: String) -> Result<SearchResults, String> {
         let query = query.trim();
         if query.is_empty() {

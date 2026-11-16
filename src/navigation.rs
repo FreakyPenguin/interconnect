@@ -60,6 +60,19 @@ impl RoomEntry {
 pub struct SectionEntry {
     pub id: String,
     pub name: String,
+    /// Creation scope controls where an empty custom section is shown.
+    pub space_id: Option<String>,
+}
+impl SectionEntry {
+    pub fn show_empty(&self, scope: &Scope) -> bool {
+        self.id.starts_with(CUSTOM_PREFIX)
+            && match scope {
+                Scope::Space(id) => self.space_id.as_ref() == Some(id),
+                Scope::All | Scope::Direct => {
+                    self.space_id.as_deref().is_none_or(|id| id == "home-space")
+                }
+            }
+    }
 }
 
 pub const ELEMENT_SETTINGS: &str = "im.vector.web.settings";
@@ -108,6 +121,9 @@ pub fn sections_from_settings(settings: &serde_json::Value) -> Vec<SectionEntry>
     let section = |id: &str, name: &str| SectionEntry {
         id: id.into(),
         name: name.into(),
+        space_id: settings["RoomList.CustomSectionData"][id]["spaceId"]
+            .as_str()
+            .map(str::to_owned),
     };
     let mut result = vec![section("m.favourite", "Favorites")];
     for tag in order {
