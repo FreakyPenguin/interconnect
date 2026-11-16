@@ -7,7 +7,6 @@
 ## Account and navigation
 
 - Logout / account switching UI
-- mark unread
 
 ## Other ideas
 

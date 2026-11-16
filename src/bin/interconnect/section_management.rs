@@ -133,7 +133,7 @@ impl App {
         result: Result<(), String>,
     ) {
         // Same account/request checks as room moves; stale completions cannot close a newer form.
-        self.room_section_moved(account, request, result);
+        self.room_menu_finished(account, request, result);
     }
     pub(super) fn section_form_view<'a>(&'a self, state: &'a State) -> Element<'a, Message> {
         let form = state.form.as_ref().unwrap();

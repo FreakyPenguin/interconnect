@@ -103,6 +103,7 @@ const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
     context_menu: Option<context_menu::State>,
+    manual_unread_generation: Option<u64>,
     section_reorder: section_reorder::State,
     settings: settings::State,
     login: login::State,
@@ -161,6 +162,7 @@ struct App {
 enum Message {
     ContextMenu(context_menu::Event),
     RoomSectionMoved(Option<String>, u64, Result<(), String>),
+    RoomMarkedUnread(Option<String>, u64, Result<(), String>),
     SectionChanged(Option<String>, u64, Result<(), String>),
     Reorder(section_reorder::Event),
     SectionsReordered(Option<String>, u64, Result<(), String>),
@@ -270,6 +272,7 @@ impl App {
             composing: false,
             shell: shell::State::default(),
             context_menu: None,
+            manual_unread_generation: None,
             section_reorder: Default::default(),
             demo: None,
             preferences_ready: false,
@@ -1017,9 +1020,10 @@ impl App {
                 self.pending_ops -= 1;
                 self.section_changed(account, request, result);
             }
-            Message::RoomSectionMoved(account, request, result) => {
+            Message::RoomSectionMoved(account, request, result)
+            | Message::RoomMarkedUnread(account, request, result) => {
                 self.pending_ops -= 1;
-                self.room_section_moved(account, request, result);
+                self.room_menu_finished(account, request, result);
             }
             Message::Sent(key, account, result) => {
                 self.pending_ops -= 1;

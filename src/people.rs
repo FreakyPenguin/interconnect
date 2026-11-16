@@ -123,6 +123,21 @@ impl Directory {
         .map_err(|_| "Moving the room timed out. Check its section before retrying.".to_owned())?
     }
 
+    /// Mark an unopened or selected joined room unread without moving read receipts.
+    pub async fn mark_room_unread(self, room: String) -> Result<(), String> {
+        let id: matrix_sdk::ruma::OwnedRoomId =
+            room.parse().map_err(|_| "Invalid room ID".to_owned())?;
+        let room = self
+            .0
+            .get_room(&id)
+            .filter(|room| room.state() == matrix_sdk::RoomState::Joined)
+            .ok_or_else(|| "This room is no longer joined.".to_owned())?;
+        tokio::time::timeout(Duration::from_secs(15), room.set_unread_flag(true))
+            .await
+            .map_err(|_| "Marking the room unread timed out. Try again.".to_owned())?
+            .map_err(|_| "Could not mark the room as unread. Try again.".to_owned())
+    }
+
     /// Serialize settings edits with room moves, against fresh server state.
     pub async fn change_section(self, change: crate::room_sections::Change) -> Result<(), String> {
         tokio::time::timeout(Duration::from_secs(30), async {
@@ -201,6 +216,72 @@ mod tests {
             .await
             .unwrap();
         client
+    }
+
+    #[tokio::test]
+    async fn marking_unopened_room_unread_writes_only_flag_and_reports_errors() {
+        let server = MockServer::start().await;
+        let client = direct_fixture(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/v3/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "next_batch":"one", "rooms":{"join":{"!room:example.org":{
+                    "state":{"events":[]}, "timeline":{"events":[],"limited":false}
+                }}}
+            })))
+            .mount(&server)
+            .await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        let endpoint = "/_matrix/client/v3/user/@test:example.org/rooms/!room:example.org/account_data/m.marked_unread";
+        let success = Mock::given(method("PUT"))
+            .and(path(endpoint))
+            .and(body_json(json!({"unread":true})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount_as_scoped(&server)
+            .await;
+        let directory = Directory::new(client);
+        directory
+            .clone()
+            .mark_room_unread("!room:example.org".into())
+            .await
+            .unwrap();
+        drop(success);
+        Mock::given(method("PUT"))
+            .and(path(endpoint))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+                "errcode":"M_FORBIDDEN", "error":"fixture"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(
+            directory
+                .clone()
+                .mark_room_unread("!room:example.org".into())
+                .await
+                .is_err()
+        );
+        assert!(
+            directory
+                .clone()
+                .mark_room_unread("!missing:example.org".into())
+                .await
+                .is_err()
+        );
+        assert!(directory.mark_room_unread("invalid".into()).await.is_err());
+        assert!(
+            !server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|request| request.url.path().contains("/receipt/")
+                    || request.url.path().contains("/read_markers"))
+        );
     }
 
     #[tokio::test]

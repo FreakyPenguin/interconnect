@@ -45,6 +45,7 @@ enum Action {
     RenameSection,
     RemoveSection,
     Sections,
+    MarkUnread,
     Copy(String),
     Dispatch(Message),
 }
@@ -146,6 +147,7 @@ impl App {
                 }
                 vec![
                     ("Open room", Action::Dispatch(Message::Room(id.clone()))),
+                    ("Mark as unread", Action::MarkUnread),
                     ("Move to section…", Action::Sections),
                     ("Copy room ID", Action::Copy(id.clone())),
                 ]
@@ -312,6 +314,7 @@ impl App {
                         Action::CreateSection | Action::RenameSection | Action::RemoveSection => {
                             self.open_section_form(action)
                         }
+                        Action::MarkUnread => self.mark_room_unread(target),
                         Action::Sections => {
                             self.context_menu.as_mut().unwrap().sections = true;
                             Task::none()
@@ -330,6 +333,46 @@ impl App {
         }
         Task::none()
     }
+    fn mark_room_unread(&mut self, target: Target) -> Task<Message> {
+        let Target::Room(id) = target else {
+            return Task::none();
+        };
+        if self.pending_ops >= super::MAX_PENDING_OPERATIONS
+            || (self.demo.is_none() && self.model.people_directory.is_none())
+        {
+            return Task::none();
+        }
+        if let Some((generation, room)) = &self.selection.room
+            && *room == id
+        {
+            // Keep the explicit flag until this conversation is opened again.
+            // Publish now: context-menu events bypass the normal update epilogue.
+            self.manual_unread_generation = Some(*generation);
+            self.selection.read = [None, None];
+            self.publish_notification_context();
+        }
+        if self.demo.is_some() {
+            if let Some(room) = std::sync::Arc::make_mut(&mut self.model.rooms)
+                .iter_mut()
+                .find(|room| room.id == id)
+            {
+                room.unread = true;
+            }
+            self.context_menu = None;
+            return Task::none();
+        }
+        let directory = self.model.people_directory.clone().unwrap();
+        self.generation += 1;
+        let request = self.generation;
+        let account = self.account_id.clone();
+        let state = self.context_menu.as_mut().unwrap();
+        state.pending = Some(request);
+        state.error = None;
+        self.pending_ops += 1;
+        Task::perform(directory.mark_room_unread(id), move |result| {
+            Message::RoomMarkedUnread(account.clone(), request, result)
+        })
+    }
     fn move_destinations(&self) -> Vec<(String, String)> {
         self.model
             .sections
@@ -345,7 +388,7 @@ impl App {
             })
             .collect()
     }
-    pub(super) fn room_section_moved(
+    pub(super) fn room_menu_finished(
         &mut self,
         account: Option<String>,
         request: u64,
@@ -440,12 +483,17 @@ impl App {
                                     .width(iced::Length::Fill)
                                     .padding([7, 10])
                                     .style(shell::quiet_button)
-                                    .on_press(message(Event::Choose(
-                                        state.target.clone(),
-                                        label.into(),
-                                    ))),
+                                    .on_press_maybe((state.pending.is_none()).then(|| {
+                                        message(Event::Choose(state.target.clone(), label.into()))
+                                    })),
                             )
                         });
+                if state.pending.is_some() {
+                    items = items.push(text("Saving…").size(12));
+                }
+                if let Some(error) = &state.error {
+                    items = items.push(text(error).size(12));
+                }
                 if state.target == Target::Sections {
                     for section in self
                         .model

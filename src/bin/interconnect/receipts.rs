@@ -11,7 +11,12 @@ impl App {
     ) {
         let index = usize::from(thread);
         self.update_notification_context();
-        if !self.selection.conversation_visible
+        if self.manual_unread_generation.is_some_and(|generation| {
+            self.selection
+                .room
+                .as_ref()
+                .is_some_and(|(current, _)| *current == generation)
+        }) || !self.selection.conversation_visible
             || self.pending_scroll[index].is_some()
             || !metrics.height.is_finite()
             || metrics.height <= 0.0
@@ -79,6 +84,16 @@ impl App {
     }
 
     pub(super) fn validate_read_targets(&mut self) {
+        if self.manual_unread_generation.is_some_and(|generation| {
+            self.selection
+                .room
+                .as_ref()
+                .is_some_and(|(current, _)| *current == generation)
+        }) {
+            self.selection.read = [None, None];
+            return;
+        }
+        self.manual_unread_generation = None;
         for (index, selected) in [&self.selection.room, &self.selection.thread]
             .into_iter()
             .enumerate()
@@ -124,6 +139,82 @@ mod tests {
                 translation: 500.0 - offset,
             },
         }
+    }
+
+    #[test]
+    fn manual_unread_preserves_conversation_and_survives_visible_updates_until_reopened() {
+        use crate::context_menu::{Event, Target};
+        let mut app = demo_app();
+        let _ = app.update(Message::WindowFocused(true));
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Unsent");
+        app.scroll_positions.insert(key.clone(), 91.0);
+        let selected = app.selection.room.clone();
+        let selected_id = selected.as_ref().unwrap().1.clone();
+        app.selection.read[0] = Some(ReadTarget {
+            generation: selected.as_ref().unwrap().0,
+            event: None,
+        });
+        let (control, published) = tokio::sync::watch::channel(app.selection.clone());
+        app.control = Some(control);
+        for id in ["general".to_owned(), selected_id.clone()] {
+            let target = Target::Room(id.clone());
+            let before = app
+                .model
+                .rooms
+                .iter()
+                .find(|room| room.id == id)
+                .unwrap()
+                .unread_count;
+            let _ = app.update(Message::ContextMenu(Event::Open(
+                target.clone(),
+                iced::Point::ORIGIN,
+            )));
+            let _ = app.update(Message::ContextMenu(Event::Choose(
+                target,
+                "Mark as unread".into(),
+            )));
+            let room = app.model.rooms.iter().find(|room| room.id == id).unwrap();
+            assert!(room.unread);
+            assert_eq!(room.unread_count, before);
+            assert_eq!(app.selection.room, selected);
+            assert_eq!(app.drafts[&key].content.text(), "Unsent");
+            assert_eq!(app.scroll_positions[&key], 91.0);
+            assert!(app.context_menu.is_none());
+        }
+        assert_eq!(published.borrow().read, [None, None]);
+        let _ = app.update(Message::WindowFocused(false));
+        let _ = app.update(Message::WindowFocused(true));
+        let _ = app.update(Message::Space(interconnect::navigation::Scope::All));
+        assert_eq!(app.selection.room, selected);
+        let _ = app.update(Message::Thread("review".into()));
+        let _ = app.update(visible(&app, true, 0.0));
+        assert!(app.selection.read[1].is_none());
+        let _ = app.update(Message::CloseThread);
+        app.pending_scroll[0] = None;
+        app.scroll_positions.insert(key, 0.0);
+        let _ = app.update(visible(&app, false, 0.0));
+        assert!(app.selection.read[0].is_none());
+        assert!(
+            app.model
+                .rooms
+                .iter()
+                .find(|room| room.id == selected_id)
+                .unwrap()
+                .unread
+        );
+        let _ = app.update(Message::Room(selected_id.clone()));
+        let _ = app.update(visible(&app, false, 0.0));
+        assert!(app.selection.read[0].is_some());
+        assert!(
+            !app.model
+                .rooms
+                .iter()
+                .find(|room| room.id == selected_id)
+                .unwrap()
+                .unread
+        );
     }
 
     #[test]

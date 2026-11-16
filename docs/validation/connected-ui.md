@@ -579,6 +579,25 @@ dismissal, opening a thread from a message menu, and thread-reply menus. This
 check used the GPU renderer at 1096×681; it did not validate native clipboard
 contents, every action, minimum-size rendering, or connected accounts.
 
+Room entries also offer **Mark as unread**, including for the open room. This
+sets Matrix's explicit unread flag without moving receipts or inventing a message
+count. The open room and its thread, drafts, and saved scroll positions stay in
+place. Automatic read marking pauses for that conversation until the room is
+opened again; space filtering and focus changes do not reset this pause. A
+connected request shows progress, and failures remain in the menu for retry.
+Demo changes stay in memory and never access an account or the network.
+
+Automated coverage checks the account-data request and server refusal with a
+mock server, plus room selection, drafts, scroll preservation, and the unread
+pause across viewport updates in demo state. On November 16, 2026, formatting,
+workspace Clippy with warnings denied, the locked desktop build, workspace tests
+(134 library tests passed, two ignored; 214 desktop tests passed), and the final
+desktop suite passed. No connected client was restarted or Matrix test messages
+sent. For manual acceptance, mark an
+unselected room and the open room unread, change spaces, refocus the window,
+then reopen the room at the bottom and confirm it becomes read. Live account
+sync, native menu appearance, and macOS acceptance remain separate checks.
+
 For desktop acceptance, use `--demo`: right-click both an unselected room and a
 message, copy to a separate editor, open a reaction picker, and pin/unpin. Open a
 thread and repeat on the original and a reply. In **Thread activity**, right-click
