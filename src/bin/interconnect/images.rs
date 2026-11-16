@@ -79,7 +79,12 @@ pub enum Event {
     Ignore,
 }
 impl App {
-    fn image_message(&self, thread: bool, generation: u64, key: &str) -> Option<&MessageRow> {
+    pub(super) fn image_message(
+        &self,
+        thread: bool,
+        generation: u64,
+        key: &str,
+    ) -> Option<&MessageRow> {
         let selected = if thread {
             &self.selection.thread
         } else {
@@ -268,7 +273,7 @@ impl App {
             let width = (size.width - 48.0).clamp(1.0, 1000.0);
             let animation = self.model.images.animations.get(&view.original);
             let height =
-                (size.height - if animation.is_some() { 196.0 } else { 144.0 }).clamp(1.0, 800.0);
+                (size.height - if animation.is_some() { 264.0 } else { 212.0 }).clamp(1.0, 800.0);
             let content: Element<'_, Message> =
                 if let Some(handle) = self.model.images.ready.get(&view.original) {
                     let handle = animation
@@ -327,6 +332,9 @@ impl App {
             ]
             .spacing(12);
             let mut body = column![header, content].spacing(12);
+            if let Some(message) = self.image_message(view.thread, view.generation, &view.row) {
+                body = body.push(self.download_actions(message, view.thread, view.generation));
+            }
             if let Some(animation) = animation {
                 body = body.push(match animation {
                     Ok(_) => {

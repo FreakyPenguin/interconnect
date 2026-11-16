@@ -103,6 +103,7 @@ appearing in the current pane.
 | Operation | Behavior and comparison points |
 | --- | --- |
 | Text and attachments | Room/thread sends use SDK encryption and local echoes. Queue admission clears the draft before delivery completes. Retry retains the original transaction. Captions, thumbnails, and thread relations can be compared in a second client. |
+| Received attachments | Open launches the system handler; Save as uses a native dialog. Images, files, audio, and video download originals, including SDK decryption, in room/thread messages and thread originals. Image previews also retain their in-app viewer. |
 | Reactions | Chips toggle reactions; the emoji picker adds a selection. Pending/error state belongs to its captured message, with stale results rejected after navigation. |
 | Clipboard | Native file lists and images stage attachments; plain-text paths remain text. Multiple files leave the previous draft intact with an error. Host-selected paths need matching container access. |
 | File drops | Only the visible conversation under the pointer stages the file. Sidebar, disabled panes, and overlays are excluded. Wayland delivery and macOS coordinates have separate native coverage; see [the Winit patch](../architecture/winit-file-drops.md). |
@@ -291,3 +292,28 @@ was not confirmed in the isolated virtual-input session; canonical copy text is
 covered by automated tests. Hardware rendering and live-account acceptance remain
 untested for this change. No connected client was restarted and no Matrix test
 messages were sent.
+
+## Saving and opening received attachments
+
+Automated coverage added November 16, 2026 exercises original-source extraction
+for images/files/audio/video (including filenames separate from captions), exact
+plain/encrypted download bytes against a mock authenticated media endpoint,
+filename sanitization, save cancellation, stale navigation, cancellation tokens,
+atomic destination replacement, and write failures. These fixtures do not launch
+external applications or exercise native save dialogs.
+
+Native acceptance remains required:
+
+- In `--demo`, open Studio → Images. Save the sample PNG and `notes.txt`, cancel
+  a save, and replace an existing scratch file. Open each using the default app.
+  Repeat from the image viewer and a thread original; check controls at 640×480.
+- With an authorized test account, save image/file/audio/video originals from an
+  encrypted room and thread. Compare bytes and filenames to the sender's files,
+  including a caption, a missing thumbnail, and an uncached original.
+- Try offline, unavailable encryption keys, and an unwritable destination. Check
+  the attachment shows an error and its controls allow another attempt. Confirm
+  changing conversations while choosing a destination or downloading produces no
+  late write or external launch; drafts and reading position must be preserved.
+- Check Linux FileChooser portal and `xdg-open`, and macOS save dialog and `open`.
+  Opened temporary files remain available until client exit and are then removed;
+  saved files remain. Confirm settled UI has no additional recurring wakeups.

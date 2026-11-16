@@ -67,6 +67,7 @@ pub struct MessageRow {
     pub display_name: String,
     pub avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     pub image: Option<crate::image_media::Attachment>,
+    pub download: Option<crate::download::Attachment>,
     pub reactions: Vec<Reaction>,
     pub can_react: bool,
     pub timestamp_ms: Option<i64>,
@@ -148,6 +149,14 @@ impl std::fmt::Debug for Composer {
     }
 }
 impl Composer {
+    /// Keep the runtime-owned timeline alive for the duration of the media request.
+    pub async fn download_attachment(
+        self,
+        attachment: crate::download::Attachment,
+    ) -> Result<Vec<u8>, String> {
+        attachment.fetch(&self.0.room().client()).await
+    }
+
     pub fn people_directory(&self) -> crate::people::Directory {
         crate::people::Directory::from_runtime(
             self.0.room().client().clone(),
@@ -1256,6 +1265,7 @@ async fn timeline_rows_cached(
                         _ => None,
                     },
                     image: crate::image_media::Attachment::from_content(content),
+                    download: crate::download::Attachment::from_content(content),
                     reactions: reactions(content, &own_user),
                     can_react: event.event_id().is_some() && can_react(content),
                     timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),

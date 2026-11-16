@@ -35,6 +35,7 @@ rand = "0.9"
 zeroize = "1"
 rfd = { version = "0.15", default-features = false, features = ["tokio", "xdg-portal"] }
 mime_guess = "2"
+tempfile = "3"
 arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -46,7 +47,6 @@ notify-rust = { version = "=4.19.0", default-features = false, features = ["prev
 [dev-dependencies]
 iced_tiny_skia = { version = "=0.14.1", default-features = false }
 matrix-sdk-crypto = { version = "=0.19.1", default-features = false }
-tempfile = "3"
 tiny-skia = { version = "=0.11.4", default-features = false }
 wiremock = "0.6"
 

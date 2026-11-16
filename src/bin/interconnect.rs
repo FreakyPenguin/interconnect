@@ -7,6 +7,8 @@ mod composer_picker;
 mod create_room;
 #[path = "interconnect/demo.rs"]
 mod demo;
+#[path = "interconnect/downloads.rs"]
+mod downloads;
 #[path = "interconnect/emoji.rs"]
 mod emoji;
 #[path = "interconnect/emoji_completion.rs"]
@@ -125,6 +127,7 @@ struct App {
     inline_demand: inline_image::Demand,
     local_inline: inline_image::LocalImages,
     image_view: Option<images::Viewing>,
+    downloads: downloads::State,
     reaction_picker: Option<reaction_picker::State>,
     reaction_sends: HashSet<reaction_picker::Sending>,
     reaction_error: Option<(reaction_picker::Target, String)>,
@@ -161,6 +164,7 @@ enum Message {
     Verification(verification::Event),
     Settings(settings::Event),
     Image(images::Event),
+    Download(downloads::Event),
     Reaction(reaction_picker::Event),
     ComposerEmoji(composer_picker::Event),
     Attachment(attachments::Event),
@@ -265,6 +269,7 @@ impl App {
             inline_demand: HashMap::new(),
             local_inline: Default::default(),
             image_view: None,
+            downloads: downloads::State::default(),
             reaction_picker: None,
             reaction_sends: HashSet::new(),
             reaction_error: None,
@@ -539,6 +544,7 @@ impl App {
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
             Message::EmojiCompletion(event) => action_task = self.emoji_completion_event(event),
             Message::Image(event) => self.image_event(event),
+            Message::Download(event) => action_task = self.download_event(event),
             Message::InlineImagesDemand {
                 context,
                 row,
@@ -1145,6 +1151,7 @@ impl App {
         {
             self.stop_typing();
         }
+        self.validate_download();
         self.validate_invite();
         self.validate_pin_error();
         self.validate_topic_editor();
@@ -1793,6 +1800,17 @@ impl App {
             } else {
                 original
             };
+        let original = if let Some(message) = self
+            .thread_original()
+            .filter(|row| row.download.is_some() || row.image.is_some())
+        {
+            let generation = self.selection.thread.as_ref().expect("thread original").0;
+            column![original, self.download_actions(message, true, generation)]
+                .spacing(6)
+                .into()
+        } else {
+            original
+        };
         let original = if let Some(message) = self.thread_original() {
             let generation = self.selection.thread.as_ref().expect("thread original").0;
             shell::message_actions(
@@ -2057,6 +2075,9 @@ impl App {
             };
             if message.image.is_some() {
                 entry = entry.push(self.image_preview(message, thread, *generation));
+            }
+            if message.download.is_some() || message.image.is_some() {
+                entry = entry.push(self.download_actions(message, thread, *generation));
             }
             if let Some(badges) = self.reaction_chips(message, thread, *generation) {
                 entry = entry.push(badges);

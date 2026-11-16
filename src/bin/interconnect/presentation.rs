@@ -44,6 +44,7 @@ mod tests {
             display_name: "Same name".into(),
             avatar_url: None,
             image: None,
+            download: None,
             reactions: Vec::new(),
             can_react: true,
             timestamp_ms,

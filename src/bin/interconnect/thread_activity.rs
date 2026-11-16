@@ -161,6 +161,7 @@ mod tests {
             display_name: "Other".into(),
             avatar_url: None,
             image: None,
+            download: None,
             reactions: Vec::new(),
             can_react: true,
             timestamp_ms: Some(1),

@@ -313,6 +313,17 @@ needs a session bus and portal backend offering `FileChooser`; macOS uses its
 native dialog. Picked host paths must be accessible at the same location inside
 a development container. Sharing the session bus does not share files.
 
+Received images, files, audio, and video offer **Open** and **Save as…** in room
+and thread timelines, thread originals, and the image viewer. Both request the
+original bytes through the SDK, including decryption. Save uses a native dialog
+and replaces the destination only after the complete file is written. Open uses
+`xdg-open` on Linux and `open` on macOS with a private temporary copy retained
+until the client exits. These handlers need access to the same filesystem;
+container display forwarding alone does not provide that access. Downloads are
+explicit, asynchronous, and cancelled when their conversation becomes stale.
+Studio → Images in demo includes generated PNG and text downloads without network
+or account access.
+
 Each room/thread draft stages one file, up to 50 MiB, with composer text as its
 caption. Files are read at send time; successful queue admission clears the
 draft, while later delivery failures use the timeline Retry action. The

@@ -4,6 +4,7 @@ pub mod clipboard;
 pub mod composition;
 pub mod connected;
 pub mod diagnostics;
+pub mod download;
 mod event_text;
 pub mod formula;
 pub mod image_media;

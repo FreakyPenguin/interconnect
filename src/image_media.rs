@@ -46,6 +46,15 @@ impl Key {
             variant,
         }
     }
+    pub fn file(source: &MediaSource) -> Self {
+        Self::new(source, Variant::Original)
+    }
+    pub fn file_request(&self) -> MediaRequestParameters {
+        MediaRequestParameters {
+            source: self.source(),
+            format: MediaFormat::File,
+        }
+    }
     pub fn inline(uri: matrix_sdk::ruma::OwnedMxcUri) -> Self {
         Self::new(&MediaSource::Plain(uri), Variant::Inline)
     }
@@ -212,6 +221,46 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn attachment_download_returns_exact_plain_and_decrypted_original_bytes() {
+        let directory = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
+            .mount(&server)
+            .await;
+        let client = client(&server, directory.path()).await;
+        let original = b"Original attachment bytes, not a decoded preview.".to_vec();
+        let (encrypted, ciphertext) = encrypted("encrypted-download", original.clone());
+        for (name, source, body) in [
+            (
+                "plain-download",
+                MediaSource::Plain("mxc://example.org/plain-download".into()),
+                original.clone(),
+            ),
+            ("encrypted-download", encrypted, ciphertext),
+        ] {
+            Mock::given(method("GET"))
+                .and(path_regex(format!(".*/download/example.org/{name}")))
+                .respond_with(ResponseTemplate::new(200).set_body_bytes(body))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let attachment = crate::download::Attachment {
+                source: Key::file(&source),
+                filename: "original.bin".into(),
+            };
+            assert_eq!(attachment.fetch(&client).await.unwrap(), original);
+        }
+        let requests = server.received_requests().await.unwrap();
+        assert!(
+            !requests
+                .iter()
+                .any(|request| request.url.path().contains("/thumbnail/"))
+        );
     }
 
     #[test]

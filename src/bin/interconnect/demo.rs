@@ -328,6 +328,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         display_name: sender.into(),
         avatar_url: None,
         image: None,
+        download: None,
         reactions: Vec::new(),
         can_react: true,
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
@@ -436,7 +437,12 @@ impl Demo {
                 let mut gif = message("sample-gif", "Jamie Davis", "A click-to-play animation. Open it, then click Play GIF. Change playback in Settings → GIF playback.");
                 gif.image = Some(gif_attachment());
                 gif.thread_replies = 2;
-                vec![sample, missing, gif]
+                for (row, filename) in [(&mut sample, "sample.png"), (&mut missing, "missing.png"), (&mut gif, "animation-preview.png")] {
+                    row.download = Some(interconnect::download::Attachment { source: row.image.as_ref().unwrap().original.clone(), filename: filename.into() });
+                }
+                let mut file = message("sample-file", "Maya Chen", "notes.txt");
+                file.download = Some(interconnect::download::Attachment { source: interconnect::image_media::Key::file(&matrix_sdk::ruma::events::room::MediaSource::Plain("mxc://demo.invalid/notes".into())), filename: "notes.txt".into() });
+                vec![sample, missing, gif, file]
             },
             "studio" => vec![
                 reacted(message("welcome", "Maya Chen", "Morning! I’ve been thinking about what makes a chat app feel calm. Less chrome, a little more space, and a clear place for everything."), &[("❤️", 3, true), ("👍🏽", 2, false)]),

@@ -93,6 +93,13 @@ viewport demand and generation checks cancel obsolete work. Avatar and attachmen
 decoded-pixel caches have separate budgets. The image viewer requests originals
 explicitly and suspends background timeline media demand while open.
 
+Received-media actions use `download::Attachment` metadata for original sources
+and filenames. The UI serializes explicit Open/Save operations, cancels obsolete
+requests, rejects stale native-dialog/download results, and holds runtime-owned
+timelines through SDK requests. File writes run on blocking workers; a temporary
+sibling replaces a save destination only after writing completes. External opens
+retain private temporary directories until exit so lazy readers keep access.
+
 Attachment preparation reads bounded bytes and builds optional thumbnails away
 from the UI thread. Clipboard reads occur only on paste; file drops use the
 native event loop. Demo mode keeps its data in memory without account access.
