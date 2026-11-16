@@ -85,7 +85,33 @@ fn message(event: Event) -> Message {
     Message::RoomSearch(event)
 }
 
+/// Case-insensitive matches mapped back to original UTF-8 byte boundaries.
+/// Lowercasing can expand a character (for example İ → i + combining dot).
+pub(super) fn matching_ranges(body: &str, query: &str) -> Vec<std::ops::Range<usize>> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let folded = body.to_lowercase();
+    let mut mapping = Vec::with_capacity(folded.len());
+    for (offset, ch) in body.char_indices() {
+        for _ in 0..ch.to_lowercase().map(char::len_utf8).sum::<usize>() {
+            mapping.push(offset..offset + ch.len_utf8());
+        }
+    }
+    folded
+        .match_indices(&query)
+        .map(|(start, found)| mapping[start].start..mapping[start + found.len() - 1].end)
+        .collect()
+}
+
+pub(super) const HIGHLIGHT: iced::Color = iced::Color::from_rgba8(255, 207, 64, 0.5);
+
 impl App {
+    pub(super) fn room_search_query(&self) -> Option<&str> {
+        self.room_search_active()
+            .then_some(self.room_search.query.as_str())
+    }
     pub(super) fn room_search_active(&self) -> bool {
         self.room_search.open && !self.room_search.query.trim().is_empty()
     }
@@ -273,6 +299,33 @@ mod tests {
         pane.rows = rows.into();
         let _ = app.update(message(Event::Open));
         app
+    }
+
+    #[test]
+    fn match_ranges_preserve_unicode_boundaries_and_find_repeated_terms() {
+        for (body, query, expected) in [
+            (
+                "Hello HELLO hello",
+                " hello ",
+                vec!["Hello", "HELLO", "hello"],
+            ),
+            ("é İSTANBUL 👩🏽‍💻 İstanbul", "i", vec!["İ", "İ"]),
+            ("İstanbul", "\u{307}", vec!["İ"]),
+            ("ΟΣ ος", "ος", vec!["ΟΣ", "ος"]),
+            ("שלום שלום", "שלום", vec!["שלום", "שלום"]),
+            ("café 👩🏽‍💻 café", "CAFÉ", vec!["café", "café"]),
+            ("hello", " ", vec![]),
+            ("hello", "absent", vec![]),
+        ] {
+            let ranges = matching_ranges(body, query);
+            assert_eq!(
+                ranges
+                    .into_iter()
+                    .map(|range| &body[range])
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
     }
 
     #[test]

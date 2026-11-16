@@ -466,6 +466,11 @@ where
         self.0.borrow().editor.cursor()
     }
 
+    /// Inspects the laid-out editor without changing its text or selection.
+    pub fn with_editor<T>(&self, inspect: impl FnOnce(&R::Editor) -> T) -> T {
+        inspect(&self.0.borrow().editor)
+    }
+
     /// Returns the amount of lines of the [`Content`].
     pub fn line_count(&self) -> usize {
         self.0.borrow().editor.line_count()

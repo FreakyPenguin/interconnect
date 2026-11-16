@@ -2310,13 +2310,14 @@ impl App {
                     &message.display_name,
                 )
             } else {
-                selectable::message_view_with_assets(
+                selectable::message_view_with_search(
                     message,
                     self.inline_assets(),
                     Some(inline_image::Context {
                         thread,
                         generation: *generation,
                     }),
+                    (!thread).then(|| self.room_search_query()).flatten(),
                 )
             };
             let mut entry = if activity {

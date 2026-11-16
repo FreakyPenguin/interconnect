@@ -48,3 +48,9 @@ Unicode-preserving selection/copy, and the existing idle-caret behavior.
 The application also overrides the same pinned Cosmic Text 0.15.0 dependency
 for embedded inline-object metrics. This does not change Iced widget code; see
 [the separate text-engine patch](../cosmic-text/PATCH.md).
+
+`src/text_editor.rs` exposes read-only `Content::with_editor` access to the
+existing laid-out editor. The message widget uses its glyph geometry to paint
+room-search matches without changing text, selection, fonts, or wrapping. This
+adds no update work or timers to Iced. Plain and formatted message raster tests
+cover highlight visibility, removal, and stable layout/selection.

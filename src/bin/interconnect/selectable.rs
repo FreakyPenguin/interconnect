@@ -25,6 +25,7 @@ pub fn view<'a>(id: &'a str, body: &'a str) -> Element<'a, Message> {
 #[cfg(test)]
 pub fn named_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, Message> {
     Element::new(Selectable {
+        search: None,
         id,
         body: Cow::Borrowed(body),
         name,
@@ -39,6 +40,7 @@ pub fn preview_view<'a>(
     document: Option<&'a Arc<Document>>,
 ) -> Element<'a, Message> {
     Element::new(Selectable {
+        search: None,
         id: "composer-preview",
         body: Cow::Borrowed(body),
         name: "",
@@ -57,7 +59,16 @@ pub fn message_view_with_assets(
     assets: inline_image::Assets,
     context: Option<inline_image::Context>,
 ) -> Element<'_, Message> {
+    message_view_with_search(message, assets, context, None)
+}
+pub fn message_view_with_search<'a>(
+    message: &'a MessageRow,
+    assets: inline_image::Assets,
+    context: Option<inline_image::Context>,
+    search: Option<&'a str>,
+) -> Element<'a, Message> {
     Element::new(Selectable {
+        search,
         id: &message.key,
         body: Cow::Borrowed(&message.body),
         name: &message.display_name,
@@ -69,6 +80,7 @@ pub fn message_view_with_assets(
 }
 pub fn activity_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, Message> {
     Element::new(Selectable {
+        search: None,
         id,
         body: Cow::Owned(format!("{name} · {body}")),
         // The inline name is already part of the selectable/copyable text.
@@ -80,6 +92,7 @@ pub fn activity_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'
     })
 }
 struct Selectable<'a> {
+    search: Option<&'a str>,
     assets: inline_image::Assets,
     context: Option<inline_image::Context>,
     document: Option<&'a Arc<Document>>,
@@ -544,6 +557,9 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        if !layout.bounds().intersects(viewport) {
+            return;
+        }
         let state = tree.state.downcast_ref::<State>();
         if let Some(rich) = &state.rich {
             renderer.with_layer(*viewport, |renderer| {
@@ -552,9 +568,65 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                     layout.position(),
                     *viewport,
                     state.selection_range(),
+                    self.search,
                 )
             });
             return;
+        }
+        if let Some(query) = self.search {
+            let ranges = super::room_search::matching_ranges(&state.body, query);
+            state.content.with_editor(|editor| {
+                let buffer = editor.buffer();
+                let mut offset = 0;
+                let line_offsets: Vec<_> = buffer
+                    .lines
+                    .iter()
+                    .map(|line| {
+                        let start = offset;
+                        offset += line.text().len() + line.ending().as_str().len();
+                        start
+                    })
+                    .collect();
+                for line in buffer.layout_runs() {
+                    let start = line_offsets[line.line_i];
+                    for glyph in line.glyphs {
+                        for range in ranges
+                            .iter()
+                            .skip(ranges.partition_point(|range| range.end <= start + glyph.start))
+                            .take_while(|range| range.start < start + glyph.end)
+                        {
+                            if start + glyph.start < range.end && start + glyph.end > range.start {
+                                let (left, width) = formatted::highlight_fraction(
+                                    &line.text[glyph.start..glyph.end],
+                                    start + glyph.start,
+                                    range,
+                                    glyph.level.is_rtl(),
+                                );
+                                let bounds = Rectangle::new(
+                                    layout.position()
+                                        + iced::Vector::new(
+                                            glyph.x + left * glyph.w,
+                                            line.line_top,
+                                        ),
+                                    Size::new(width * glyph.w, line.line_height),
+                                );
+                                if let Some(bounds) = bounds
+                                    .intersection(viewport)
+                                    .and_then(|bounds| bounds.intersection(&layout.bounds()))
+                                {
+                                    renderer.fill_quad(
+                                        renderer::Quad {
+                                            bounds,
+                                            ..Default::default()
+                                        },
+                                        super::room_search::HIGHLIGHT,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            });
         }
         editor(&state.content, self.appearance).draw(
             &tree.children[0],
@@ -622,6 +694,114 @@ mod tests {
         }
     }
     #[test]
+    fn search_highlights_plain_and_formatted_text_without_changing_layout_or_selection() {
+        let document = Arc::new(
+            Document::parse(
+                "<p>Hello <b>HELLO</b> café 👩🏽‍💻 <code>hello</code></p><p>hello again</p>",
+            )
+            .unwrap(),
+        );
+        for (document, ending) in [
+            (None, "\n"),
+            (None, "\r\n"),
+            (None, "\r"),
+            (Some(&document), "\n"),
+        ] {
+            let mut view = Selectable {
+                search: None,
+                id: "search-highlight",
+                name: "Alice",
+                body: Cow::Owned(format!("Hello HELLO café 👩🏽‍💻 hello{ending}hello again")),
+                appearance: Appearance::Message,
+                assets: Default::default(),
+                context: None,
+                document,
+            };
+            let mut renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+            let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
+            let size = Size::new(150.0, 250.0);
+            let limits = layout::Limits::new(Size::ZERO, size);
+            let initial = view.layout(&mut tree, &renderer, &limits).bounds();
+            {
+                let state = tree.state.downcast_mut::<State>();
+                state.content.perform(Action::SelectAll);
+                state.selected = true;
+            }
+            let selected = tree.state.downcast_ref::<State>().content.selection();
+            let mut yellow = Vec::new();
+            for search in [
+                None,
+                Some("HeLLo"),
+                Some("café"),
+                Some("absent"),
+                Some(""),
+                None,
+            ] {
+                view.search = search;
+                view.diff(&mut tree);
+                let node = view.layout(&mut tree, &renderer, &limits);
+                assert_eq!(node.bounds(), initial, "search must not rewrap text");
+                assert_eq!(
+                    tree.state.downcast_ref::<State>().content.selection(),
+                    selected
+                );
+                let viewport = Rectangle::with_size(size);
+                renderer.reset(viewport);
+                view.draw(
+                    &tree,
+                    &mut renderer,
+                    &shell::theme(),
+                    &renderer::Style {
+                        text_color: shell::INK,
+                    },
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &viewport,
+                );
+                let iced::Renderer::Secondary(software) = &mut renderer else {
+                    panic!("software renderer");
+                };
+                let mut pixels = tiny_skia::Pixmap::new(150, 250).unwrap();
+                let mut mask = tiny_skia::Mask::new(150, 250).unwrap();
+                software.draw(
+                    &mut pixels.as_mut(),
+                    &mut mask,
+                    &iced::advanced::graphics::Viewport::with_physical_size(
+                        iced::Size::new(150, 250),
+                        1.0,
+                    ),
+                    &[viewport],
+                    iced::Color::WHITE,
+                );
+                yellow.push(
+                    pixels
+                        .pixels()
+                        .iter()
+                        .filter(|pixel| {
+                            // The software renderer targets the window's BGRA framebuffer.
+                            pixel.blue() > 180 && pixel.green() > 150 && pixel.red() < 180
+                        })
+                        .count(),
+                );
+            }
+            assert!(
+                yellow[1] > yellow[0] + 50,
+                "all repeated matches should have visible highlights (rich={}, ending={ending:?}): {yellow:?}",
+                document.is_some()
+            );
+            assert!(
+                yellow[2] > yellow[0] + 10,
+                "Unicode match should be highlighted: {yellow:?}"
+            );
+            assert_eq!(
+                &yellow[3..],
+                &[yellow[0]; 3],
+                "editing, clearing, and closing remove highlights"
+            );
+        }
+    }
+
+    #[test]
     fn inline_image_demand_is_viewport_scoped_and_settles_without_timers() {
         let document = Arc::new(
             Document::parse(
@@ -630,6 +810,7 @@ mod tests {
             .unwrap(),
         );
         let mut view = Selectable {
+            search: None,
             id: "inline",
             name: "Alice",
             body: Cow::Borrowed("image"),
@@ -691,6 +872,7 @@ mod tests {
         ] {
             let document = Arc::new(document);
             let mut view = Selectable {
+                search: None,
                 id: "link",
                 name: "Alice",
                 body: Cow::Borrowed("fallback"),
@@ -753,6 +935,7 @@ mod tests {
     #[test]
     fn partial_selection_copies_but_cannot_edit_or_schedule_a_timer() {
         let mut view = Selectable {
+            search: None,
             id: "$one",
             name: "Alice",
             body: Cow::Borrowed("hello world café 👋"),

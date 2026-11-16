@@ -546,7 +546,11 @@ impl State {
         origin: Point,
         viewport: Rectangle,
         selection: Option<Range<usize>>,
+        search: Option<&str>,
     ) {
+        let highlights = search
+            .map(|query| super::room_search::matching_ranges(&self.text(), query))
+            .unwrap_or_default();
         for block in &self.blocks {
             let translation = origin - Point::ORIGIN;
             let bounds = block.bounds + translation;
@@ -614,45 +618,47 @@ impl State {
                 }
             }
             // Glyph clusters supply byte ranges and visual rectangles, including bidi runs.
-            if let Some(selected) = &selection {
-                for line in block.paragraph.buffer().layout_runs() {
-                    let line_start = block.lines[line.line_i];
-                    for glyph in line.glyphs {
-                        if block.runs.get(glyph.metadata).is_some_and(|run| {
-                            matches!(block.block.runs[*run].content, Inline::Image { .. })
-                        }) {
-                            continue;
-                        }
-                        let glyph_start =
-                            block.range.start + block.canonical(line_start + glyph.start);
-                        let glyph_end = block.range.start + block.canonical(line_start + glyph.end);
-                        if glyph_start < selected.end && glyph_end > selected.start {
-                            let cluster = &line.text[glyph.start..glyph.end];
-                            let graphemes: Vec<_> = cluster.grapheme_indices(true).collect();
-                            let start = glyph_start;
-                            let from = graphemes
+            for line in block.paragraph.buffer().layout_runs() {
+                let line_start = block.lines[line.line_i];
+                for glyph in line.glyphs {
+                    if block.runs.get(glyph.metadata).is_some_and(|run| {
+                        matches!(block.block.runs[*run].content, Inline::Image { .. })
+                    }) {
+                        continue;
+                    }
+                    let glyph_start = block.range.start + block.canonical(line_start + glyph.start);
+                    let glyph_end = block.range.start + block.canonical(line_start + glyph.end);
+                    // Logical order can differ from visual order in bidi text.
+                    let first = highlights.partition_point(|range| range.end <= glyph_start);
+                    for (selected, color) in highlights[first..]
+                        .iter()
+                        .take_while(|range| range.start < glyph_end)
+                        .map(|range| (range, super::room_search::HIGHLIGHT))
+                        .chain(
+                            selection
                                 .iter()
-                                .take_while(|(i, g)| start + i + g.len() <= selected.start)
-                                .count() as f32
-                                / graphemes.len().max(1) as f32;
-                            let to = graphemes
-                                .iter()
-                                .take_while(|(i, _)| start + i < selected.end)
-                                .count() as f32
-                                / graphemes.len().max(1) as f32;
-                            let left = if glyph.level.is_rtl() { 1.0 - to } else { from };
-                            quad(
-                                renderer,
-                                Rectangle::new(
-                                    Point::new(
-                                        bounds.x + glyph.x + left * glyph.w,
-                                        bounds.y + line.line_top,
-                                    ),
-                                    Size::new((to - from) * glyph.w, line.line_height),
+                                .filter(|range| range.start < glyph_end && range.end > glyph_start)
+                                .map(|range| (range, iced::Color::from_rgba8(73, 121, 211, 0.25))),
+                        )
+                    {
+                        let cluster = &line.text[glyph.start..glyph.end];
+                        let (left, width) = highlight_fraction(
+                            cluster,
+                            glyph_start,
+                            selected,
+                            glyph.level.is_rtl(),
+                        );
+                        quad(
+                            renderer,
+                            Rectangle::new(
+                                Point::new(
+                                    bounds.x + glyph.x + left * glyph.w,
+                                    bounds.y + line.line_top,
                                 ),
-                                iced::Color::from_rgba8(73, 121, 211, 0.25),
-                            );
-                        }
+                                Size::new(width * glyph.w, line.line_height),
+                            ),
+                            color,
+                        );
                     }
                 }
             }
@@ -708,6 +714,28 @@ impl State {
         }
     }
 }
+/// Preserve partial ligatures, complete graphemes, and RTL visual direction.
+pub(super) fn highlight_fraction(
+    cluster: &str,
+    start: usize,
+    selected: &Range<usize>,
+    rtl: bool,
+) -> (f32, f32) {
+    let graphemes: Vec<_> = cluster.grapheme_indices(true).collect();
+    let count = graphemes.len().max(1) as f32;
+    let from = graphemes
+        .iter()
+        .take_while(|(i, g)| start + i + g.len() <= selected.start)
+        .count() as f32
+        / count;
+    let to = graphemes
+        .iter()
+        .take_while(|(i, _)| start + i < selected.end)
+        .count() as f32
+        / count;
+    (if rtl { 1.0 - to } else { from }, to - from)
+}
+
 fn quad(renderer: &mut iced::Renderer, bounds: Rectangle, color: iced::Color) {
     renderer.fill_quad(
         renderer::Quad {
@@ -815,7 +843,7 @@ mod tests {
         let mut renderer = crate::test_renderer(Font::with_name("Inter"), iced::Pixels(14.0));
         let viewport = Rectangle::with_size(Size::new(300.0, 200.0));
         renderer.reset(viewport);
-        state.draw(&mut renderer, Point::ORIGIN, viewport, None);
+        state.draw(&mut renderer, Point::ORIGIN, viewport, None, None);
         let iced::Renderer::Secondary(software) = &mut renderer else {
             panic!("software renderer");
         };
@@ -1031,6 +1059,7 @@ mod tests {
                 Point::ORIGIN,
                 Rectangle::with_size(size),
                 Some(0..canonical.len()),
+                None,
             );
             assert_eq!(
                 state.layout(width).bounds(),
