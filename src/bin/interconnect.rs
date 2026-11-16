@@ -1261,6 +1261,18 @@ impl App {
         if let Some(uri) = &self.model.account_avatar_url {
             self.selection.avatars.push(uri.clone());
         }
+        for uri in self
+            .model
+            .spaces
+            .iter()
+            .filter_map(|s| s.avatar_url.as_ref())
+        {
+            if !self.selection.avatars.contains(uri)
+                && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED
+            {
+                self.selection.avatars.push(uri.clone());
+            }
+        }
         if let Some(view) = &self.image_view {
             self.selection.images.push(view.original.clone());
             return;
@@ -2805,6 +2817,38 @@ mod tests {
         app.shell.space = Scope::Space("studio-space".into());
         let _ = app.update(Message::Room("studio".into()));
         app
+    }
+
+    #[test]
+    fn space_icons_follow_metadata_deduplicate_and_release_demand() {
+        let mut app = demo_app();
+        let first: matrix_sdk::ruma::OwnedMxcUri = "mxc://example.org/space".into();
+        let next: matrix_sdk::ruma::OwnedMxcUri = "mxc://example.org/new-space".into();
+        let spaces = std::sync::Arc::make_mut(&mut app.model.spaces);
+        spaces[0].avatar_url = Some(first.clone());
+        spaces[1].avatar_url = Some(first.clone());
+        app.refresh_media_demand();
+        assert!(
+            app.selection.avatars.is_empty(),
+            "demo never requests media"
+        );
+        app.demo = None;
+        app.refresh_media_demand();
+        assert_eq!(app.selection.avatars, vec![first.clone()]);
+        let _ = app.update(Message::Space(Scope::All));
+        assert_eq!(app.selection.avatars, vec![first]);
+
+        let mut model = app.model.clone();
+        let spaces = std::sync::Arc::make_mut(&mut model.spaces);
+        spaces[0].avatar_url = None;
+        spaces[1].avatar_url = Some(next.clone());
+        let _ = app.update(Message::State(Box::new(model)));
+        assert_eq!(app.selection.avatars, vec![next]);
+
+        let mut model = app.model.clone();
+        model.spaces = Default::default();
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.selection.avatars.is_empty());
     }
 
     #[test]

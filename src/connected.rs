@@ -2086,7 +2086,7 @@ mod tests {
         );
         conversation["account_data"] = json!({"events":[{"type":"m.tag","content":{"tags":{"m.favourite":{}}}},{"type":"m.marked_unread","content":{"unread":true}}]});
         let first = json!({"next_batch":"one","rooms":{"join":{
-            "!space:example.org": room("Space",true,vec![event("m.space.child","!nested:example.org",json!({"via":["example.org"]}))]),
+            "!space:example.org": room("Space",true,vec![event("m.room.avatar","",json!({"url":"mxc://example.org/space"})),event("m.space.child","!nested:example.org",json!({"via":["example.org"]}))]),
             "!nested:example.org": room("Nested",true,vec![event("m.space.child","!room:example.org",json!({"via":["example.org"]}))]),
             "!other:example.org": room("Other",true,vec![event("m.space.child","!room:example.org",json!({"via":["example.org"]}))]),
             "!room:example.org": conversation
@@ -2111,6 +2111,10 @@ mod tests {
             Duration::from_secs(5),
             snapshots.wait_for(|s| {
                 s.spaces.len() == 3
+                    && s.spaces.iter().any(|s| {
+                        s.avatar_url.as_deref().map(|u| u.as_str())
+                            == Some("mxc://example.org/space")
+                    })
                     && s.rooms.len() == 1
                     && s.rooms[0].topic == "Initial topic"
                     && s.rooms[0].can_edit_topic
@@ -2238,6 +2242,8 @@ mod tests {
         // Global and room account-data updates must work without a room-list lifecycle transition.
         *response.lock().unwrap() = json!({"next_batch":"two","account_data":{"events":[{"type":"m.direct","content":{}}]},"rooms":{"join":{
             "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"})), event("m.room.topic","",json!({"topic":""})), event("m.room.pinned_events","",json!({"pinned":["$existing","$pin-one","$pin-two"]})), event("m.room.power_levels","",json!({"users":{"@test:example.org":50},"invite":100,"state_default":50,"events":{"m.room.topic":100,"m.room.pinned_events":100}}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
+            "!space:example.org":{"state":{"events":[event("m.room.avatar","",json!({}))]}},
+            "!other:example.org":{"state":{"events":[event("m.room.avatar","",json!({"url":"mxc://example.org/other"}))]}},
             "!nested:example.org":{"state":{"events":[event("m.space.child","!room:example.org",json!({}))]}}
         }}});
         client
@@ -2248,6 +2254,14 @@ mod tests {
             Duration::from_secs(5),
             snapshots.wait_for(|s| {
                 s.rooms.len() == 1
+                    && s.spaces
+                        .iter()
+                        .any(|s| s.id == "!space:example.org" && s.avatar_url.is_none())
+                    && s.spaces.iter().any(|s| {
+                        s.id == "!other:example.org"
+                            && s.avatar_url.as_deref().map(|u| u.as_str())
+                                == Some("mxc://example.org/other")
+                    })
                     && s.rooms[0].topic.is_empty()
                     && !s.rooms[0].can_edit_topic
                     && !s.rooms[0].can_pin

@@ -98,6 +98,24 @@ sections, unread indicators, and the last selected space/room use the navigation
 model. Selection generations prevent a late snapshot from a previous room/thread
 appearing in the current pane.
 
+The spaces bar displays each space's configured avatar through the shared static
+thumbnail cache. Missing, loading, or failed icons retain the initial fallback;
+the button size, selection highlight, and tooltip stay the same. Icon changes and
+removals follow account sync without a polling timer. Demo mode makes no icon
+requests.
+
+For connected acceptance, use another client to set, replace, and remove a space
+avatar, and confirm the bar updates without switching the open conversation.
+Check a space without an avatar and an unavailable image for the initial fallback.
+These rendering and live-account checks remain manual. Automated coverage checks
+SDK metadata updates/removal and deduplicated media demand across space selection,
+icon replacement, space removal, and demo isolation.
+
+November 16, 2026: space-icon validation passed formatting, workspace Clippy with
+warnings denied, a locked desktop build, and workspace tests (127 library tests
+passed, two ignored; 197 desktop tests passed). No live-account or desktop visual
+acceptance was performed for this change.
+
 ## Read receipts and unread clearing
 
 A focused, unobscured room at the newest messages sends a public `m.read`

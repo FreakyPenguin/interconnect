@@ -476,8 +476,13 @@ impl App {
         .spacing(10)
         .align_x(Alignment::Center);
         let mut entries = vec![
-            (Scope::All, "All".to_owned(), "All rooms".to_owned()),
-            (Scope::Direct, "DM".to_owned(), "Direct messages".to_owned()),
+            (Scope::All, "All".to_owned(), "All rooms".to_owned(), None),
+            (
+                Scope::Direct,
+                "DM".to_owned(),
+                "Direct messages".to_owned(),
+                None,
+            ),
         ];
         entries.extend(self.model.spaces.iter().map(|s| {
             (
@@ -489,12 +494,25 @@ impl App {
                     .to_uppercase()
                     .collect(),
                 s.name.clone(),
+                s.avatar_url
+                    .as_ref()
+                    .and_then(|uri| self.model.avatars.get(uri)),
             )
         }));
         let mut rail = column![].spacing(10).align_x(Alignment::Center);
-        for (scope, initial, name) in entries {
+        for (scope, initial, name, image) in entries {
             let selected = self.shell.space == scope;
-            let mut control = button(container(text(initial).size(14)).center_x(38).center_y(38))
+            let content: Element<'_, Message> = if let Some(handle) = image {
+                widget::image(handle.clone())
+                    .width(32)
+                    .height(32)
+                    .content_fit(iced::ContentFit::Cover)
+                    .border_radius(6)
+                    .into()
+            } else {
+                text(initial).size(14).into()
+            };
+            let mut control = button(container(content).center_x(38).center_y(38))
                 .padding(0)
                 .style(move |_, status| navigation_button(selected, status));
             if !self.closing && !self.stopped {

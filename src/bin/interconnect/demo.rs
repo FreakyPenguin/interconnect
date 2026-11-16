@@ -185,6 +185,7 @@ pub fn spaces() -> Vec<SpaceEntry> {
     .map(|(index, (id, name))| SpaceEntry {
         id: id.into(),
         name: name.into(),
+        avatar_url: None,
         children: ROOMS
             .iter()
             .filter(|r| r.space == index + 1)

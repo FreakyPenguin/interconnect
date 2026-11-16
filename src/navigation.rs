@@ -47,6 +47,7 @@ impl RoomEntry {
 pub struct SpaceEntry {
     pub id: String,
     pub name: String,
+    pub avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     /// Active m.space.child links. Unknown/unjoined children are not displayed.
     pub children: Vec<String>,
 }
@@ -101,7 +102,12 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<(Vec<RoomEntry>, Vec<Sp
             }
             children.sort();
             children.dedup();
-            spaces.push(SpaceEntry { id, name, children });
+            spaces.push(SpaceEntry {
+                id,
+                name,
+                avatar_url: room.avatar_url(),
+                children,
+            });
         } else {
             let unread_count = room.num_unread_messages();
             let levels = room.power_levels().await.ok();
