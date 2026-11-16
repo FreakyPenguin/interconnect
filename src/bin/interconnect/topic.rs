@@ -2,7 +2,7 @@
 use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, row, text, text_editor, tooltip},
+    widget::{button, column, row, text, text_editor, tooltip},
 };
 
 pub struct State {
@@ -176,28 +176,25 @@ impl App {
             .map(|room| room.topic.as_str())
             .filter(|topic| !topic.trim().is_empty())
             .unwrap_or("No topic");
-        let label = tooltip(
+        let label = super::tooltips::tooltip(
             text(topic.replace(['\n', '\r'], " "))
                 .width(Length::Fill)
                 .size(12)
                 .color(shell::MUTED)
                 .wrapping(text::Wrapping::None),
-            container(text(topic).size(12))
-                .padding(8)
-                .max_width(520)
-                .style(container::rounded_box),
+            topic,
             tooltip::Position::Bottom,
         );
         let mut content = row![label].spacing(6).align_y(iced::Alignment::Center);
         if room.is_some_and(|room| room.can_edit_topic) && !self.closing && !self.stopped {
-            content = content.push(tooltip(
+            content = content.push(super::tooltips::tooltip(
                 button(text("✎").size(14))
                     .width(24)
                     .height(24)
                     .padding([0, 4])
                     .style(shell::icon_button)
                     .on_press(message(Event::Open(generation, room_id.to_owned()))),
-                text("Edit room topic").size(12),
+                "Edit room topic",
                 tooltip::Position::Bottom,
             ));
         }

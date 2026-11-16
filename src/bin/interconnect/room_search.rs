@@ -200,7 +200,7 @@ impl App {
     }
 
     pub(super) fn room_search_button(&self) -> Element<'_, Message> {
-        tooltip(
+        super::tooltips::tooltip(
             button(
                 container(Element::new(SearchIcon))
                     .center_x(28)
@@ -209,7 +209,7 @@ impl App {
             .padding(0)
             .style(shell::icon_button)
             .on_press(message(Event::Open)),
-            text("Find in room (Ctrl+F / ⌘F)").size(12),
+            "Find in room (Ctrl+F / ⌘F)",
             tooltip::Position::Bottom,
         )
         .into()
@@ -250,17 +250,17 @@ impl App {
                     .on_submit(message(Event::Step(true)))
                     .width(Length::Fill),
                 text(label).size(11).color(shell::MUTED),
-                tooltip(
+                super::tooltips::tooltip(
                     previous,
-                    text("Previous match · Enter").size(12),
+                    "Previous match · Enter",
                     tooltip::Position::Bottom
                 ),
-                tooltip(next, text("Next match").size(12), tooltip::Position::Bottom),
-                tooltip(
+                super::tooltips::tooltip(next, "Next match", tooltip::Position::Bottom),
+                super::tooltips::tooltip(
                     button(text("×").size(18))
                         .style(shell::icon_button)
                         .on_press(message(Event::Close)),
-                    text("Close search · Escape").size(12),
+                    "Close search · Escape",
                     tooltip::Position::Bottom
                 ),
             ]

@@ -12,6 +12,5 @@
 
 - Dashboard
 - Standalone stickers and animated custom emoji
-- Ugly tooltips
 - resizable/scrollable composer
 - edit with control in composer

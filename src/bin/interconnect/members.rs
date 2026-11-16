@@ -155,9 +155,9 @@ impl App {
         if !self.closing && !self.stopped {
             badge = badge.on_press(message(Event::Open));
         }
-        tooltip(
+        super::tooltips::tooltip(
             container(badge).id("room-members"),
-            text(format!("{count} joined members · Show people")).size(12),
+            format!("{count} joined members · Show people"),
             tooltip::Position::Bottom,
         )
         .into()
@@ -166,12 +166,12 @@ impl App {
         let header = row![
             shell::title("People", 18),
             iced::widget::space().width(Length::Fill),
-            tooltip(
+            super::tooltips::tooltip(
                 button(container(text("×").size(18)).center_x(28).center_y(28))
                     .padding(0)
                     .style(shell::icon_button)
                     .on_press(message(Event::Close)),
-                text("Close people").size(12),
+                "Close people",
                 tooltip::Position::Bottom
             ),
         ]

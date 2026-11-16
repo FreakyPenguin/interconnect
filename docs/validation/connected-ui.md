@@ -36,6 +36,7 @@ see [renderer selection](../development.md#renderer-selection).
 | --- | --- |
 | Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
 | Navigation | Space selection filters the room list without switching the open conversation. Sections collapse independently; search filters rooms. |
+| Tooltips | Hover the account avatar, spaces, room-list toggle, header controls, composer actions, message timestamps/senders, and emoji choices. Hints use compact 11 px light text in a charcoal rounded surface with consistent padding, a subtle border/shadow, and a gap from the control. Check long topics and multiline read receipts wrap within the surface, and hints stay inside the window near its edges. Native rendering remains a manual check. |
 | Global message search | **Search messages** above Saved messages or Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a full-size panel. Enter or **Search** submits; typing cancels the previous request and clears its results. Results span all rooms regardless of the selected space and include room, sender, date, highlighted text, and **Go to message/reply**. Check pagination, duplicate suppression, no matches, server failure with local results, and switching to Saved messages or a room. Back/Escape restores the previous conversation, thread, drafts, and scroll; the panel sends no read receipts for hidden conversations. |
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
@@ -52,6 +53,11 @@ see [renderer selection](../development.md#renderer-selection).
 | GIFs | Images open still. Play/Stop, once/duration settings, close, and focus loss control playback. Reopening stays still. |
 | Attachments | Pick, paste, and drop stage one file per draft. The hover outline identifies the target; multiple files produce an error. Overlays block underlying drop targets. |
 | Settings | Save applies changes; Cancel discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
+
+Tooltip styling was visually checked in an isolated headless Sway demo with
+tiny-skia at 1280×900: account name, header search, message timestamp near the
+right edge, and room-list toggle. macOS, wgpu, long topics, and multiline read
+receipts remain manual acceptance checks.
 
 Ctrl+, opens Settings, Ctrl+K focuses the sidebar room filter, Alt+Up/Down selects adjacent
 filtered rooms, and Escape clears search or closes a thread. macOS uses Command

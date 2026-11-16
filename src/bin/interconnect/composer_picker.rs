@@ -184,11 +184,9 @@ impl App {
         {
             open = open.on_press(Message::ComposerEmoji(Event::Open(target)));
         }
-        tooltip(
+        super::tooltips::tooltip(
             container(open).id("composer-emoji"),
-            container(text("Insert emoji").size(12))
-                .padding(8)
-                .style(container::rounded_box),
+            "Insert emoji",
             tooltip::Position::Top,
         )
         .into()

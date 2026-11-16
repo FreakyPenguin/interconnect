@@ -227,16 +227,14 @@ pub fn message_actions<'a>(
                 .on_press_maybe(reaction),
         )
         .id("add-reaction");
-        controls = controls.push(widget::tooltip(
+        controls = controls.push(super::tooltips::tooltip(
             add,
-            container(text("Add reaction").size(12))
-                .padding(8)
-                .style(container::rounded_box),
+            "Add reaction",
             widget::tooltip::Position::Top,
         ));
     }
     if let Some(reply) = reply {
-        controls = controls.push(widget::tooltip(
+        controls = controls.push(super::tooltips::tooltip(
             container(
                 button(container(text("↩").size(16)).center_x(28).center_y(20))
                     .padding(0)
@@ -244,15 +242,13 @@ pub fn message_actions<'a>(
                     .on_press(reply),
             )
             .id("reply-in-thread"),
-            container(text("Reply in thread").size(12))
-                .padding(8)
-                .style(container::rounded_box),
+            "Reply in thread",
             widget::tooltip::Position::Top,
         ));
     }
     if let Some(pin) = pin {
         let unpin = matches!(&pin, Message::Pin(super::pin_action::Event::Set(_, false)));
-        controls = controls.push(widget::tooltip(
+        controls = controls.push(super::tooltips::tooltip(
             container(
                 button(
                     container(
@@ -270,16 +266,11 @@ pub fn message_actions<'a>(
             } else {
                 "pin-message"
             }),
-            container(
-                text(if unpin {
-                    "Unpin message"
-                } else {
-                    "Pin message"
-                })
-                .size(12),
-            )
-            .padding(8)
-            .style(container::rounded_box),
+            if unpin {
+                "Unpin message"
+            } else {
+                "Pin message"
+            },
             widget::tooltip::Position::Top,
         ));
     }
@@ -288,7 +279,7 @@ pub fn message_actions<'a>(
             &bookmark,
             Message::Bookmark(super::bookmarks::Event::Set(_, false))
         );
-        controls = controls.push(widget::tooltip(
+        controls = controls.push(super::tooltips::tooltip(
             container(
                 button(
                     container(text(if remove { "★" } else { "☆" }).size(18))
@@ -304,16 +295,11 @@ pub fn message_actions<'a>(
             } else {
                 "bookmark-message"
             }),
-            container(
-                text(if remove {
-                    "Remove bookmark"
-                } else {
-                    "Bookmark message"
-                })
-                .size(12),
-            )
-            .padding(8)
-            .style(container::rounded_box),
+            if remove {
+                "Remove bookmark"
+            } else {
+                "Bookmark message"
+            },
             widget::tooltip::Position::Top,
         ));
     }
@@ -548,9 +534,9 @@ impl App {
                 );
             }
             if let Some(error) = &self.model.media_error {
-                footer = footer.push(widget::tooltip(
+                footer = footer.push(super::tooltips::tooltip(
                     text("Media unavailable").size(11).color(MUTED),
-                    text(error).size(12),
+                    error,
                     widget::tooltip::Position::Top,
                 ));
             }
@@ -580,7 +566,7 @@ impl App {
             .as_ref()
             .and_then(|uri| self.model.avatars.get(uri));
         let mut spaces = column![
-            container(widget::tooltip(
+            container(super::tooltips::tooltip(
                 avatar(account_name, account_image),
                 account_name,
                 widget::tooltip::Position::Right,
@@ -637,11 +623,9 @@ impl App {
             if !self.closing && !self.stopped {
                 control = control.on_press(Message::Space(scope));
             }
-            rail = rail.push(widget::tooltip(
+            rail = rail.push(super::tooltips::tooltip(
                 control,
-                container(text(name).size(12))
-                    .padding(8)
-                    .style(container::rounded_box),
+                name,
                 widget::tooltip::Position::Right,
             ));
         }
@@ -651,7 +635,7 @@ impl App {
                 .style(scroll_style)
                 .height(Length::Fill),
         );
-        spaces = spaces.push(widget::tooltip(
+        spaces = spaces.push(super::tooltips::tooltip(
             button("☰")
                 .padding(10)
                 .style(quiet_button)
@@ -709,7 +693,7 @@ impl App {
             );
         }
         let mut rooms = column![
-            widget::tooltip(
+            super::tooltips::tooltip(
                 button(
                     row![
                         Element::new(super::room_search::SearchIcon),
@@ -725,7 +709,7 @@ impl App {
                     (!self.closing && !self.stopped)
                         .then_some(Message::GlobalSearch(super::global_search::Event::Open))
                 ),
-                text("Search all rooms · Ctrl+Shift+F / ⌘⇧F").size(12),
+                "Search all rooms · Ctrl+Shift+F / ⌘⇧F",
                 widget::tooltip::Position::Bottom,
             ),
             button(saved_messages)
@@ -890,13 +874,8 @@ impl App {
         } else {
             "New chat (Ctrl+N)"
         };
-        let new_chat = widget::tooltip(
-            new_chat,
-            container(text(shortcut).size(12))
-                .padding(8)
-                .style(container::rounded_box),
-            widget::tooltip::Position::Bottom,
-        );
+        let new_chat =
+            super::tooltips::tooltip(new_chat, shortcut, widget::tooltip::Position::Bottom);
         let mut create_room = button(container(text("#+").size(16)).center_x(24).center_y(24))
             .padding(2)
             .style(icon_button);
@@ -909,13 +888,8 @@ impl App {
         } else {
             "Create room (Ctrl+Shift+N)"
         };
-        let create_room = widget::tooltip(
-            create_room,
-            container(text(shortcut).size(12))
-                .padding(8)
-                .style(container::rounded_box),
-            widget::tooltip::Position::Bottom,
-        );
+        let create_room =
+            super::tooltips::tooltip(create_room, shortcut, widget::tooltip::Position::Bottom);
         container(
             column![
                 row![
@@ -924,7 +898,7 @@ impl App {
                         .width(Length::Fill),
                     new_chat,
                     create_room,
-                    widget::tooltip(
+                    super::tooltips::tooltip(
                         button(text("⋯").size(16))
                             .padding(2)
                             .style(icon_button)

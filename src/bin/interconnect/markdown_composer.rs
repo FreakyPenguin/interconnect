@@ -272,9 +272,9 @@ impl App {
             }
         }
         row![
-            tooltip(
+            super::tooltips::tooltip(
                 mode,
-                text("Switch between Markdown and literal text").size(12),
+                "Switch between Markdown and literal text",
                 tooltip::Position::Top
             ),
             preview

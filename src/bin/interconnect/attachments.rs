@@ -313,11 +313,9 @@ impl App {
         {
             pick = pick.on_press(Message::Attachment(Event::Pick(target)));
         }
-        tooltip(
+        super::tooltips::tooltip(
             container(pick).id("composer-attachment"),
-            container(text("Attach a file (up to 50 MiB)").size(12))
-                .padding(8)
-                .style(container::rounded_box),
+            "Attach a file (up to 50 MiB)",
             tooltip::Position::Top,
         )
         .into()

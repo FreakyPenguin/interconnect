@@ -75,6 +75,8 @@ mod shell;
 mod thread_activity;
 #[path = "interconnect/timeline.rs"]
 mod timeline;
+#[path = "interconnect/tooltips.rs"]
+mod tooltips;
 #[path = "interconnect/topic.rs"]
 mod topic;
 #[path = "interconnect/typing.rs"]
@@ -2121,9 +2123,9 @@ impl App {
         if !self.closing && !self.stopped {
             open = open.on_press(Message::OpenThreadLatest(root.to_owned()));
         }
-        iced::widget::tooltip(
+        tooltips::tooltip(
             open,
-            text(presentation::time_detail(latest)).size(12),
+            presentation::time_detail(latest),
             iced::widget::tooltip::Position::Top,
         )
         .into()
@@ -2138,18 +2140,18 @@ impl App {
                     &message.display_name,
                 )
             } else {
-                let timestamp = iced::widget::tooltip(
+                let timestamp = tooltips::tooltip(
                     text(presentation::time_label(message))
                         .size(11)
                         .color(shell::MUTED),
-                    text(presentation::time_detail(message)).size(12),
+                    presentation::time_detail(message),
                     iced::widget::tooltip::Position::Top,
                 );
                 column![
                     row![
-                        iced::widget::tooltip(
+                        tooltips::tooltip(
                             shell::title(&message.display_name, 13),
-                            text(&message.sender).size(12),
+                            &message.sender,
                             iced::widget::tooltip::Position::Top,
                         ),
                         iced::widget::space().width(Length::Fill),
@@ -2319,14 +2321,12 @@ impl App {
             );
         }
         if thread {
-            header = header.push(iced::widget::tooltip(
+            header = header.push(tooltips::tooltip(
                 button(container(text("×").size(18)).center_x(28).center_y(28))
                     .padding(0)
                     .style(shell::icon_button)
                     .on_press(Message::CloseThread),
-                container(text("Close thread").size(12))
-                    .padding(8)
-                    .style(container::rounded_box),
+                "Close thread",
                 iced::widget::tooltip::Position::Bottom,
             ));
         }
@@ -2480,11 +2480,11 @@ impl App {
                 messages = messages.push(container(message_row).id(timeline::row_id(index)));
                 continue;
             }
-            let timestamp = iced::widget::tooltip(
+            let timestamp = tooltips::tooltip(
                 text(presentation::time_label(message))
                     .size(11)
                     .color(shell::MUTED),
-                text(presentation::time_detail(message)).size(12),
+                presentation::time_detail(message),
                 iced::widget::tooltip::Position::Top,
             );
             let body = if activity {
@@ -2505,9 +2505,9 @@ impl App {
                 )
             };
             let mut entry = if activity {
-                column![iced::widget::tooltip(
+                column![tooltips::tooltip(
                     body,
-                    text(presentation::time_detail(message)).size(12),
+                    presentation::time_detail(message),
                     iced::widget::tooltip::Position::Top,
                 )]
             } else if grouped {
@@ -2515,9 +2515,9 @@ impl App {
             } else {
                 column![
                     row![
-                        iced::widget::tooltip(
+                        tooltips::tooltip(
                             shell::title(&message.display_name, 13),
-                            text(&message.sender).size(12),
+                            &message.sender,
                             iced::widget::tooltip::Position::Top
                         ),
                         iced::widget::space().width(Length::Fill),
@@ -2544,9 +2544,9 @@ impl App {
                 } else {
                     format!("Read by {count} people")
                 };
-                entry = entry.push(iced::widget::tooltip(
+                entry = entry.push(tooltips::tooltip(
                     text(label).size(11).color(shell::MUTED),
-                    text(message.read_by.join("\n")).size(12),
+                    message.read_by.join("\n"),
                     iced::widget::tooltip::Position::Top,
                 ));
             }
@@ -2713,7 +2713,7 @@ impl App {
         if self.pending_scroll[usize::from(thread)].is_none()
             && (self.saved_scroll(thread) > 1.0 || focus.is_some())
         {
-            let jump = iced::widget::tooltip(
+            let jump = tooltips::tooltip(
                 button(container(text("⌄").size(24)).center_x(36).center_y(36))
                     .padding(0)
                     .style(shell::jump_button)
@@ -2721,9 +2721,7 @@ impl App {
                         thread,
                         generation: *generation,
                     }),
-                container(text("Jump to newest message").size(12))
-                    .padding(8)
-                    .style(container::rounded_box),
+                "Jump to newest message",
                 iced::widget::tooltip::Position::Top,
             );
             message_area = message_area.push(
@@ -2795,30 +2793,25 @@ impl App {
             {
                 send = send.on_press(Message::Send(key.clone()));
             }
-            let send = iced::widget::tooltip(
+            let send = tooltips::tooltip(
                 send,
-                container(
-                    text(if draft.pending {
-                        "Queueing message…"
-                    } else if thread {
-                        match shortcut {
-                            interconnect::settings::SendShortcut::CtrlEnter => {
-                                "Send reply (Ctrl+Enter)"
-                            }
-                            interconnect::settings::SendShortcut::Enter => "Send reply (Enter)",
+                if draft.pending {
+                    "Queueing message…"
+                } else if thread {
+                    match shortcut {
+                        interconnect::settings::SendShortcut::CtrlEnter => {
+                            "Send reply (Ctrl+Enter)"
                         }
-                    } else {
-                        match shortcut {
-                            interconnect::settings::SendShortcut::CtrlEnter => {
-                                "Send message (Ctrl+Enter)"
-                            }
-                            interconnect::settings::SendShortcut::Enter => "Send message (Enter)",
+                        interconnect::settings::SendShortcut::Enter => "Send reply (Enter)",
+                    }
+                } else {
+                    match shortcut {
+                        interconnect::settings::SendShortcut::CtrlEnter => {
+                            "Send message (Ctrl+Enter)"
                         }
-                    })
-                    .size(12),
-                )
-                .padding(8)
-                .style(container::rounded_box),
+                        interconnect::settings::SendShortcut::Enter => "Send message (Enter)",
+                    }
+                },
                 iced::widget::tooltip::Position::Top,
             );
             let actions = row![

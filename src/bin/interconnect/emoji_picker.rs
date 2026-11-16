@@ -336,7 +336,7 @@ fn entry_view<'a, Message: Clone + 'static>(
     images: &'a interconnect::media::Snapshot<interconnect::image_media::Key>,
     select: Option<Message>,
 ) -> Element<'a, Message> {
-    tooltip(
+    super::tooltips::tooltip(
         button(
             container(glyph(entry.custom.as_ref(), &entry.glyph, images, 22.0))
                 .center_x(34)
@@ -346,11 +346,10 @@ fn entry_view<'a, Message: Clone + 'static>(
         .padding(0)
         .style(shell::quiet_button)
         .on_press_maybe(select),
-        text(entry.custom.as_ref().map_or_else(
+        entry.custom.as_ref().map_or_else(
             || entry.name.clone(),
             |emoji| format!(":{}: · {} · {}", emoji.shortcode, emoji.pack, emoji.name),
-        ))
-        .size(12),
+        ),
         tooltip::Position::Top,
     )
     .into()

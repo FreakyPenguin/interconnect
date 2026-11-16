@@ -17,16 +17,16 @@ impl App {
         }
         let mut entries = column![].spacing(10);
         for message in pins.rows.iter() {
-            let timestamp = tooltip(
+            let timestamp = super::tooltips::tooltip(
                 text(presentation::time_label(message))
                     .size(11)
                     .color(shell::MUTED),
-                text(presentation::time_detail(message)).size(12),
+                presentation::time_detail(message),
                 tooltip::Position::Bottom,
             );
             let icon: Element<'_, Message> =
                 if let Some(unpin) = self.pinned_unpin_action(message, generation) {
-                    tooltip(
+                    super::tooltips::tooltip(
                         container(
                             button(emoji::preview("📌".into()).size(14))
                                 .padding(0)
@@ -35,7 +35,7 @@ impl App {
                                 .on_press(unpin),
                         )
                         .id(format!("pinned-unpin:{}", message.key)),
-                        text("Unpin message").size(12),
+                        "Unpin message",
                         tooltip::Position::Bottom,
                     )
                     .into()
