@@ -184,6 +184,9 @@ pub async fn snapshot(
     let mut rooms = Vec::new();
     let mut spaces = Vec::new();
     for room in client.joined_rooms() {
+        if crate::bookmarks::is_bookmarks_room(&room) {
+            continue;
+        }
         let id = room.room_id().to_string();
         let name = room
             .name()

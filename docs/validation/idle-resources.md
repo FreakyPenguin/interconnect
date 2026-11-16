@@ -4,6 +4,19 @@ The settled UI has no global polling or continuous redraw loop. SDK and network
 work still wake the process. CPU and scheduler measurements capture activity
 that timer and subscription tests alone cannot establish.
 
+## Message bookmarks — 2026-11-15
+
+The account-wide bookmarks worker adds one storage-room cache subscription and
+hydrates its full history. The Saved messages view additionally owns up to 20
+source timelines and source-room sync subscriptions for its current page;
+four setups run concurrently. These end on paging, closing or account changes.
+Settled streams wait on SDK/cache updates. Only finite setup/write deadlines add
+timers. No periodic refresh, frame subscription or automatic receipt was added.
+Existing `live_timelines` diagnostics do not count these source timelines.
+The CPU-rendered view test checks that settled redraws request `Wait`.
+Production CPU, wakeups and large-history memory remain unmeasured; earlier
+measurements below predate this feature. See [bookmark design](../bookmarks.md).
+
 ## Repeatable checks
 
 Run the normal suite and the longer SDK fixture separately:

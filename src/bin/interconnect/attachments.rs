@@ -45,6 +45,7 @@ impl App {
         };
         !self.closing
             && !self.stopped
+            && !self.bookmarks.open
             && (thread
                 || !self
                     .window_width

@@ -38,6 +38,8 @@ pub struct Selection {
     pub image_retry: u64,
     pub notifications: crate::settings::Notifications,
     pub conversation_visible: bool,
+    /// Source rooms for the currently displayed saved messages only.
+    pub bookmark_rooms: Vec<String>,
 }
 
 pub use crate::navigation::{RoomEntry, SpaceEntry};
@@ -549,6 +551,8 @@ impl std::error::Error for SignInRequired {}
 
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub bookmarks_service: Option<crate::bookmarks::Service>,
+    pub bookmarks: crate::bookmarks::Snapshot,
     pub people_directory: Option<crate::people::Directory>,
     pub typing: Option<Typing>,
     pub authentication: Option<Authentication>,
@@ -577,6 +581,8 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            bookmarks_service: None,
+            bookmarks: Default::default(),
             people_directory: None,
             typing: None,
             authentication: Some(Authentication::Checking),
@@ -605,8 +611,8 @@ impl Default for Model {
     }
 }
 
-type ViewFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
-fn inactive() -> ViewFuture {
+pub(crate) type ViewFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
+pub(crate) fn inactive() -> ViewFuture {
     Box::pin(pending())
 }
 
@@ -670,6 +676,7 @@ pub async fn run(
         state.send_modify(|s| {
             s.authentication = None;
             s.people_directory = Some(crate::people::Directory::new(client.clone()));
+            s.bookmarks_service = Some(crate::bookmarks::Service::new(client.clone()));
             s.account_id = client.user_id().map(ToString::to_string);
             s.status = "Loading conversations…".into();
         });
@@ -814,6 +821,15 @@ async fn connected(
     tokio::pin!(profile);
     let navigation = navigation_updates(client, state);
     tokio::pin!(navigation);
+    let bookmarks_service = state.borrow().bookmarks_service.clone();
+    let bookmarks = async {
+        if let Some(service) = bookmarks_service {
+            service.run(sync, state.clone()).await;
+        } else {
+            pending::<()>().await;
+        }
+    };
+    tokio::pin!(bookmarks);
     let mut sync_states = sync.state();
     let mut room_states = sync.room_list_service().state();
     let mut session_changes = client.subscribe_to_session_changes();
@@ -830,6 +846,7 @@ async fn connected(
     let mut pinned_view = inactive();
     let mut members_view = inactive();
     let mut thread_view = inactive();
+    let mut bookmark_rooms = std::collections::HashSet::new();
     let result = async {
         loop {
             let next = selection.borrow_and_update().clone();
@@ -886,6 +903,19 @@ async fn connected(
                     members_view = Box::pin(members::view(client.clone(), room.clone(), generation, state.clone()));
                 }
             }
+            if active.bookmark_rooms != next.bookmark_rooms || active.room != next.room {
+                let requested: std::collections::HashSet<matrix_sdk::ruma::OwnedRoomId> = next.bookmark_rooms.iter()
+                    .filter_map(|room| room.parse::<matrix_sdk::ruma::OwnedRoomId>().ok())
+                    .filter(|id| client.get_room(id).is_none_or(|room| !crate::bookmarks::is_bookmarks_room(&room)))
+                    .collect();
+                let remove: Vec<_> = bookmark_rooms.difference(&requested)
+                    .filter(|room: &&matrix_sdk::ruma::OwnedRoomId| next.room.as_ref().is_none_or(|(_, selected)| selected != room.as_str()))
+                    .map(|room| room.as_ref()).collect();
+                sync.room_list_service().remove_room_subscriptions(&remove);
+                let ids: Vec<_> = requested.iter().map(|room| room.as_ref()).collect();
+                sync.room_list_service().set_room_subscriptions(&ids).await;
+                bookmark_rooms = requested;
+            }
             active = next;
             tokio::select! {
                 result = &mut media, if !media_finished => {
@@ -915,6 +945,7 @@ async fn connected(
                 changed = selection.changed() => { if changed.is_err() { break; } }
                 _ = &mut profile => {},
                 _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
+                _ = &mut bookmarks => anyhow::bail!("Bookmarks update stream ended"),
                 _ = &mut typing_view => typing_view = inactive(),
                 _ = &mut outgoing, if !outgoing_finished => outgoing_finished = true,
                 _ = &mut room_view => room_view = inactive(),
@@ -949,6 +980,8 @@ async fn connected(
     drop(pinned_view);
     drop(members_view);
     drop(thread_view);
+    let ids: Vec<_> = bookmark_rooms.iter().map(|room| room.as_ref()).collect();
+    sync.room_list_service().remove_room_subscriptions(&ids);
     if let Some((_, id)) = active.room {
         let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
         sync.room_list_service().remove_room_subscriptions(&[&id]);
@@ -1239,7 +1272,7 @@ async fn publish(
     });
 }
 
-async fn timeline_rows(timeline: &Timeline) -> Vec<MessageRow> {
+pub(crate) async fn timeline_rows(timeline: &Timeline) -> Vec<MessageRow> {
     timeline_rows_cached(timeline, Arc::default()).await
 }
 

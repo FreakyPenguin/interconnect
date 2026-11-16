@@ -95,7 +95,8 @@ fn message(event: Event) -> Message {
 impl App {
     pub(super) fn update_notification_context(&mut self) {
         self.selection.notifications = self.settings.current.notifications.clone();
-        self.selection.conversation_visible = self.window_focused
+        self.selection.conversation_visible = !self.bookmarks.open
+            && self.window_focused
             && self.settings.draft.is_none()
             && self.room_picker.is_none()
             && self.new_chat.is_none()

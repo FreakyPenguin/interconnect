@@ -204,9 +204,15 @@ pub fn message_actions<'a>(
     reply: Option<Message>,
     reaction: Option<Message>,
     pin: Option<Message>,
+    bookmark: Option<Message>,
     popup: Option<(Element<'a, Message>, Message)>,
 ) -> Element<'a, Message> {
-    if reply.is_none() && reaction.is_none() && pin.is_none() && popup.is_none() {
+    if reply.is_none()
+        && reaction.is_none()
+        && pin.is_none()
+        && bookmark.is_none()
+        && popup.is_none()
+    {
         return body.into();
     }
     let (content, dismiss) = popup.map_or((None, Message::Escape), |(content, dismiss)| {
@@ -269,6 +275,40 @@ pub fn message_actions<'a>(
                     "Unpin message"
                 } else {
                     "Pin message"
+                })
+                .size(12),
+            )
+            .padding(8)
+            .style(container::rounded_box),
+            widget::tooltip::Position::Top,
+        ));
+    }
+    if let Some(bookmark) = bookmark {
+        let remove = matches!(
+            &bookmark,
+            Message::Bookmark(super::bookmarks::Event::Set(_, false))
+        );
+        controls = controls.push(widget::tooltip(
+            container(
+                button(
+                    container(text(if remove { "★" } else { "☆" }).size(18))
+                        .center_x(28)
+                        .center_y(20),
+                )
+                .padding(0)
+                .style(icon_button)
+                .on_press(bookmark),
+            )
+            .id(if remove {
+                "unbookmark-message"
+            } else {
+                "bookmark-message"
+            }),
+            container(
+                text(if remove {
+                    "Remove bookmark"
+                } else {
+                    "Bookmark message"
                 })
                 .size(12),
             )
@@ -450,7 +490,9 @@ impl App {
                     .push(self.room_navigation())
                     .push(widget::rule::vertical(1));
             }
-            if self.side_panel_replaces_room(size.width) {
+            if self.bookmarks.open {
+                body = body.push(container(self.bookmarks_view()).width(Length::Fill));
+            } else if self.side_panel_replaces_room(size.width) {
                 body = body.push(container(self.side_panel()).width(Length::Fill));
             } else {
                 body = body.push(container(self.pane(false)).width(Length::Fill));
@@ -644,7 +686,18 @@ impl App {
                 .on_input(Message::Search)
                 .on_submit(Message::SearchOpen);
         }
-        let mut rooms = column![].spacing(2);
+        let mut rooms = column![
+            button(row![text("☆").size(17), text("Saved messages").size(13)].spacing(8))
+                .width(Length::Fill)
+                .padding([8, 10])
+                .style(move |_, status| navigation_button(self.bookmarks.open, status))
+                .on_press_maybe(
+                    (!self.closing && !self.stopped)
+                        .then_some(Message::Bookmark(super::bookmarks::Event::Open))
+                ),
+            widget::rule::horizontal(1),
+        ]
+        .spacing(2);
         let sections = &*self.model.sections;
         let visible = self.visible_rooms();
         if let Some(error) = &self.model.preferences_error {
@@ -735,11 +788,12 @@ impl App {
                 continue;
             }
             for room in entries {
-                let selected = self
-                    .selection
-                    .room
-                    .as_ref()
-                    .is_some_and(|(_, id)| id == &room.id);
+                let selected = !self.bookmarks.open
+                    && self
+                        .selection
+                        .room
+                        .as_ref()
+                        .is_some_and(|(_, id)| id == &room.id);
                 let unread = room.unread_count;
                 let mut label = row![
                     text(if room.direct { "·" } else { "#" })

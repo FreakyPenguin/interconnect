@@ -857,6 +857,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
         ])
         .anchor_bottom()

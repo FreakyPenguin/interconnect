@@ -1,5 +1,6 @@
 #![recursion_limit = "256"]
 pub mod attachment;
+pub mod bookmarks;
 pub mod clipboard;
 pub mod composition;
 pub mod connected;

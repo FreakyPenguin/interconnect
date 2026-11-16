@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 #[path = "interconnect/attachments.rs"]
 mod attachments;
+#[path = "interconnect/bookmarks.rs"]
+mod bookmarks;
 #[path = "interconnect/composer_picker.rs"]
 mod composer_picker;
 #[path = "interconnect/context_menu.rs"]
@@ -105,6 +107,7 @@ struct App {
     context_menu: Option<context_menu::State>,
     manual_unread_generation: Option<u64>,
     section_reorder: section_reorder::State,
+    bookmarks: bookmarks::State,
     settings: settings::State,
     login: login::State,
     verification: verification::State,
@@ -168,6 +171,7 @@ enum Message {
     SectionsReordered(Option<String>, u64, Result<(), String>),
     OpenMessageLink(String),
     LinkOpened,
+    Bookmark(bookmarks::Event),
     QuickRoom(room_picker::Event),
     NewChat(new_chat::Event),
     CreateRoom(create_room::Event),
@@ -254,6 +258,7 @@ enum Message {
 impl App {
     fn new() -> Self {
         let mut app = Self {
+            bookmarks: bookmarks::State::default(),
             settings: settings::State::default(),
             login: login::State::default(),
             verification: verification::State::default(),
@@ -312,6 +317,7 @@ impl App {
         };
         if std::env::args().any(|arg| arg == "--demo") {
             app.model.authentication = None;
+            app.model.bookmarks.complete = true;
             app.demo = Some(demo::Demo::default());
             app.model.rooms = demo::rooms().into();
             app.model.sections = demo::sections().into();
@@ -332,7 +338,8 @@ impl App {
         }
         if matches!(
             message,
-            Message::Space(_)
+            Message::Bookmark(bookmarks::Event::Open)
+                | Message::Space(_)
                 | Message::Search(_)
                 | Message::Section(_)
                 | Message::Room(_)
@@ -377,6 +384,7 @@ impl App {
                 | Message::Invite(_)
                 | Message::Topic(_)
                 | Message::Members(_)
+                | Message::Bookmark(bookmarks::Event::Open)
         ) {
             self.context_menu = None;
         }
@@ -507,6 +515,14 @@ impl App {
                     | Message::OpenLastThread
                     | Message::ToggleNavigation
                     | Message::Focus(_)
+                    | Message::Bookmark(
+                        bookmarks::Event::Open
+                            | bookmarks::Event::Remove(_)
+                            | bookmarks::Event::Conversation(_)
+                            | bookmarks::Event::More
+                            | bookmarks::Event::Previous
+                            | bookmarks::Event::Refresh
+                    )
                     | Message::Room(_)
                     | Message::Thread(_)
                     | Message::OpenThreadLatest(_)
@@ -544,6 +560,9 @@ impl App {
         if matches!(message, Message::Escape) && self.topic_editor.is_some() {
             return self.update(Message::Topic(topic::Event::Cancel));
         }
+        if matches!(message, Message::Escape) && self.bookmarks.open {
+            return self.update(Message::Bookmark(bookmarks::Event::Close));
+        }
         if matches!(
             &message,
             Message::Space(_) | Message::Room(_) | Message::Section(_)
@@ -551,6 +570,23 @@ impl App {
             self.pending_navigation = None;
         }
 
+        if self.bookmarks.open
+            && matches!(
+                message,
+                Message::Edit(..)
+                    | Message::Send(_)
+                    | Message::LoadOlder { .. }
+                    | Message::TimelineMeasured { .. }
+                    | Message::RowsVisible { .. }
+                    | Message::Scrolled { .. }
+                    | Message::Pin(pin_action::Event::Set(..))
+                    | Message::Reaction(
+                        reaction_picker::Event::Open(_) | reaction_picker::Event::Chip { .. }
+                    )
+            )
+        {
+            return Task::none();
+        }
         let navigation = matches!(
             &message,
             Message::Room(_)
@@ -566,7 +602,7 @@ impl App {
         let closing_image = matches!(&message, Message::Image(images::Event::Close));
         let refresh_media = matches!(
             &message,
-            Message::Members(_) | Message::Invite(_) | Message::NewChat(_)
+            Message::Members(_) | Message::Invite(_) | Message::NewChat(_) | Message::Bookmark(_)
         ) || navigation
             || matches!(
                 &message,
@@ -608,6 +644,7 @@ impl App {
             Message::LinkOpened => {}
 
             Message::CreateRoom(event) => action_task = self.create_room_event(event),
+            Message::Bookmark(event) => action_task = self.bookmark_event(event),
             Message::NewChat(event) => action_task = self.new_chat_event(event),
             Message::Pin(event) => action_task = self.pin_event(event),
             Message::Topic(event) => action_task = self.topic_event(event),
@@ -1069,6 +1106,8 @@ impl App {
                 self.control = Some(sender);
             }
             Message::State(mut state) => {
+                let bookmarks_changed = self.model.bookmarks.entries != state.bookmarks.entries
+                    || self.model.bookmarks.loading != state.bookmarks.loading;
                 if self.demo.is_none()
                     && (state.authentication.is_some() || state.account_id != self.account_id)
                 {
@@ -1076,6 +1115,7 @@ impl App {
                     self.create_room = None;
                     self.pending_created_space = None;
                     self.pending_created_room = None;
+                    self.bookmarks.reset();
                 }
                 if let Some(room) = &self.pending_created_room {
                     if state.rooms.iter().any(|r| r.id == room.id) {
@@ -1120,6 +1160,9 @@ impl App {
                     self.verification.open = false;
                 }
                 self.model = *state;
+                if bookmarks_changed && self.bookmarks.open {
+                    action_task = self.load_bookmark_previews();
+                }
                 if let Some(room) = self.restore_navigation() {
                     return self.update(Message::Room(room));
                 }
@@ -1152,6 +1195,7 @@ impl App {
             }
             Message::Close if self.demo.is_some() => return iced::exit(),
             Message::Close => {
+                self.bookmarks.close();
                 if self.stopped && self.pending_ops == 0 {
                     return iced::exit();
                 }
@@ -1161,6 +1205,7 @@ impl App {
             }
             Message::Exit => return self.update(Message::Close),
             Message::Room(id) if !self.closing && !self.stopped => {
+                self.bookmarks.close();
                 self.visible_rows = Default::default();
                 self.generation += 1;
                 self.selection.members = None;
@@ -1174,6 +1219,7 @@ impl App {
             Message::Thread(id)
                 if !self.closing && !self.stopped && self.selection.room.is_some() =>
             {
+                self.bookmarks.close();
                 self.visible_rows[1].clear();
                 self.generation += 1;
                 self.selection.members = None;
@@ -1270,6 +1316,22 @@ impl App {
         if refresh_media {
             self.refresh_media_demand();
         }
+        self.selection.bookmark_rooms = if self.bookmarks.open && !self.model.bookmarks.loading {
+            let mut rooms: Vec<_> = self
+                .model
+                .bookmarks
+                .entries
+                .iter()
+                .skip(self.bookmarks.start())
+                .take(self.bookmarks.limit())
+                .map(|entry| entry.pointer.room_id.clone())
+                .collect();
+            rooms.sort();
+            rooms.dedup();
+            rooms
+        } else {
+            Vec::new()
+        };
         self.update_notification_context();
         self.validate_read_targets();
         if let Some(control) = &self.control {
@@ -1388,6 +1450,9 @@ impl App {
             }
         }
         let mut previews = 0;
+        if self.bookmarks.open {
+            return;
+        }
         for (index, (selected, snapshot)) in [
             (&self.selection.room, &self.model.room),
             (&self.selection.thread, &self.model.thread),
@@ -1453,6 +1518,9 @@ impl App {
             .unwrap_or(0.0)
     }
     fn restore_scroll(&mut self) -> Task<Message> {
+        if self.bookmarks.open {
+            return Task::none();
+        }
         let mut tasks = Vec::new();
         for thread in [false, true] {
             let index = usize::from(thread);
@@ -1924,10 +1992,14 @@ impl App {
             let generation = self.selection.thread.as_ref().expect("thread original").0;
             self.message_context(
                 shell::message_actions(
-                    self.pin_feedback(original, message, true, generation),
+                    self.bookmark_feedback(
+                        self.pin_feedback(original, message, true, generation),
+                        message,
+                    ),
                     None,
                     self.reaction_action(message, true, generation),
                     self.pin_action(message, true, generation),
+                    self.bookmark_action(message, true, generation),
                     self.reaction_popup(
                         true,
                         generation,
@@ -2311,10 +2383,14 @@ impl App {
                 let reply = (!thread && !self.closing && !self.stopped)
                     .then(|| Message::Thread(id.clone()));
                 shell::message_actions(
-                    self.pin_feedback(body.into(), message, thread, *generation),
+                    self.bookmark_feedback(
+                        self.pin_feedback(body.into(), message, thread, *generation),
+                        message,
+                    ),
                     reply,
                     self.reaction_action(message, thread, *generation),
                     self.pin_action(message, thread, *generation),
+                    self.bookmark_action(message, thread, *generation),
                     self.reaction_popup(thread, *generation, id),
                 )
             } else {
@@ -2918,6 +2994,7 @@ mod tests {
     pub(super) fn demo_app() -> App {
         let mut app = App::new();
         app.demo = Some(demo::Demo::default());
+        app.model.bookmarks.complete = true;
         app.model.rooms = demo::rooms().into();
         app.model.sections = demo::sections().into();
         app.model.spaces = demo::spaces().into();

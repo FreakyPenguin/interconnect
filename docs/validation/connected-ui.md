@@ -41,6 +41,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Room creation | Ctrl+Shift+N or **#+** opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
 | Drafts and scrolling | Room/thread drafts and reading positions survive navigation and dialogs. Jump-to-newest resumes following incoming messages. |
 | Context menus | Right-click a room entry for **Open room**, **Move to section…**, and **Copy room ID**. The section picker includes empty custom sections, Favorites, Low priority, and Default; the current section is checked. Messages in rooms, thread originals, and replies offer **Copy text**, reactions, and permission-gated pin/unpin; room messages also offer **Reply in thread**. Thread summaries offer **Open thread** and **Copy thread ID**. Menus stay inside the window, dismiss on Escape/outside click/focus loss, and preserve drafts and reading positions. An outside click dismisses without activating the item underneath. |
+| Bookmarks | Hover a room message, thread original, or reply and use ☆/★. **Saved messages** above the sections opens the account-wide view. Back/Escape restores drafts and reading positions. Demo bookmarks and previews stay in memory. |
 | Threads | The reply arrow or Alt+T opens a thread. Its original appears once above replies; long originals and replies scroll independently. |
 | Thread activity | Studio → Thread activity has interleaved replies. **New sample reply** updates the latest summary and new count for its thread. |
 | Event layout | Studio → Room activity contains compact activity rows, long topics, and selectable text across message types. |
@@ -606,3 +607,78 @@ all window edges at 640×480. Confirm scrolling remains blocked while the menu i
 open and resumes at the same position after dismissal. File drops must not stage
 an attachment through an open menu. Connected and native macOS checks, including
 secondary click and clipboard integration, require separate desktop acceptance.
+
+## Message bookmarks — 2026-11-15
+
+The ☆/★ message action saves/removes a private bookmark from room timelines,
+thread replies and the thread original. **Saved messages** above the sidebar
+sections opens an account-wide view. Back/Escape restores the open conversation;
+space changes still only filter navigation. The view shows 20 live source
+previews per page, allows removal even when the source is unavailable, and opens
+the source room/thread. Exact source-event scroll navigation is deferred.
+
+See [bookmark protocol and lifecycle](../bookmarks.md) for experimental MSC4482
+wire names, extensible-text fallback limits, storage recovery, and write/retry
+semantics. No Matrix SDK or Ruma fork, vendoring, or dependency upgrade is used.
+
+Automated evidence:
+
+- A local mock homeserver exercises initial read-only discovery, encrypted
+  invite-only room creation, waiting for synced metadata, and publishing the
+  global account-data pointer. Cold discovery waits for a room outside the
+  initial list range instead of creating a replacement.
+- An actual SDK encrypted send is decrypted in the fixture to check the custom
+  event/pointer and Matrix URI fallback. Source text is absent from the fallback.
+  A failed send retries with the same transaction ID; acknowledged saves do not
+  duplicate before their sync echo. Removal redacts every known duplicate.
+- Paginated cache hydration resolves bookmark replacements, rejects other
+  senders' edits, follows raw redactions, and cancels without late model updates.
+  Unknown history is not exposed as unbookmarked. An active account-data room
+  switch cannot send old bookmark IDs to the new room.
+- Source preview timelines follow actual message edits and redactions. Dropping
+  previews adds no idle requests. Initial empty discovery settles without room
+  creation or periodic HTTP requests. Cold previews wait for source-room metadata
+  outside the initial list range.
+- UI tests click the real hover control, retain drafts and saved scroll offsets,
+  keep space filtering separate from the saved view, reject obsolete actions and
+  preview results, and wait for writes during shutdown. The saved view is laid
+  out and CPU-rasterized at 1000×720 and 360×480, with settled redraws requesting
+  `Wait`. Local inspection captures were written only under `/tmp`.
+
+Validation passed: formatting, locked workspace Clippy with warnings denied,
+locked workspace tests (102 library tests and 165 GUI tests passed; two existing
+opt-in library fixtures ignored), and `cargo build --locked --bin interconnect`.
+
+No native desktop or saved-account session was launched. Native fonts/rendering,
+real homeserver interoperability, simultaneous first creation on two devices,
+room-upgrade recovery, restart with real historical keys, and measured idle
+resources remain acceptance work.
+
+Manual acceptance:
+
+1. Use `cargo run --locked --bin interconnect -- --demo`. Bookmark room messages,
+   a thread reply and its original, then open Saved messages. Remove from both
+   the view and the message action panel. Confirm room/thread drafts and reading
+   positions survive Back, Escape and sidebar navigation.
+2. In an independently authorized connected session, bookmark an existing
+   message. Check that exactly one private encrypted Bookmarks room is created
+   lazily and that its account-data pointer survives restart. No test message
+   needs to be sent to an ordinary room.
+3. Inspect the room in another client. A client supporting extensible text should
+   show a readable fallback with a working Matrix URI; a legacy client may show
+   an unsupported event. Verify history on another own device, including keys.
+4. With a compatible second client, add/remove/edit bookmarks, including an older
+   one outside the initial history window. Check binary action state, duplicate
+   removal, paging, and updates while Saved messages is closed and reopened.
+5. Edit/redact a source message and inspect its open preview. Test inaccessible
+   sources, missing keys and disconnected refresh. Check error feedback, retained
+   drafts, same-operation retry and shutdown while a write is pending.
+
+Rebase integration on November 16, 2026: formatting, locked workspace Clippy
+with warnings denied, locked workspace tests (144 library and 219 desktop tests
+passed; two existing opt-in library fixtures ignored), and the locked desktop
+build passed against current main. The integration preserves custom section
+controls and message context menus; a regression checks that Saved messages
+dismisses conversation menus and rejects stale message menus while keeping room
+sidebar menus available. No native desktop or connected session was launched;
+the manual acceptance items above remain pending.
