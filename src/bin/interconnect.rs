@@ -27,6 +27,8 @@ mod file_drop;
 mod formatted;
 #[path = "interconnect/global_search.rs"]
 mod global_search;
+#[path = "interconnect/icons.rs"]
+mod icons;
 #[path = "interconnect/images.rs"]
 mod images;
 #[path = "interconnect/inline_image.rs"]
@@ -134,6 +136,7 @@ struct App {
     pending_ops: usize,
     composing: bool,
     shell: shell::State,
+    expanded_pins: Option<u64>,
     demo: Option<demo::Demo>,
     preferences_ready: bool,
     pending_navigation: Option<Preferences>,
@@ -190,6 +193,7 @@ enum Message {
     NewChat(new_chat::Event),
     CreateRoom(create_room::Event),
     Pin(pin_action::Event),
+    TogglePins(u64),
     Topic(topic::Event),
     Members(members::Event),
     Invite(invite::Event),
@@ -293,6 +297,7 @@ impl App {
             pending_ops: 0,
             composing: false,
             shell: shell::State::default(),
+            expanded_pins: None,
             context_menu: None,
             manual_unread_generation: None,
             section_reorder: Default::default(),
@@ -599,6 +604,7 @@ impl App {
                     | Message::AdjacentRoom(_)
                     | Message::OpenLastThread
                     | Message::ToggleNavigation
+                    | Message::TogglePins(_)
                     | Message::Focus(_)
                     | Message::Bookmark(
                         bookmarks::Event::Open
@@ -748,6 +754,22 @@ impl App {
             Message::GlobalSearch(event) => action_task = self.global_search_event(event),
             Message::NewChat(event) => action_task = self.new_chat_event(event),
             Message::Pin(event) => action_task = self.pin_event(event),
+            Message::TogglePins(generation)
+                if !self.closing
+                    && !self.stopped
+                    && self
+                        .selection
+                        .room
+                        .as_ref()
+                        .is_some_and(|(current, _)| *current == generation)
+                    && self
+                        .model
+                        .pinned
+                        .as_ref()
+                        .is_some_and(|pins| pins.generation == generation && pins.total > 0) =>
+            {
+                self.expanded_pins = (self.expanded_pins != Some(generation)).then_some(generation);
+            }
             Message::Topic(event) => action_task = self.topic_event(event),
             Message::Members(event) => action_task = self.members_event(event),
             Message::Invite(event) => action_task = self.invite_event(event),
@@ -2113,7 +2135,7 @@ impl App {
             row![
                 container(text("↳").size(16).color(shell::MUTED)).center_x(32),
                 details.width(Length::Fill),
-                text("›").size(15).color(shell::MUTED)
+                icons::icon(icons::Kind::ChevronRight)
             ]
             .spacing(12),
         )
@@ -2322,10 +2344,14 @@ impl App {
         }
         if thread {
             header = header.push(tooltips::tooltip(
-                button(container(text("×").size(18)).center_x(28).center_y(28))
-                    .padding(0)
-                    .style(shell::icon_button)
-                    .on_press(Message::CloseThread),
+                button(
+                    container(icons::icon(icons::Kind::Close))
+                        .center_x(28)
+                        .center_y(28),
+                )
+                .padding(0)
+                .style(shell::icon_button)
+                .on_press(Message::CloseThread),
                 "Close thread",
                 iced::widget::tooltip::Position::Bottom,
             ));
@@ -2714,13 +2740,17 @@ impl App {
             && (self.saved_scroll(thread) > 1.0 || focus.is_some())
         {
             let jump = tooltips::tooltip(
-                button(container(text("⌄").size(24)).center_x(36).center_y(36))
-                    .padding(0)
-                    .style(shell::jump_button)
-                    .on_press(Message::JumpToNewest {
-                        thread,
-                        generation: *generation,
-                    }),
+                button(
+                    container(icons::icon(icons::Kind::ChevronDown))
+                        .center_x(36)
+                        .center_y(36),
+                )
+                .padding(0)
+                .style(shell::jump_button)
+                .on_press(Message::JumpToNewest {
+                    thread,
+                    generation: *generation,
+                }),
                 "Jump to newest message",
                 iced::widget::tooltip::Position::Top,
             );
@@ -2776,9 +2806,13 @@ impl App {
                     });
             }
             let mut send = button(
-                container(text(if draft.pending { "…" } else { "↑" }).size(18))
-                    .center_x(26)
-                    .center_y(26),
+                container(icons::icon(if draft.pending {
+                    icons::Kind::More
+                } else {
+                    icons::Kind::ArrowUp
+                }))
+                .center_x(26)
+                .center_y(26),
             )
             .padding(0)
             .style(shell::icon_button);

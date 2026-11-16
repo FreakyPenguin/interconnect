@@ -5,67 +5,6 @@ use iced::{
     widget::{button, container, row, text, text_input, tooltip},
 };
 
-/// A small vector magnifier, independent of platform glyph coverage.
-pub(super) struct SearchIcon;
-impl iced::advanced::Widget<Message, iced::Theme, iced::Renderer> for SearchIcon {
-    fn size(&self) -> iced::Size<Length> {
-        iced::Size::new(Length::Fixed(20.0), Length::Fixed(20.0))
-    }
-    fn layout(
-        &mut self,
-        _tree: &mut iced::advanced::widget::Tree,
-        _renderer: &iced::Renderer,
-        limits: &iced::advanced::layout::Limits,
-    ) -> iced::advanced::layout::Node {
-        iced::advanced::layout::Node::new(limits.resolve(20, 20, iced::Size::ZERO))
-    }
-    fn draw(
-        &self,
-        _tree: &iced::advanced::widget::Tree,
-        renderer: &mut iced::Renderer,
-        _theme: &iced::Theme,
-        style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        _cursor: iced::advanced::mouse::Cursor,
-        _viewport: &iced::Rectangle,
-    ) {
-        use iced::advanced::Renderer as _;
-        let origin = layout.position();
-        renderer.fill_quad(
-            iced::advanced::renderer::Quad {
-                bounds: iced::Rectangle::new(
-                    origin + iced::Vector::new(2.0, 2.0),
-                    iced::Size::new(12.0, 12.0),
-                ),
-                border: iced::Border {
-                    color: style.text_color,
-                    width: 1.5,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            },
-            iced::Color::TRANSPARENT,
-        );
-        for step in 0..5 {
-            let offset = 12.0 + step as f32;
-            renderer.fill_quad(
-                iced::advanced::renderer::Quad {
-                    bounds: iced::Rectangle::new(
-                        origin + iced::Vector::new(offset, offset),
-                        iced::Size::new(2.0, 2.0),
-                    ),
-                    border: iced::Border {
-                        radius: 1.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                },
-                style.text_color,
-            );
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct State {
     pub open: bool,
@@ -202,7 +141,7 @@ impl App {
     pub(super) fn room_search_button(&self) -> Element<'_, Message> {
         super::tooltips::tooltip(
             button(
-                container(Element::new(SearchIcon))
+                container(super::icons::icon(super::icons::Kind::Search))
                     .center_x(28)
                     .center_y(28),
             )
@@ -234,8 +173,10 @@ impl App {
                 matches.len()
             )
         };
-        let mut previous = button(text("↑").size(16)).style(shell::icon_button);
-        let mut next = button(text("↓").size(16)).style(shell::icon_button);
+        let mut previous =
+            button(super::icons::icon(super::icons::Kind::ArrowUp)).style(shell::icon_button);
+        let mut next =
+            button(super::icons::icon(super::icons::Kind::ArrowDown)).style(shell::icon_button);
         if !matches.is_empty() {
             previous = previous.on_press(message(Event::Step(true)));
             next = next.on_press(message(Event::Step(false)));
@@ -257,7 +198,7 @@ impl App {
                 ),
                 super::tooltips::tooltip(next, "Next match", tooltip::Position::Bottom),
                 super::tooltips::tooltip(
-                    button(text("×").size(18))
+                    button(super::icons::icon(super::icons::Kind::Close))
                         .style(shell::icon_button)
                         .on_press(message(Event::Close)),
                     "Close search · Escape",

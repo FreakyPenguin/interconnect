@@ -1,0 +1,308 @@
+//! Static outline icons. Geometry is cached per widget; no animation or wakeups.
+use iced::{
+    Color, Element, Length, Point, Size, Vector,
+    advanced::{self, graphics::geometry::Renderer as _, layout, mouse, renderer, widget},
+    widget::canvas::{self, LineCap, LineJoin, Path, Stroke},
+};
+use std::cell::Cell;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Kind {
+    Search,
+    People,
+    Grid,
+    Direct,
+    Plus,
+    RoomAdd,
+    More,
+    Sidebar,
+    Pin,
+    Unpin,
+    Reply,
+    Bookmark,
+    BookmarkFilled,
+    Close,
+    ChevronDown,
+    ChevronUp,
+    ChevronRight,
+    ArrowUp,
+    ArrowDown,
+    Smile,
+    AddReaction,
+    Attach,
+    Edit,
+}
+
+pub(super) fn icon<'a, Message: 'a>(kind: Kind) -> Element<'a, Message> {
+    sized(kind, 18.0)
+}
+
+pub(super) fn sized<'a, Message: 'a>(kind: Kind, size: f32) -> Element<'a, Message> {
+    Element::new(Icon { kind, size })
+}
+
+struct Icon {
+    kind: Kind,
+    size: f32,
+}
+
+#[derive(Default)]
+struct State {
+    cache: canvas::Cache,
+    appearance: Cell<Option<(Kind, Color)>>,
+}
+
+impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(self.size), Length::Fixed(self.size))
+    }
+
+    fn state(&self) -> widget::tree::State {
+        widget::tree::State::new(State::default())
+    }
+
+    fn tag(&self) -> widget::tree::Tag {
+        widget::tree::Tag::of::<State>()
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        layout::Node::new(limits.resolve(self.size, self.size, Size::ZERO))
+    }
+
+    fn draw(
+        &self,
+        tree: &widget::Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: advanced::Layout<'_>,
+        _cursor: mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        use advanced::Renderer as _;
+        if !layout.bounds().intersects(viewport) {
+            return;
+        }
+        let state = tree.state.downcast_ref::<State>();
+        let appearance = (self.kind, style.text_color);
+        if state.appearance.replace(Some(appearance)) != Some(appearance) {
+            state.cache.clear();
+        }
+        let geometry = state.cache.draw(renderer, layout.bounds().size(), |frame| {
+            frame.scale(self.size / 24.0);
+            let stroke = Stroke::default()
+                .with_color(style.text_color)
+                .with_width(1.8)
+                .with_line_cap(LineCap::Round)
+                .with_line_join(LineJoin::Round);
+            let mut line = |points: &[(f32, f32)]| {
+                let path = Path::new(|p| {
+                    p.move_to(Point::from(points[0]));
+                    for &point in &points[1..] {
+                        p.line_to(Point::from(point));
+                    }
+                });
+                frame.stroke(&path, stroke);
+            };
+            use Kind::*;
+            match self.kind {
+                Plus => {
+                    line(&[(5.0, 12.0), (19.0, 12.0)]);
+                    line(&[(12.0, 5.0), (12.0, 19.0)]);
+                }
+                Close => {
+                    line(&[(6.0, 6.0), (18.0, 18.0)]);
+                    line(&[(18.0, 6.0), (6.0, 18.0)]);
+                }
+                ChevronDown => line(&[(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)]),
+                ChevronUp => line(&[(6.0, 15.0), (12.0, 9.0), (18.0, 15.0)]),
+                ChevronRight => line(&[(9.0, 6.0), (15.0, 12.0), (9.0, 18.0)]),
+                ArrowUp | ArrowDown => {
+                    let (a, b) = if self.kind == ArrowUp {
+                        (5.0, 19.0)
+                    } else {
+                        (19.0, 5.0)
+                    };
+                    let mid = if self.kind == ArrowUp { 11.0 } else { 13.0 };
+                    line(&[(6.0, mid), (12.0, a), (18.0, mid)]);
+                    line(&[(12.0, a), (12.0, b)]);
+                }
+                Reply => {
+                    line(&[(9.0, 5.0), (3.0, 11.0), (9.0, 17.0)]);
+                    line(&[(3.0, 11.0), (15.0, 11.0), (19.0, 15.0), (19.0, 20.0)]);
+                }
+                Pin | Unpin => {
+                    line(&[
+                        (9.0, 3.0),
+                        (15.0, 3.0),
+                        (14.0, 10.0),
+                        (18.0, 14.0),
+                        (6.0, 14.0),
+                        (10.0, 10.0),
+                        (9.0, 3.0),
+                    ]);
+                    line(&[(12.0, 14.0), (12.0, 21.0)]);
+                    if self.kind == Unpin {
+                        line(&[(3.0, 3.0), (21.0, 21.0)]);
+                    }
+                }
+                Bookmark | BookmarkFilled => {
+                    let path = Path::new(|p| {
+                        p.move_to(Point::new(6.0, 3.0));
+                        for point in [(18.0, 3.0), (18.0, 21.0), (12.0, 17.0), (6.0, 21.0)] {
+                            p.line_to(Point::from(point));
+                        }
+                        p.close();
+                    });
+                    if self.kind == BookmarkFilled {
+                        frame.fill(&path, style.text_color);
+                    } else {
+                        frame.stroke(&path, stroke);
+                    }
+                }
+                Search => {
+                    line(&[(16.0, 16.0), (21.0, 21.0)]);
+                    frame.stroke(&Path::circle(Point::new(10.5, 10.5), 6.5), stroke);
+                }
+                Sidebar => {
+                    line(&[(9.0, 4.0), (9.0, 20.0)]);
+                    frame.stroke(
+                        &Path::rounded_rectangle(
+                            Point::new(3.0, 4.0),
+                            Size::new(18.0, 16.0),
+                            2.0.into(),
+                        ),
+                        stroke,
+                    );
+                }
+                RoomAdd => {
+                    line(&[(8.0, 3.0), (5.0, 21.0)]);
+                    line(&[(16.0, 3.0), (14.5, 12.0)]);
+                    line(&[(3.0, 9.0), (20.0, 9.0)]);
+                    line(&[(2.0, 15.0), (10.0, 15.0)]);
+                    line(&[(17.0, 14.0), (17.0, 22.0)]);
+                    line(&[(13.0, 18.0), (21.0, 18.0)]);
+                }
+                More => {
+                    for x in [5.0, 12.0, 19.0] {
+                        frame.fill(&Path::circle(Point::new(x, 12.0), 1.3), style.text_color);
+                    }
+                }
+                Grid => {
+                    for x in [3.0, 14.0] {
+                        for y in [3.0, 14.0] {
+                            frame.stroke(
+                                &Path::rounded_rectangle(
+                                    Point::new(x, y),
+                                    Size::new(7.0, 7.0),
+                                    1.5.into(),
+                                ),
+                                stroke,
+                            );
+                        }
+                    }
+                }
+                People | Direct => {
+                    frame.stroke(&Path::circle(Point::new(9.0, 7.0), 3.0), stroke);
+                    frame.stroke(&Path::circle(Point::new(18.0, 8.0), 2.5), stroke);
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(Point::new(3.0, 21.0));
+                            p.line_to(Point::new(3.0, 18.0));
+                            p.bezier_curve_to(
+                                Point::new(3.0, 11.0),
+                                Point::new(15.0, 11.0),
+                                Point::new(15.0, 18.0),
+                            );
+                            p.line_to(Point::new(15.0, 21.0));
+                            p.close();
+                            p.move_to(Point::new(18.0, 14.0));
+                            p.bezier_curve_to(
+                                Point::new(22.0, 14.0),
+                                Point::new(22.0, 17.0),
+                                Point::new(22.0, 21.0),
+                            );
+                            p.line_to(Point::new(19.0, 21.0));
+                        }),
+                        stroke,
+                    );
+                }
+                Smile | AddReaction => {
+                    frame.with_save(|frame| {
+                        if self.kind == AddReaction {
+                            frame.translate(Vector::new(0.0, 4.0));
+                            frame.scale(0.75_f32);
+                        }
+                        frame.stroke(&Path::circle(Point::new(12.0, 12.0), 9.0), stroke);
+                        for x in [9.0, 15.0] {
+                            frame.fill(&Path::circle(Point::new(x, 9.0), 0.9), style.text_color);
+                        }
+                        frame.stroke(
+                            &Path::new(|p| {
+                                p.move_to(Point::new(8.0, 14.0));
+                                p.quadratic_curve_to(
+                                    Point::new(12.0, 19.0),
+                                    Point::new(16.0, 14.0),
+                                );
+                            }),
+                            stroke,
+                        );
+                    });
+                    if self.kind == AddReaction {
+                        frame.stroke(
+                            &Path::line(Point::new(17.0, 4.0), Point::new(23.0, 4.0)),
+                            stroke,
+                        );
+                        frame.stroke(
+                            &Path::line(Point::new(20.0, 1.0), Point::new(20.0, 7.0)),
+                            stroke,
+                        );
+                    }
+                }
+                Attach => {
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(Point::new(8.0, 13.0));
+                            p.line_to(Point::new(14.0, 7.0));
+                            p.bezier_curve_to(
+                                Point::new(17.0, 4.0),
+                                Point::new(21.0, 8.0),
+                                Point::new(18.0, 11.0),
+                            );
+                            p.line_to(Point::new(10.0, 19.0));
+                            p.bezier_curve_to(
+                                Point::new(5.0, 24.0),
+                                Point::new(-1.0, 18.0),
+                                Point::new(4.0, 13.0),
+                            );
+                            p.line_to(Point::new(13.0, 4.0));
+                        }),
+                        stroke,
+                    );
+                }
+                Edit => {
+                    line(&[
+                        (4.0, 16.0),
+                        (16.0, 4.0),
+                        (20.0, 8.0),
+                        (8.0, 20.0),
+                        (3.0, 21.0),
+                        (4.0, 16.0),
+                    ]);
+                    line(&[(13.0, 7.0), (17.0, 11.0)]);
+                }
+            }
+        });
+        renderer.with_translation(
+            Vector::new(layout.position().x, layout.position().y),
+            |renderer| {
+                renderer.draw_geometry(geometry);
+            },
+        );
+    }
+}

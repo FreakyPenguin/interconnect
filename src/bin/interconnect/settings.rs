@@ -1,5 +1,9 @@
 //! Startup settings and asynchronous dialog reload/save tasks. No timers.
-use super::{App, Message, shell};
+use super::{
+    App, Message,
+    icons::{Kind, icon},
+    shell,
+};
 use iced::{
     Element, Length, Task,
     widget::{
@@ -346,26 +350,39 @@ impl App {
     fn settings_card(&self, size: iced::Size) -> Element<'_, Message> {
         let draft = self.settings.draft.as_ref().expect("open dialog");
         let available = !self.settings.busy;
-        let mut notifications =
-            checkbox(draft.notifications.enabled).label("Enable desktop notifications");
-        let mut previews =
-            checkbox(draft.notifications.show_preview).label("Show room, sender, and message text");
+        let mut notifications = checkbox(draft.notifications.enabled)
+            .label("Enable desktop notifications")
+            .size(16)
+            .text_size(13)
+            .spacing(9);
+        let mut previews = checkbox(draft.notifications.show_preview)
+            .label("Show room, sender, and message text")
+            .size(16)
+            .text_size(13)
+            .spacing(9);
         if available {
             notifications =
                 notifications.on_toggle(|value| message(Event::NotificationsEnabled(value)));
             previews = previews.on_toggle(|value| message(Event::NotificationPreview(value)));
         }
-        let mut notification_test = button(if self.settings.notification_test_busy {
-            "Sending sample…"
-        } else {
-            "Send sample notification"
-        })
+        let mut notification_test = button(
+            text(if self.settings.notification_test_busy {
+                "Sending sample…"
+            } else {
+                "Send sample notification"
+            })
+            .size(13),
+        )
+        .padding([7, 10])
         .style(shell::quiet_button);
         if !self.settings.notification_test_busy {
             notification_test = notification_test.on_press(message(Event::TestNotification));
         }
-        let mut visibility =
-            checkbox(draft.navigation.show_room_list).label("Show room list at startup");
+        let mut visibility = checkbox(draft.navigation.show_room_list)
+            .label("Show room list at startup")
+            .size(16)
+            .text_size(13)
+            .spacing(9);
         if available {
             visibility = visibility.on_toggle(|show| message(Event::ShowRoomList(show)));
         }
@@ -373,23 +390,45 @@ impl App {
             [SendShortcut::CtrlEnter, SendShortcut::Enter],
             Some(draft.composer.send_shortcut),
             |shortcut| message(Event::SendShortcut(shortcut)),
-        );
-        let mut gpu = checkbox(draft.graphics.gpu_enabled).label("Use GPU rendering");
-        let mut low_power = checkbox(draft.graphics.low_power).label("Prefer a low-power GPU");
+        )
+        .text_size(13)
+        .padding([7, 10])
+        .style(select_style);
+        let mut gpu = checkbox(draft.graphics.gpu_enabled)
+            .label("Use GPU rendering")
+            .size(16)
+            .text_size(13)
+            .spacing(9);
+        let mut low_power = checkbox(draft.graphics.low_power)
+            .label("Prefer a low-power GPU")
+            .size(16)
+            .text_size(13)
+            .spacing(9);
         if available {
             gpu = gpu.on_toggle(|value| message(Event::GpuEnabled(value)));
         }
         if available && draft.graphics.gpu_enabled {
             low_power = low_power.on_toggle(|value| message(Event::LowPower(value)));
         }
-        let mut reload = button("Reload file").style(shell::quiet_button);
-        let mut defaults = button("Use defaults").style(shell::quiet_button);
-        let mut cancel = button("Cancel").style(shell::quiet_button);
-        let mut save = button(if self.settings.saving {
-            "Saving…"
-        } else {
-            "Save"
-        });
+        let mut reload = button(text("Reload file").size(13))
+            .padding([7, 10])
+            .style(shell::quiet_button);
+        let mut defaults = button(text("Use defaults").size(13))
+            .padding([7, 10])
+            .style(shell::quiet_button);
+        let mut cancel = button(text("Cancel").size(13))
+            .padding([7, 14])
+            .style(shell::quiet_button);
+        let mut save = button(
+            text(if self.settings.saving {
+                "Saving…"
+            } else {
+                "Save"
+            })
+            .size(13),
+        )
+        .padding([7, 18])
+        .style(primary_button);
         if available {
             defaults = defaults.on_press(message(Event::Defaults));
             if self.settings.path.is_some() {
@@ -406,106 +445,155 @@ impl App {
             [GifPlayback::Once, GifPlayback::Duration],
             Some(draft.media.gif_playback),
             |value| message(Event::GifPlayback(value)),
-        );
-        let mut gif_controls = row![text("Play").size(14), playback]
+        )
+        .text_size(13)
+        .padding([7, 10])
+        .style(select_style);
+        let mut gif_controls = row![text("Play").size(13), playback]
             .spacing(12)
             .align_y(iced::Alignment::Center);
         if draft.media.gif_playback == GifPlayback::Duration {
-            let mut seconds = text_input("1–300", &self.settings.gif_seconds_input).width(80);
+            let mut seconds = text_input("1–300", &self.settings.gif_seconds_input)
+                .width(72)
+                .size(13)
+                .padding([7, 10])
+                .style(shell::search_style);
             if available {
                 seconds = seconds.on_input(|value| message(Event::GifSeconds(value)));
             }
-            gif_controls = gif_controls.push(seconds).push(text("seconds").size(14));
+            gif_controls = gif_controls.push(seconds).push(text("seconds").size(13));
         }
         let mut notification_controls = column![
             notifications,
             previews,
-            text("Alerts follow your Matrix notification rules. The conversation you are viewing stays quiet.").size(12).color(shell::MUTED),
+            caption("Alerts follow your Matrix notification rules. The conversation you are viewing stays quiet."),
             notification_test,
-            text("The sample uses no account or message content. On macOS, allow notifications when prompted.").size(12).color(shell::MUTED),
-        ].spacing(12);
+            caption("The sample uses no account or message content. On macOS, allow notifications when prompted."),
+        ].spacing(12).width(Length::Fill);
         if let Some(result) = &self.settings.notification_test_result {
-            notification_controls = notification_controls.push(
-                text(match result {
-                    Ok(()) => "Sample accepted by the desktop. Check your notification center.",
-                    Err(error) => error.as_str(),
-                })
-                .size(12),
-            );
+            notification_controls = notification_controls.push(caption(match result {
+                Ok(()) => "Sample accepted by the desktop. Check your notification center.",
+                Err(error) => error.as_str(),
+            }));
         }
         if let Some(error) = &self.model.notification_error {
-            notification_controls = notification_controls.push(
-                text(error)
-                    .size(12)
-                    .color(iced::Color::from_rgb8(174, 73, 78)),
-            );
+            notification_controls = notification_controls
+                .push(caption(error).color(iced::Color::from_rgb8(174, 73, 78)));
         }
         let mut content = column![
-            shell::title("Settings", 24),
-            text("Changes apply when you save. Startup options apply on the next launch.")
-                .size(13)
-                .color(shell::MUTED),
+            column![shell::title("Notifications", 14), notification_controls].spacing(12),
             iced::widget::rule::horizontal(1),
-            shell::title("Notifications", 15),
-            notification_controls,
+            column![
+                shell::title("Navigation", 14),
+                visibility,
+                button(text("Manage emoji packs…").size(13))
+                    .padding([7, 10])
+                    .style(shell::quiet_button)
+                    .on_press_maybe((available && (self.demo.is_some() || self.model.emoji_management.is_some()))
+                        .then_some(Message::EmojiManagement(super::emoji_management::Event::Open))),
+            ].spacing(12),
             iced::widget::rule::horizontal(1),
-            shell::title("Navigation", 15),
-            visibility,
-            button("Manage emoji packs…").style(shell::quiet_button).on_press_maybe((available && (self.demo.is_some() || self.model.emoji_management.is_some())).then_some(Message::EmojiManagement(super::emoji_management::Event::Open))),
-            shell::title("Messages", 15),
-            row![text("Send with").size(14), shortcut]
-                .spacing(16)
-                .align_y(iced::Alignment::Center),
-            text("With Enter to send, use Shift+Enter for a new line. Ctrl+Enter always sends.")
-                .size(12)
-                .color(shell::MUTED),
+            column![
+                shell::title("Messages", 14),
+                row![text("Send with").size(13), shortcut].spacing(16).align_y(iced::Alignment::Center),
+                caption("With Enter to send, use Shift+Enter for a new line. Ctrl+Enter always sends."),
+            ].spacing(12),
             iced::widget::rule::horizontal(1),
-            shell::title("GIF playback", 15),
-            text("GIFs stay still until you click Play in the image viewer.").size(12).color(shell::MUTED),
-            gif_controls,
-            text(if self.valid_gif_seconds() { "Duration repeats the GIF for 1–300 whole seconds. Once plays one loop." } else { "Enter a whole number from 1 to 300 seconds to save." }).size(12).color(shell::MUTED),
+            column![
+                shell::title("GIF playback", 14),
+                caption("GIFs stay still until you click Play in the image viewer."),
+                gif_controls,
+                caption(if self.valid_gif_seconds() {
+                    "Duration repeats the GIF for 1–300 whole seconds. Once plays one loop."
+                } else {
+                    "Enter a whole number from 1 to 300 seconds to save."
+                }),
+            ].spacing(12),
             iced::widget::rule::horizontal(1),
-            shell::title("Graphics · restart required", 15),
-            gpu,
-            text("Uses the CPU renderer when disabled. GPU rendering includes a software fallback.").size(12).color(shell::MUTED),
-            low_power,
-            text("Selects a lower-power adapter when GPU rendering is enabled. Changes apply on the next launch.").size(12).color(shell::MUTED),
+            column![
+                row![shell::title("Graphics", 14), text("Restart required").size(11).color(shell::MUTED)]
+                    .spacing(10).align_y(iced::Alignment::Center),
+                gpu,
+                caption("Uses the CPU renderer when disabled. GPU rendering includes a software fallback."),
+                low_power,
+                caption("Selects a lower-power adapter when GPU rendering is enabled. Changes apply on the next launch."),
+            ].spacing(12),
             iced::widget::rule::horizontal(1),
-        ]
-        .spacing(16);
+        ].spacing(20).width(Length::Fill);
         if self.demo.is_some() {
-            content = content.push(
-                text("Demo settings stay in memory and disappear on exit.")
-                    .size(12)
-                    .color(shell::MUTED),
-            );
+            content = content.push(caption(
+                "Demo settings stay in memory and disappear on exit.",
+            ));
         } else if let Some(path) = &self.settings.path {
-            content = content.push(text(path.display().to_string()).size(12))
-                .push(text("Edit this TOML file, then reload to apply it. Reload discards unsaved changes.")
-                    .size(12).color(shell::MUTED));
+            content = content.push(caption(path.display().to_string()).wrapping(text::Wrapping::Glyph))
+                .push(caption("Edit this TOML file, then reload to apply it. Reload discards unsaved changes."));
         }
         if self.settings.busy && !self.settings.saving {
-            content = content.push(text("Loading settings…").size(12));
+            content = content.push(caption("Loading settings…"));
         }
+        // Save errors belong next to the persistent actions, rather than below the fold.
+        let mut actions = column![].spacing(10).width(Length::Fill);
         if let Some(error) = &self.settings.error {
-            content = content.push(
-                text(error)
-                    .size(12)
-                    .color(iced::Color::from_rgb8(174, 73, 78)),
-            );
+            actions = actions.push(caption(error).color(iced::Color::from_rgb8(174, 73, 78)));
         }
-        content = content
-            .push(row![defaults, reload].spacing(8))
-            .push(row![iced::widget::space().width(Length::Fill), cancel, save].spacing(8));
-        // Keep long paths and parser errors scrollable at the minimum window size.
-        let card = container(scrollable(content).style(shell::scroll_style))
-            .padding(24)
-            .max_width(540)
-            .max_height((size.height - 32.0).max(1.0))
-            .style(|_| container::Style {
-                border: iced::Border::default().rounded(12),
-                ..shell::surface(iced::Color::WHITE)
-            });
+        actions =
+            actions.push(row![iced::widget::space().width(Length::Fill), cancel, save].spacing(8));
+        let footer = container(actions)
+            .padding([14, 24])
+            .width(Length::Fill)
+            .id("settings-actions");
+        let close = super::tooltips::tooltip(
+            button(container(icon(Kind::Close)).center_x(28).center_y(28))
+                .padding(0)
+                .style(shell::icon_button)
+                .on_press_maybe((!self.settings.saving).then_some(message(Event::Cancel))),
+            "Close settings",
+            iced::widget::tooltip::Position::Bottom,
+        );
+        let header = container(
+            column![
+                row![
+                    shell::title("Settings", 20),
+                    iced::widget::space().width(Length::Fill),
+                    close
+                ]
+                .align_y(iced::Alignment::Center),
+                caption("Changes apply when you save. Startup options apply on the next launch."),
+            ]
+            .spacing(8),
+        )
+        .padding([18, 24])
+        .width(Length::Fill);
+        content = content.push(row![defaults, reload].spacing(8));
+        // Constrain content before laying out text so captions wrap within the card.
+        let body = scrollable(container(content).padding(24).width(Length::Fill))
+            .id("settings-body")
+            .direction(shell::scrollbar())
+            .style(shell::scroll_style)
+            .height(Length::Fill);
+        let card = container(
+            column![
+                header,
+                iced::widget::rule::horizontal(1),
+                body,
+                iced::widget::rule::horizontal(1),
+                footer,
+            ]
+            .spacing(0),
+        )
+        .width((size.width - 32.0).clamp(1.0, 560.0))
+        .height((size.height - 32.0).clamp(1.0, 760.0))
+        .clip(true)
+        .style(|_| container::Style {
+            // Large shadows in tiny-skia 0.14 repaint outside the damage region.
+            // A border gives the card separation without darkening on scroll.
+            border: iced::Border {
+                color: shell::LINE,
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..shell::surface(iced::Color::WHITE)
+        });
         opaque(
             mouse_area(
                 container(card)
@@ -518,6 +606,33 @@ impl App {
             .on_press(message(Event::Ignore)),
         )
     }
+}
+
+fn caption<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
+    text(label).size(12).color(shell::MUTED).width(Length::Fill)
+}
+
+fn select_style(theme: &iced::Theme, status: pick_list::Status) -> pick_list::Style {
+    let mut style = pick_list::default(theme, status);
+    style.background = iced::Color::WHITE.into();
+    style.text_color = shell::INK;
+    style.handle_color = shell::MUTED;
+    style.border = iced::Border {
+        color: if matches!(status, pick_list::Status::Active) {
+            shell::LINE
+        } else {
+            shell::ACCENT
+        },
+        width: 1.0,
+        radius: 6.0.into(),
+    };
+    style
+}
+
+fn primary_button(theme: &iced::Theme, status: button::Status) -> button::Style {
+    let mut style = button::primary(theme, status);
+    style.border = iced::Border::default().rounded(6);
+    style
 }
 
 #[cfg(test)]
@@ -871,6 +986,64 @@ mod tests {
             view.as_widget_mut()
                 .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
         assert_eq!(node.size(), size);
+        #[derive(Default)]
+        struct Probe {
+            actions: Option<iced::Rectangle>,
+            body: Option<iced::Rectangle>,
+            content: Option<iced::Rectangle>,
+            save: Option<iced::Rectangle>,
+            cancel: Option<iced::Rectangle>,
+            captions: Vec<iced::Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("settings-actions")) {
+                    self.actions = Some(bounds);
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                _: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("settings-body")) {
+                    self.body = Some(bounds);
+                    self.content = Some(content);
+                }
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, value: &str) {
+                match value {
+                    "Save" => self.save = Some(bounds),
+                    "Cancel" => self.cancel = Some(bounds),
+                    value if value.starts_with("The sample uses") => self.captions.push(bounds),
+                    _ => {}
+                }
+            }
+        }
+        let mut probe = Probe::default();
+        view.as_widget_mut()
+            .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut probe);
+        let actions = probe.actions.unwrap();
+        let body = probe.body.unwrap();
+        assert!(body.height > 100.0);
+        assert!(
+            probe.content.unwrap().height > body.height,
+            "only the preferences scroll"
+        );
+        assert!(body.y + body.height <= actions.y);
+        for bounds in [probe.save.unwrap(), probe.cancel.unwrap()] {
+            assert!(bounds.y >= actions.y && bounds.y + bounds.height <= size.height - 16.0);
+        }
+        assert_eq!(probe.captions.len(), 1);
+        let caption = probe.captions[0];
+        assert!(caption.x >= body.x && caption.x + caption.width <= body.x + body.width);
+        assert!(caption.height > 20.0, "long descriptions wrap");
         let event = iced::Event::Mouse(mouse::Event::WheelScrolled {
             delta: mouse::ScrollDelta::Lines { x: 0.0, y: -3.0 },
         });

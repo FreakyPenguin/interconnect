@@ -7,62 +7,6 @@ use iced::{
 use interconnect::connected::{Member, Members};
 use std::sync::Arc;
 
-// A small outline icon follows the shell color without a platform emoji glyph.
-struct PeopleIcon;
-impl iced::advanced::Widget<Message, iced::Theme, iced::Renderer> for PeopleIcon {
-    fn size(&self) -> iced::Size<Length> {
-        iced::Size::new(Length::Fixed(16.0), Length::Fixed(16.0))
-    }
-    fn layout(
-        &mut self,
-        _tree: &mut iced::advanced::widget::Tree,
-        _renderer: &iced::Renderer,
-        limits: &iced::advanced::layout::Limits,
-    ) -> iced::advanced::layout::Node {
-        iced::advanced::layout::Node::new(limits.resolve(16.0, 16.0, iced::Size::ZERO))
-    }
-    fn draw(
-        &self,
-        _tree: &iced::advanced::widget::Tree,
-        renderer: &mut iced::Renderer,
-        _theme: &iced::Theme,
-        _style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        _cursor: iced::advanced::mouse::Cursor,
-        _viewport: &iced::Rectangle,
-    ) {
-        use iced::advanced::Renderer;
-        let origin = layout.bounds();
-        for (x, y, width, height, radius) in [
-            (9.0, 3.0, 4.0, 4.0, 2.0),
-            (8.0, 9.0, 7.0, 5.0, 2.0),
-            (3.0, 2.0, 5.0, 5.0, 2.5),
-            (1.0, 9.0, 9.0, 5.0, 2.0),
-        ] {
-            renderer.fill_quad(
-                iced::advanced::renderer::Quad {
-                    bounds: iced::Rectangle {
-                        x: origin.x + x,
-                        y: origin.y + y,
-                        width,
-                        height,
-                    },
-                    border: iced::Border {
-                        color: shell::MUTED,
-                        width: 1.1,
-                        radius: radius.into(),
-                    },
-                    ..Default::default()
-                },
-                iced::Color::WHITE,
-            );
-        }
-    }
-}
-fn people_icon<'a>() -> Element<'a, Message> {
-    Element::new(PeopleIcon)
-}
-
 const PAGE_SIZE: usize = 50;
 #[derive(Default)]
 pub struct State {
@@ -146,9 +90,12 @@ impl App {
             .and_then(|(_, id)| self.model.rooms.iter().find(|r| &r.id == id))
             .map_or(0, |r| r.member_count);
         let mut badge = button(
-            row![people_icon(), text(count).size(12)]
-                .spacing(5)
-                .align_y(iced::Alignment::Center),
+            row![
+                super::icons::icon(super::icons::Kind::People),
+                text(count).size(12)
+            ]
+            .spacing(5)
+            .align_y(iced::Alignment::Center),
         )
         .padding([5, 8])
         .style(shell::quiet_button);
@@ -167,10 +114,14 @@ impl App {
             shell::title("People", 18),
             iced::widget::space().width(Length::Fill),
             super::tooltips::tooltip(
-                button(container(text("×").size(18)).center_x(28).center_y(28))
-                    .padding(0)
-                    .style(shell::icon_button)
-                    .on_press(message(Event::Close)),
+                button(
+                    container(super::icons::icon(super::icons::Kind::Close))
+                        .center_x(28)
+                        .center_y(28)
+                )
+                .padding(0)
+                .style(shell::icon_button)
+                .on_press(message(Event::Close)),
                 "Close people",
                 tooltip::Position::Bottom
             ),

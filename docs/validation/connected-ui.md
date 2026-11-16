@@ -41,23 +41,47 @@ see [renderer selection](../development.md#renderer-selection).
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
-| Room creation | Ctrl+Shift+N or **#+** opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
+| Room creation | Ctrl+Shift+N or the **Create room** icon opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
 | Drafts and scrolling | Room/thread drafts and reading positions survive navigation and dialogs. Jump-to-newest resumes following incoming messages. |
 | Context menus | Right-click a room entry for **Open room**, **Move to section…**, and **Copy room ID**. The section picker includes empty custom sections, Favorites, Low priority, and Default; the current section is checked. Messages in rooms, thread originals, and replies offer **Copy text**, reactions, and permission-gated pin/unpin; room messages also offer **Reply in thread**. Thread summaries offer **Open thread** and **Copy thread ID**. Menus stay inside the window, dismiss on Escape/outside click/focus loss, and preserve drafts and reading positions. An outside click dismisses without activating the item underneath. |
-| Bookmarks | Hover a room message, thread original, or reply and use ☆/★. **Saved messages** above the sections opens the account-wide view. Back/Escape restores drafts and reading positions. Demo bookmarks and previews stay in memory. |
+| Bookmarks | Hover a room message, thread original, or reply and use the outline/filled bookmark icon. **Saved messages** above the sections opens the account-wide view. Back/Escape restores drafts and reading positions. Demo bookmarks and previews stay in memory. |
 | Threads | The reply arrow or Alt+T opens a thread. Its original appears once above replies; long originals and replies scroll independently. |
+| Pinned messages | Studio → Design starts with a compact **2 pinned messages** disclosure. Expand/collapse it to show bounded, scrollable previews and permission-gated unpin buttons. Previews use the conversation rich-text renderer: check emphasis, lists, quotes, code, clickable links, and concealed spoilers. Space filters and thread navigation keep the disclosure; a newly opened room starts collapsed. Check long pins, unavailable/loading pins, and live additions/removals without losing the timeline reading position or drafts. |
 | Thread activity | Studio → Thread activity has interleaved replies. **New sample reply** updates the latest summary and new count for its thread. |
 | Event layout | Studio → Room activity contains compact activity rows, long topics, and selectable text across message types. |
 | Emoji | Studio → Emoji preview contains flags, skin tones, joined sequences, and text-presentation variants. Pickers insert glyphs; `:se` opens inline completion. |
 | Images | Studio → Images has ready and failed fixtures. Escape closes the original viewer, preserving drafts and scroll positions. Originals also open from threads. |
 | GIFs | Images open still. Play/Stop, once/duration settings, close, and focus loss control playback. Reopening stays still. |
 | Attachments | Pick, paste, and drop stage one file per draft. The hover outline identifies the target; multiple files produce an error. Overlays block underlying drop targets. |
-| Settings | Save applies changes; Cancel discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
+| Settings | The fixed header and footer keep Close, Cancel, and Save visible while the preferences body scrolls. Check 640×480 and ordinary desktop sizes: long descriptions, paths, and errors wrap within the card; controls use compact type and outlined fields. Save applies changes; Cancel/Close discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
+| Control icons | Navigation, header, message actions, pins, and composer use shared static outline icons. Check consistent size/stroke, hover/disabled colors, recognizable pin/unpin and bookmark states, and action tooltips. User-authored emoji and reaction glyphs remain emoji. |
 
 Tooltip styling was visually checked in an isolated headless Sway demo with
 tiny-skia at 1280×900: account name, header search, message timestamp near the
 right edge, and room-list toggle. macOS, wgpu, long topics, and multiline read
 receipts remain manual acceptance checks.
+
+The compact pins, shared control icons, and Settings layout were visually checked
+in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
+Checks included expanding/collapsing pins, message-action icons, and scrolling
+Settings to the bottom while Close/Cancel/Save remain visible. The card uses a
+border rather than a large shadow: tiny-skia 0.14 shadows paint outside damage
+regions and darken the card during partial redraws. Automated UI coverage checks
+disclosure scope, stale/modal rejection, timeline scroll preservation, bounded
+long pins, caption wrapping, and minimum-size action visibility. Native macOS,
+wgpu, and connected-account acceptance remain untested for this visual pass.
+
+Pinned preview formatting has automated coverage for rich-text rendering, link
+activation, and concealed spoilers. Native visual acceptance of formatted pins
+remains a manual check.
+
+The selected room and bookmark source rooms share one complete sliding-sync
+subscription set. A mock homeserver regression checks that the pin count and
+previews advance from one to two to three while bookmark subscriptions are added
+and removed. In connected acceptance, pin another message in the open room and
+verify both the count and expanded list update after sync; repeat with Saved
+messages open/closed and pin changes from another client. This regression has not
+been validated against a saved account.
 
 Ctrl+, opens Settings, Ctrl+K focuses the sidebar room filter, Alt+Up/Down selects adjacent
 filtered rooms, and Escape clears search or closes a thread. macOS uses Command
@@ -664,7 +688,7 @@ secondary click and clipboard integration, require separate desktop acceptance.
 
 ## Message bookmarks — 2026-11-15
 
-The ☆/★ message action saves/removes a private bookmark from room timelines,
+The outline/filled bookmark action saves/removes a private bookmark from room timelines,
 thread replies and the thread original. **Saved messages** above the sidebar
 sections opens an account-wide view. Back/Escape restores the open conversation;
 space changes still only filter navigation. The view shows 20 live source

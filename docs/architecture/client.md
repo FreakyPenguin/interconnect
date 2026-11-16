@@ -4,7 +4,10 @@
 
 The client uses Iced 0.14 and matrix-sdk/matrix-sdk-ui 0.19.1, pinned in
 [Cargo.toml](../../Cargo.toml) and Cargo.lock. Iced enables Wayland, Tokio, wgpu,
-tiny-skia, advanced input handling, and image handles. The SDK owns sync,
+tiny-skia, advanced input handling, image handles, and canvas geometry for the
+shared outline icons. Icon geometry is cached per widget and follows its inherited
+color, including hover and disabled states; it adds no timers or subscriptions.
+The SDK owns sync,
 SQLite persistence, encryption, and automatic room-key requests/forwarding under
 its trust policy. Native sliding sync is required.
 
@@ -39,6 +42,9 @@ returns to sign-in. UI updates stay synchronous; network, file preparation,
 decoding, and persistence run asynchronously or on bounded blocking workers.
 
 Room/thread presentation workers publish replaceable full-state snapshots.
+The selected room and bookmark source rooms are combined into a single SDK room
+subscription set. The SDK replaces that set on each update; setting bookmark
+subscriptions separately would unsubscribe the open room and stop live pin state.
 SDK diffs are applied in order before snapshots are coalesced. Navigation and
 command results have separate lifetimes; generation/account checks reject obsolete
 completions. Closing a thread releases its presentation without stopping the

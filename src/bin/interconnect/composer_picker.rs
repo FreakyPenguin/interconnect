@@ -2,7 +2,7 @@
 use super::{App, DraftKey, Message, emoji_picker, popover, shell};
 use iced::{
     Element, Task,
-    widget::{button, container, text, text_editor, tooltip},
+    widget::{button, container, text_editor, tooltip},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -177,9 +177,13 @@ impl App {
             key: key.clone(),
             generation,
         };
-        let mut open = button(container(text("☺").size(18)).center_x(26).center_y(26))
-            .padding(0)
-            .style(shell::icon_button);
+        let mut open = button(
+            container(super::icons::icon(super::icons::Kind::Smile))
+                .center_x(26)
+                .center_y(26),
+        )
+        .padding(0)
+        .style(shell::icon_button);
         if !self.composing && self.composer_picker_valid(&target) && self.composer_picker.is_none()
         {
             open = open.on_press(Message::ComposerEmoji(Event::Open(target)));

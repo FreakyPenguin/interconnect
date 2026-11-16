@@ -188,7 +188,7 @@ impl App {
         let mut content = row![label].spacing(6).align_y(iced::Alignment::Center);
         if room.is_some_and(|room| room.can_edit_topic) && !self.closing && !self.stopped {
             content = content.push(super::tooltips::tooltip(
-                button(text("✎").size(14))
+                button(super::icons::icon(super::icons::Kind::Edit))
                     .width(24)
                     .height(24)
                     .padding([0, 4])

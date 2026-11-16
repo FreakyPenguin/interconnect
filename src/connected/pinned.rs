@@ -148,6 +148,157 @@ mod tests {
     };
 
     #[tokio::test]
+    async fn selected_room_pins_keep_updating_when_bookmark_subscriptions_change() {
+        use std::{
+            collections::BTreeSet,
+            sync::{
+                Mutex,
+                atomic::{AtomicUsize, Ordering},
+            },
+        };
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*/relations/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[]})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*/messages"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"chunk":[],"start":"end"})),
+            )
+            .mount(&server)
+            .await;
+        for id in ["$one", "$two", "$three"] {
+            Mock::given(method("GET"))
+                .and(path(format!(
+                    "/_matrix/client/v3/rooms/!room:example.org/event/{id}"
+                )))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "type":"m.room.message", "event_id":id, "room_id":"!room:example.org",
+                    "sender":"@test:example.org", "origin_server_ts":10,
+                    "content":{"msgtype":"m.text","body":format!("Pinned {id}")}
+                })))
+                .mount(&server)
+                .await;
+        }
+        let count = Arc::new(AtomicUsize::new(1));
+        let subscriptions = Arc::new(Mutex::new(BTreeSet::<String>::new()));
+        let subscription_requests = Arc::new(tokio::sync::Notify::new());
+        let requests = subscription_requests.clone();
+        let expected_count = count.clone();
+        let active = subscriptions.clone();
+        Mock::given(method("POST"))
+            .and(path("/_matrix/client/unstable/org.matrix.simplified_msc3575/sync"))
+            .respond_with(move |request: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                let mut active = active.lock().unwrap();
+                // Simplified sliding sync sends the complete subscription map.
+                *active = body["room_subscriptions"].as_object()
+                    .map(|rooms| rooms.keys().cloned().collect()).unwrap_or_default();
+                requests.notify_one();
+                let count = expected_count.load(Ordering::SeqCst);
+                let mut state = vec![json!({
+                    "type":"m.room.member","state_key":"@test:example.org",
+                    "event_id":"$member","sender":"@test:example.org","origin_server_ts":1,
+                    "content":{"membership":"join"}
+                })];
+                // Room-list updates do not include pins unless explicitly subscribed.
+                // The initial cached state has one pin; subsequent changes require
+                // the selected room subscription to survive bookmark updates.
+                if count == 1 || active.contains("!room:example.org") {
+                    let ids: Vec<_> = ["$one", "$two", "$three"].into_iter().take(count).collect();
+                    state.push(json!({"type":"m.room.pinned_events","state_key":"",
+                        "event_id":format!("$pins-{count}"),"sender":"@test:example.org",
+                        "origin_server_ts":count,"content":{"pinned":ids}}));
+                }
+                ResponseTemplate::new(200).set_delay(Duration::from_millis(30)).set_body_json(json!({
+                    "pos":format!("position-{count}"),
+                    "lists":{"all_rooms":{"count":1,"ops":[{"op":"SYNC","range":[0,0],"room_ids":["!room:example.org"]}]}},
+                    "rooms":{"!room:example.org":{"name":"Fixture", "initial":true,
+                        "required_state":state,"timeline":[],"num_live":0}}
+                }))
+            }).mount(&server).await;
+        let client = Client::builder()
+            .homeserver_url(server.uri())
+            .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+            .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
+            .build()
+            .await
+            .unwrap();
+        client
+            .matrix_auth()
+            .restore_session(
+                serde_json::from_value::<MatrixSession>(json!({
+                    "user_id":"@test:example.org","device_id":"TEST","access_token":"fake"
+                }))
+                .unwrap(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        let sync = super::super::build_sync(client.clone()).await.unwrap();
+        crate::sso::start_and_wait(&sync).await.unwrap();
+        let (navigation, mut selections) = watch::channel(super::super::Selection::default());
+        let (state, mut snapshots) = watch::channel(Model::default());
+        let worker = tokio::spawn(async move {
+            let result = super::super::connected(&client, &sync, &mut selections, &state).await;
+            crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(5))
+                .await
+                .unwrap();
+            result.unwrap();
+        });
+        navigation.send_modify(|s| s.room = Some((7, "!room:example.org".into())));
+        for total in 1..=3 {
+            count.store(total, Ordering::SeqCst);
+            if total == 2 {
+                navigation.send_modify(|s| s.bookmark_rooms = vec!["!preview:example.org".into()]);
+            } else if total == 3 {
+                navigation.send_modify(|s| s.bookmark_rooms.clear());
+            }
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                snapshots.wait_for(|model| {
+                    model.pinned.as_ref().is_some_and(|pins| {
+                        pins.generation == 7
+                            && pins.total == total
+                            && pins.rows.len() == total
+                            && !pins.loading
+                    })
+                }),
+            )
+            .await
+            .expect("selected-room pins must remain subscribed")
+            .unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    {
+                        let active = subscriptions.lock().unwrap();
+                        if active.contains("!room:example.org")
+                            && active.contains("!preview:example.org") == (total == 2)
+                        {
+                            break;
+                        }
+                    }
+                    subscription_requests.notified().await;
+                }
+            })
+            .await
+            .expect("the full subscription set must reach the server");
+        }
+        navigation.send_modify(|s| s.shutdown = true);
+        tokio::time::timeout(Duration::from_secs(5), worker)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn pins_outside_history_load_follow_updates_and_cancel_without_late_snapshots() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))

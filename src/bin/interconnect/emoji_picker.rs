@@ -411,7 +411,7 @@ pub fn view<'a, Message: Clone + 'static>(
         row![
             text("Emoji").size(14),
             iced::widget::space().width(Length::Fill),
-            button("×")
+            button(super::icons::icon(super::icons::Kind::Close))
                 .style(shell::quiet_button)
                 .on_press(on_event(Event::Close))
         ]

@@ -869,7 +869,7 @@ async fn connected(
     let mut pinned_view = inactive();
     let mut members_view = inactive();
     let mut thread_view = inactive();
-    let mut bookmark_rooms = std::collections::HashSet::new();
+    let mut subscribed_rooms = std::collections::BTreeSet::new();
     let result = async {
         loop {
             let next = selection.borrow_and_update().clone();
@@ -886,31 +886,38 @@ async fn connected(
             state.send_if_modified(|s| {
                 if s.status == status { false } else { s.status = status.into(); true }
             });
-            if active.room != next.room || active.event_focus[0] != next.event_focus[0] {
+            let room_changed = active.room != next.room || active.event_focus[0] != next.event_focus[0];
+            if room_changed {
                 // Drop the old subscriptions before constructing replacements.
                 members_view = inactive();
                 typing_view = inactive();
                 room_view = inactive();
                 pinned_view = inactive();
                 thread_view = inactive();
-                if let Some((_, id)) = &active.room {
-                    let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
-                    sync.room_list_service().remove_room_subscriptions(&[&id]);
-                }
                 state.send_modify(|s| { s.room = None; s.thread = None; s.pinned = None; s.typing = None; });
-                if let Some((generation, id)) = &next.room {
-                    let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
-                    typing_view = typing::incoming(client.clone(), id.to_string(), *generation, state.clone());
-                    // Sync subscription setup is cancelled by a newer navigation request.
-                    let room_list = sync.room_list_service();
-                    let ids = [&*id];
-                    tokio::select! {
-                        _ = room_list.set_room_subscriptions(&ids) => {},
-                        changed = selection.changed() => { changed.context("UI closed")?; typing_view = inactive(); sync.room_list_service().remove_room_subscriptions(&[&id]); active = Selection::default(); continue; }
-                    }
-                    room_view = Box::pin(view(client.clone(), id.to_string(), None, *generation, state.clone(), selection.clone()));
-                    pinned_view = Box::pin(pinned::view(client.clone(), id.to_string(), *generation, state.clone()));
+            }
+            if room_changed || active.bookmark_rooms != next.bookmark_rooms {
+                // This SDK method replaces the complete set. Bookmark previews must
+                // not unsubscribe the open conversation (including its pin state).
+                let mut rooms: std::collections::BTreeSet<matrix_sdk::ruma::OwnedRoomId> = next.bookmark_rooms.iter()
+                    .filter_map(|room| room.parse::<matrix_sdk::ruma::OwnedRoomId>().ok())
+                    .filter(|id| client.get_room(id).is_none_or(|room| !crate::bookmarks::is_bookmarks_room(&room)))
+                    .collect();
+                if let Some((_, room)) = &next.room {
+                    rooms.insert(room.parse()?);
                 }
+                let ids: Vec<_> = rooms.iter().map(|room| room.as_ref()).collect();
+                let room_list = sync.room_list_service();
+                tokio::select! {
+                    _ = room_list.set_room_subscriptions(&ids) => {},
+                    changed = selection.changed() => { changed.context("UI closed")?; active = Selection::default(); continue; }
+                }
+                subscribed_rooms = rooms;
+            }
+            if room_changed && let Some((generation, id)) = &next.room {
+                typing_view = typing::incoming(client.clone(), id.clone(), *generation, state.clone());
+                room_view = Box::pin(view(client.clone(), id.clone(), None, *generation, state.clone(), selection.clone()));
+                pinned_view = Box::pin(pinned::view(client.clone(), id.clone(), *generation, state.clone()));
             }
             if active.thread != next.thread || active.room != next.room || active.event_focus != next.event_focus {
                 thread_view = inactive();
@@ -925,19 +932,6 @@ async fn connected(
                 if let (Some((_, room)), Some(generation)) = (&next.room, next.members) {
                     members_view = Box::pin(members::view(client.clone(), room.clone(), generation, state.clone()));
                 }
-            }
-            if active.bookmark_rooms != next.bookmark_rooms || active.room != next.room {
-                let requested: std::collections::HashSet<matrix_sdk::ruma::OwnedRoomId> = next.bookmark_rooms.iter()
-                    .filter_map(|room| room.parse::<matrix_sdk::ruma::OwnedRoomId>().ok())
-                    .filter(|id| client.get_room(id).is_none_or(|room| !crate::bookmarks::is_bookmarks_room(&room)))
-                    .collect();
-                let remove: Vec<_> = bookmark_rooms.difference(&requested)
-                    .filter(|room: &&matrix_sdk::ruma::OwnedRoomId| next.room.as_ref().is_none_or(|(_, selected)| selected != room.as_str()))
-                    .map(|room| room.as_ref()).collect();
-                sync.room_list_service().remove_room_subscriptions(&remove);
-                let ids: Vec<_> = requested.iter().map(|room| room.as_ref()).collect();
-                sync.room_list_service().set_room_subscriptions(&ids).await;
-                bookmark_rooms = requested;
             }
             active = next;
             tokio::select! {
@@ -1004,12 +998,8 @@ async fn connected(
     drop(pinned_view);
     drop(members_view);
     drop(thread_view);
-    let ids: Vec<_> = bookmark_rooms.iter().map(|room| room.as_ref()).collect();
+    let ids: Vec<_> = subscribed_rooms.iter().map(|room| room.as_ref()).collect();
     sync.room_list_service().remove_room_subscriptions(&ids);
-    if let Some((_, id)) = active.room {
-        let id: matrix_sdk::ruma::OwnedRoomId = id.parse()?;
-        sync.room_list_service().remove_room_subscriptions(&[&id]);
-    }
     result
 }
 

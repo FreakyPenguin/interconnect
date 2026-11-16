@@ -296,13 +296,9 @@ impl App {
     ) -> Element<'_, Message> {
         let target = self.attachment_target(key, generation);
         let mut pick = button(
-            container(
-                text("📎")
-                    .font(super::emoji::font().unwrap_or_default())
-                    .size(16),
-            )
-            .center_x(26)
-            .center_y(26),
+            container(super::icons::icon(super::icons::Kind::Attach))
+                .center_x(26)
+                .center_y(26),
         )
         .padding(0)
         .style(shell::icon_button);
@@ -329,7 +325,7 @@ impl App {
         let draft = self.drafts.get(key)?;
         let attachment = draft.attachment.as_ref()?;
         let target = self.attachment_target(key, generation);
-        let mut remove = button(text("×").size(16))
+        let mut remove = button(super::icons::icon(super::icons::Kind::Close))
             .padding([2, 6])
             .style(shell::icon_button);
         if self.clipboard_paste.is_none() && self.attachment_target_valid(&target) {

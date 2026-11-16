@@ -1,5 +1,8 @@
 //! Presentation only: no SDK state or polling belongs in this module.
-use super::{App, Message};
+use super::{
+    App, Message,
+    icons::{Kind, icon, sized},
+};
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Theme, font,
     widget::{self, button, column, container, row, scrollable, text, text_editor, text_input},
@@ -12,73 +15,8 @@ pub const MUTED: Color = Color::from_rgb8(112, 121, 134);
 pub const ACCENT: Color = Color::from_rgb8(66, 99, 157);
 const SIDEBAR: Color = Color::from_rgb8(246, 247, 249);
 const RAIL: Color = Color::from_rgb8(237, 240, 244);
-const LINE: Color = Color::from_rgb8(228, 232, 237);
+pub(super) const LINE: Color = Color::from_rgb8(228, 232, 237);
 const SELECTED: Color = Color::from_rgb8(226, 234, 247);
-
-/// Static vector icons inherit the button's text color, including selection.
-struct RailIcon {
-    direct: bool,
-}
-impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RailIcon {
-    fn size(&self) -> iced::Size<Length> {
-        iced::Size::new(Length::Fixed(24.0), Length::Fixed(24.0))
-    }
-
-    fn layout(
-        &mut self,
-        _tree: &mut iced::advanced::widget::Tree,
-        _renderer: &iced::Renderer,
-        limits: &iced::advanced::layout::Limits,
-    ) -> iced::advanced::layout::Node {
-        iced::advanced::layout::Node::new(limits.resolve(24, 24, iced::Size::ZERO))
-    }
-
-    fn draw(
-        &self,
-        _tree: &iced::advanced::widget::Tree,
-        renderer: &mut iced::Renderer,
-        _theme: &Theme,
-        style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        _cursor: iced::advanced::mouse::Cursor,
-        _viewport: &iced::Rectangle,
-    ) {
-        use iced::advanced::Renderer as _;
-        let origin = layout.position();
-        let mut outline = |x, y, width, height, radius: f32| {
-            renderer.fill_quad(
-                iced::advanced::renderer::Quad {
-                    bounds: iced::Rectangle::new(
-                        origin + iced::Vector::new(x, y),
-                        iced::Size::new(width, height),
-                    ),
-                    border: Border {
-                        color: style.text_color,
-                        width: 1.6,
-                        radius: radius.into(),
-                    },
-                    ..Default::default()
-                },
-                Color::TRANSPARENT,
-            );
-        };
-        if self.direct {
-            // Two people with a shared speech bubble.
-            outline(2.0, 8.0, 6.0, 6.0, 3.0);
-            outline(16.0, 8.0, 6.0, 6.0, 3.0);
-            outline(0.5, 16.0, 9.0, 6.0, 3.0);
-            outline(14.5, 16.0, 9.0, 6.0, 3.0);
-            outline(8.0, 1.0, 8.0, 5.0, 2.0);
-        } else {
-            // A grid of rooms represents the complete room collection.
-            for x in [2.0, 14.0] {
-                for y in [2.0, 14.0] {
-                    outline(x, y, 8.0, 8.0, 2.0);
-                }
-            }
-        }
-    }
-}
 
 pub struct State {
     pub space: Scope,
@@ -221,7 +159,7 @@ pub fn message_actions<'a>(
     let mut controls = row![].spacing(2);
     if reaction.is_some() || content.is_some() {
         let add = container(
-            button(container(text("☺+").size(16)).center_x(28).center_y(20))
+            button(container(icon(Kind::AddReaction)).center_x(28).center_y(20))
                 .padding(0)
                 .style(icon_button)
                 .on_press_maybe(reaction),
@@ -236,7 +174,7 @@ pub fn message_actions<'a>(
     if let Some(reply) = reply {
         controls = controls.push(super::tooltips::tooltip(
             container(
-                button(container(text("↩").size(16)).center_x(28).center_y(20))
+                button(container(icon(Kind::Reply)).center_x(28).center_y(20))
                     .padding(0)
                     .style(icon_button)
                     .on_press(reply),
@@ -251,11 +189,9 @@ pub fn message_actions<'a>(
         controls = controls.push(super::tooltips::tooltip(
             container(
                 button(
-                    container(
-                        super::emoji::preview(if unpin { "📌−" } else { "📌" }.into()).size(14),
-                    )
-                    .center_x(28)
-                    .center_y(20),
+                    container(icon(if unpin { Kind::Unpin } else { Kind::Pin }))
+                        .center_x(28)
+                        .center_y(20),
                 )
                 .padding(0)
                 .style(icon_button)
@@ -282,9 +218,13 @@ pub fn message_actions<'a>(
         controls = controls.push(super::tooltips::tooltip(
             container(
                 button(
-                    container(text(if remove { "★" } else { "☆" }).size(18))
-                        .center_x(28)
-                        .center_y(20),
+                    container(icon(if remove {
+                        Kind::BookmarkFilled
+                    } else {
+                        Kind::Bookmark
+                    }))
+                    .center_x(28)
+                    .center_y(20),
                 )
                 .padding(0)
                 .style(icon_button)
@@ -330,7 +270,7 @@ pub fn message_actions<'a>(
         dismiss,
     )
 }
-fn search_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
+pub(super) fn search_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let mut style = text_input::default(theme, status);
     style.border = Border {
         color: if matches!(status, text_input::Status::Focused { .. }) {
@@ -604,9 +544,14 @@ impl App {
         for (scope, initial, name, image) in entries {
             let selected = self.shell.space == scope;
             let content: Element<'_, Message> = if matches!(scope, Scope::All | Scope::Direct) {
-                Element::new(RailIcon {
-                    direct: scope == Scope::Direct,
-                })
+                sized(
+                    if scope == Scope::Direct {
+                        Kind::Direct
+                    } else {
+                        Kind::Grid
+                    },
+                    24.0,
+                )
             } else if let Some(handle) = image {
                 widget::image(handle.clone())
                     .width(32)
@@ -636,8 +581,8 @@ impl App {
                 .height(Length::Fill),
         );
         spaces = spaces.push(super::tooltips::tooltip(
-            button("☰")
-                .padding(10)
+            button(container(icon(Kind::Sidebar)).center_x(36).center_y(36))
+                .padding(0)
                 .style(quiet_button)
                 .on_press(Message::ToggleNavigation),
             "Toggle room list",
@@ -673,7 +618,7 @@ impl App {
                 .on_submit(Message::SearchOpen);
         }
         let mut saved_messages = row![
-            text("☆").size(17),
+            icon(Kind::Bookmark),
             text("Saved messages").size(13).width(Length::Fill),
         ]
         .spacing(8)
@@ -695,12 +640,9 @@ impl App {
         let mut rooms = column![
             super::tooltips::tooltip(
                 button(
-                    row![
-                        Element::new(super::room_search::SearchIcon),
-                        text("Search messages").size(13)
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
+                    row![icon(Kind::Search), text("Search messages").size(13)]
+                        .spacing(8)
+                        .align_y(Alignment::Center)
                 )
                 .width(Length::Fill)
                 .padding([8, 10])
@@ -747,11 +689,15 @@ impl App {
                 rooms = rooms.push(container(title("Spaces", 11).color(MUTED)).padding([6, 8]));
                 for child in children {
                     rooms = rooms.push(
-                        button(text(format!("› {}", child.name)).size(13))
-                            .width(Length::Fill)
-                            .padding([4, 10])
-                            .style(quiet_button)
-                            .on_press(Message::Space(Scope::Space(child.id.clone()))),
+                        button(
+                            row![sized(Kind::ChevronRight, 14.0), text(&child.name).size(13)]
+                                .spacing(6)
+                                .align_y(Alignment::Center),
+                        )
+                        .width(Length::Fill)
+                        .padding([4, 10])
+                        .style(quiet_button)
+                        .on_press(Message::Space(Scope::Space(child.id.clone()))),
                     );
                 }
             }
@@ -777,7 +723,14 @@ impl App {
                 && self.shell.query.is_empty();
             let header = button(
                 row![
-                    text(if collapsed { "›" } else { "⌄" }).size(12),
+                    sized(
+                        if collapsed {
+                            Kind::ChevronRight
+                        } else {
+                            Kind::ChevronDown
+                        },
+                        12.0
+                    ),
                     title(&section.name, 11).color(MUTED),
                     widget::space().width(Length::Fill),
                     text(entries.len()).size(10).color(MUTED),
@@ -863,7 +816,7 @@ impl App {
         if matches == 0 {
             rooms = rooms.push(container(text("No rooms found").size(13).color(MUTED)).padding(12));
         }
-        let mut new_chat = button(container(text("+").size(22)).center_x(24).center_y(24))
+        let mut new_chat = button(container(icon(Kind::Plus)).center_x(28).center_y(28))
             .padding(2)
             .style(icon_button);
         if !self.closing && !self.stopped {
@@ -876,7 +829,7 @@ impl App {
         };
         let new_chat =
             super::tooltips::tooltip(new_chat, shortcut, widget::tooltip::Position::Bottom);
-        let mut create_room = button(container(text("#+").size(16)).center_x(24).center_y(24))
+        let mut create_room = button(container(icon(Kind::RoomAdd)).center_x(28).center_y(28))
             .padding(2)
             .style(icon_button);
         if !self.closing && !self.stopped {
@@ -899,7 +852,7 @@ impl App {
                     new_chat,
                     create_room,
                     super::tooltips::tooltip(
-                        button(text("⋯").size(16))
+                        button(container(icon(Kind::More)).center_x(28).center_y(28))
                             .padding(2)
                             .style(icon_button)
                             .on_press(Message::ContextMenu(super::context_menu::Event::Open(
