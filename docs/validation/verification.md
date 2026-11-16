@@ -20,8 +20,7 @@ The dialog reports the SDK's own-device trust independently as **Unknown**,
 **Unverified**, or **Verified**. A completed SAS comparison does not by itself
 promise cross-signing trust or historical message-key availability. Key backup,
 recovery-secret entry, cross-signing setup/reset, and account recovery are not
-implemented. Existing automatic room-key requests/forwarding remain SDK-owned;
-see [the earlier two-client historical-key exchange](interactive.md#user-run-historical-key-exchange--2026-11-14).
+implemented. Automatic room-key requests/forwarding remain SDK-owned.
 
 ## Lifecycle and resource behavior
 
@@ -54,10 +53,10 @@ The footer updates when a request arrives but does not steal focus or open a
 modal automatically.
 
 Demo mode offers a local sample device and comparison through the same footer.
-Its completion is explicitly labeled as a preview and never changes device trust,
-accesses saved accounts, or sends Matrix requests.
+The sample never changes device trust, accesses saved accounts, or sends Matrix
+requests.
 
-## Automated evidence — 2026-11-15
+## Automated coverage
 
 The protocol fixture runs two independent matrix-sdk clients with real crypto
 stores in memory. Local mock homeservers serve their signed device keys and route
@@ -74,22 +73,14 @@ send no MAC and do not verify the peer. GUI checks cover demo isolation, draft
 and scroll preservation, modal input blocking, notification visibility, and all
 phases at the minimum 640×480 window size.
 
-Validation passed: `cargo fmt --all -- --check`,
-`cargo clippy --locked --workspace --all-targets -- -D warnings`,
-`cargo test --locked --workspace` (73 library and 111 GUI tests passed; one
-existing stress test ignored), and `cargo build --locked --bin interconnect`.
-The six verification protocol/lifecycle tests also passed after the final
-confirmation guards were tightened.
-
 These checks exercise cryptographic SAS exchange and the SDK's local peer-device
 trust. They do not establish a live account's cross-signing status, historical-key
 recovery, server interoperability, native emoji rendering, or actual idle CPU and
-wakeups. No connected client was launched or restarted, no verification was sent
-to a real device, and no chat messages were sent.
+wakeups. The fixture uses no real accounts or devices.
 
 ## Manual acceptance
 
-Use an authorized test account with another trusted Matrix client online:
+Two-client acceptance requires a test account with another trusted Matrix client online:
 
 1. Launch Interconnect with the test profile. Open **Verify device**, confirm
    account/local device identity, and choose the intended peer by device ID.
@@ -104,7 +95,6 @@ Use an authorized test account with another trusted Matrix client online:
 5. Check minimum-window layout, emoji labels/numbers with missing emoji fonts,
    Escape, and draft/scroll preservation. Compare settled idle
    resources with [the existing procedure](idle-resources.md), including a closed
-   dialog and a pending request. Do not save comparisons or private messages in
-   tracked validation artifacts.
+   dialog and a pending request.
 
 Native desktop and two-client acceptance remain pending for this desktop flow.

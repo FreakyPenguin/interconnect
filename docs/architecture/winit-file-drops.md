@@ -12,8 +12,8 @@ copy is required. The override applies to Iced's transitive dependency too.
 
 The manifest pins the full commit hash, rather than following the branch tip.
 Cargo fetches/caches the public HTTPS repository and `Cargo.lock` records the Git
-source/revision. Update the manifest and lockfile together when changing the
-backport; normal builds use `--locked`.
+source/revision. A backport revision change affects both the manifest and lockfile;
+normal builds use `--locked`.
 
 The fork keeps `dpi` on crates.io, matching the published Winit package. The
 upstream Git workspace otherwise resolves its older local `dpi` member instead
@@ -48,5 +48,5 @@ changed by this patch. Wayland native acceptance and
 application routing/stale-result tests are recorded in
 [connected UI validation](../validation/connected-ui.md) under file drops.
 
-When updating Interconnect's Iced/Winit integration, compare/remove this backport
-once it can consume upstream Wayland drops with usable coordinates.
+The backport is needed until the Iced/Winit integration supports upstream
+Wayland drops with usable coordinates.

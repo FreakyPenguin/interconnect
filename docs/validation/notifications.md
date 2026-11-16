@@ -1,6 +1,6 @@
 # Desktop notifications
 
-Implemented on 2026-11-15 with `notify-rust` 4.19.0. Linux uses asynchronous
+`notify-rust` provides asynchronous Linux
 Tokio/zbus delivery to `org.freedesktop.Notifications` on the session bus. macOS
 selects the modern UserNotifications backend (`preview-macos-un`), with an app
 bundle and asynchronous permission handling.
@@ -64,8 +64,8 @@ dbus-send --session --print-reply --dest=org.freedesktop.Notifications \
 Run `cargo run --locked --bin interconnect -- --demo`, open Settings, and click
 **Send sample notification**. Check the host banner or notification center.
 A forwarded display alone does not forward notifications; the session bus must
-also be accessible. An absent daemon should produce a Settings error while the
-UI remains responsive.
+also be accessible. An absent daemon produces a Settings error; delivery runs
+asynchronously.
 
 ## macOS
 
@@ -83,10 +83,10 @@ identifier is `io.github.interconnect.desktop`. Distribution signing/notarizatio
 remain release work.
 
 Send the sample in Settings, accept the permission prompt, and inspect
-Notification Center. Denial should show an actionable error. Enable Interconnect
+Notification Center. Denial appears as an actionable error. Enable Interconnect
 in **System Settings → Notifications**, then retry and check again after
-relaunching the same bundle. A bare `cargo run` launch should report the missing
-bundle instead of invoking UserNotifications without a bundle identity. Iced
+relaunching the same bundle. A bare `cargo run` launch reports a missing bundle
+rather than invoking UserNotifications without a bundle identity. Iced
 stays on the main thread, pumping AppKit while Tokio handles notification work.
 
 This provides the native notification route, not a complete macOS account port:
@@ -96,12 +96,10 @@ Matrix login, or network.
 
 ## Validation evidence and remaining acceptance
 
-`cargo test --locked --workspace` passed on Linux: 58 library tests and 73 UI
-tests, with the existing 100-cycle lifecycle stress test ignored. Coverage includes
-notification policy, bounded deduplication/previews, settings persistence and
-UI focus propagation, and an SDK sync fixture proving muted-room filtering
-without open timelines. A lifecycle test changes focus/privacy during pending
-permission and drops a pending worker without retaining its queue.
+Recorded Linux automated checks cover notification policy, bounded deduplication,
+privacy settings, focus propagation, muted-room filtering without open timelines,
+and cancellation during pending permission. They do not establish native banner
+appearance or connected-account delivery.
 
 The D-Bus integration test delivers real freedesktop protocol calls to a mock
 service on a private `dbus-daemon`, checking app identity, escaped body markup,
@@ -112,12 +110,8 @@ the runner and host notification daemon remain untouched. This test requires
 
 Native Linux banner appearance, connected-account delivery, encrypted notification
 delivery with real keys, and macOS compilation/permission/banner behavior remain
-manual acceptance checks. A Linux-to-Apple cross-check stopped in `aws-lc-sys`
-because the container's C compiler lacks Apple target/SDK support; it did not
-compile the macOS app. Shell syntax and Info.plist structure were checked on Linux.
+manual acceptance checks. Run macOS compilation and acceptance on a native host.
 
-For connected acceptance, use an authorized dedicated room and another client.
-Exercise focused/unfocused panes, closed threads, other rooms/spaces, mute rules,
+Connected acceptance uses a dedicated test room and a second client. Scenarios
+include focused/unfocused panes, closed threads, other rooms/spaces, mute rules,
 preview opt-out, duplicate events, history pagination, reconnect, and shutdown.
-Do not restart a running connected client or send messages as part of ordinary
-automated validation.

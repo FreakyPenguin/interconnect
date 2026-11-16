@@ -22,7 +22,7 @@ support remains unvalidated. An explicit profile-directory argument overrides
 the default. Desktop startup creates missing profile directories with mode 0700
 and offers password or browser login; signed-in profiles restore their saved
 device. Missing credentials and signed-out sessions also open the login form.
-See [desktop login](validation/connected-ui.md#desktop-login--2026-11-15) for
+See [desktop login](validation/connected-ui.md#desktop-login) for
 keyring storage, retained stores, and SSO callback setup. CLI restoration still
 requires an existing profile. Demo mode never accesses a profile.
 
@@ -32,7 +32,7 @@ an existing account by its original canonical profile path. Preserve that path
 in a `keyring-profile` file inside the profile **before moving it**; the updated
 client uses that identity for keyring reads, saves, and logout. This file contains
 only a path, with no trailing newline; credentials remain in Secret Service.
-Keep it with the profile on subsequent moves. Profiles without the file continue
+The identity file remains part of the profile on subsequent moves. Profiles without it continue
 to use their current canonical path.
 
 On Linux, from the repository directory containing the old `.matrix-spike`, run
@@ -68,8 +68,8 @@ permissions, and refuses to overwrite an existing default profile. Then launch
 the updated client with `cargo run --locked --bin interconnect`. No keyring edit
 or new login is needed. Until moving, use
 `cargo run --locked --bin interconnect -- .matrix-spike` to open the old location.
-Do not copy credentials into a new SDK store. In a development container, keep
-the data directory on persistent storage across container rebuilds.
+Restoration requires the complete SDK store as well as credentials. Development
+containers need persistent storage for the data directory across rebuilds.
 
 ## File location and format
 
@@ -173,20 +173,21 @@ at a time. Save preserves comments and
 unknown keys, writes a private temporary file in the same directory, flushes it,
 and atomically replaces the destination. Existing edits detected since the last
 load cause Save to fail with a reload instruction. This is an optimistic check,
-not a cross-process locking protocol; coordinate simultaneous writers.
+not a cross-process locking protocol, so simultaneous writers can still race.
 
 A save failure leaves the draft and dialog open and retains the active settings.
 Closing the window during a save waits for completion; a failed save keeps the
 window open with its error. Cancel remains available afterward.
 
-## Extending the schema
+## Schema implementation
 
 `src/settings.rs` defines typed settings, nested categories, defaults, the schema
-version, and file persistence. Add fields there, their documented example values,
-and their comment-preserving assignments in `Store::save`. Give new fields
-backward-compatible defaults; incompatible formats require a version migration.
+version, and file persistence. Each field has a default, an example value in
+`config.example.toml`, and a comment-preserving assignment in `Store::save`. Defaults
+allow older files to omit newer fields; incompatible formats require a version
+migration.
 
 `src/bin/interconnect/settings.rs` owns dialog drafts and asynchronous load/save
-completion handling. Apply live values from `settings.current`; keep startup-only
-behavior explicit. Unknown keys survive dialog saves to support later additions.
-Keep file I/O off the UI thread and avoid settings subscriptions that wake when idle.
+completion handling. Live values come from `settings.current`; startup-only values
+take effect on the next launch. Unknown keys survive dialog saves. File operations
+run outside the UI thread, and settings have no idle subscription.

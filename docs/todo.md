@@ -1,21 +1,25 @@
-# Rooms
-- formatting
-- add member invite link?
-  
+# Todo
 
-# Management tasks
-- logout / account switching UI
-- unread clearing, mark unread
-- sections
+## Rooms
 
+- Formatting
+- Member invite link?
 
-# Infrastructure
-- context menu
+## Account and navigation
 
-# Miscelaneous
-- bookmarks (MSC4482)
-- "dashboard"
-- custom emojis
-- math
-- search in room (ctrl + f)
-- search across rooms (ctrl + shift + f)
+- Logout / account switching UI
+- Unread clearing, mark unread
+- Sections
+
+## Infrastructure
+
+- Context menu
+
+## Other ideas
+
+- Bookmarks (MSC4482)
+- Dashboard
+- Custom emoji
+- Math
+- Search in room (Ctrl+F)
+- Search across rooms (Ctrl+Shift+F)
