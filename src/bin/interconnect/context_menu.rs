@@ -60,7 +60,7 @@ pub fn trigger<'a>(base: impl Into<Element<'a, Message>>, target: Target) -> Ele
     )
 }
 impl App {
-    fn context_menu_allowed(&self) -> bool {
+    pub(super) fn context_menu_allowed(&self) -> bool {
         !self.closing
             && !self.stopped
             && (self.demo.is_some() || self.model.authentication.is_none())
@@ -107,15 +107,38 @@ impl App {
         match target {
             Target::Sections => vec![("New section…", Action::CreateSection)],
             Target::Section(tag) => {
-                if !tag.starts_with("element.io.section.")
-                    || !self.model.sections.iter().any(|section| &section.id == tag)
-                {
+                if !self.model.sections.iter().any(|section| &section.id == tag) {
                     return Vec::new();
                 }
-                vec![
-                    ("Rename section…", Action::RenameSection),
-                    ("Remove section…", Action::RemoveSection),
-                ]
+                let mut actions = Vec::new();
+                if tag.starts_with("element.io.section.") {
+                    actions.extend([
+                        ("Rename section…", Action::RenameSection),
+                        ("Remove section…", Action::RemoveSection),
+                    ]);
+                }
+                if let Some(tag) = interconnect::room_sections::reorder_tag(tag) {
+                    let order = interconnect::room_sections::section_order(&self.model.sections);
+                    if let Some(index) = order.iter().position(|id| id == tag) {
+                        if index > 0 {
+                            actions.push((
+                                "Move section up",
+                                Action::Dispatch(Message::Reorder(
+                                    super::section_reorder::Event::Step(tag.into(), true),
+                                )),
+                            ));
+                        }
+                        if index + 1 < order.len() {
+                            actions.push((
+                                "Move section down",
+                                Action::Dispatch(Message::Reorder(
+                                    super::section_reorder::Event::Step(tag.into(), false),
+                                )),
+                            ));
+                        }
+                    }
+                }
+                actions
             }
             Target::Room(id) => {
                 if !self.model.rooms.iter().any(|room| &room.id == id) {

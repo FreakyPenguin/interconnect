@@ -653,6 +653,9 @@ impl App {
         if let Some(error) = &self.model.navigation_error {
             rooms = rooms.push(text(error).size(12).color(MUTED));
         }
+        if let Some(error) = &self.section_reorder.error {
+            rooms = rooms.push(text(error).size(12).color(MUTED));
+        }
         if let Scope::Space(id) = &self.shell.space
             && let Some(space) = self.model.spaces.iter().find(|s| &s.id == id)
         {
@@ -699,7 +702,16 @@ impl App {
                     text(if collapsed { "›" } else { "⌄" }).size(12),
                     title(&section.name, 11).color(MUTED),
                     widget::space().width(Length::Fill),
-                    text(entries.len()).size(10).color(MUTED)
+                    text(entries.len()).size(10).color(MUTED),
+                    text(
+                        if interconnect::room_sections::reorder_tag(&section.id).is_some() {
+                            "⠿"
+                        } else {
+                            ""
+                        }
+                    )
+                    .size(12)
+                    .color(MUTED),
                 ]
                 .spacing(7)
                 .align_y(Alignment::Center),
@@ -708,14 +720,17 @@ impl App {
             .padding([6, 8])
             .style(quiet_button)
             .on_press(Message::Section(section.id.clone()));
-            rooms = rooms.push(if section.id.starts_with("element.io.section.") {
-                super::context_menu::trigger(
-                    header,
-                    super::context_menu::Target::Section(section.id.clone()),
-                )
-            } else {
-                header.into()
-            });
+            let header = self.reorder_header(header.into(), &section.id);
+            rooms = rooms.push(
+                if interconnect::room_sections::reorder_tag(&section.id).is_some() {
+                    super::context_menu::trigger(
+                        header,
+                        super::context_menu::Target::Section(section.id.clone()),
+                    )
+                } else {
+                    header
+                },
+            );
             if collapsed {
                 continue;
             }

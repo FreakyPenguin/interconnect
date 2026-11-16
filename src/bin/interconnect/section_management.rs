@@ -9,7 +9,6 @@ use interconnect::{
     navigation::{Scope, sections_from_settings},
     room_sections::{Change, change_settings, new_section_tag},
 };
-use serde_json::json;
 
 pub(super) struct Form {
     change: Change,
@@ -102,21 +101,8 @@ impl App {
                 }
                 let change = form.change.clone();
                 if self.demo.is_some() {
-                    let mut definitions = serde_json::Map::new();
-                    let mut order = Vec::new();
-                    for section in &*self.model.sections {
-                        match section.id.as_str() {
-                            "Direct messages" => order.push(json!("im.vector.fake.direct")),
-                            "Rooms" => order.push(json!("chats")),
-                            tag if tag.starts_with("element.io.section.") => {
-                                definitions
-                                    .insert(tag.into(), json!({"tag":tag,"name":section.name,"spaceId":section.space_id}));
-                                order.push(json!(tag));
-                            }
-                            _ => {}
-                        }
-                    }
-                    let settings = json!({"RoomList.CustomSectionData":definitions,"RoomList.OrderedCustomSections":order});
+                    let settings =
+                        super::super::section_reorder::demo_settings(&self.model.sections);
                     match change_settings(settings, &change) {
                         Ok(settings) => {
                             self.model.sections = sections_from_settings(&settings).into();
@@ -155,6 +141,7 @@ impl App {
             Change::Create { .. } => ("New section", "Create"),
             Change::Rename { .. } => ("Rename section", "Save"),
             Change::Remove { .. } => ("Remove section?", "Remove"),
+            Change::Reorder { .. } => unreachable!("reordering has no form"),
         };
         let mut body = column![text(heading).size(14)].spacing(10).padding(8);
         if let Some(name) = form.name() {

@@ -53,6 +53,8 @@ mod reactions;
 mod receipts;
 #[path = "interconnect/room_picker.rs"]
 mod room_picker;
+#[path = "interconnect/section_reorder.rs"]
+mod section_reorder;
 #[path = "interconnect/selectable.rs"]
 mod selectable;
 #[path = "interconnect/selection.rs"]
@@ -101,6 +103,7 @@ const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
     context_menu: Option<context_menu::State>,
+    section_reorder: section_reorder::State,
     settings: settings::State,
     login: login::State,
     verification: verification::State,
@@ -159,6 +162,8 @@ enum Message {
     ContextMenu(context_menu::Event),
     RoomSectionMoved(Option<String>, u64, Result<(), String>),
     SectionChanged(Option<String>, u64, Result<(), String>),
+    Reorder(section_reorder::Event),
+    SectionsReordered(Option<String>, u64, Result<(), String>),
     OpenMessageLink(String),
     LinkOpened,
     QuickRoom(room_picker::Event),
@@ -265,6 +270,7 @@ impl App {
             composing: false,
             shell: shell::State::default(),
             context_menu: None,
+            section_reorder: Default::default(),
             demo: None,
             preferences_ready: false,
             pending_navigation: None,
@@ -318,7 +324,22 @@ impl App {
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
         if let Message::ContextMenu(event) = message {
+            let _ = self.reorder_event(section_reorder::Event::Cancel);
             return self.context_menu_event(event);
+        }
+        if matches!(
+            message,
+            Message::Space(_)
+                | Message::Search(_)
+                | Message::Section(_)
+                | Message::Room(_)
+                | Message::Escape
+                | Message::WindowFocused(false)
+                | Message::WindowResized(_)
+                | Message::Close
+                | Message::Exit
+        ) {
+            let _ = self.reorder_event(section_reorder::Event::Cancel);
         }
         if self.context_menu.is_some() && matches!(message, Message::Escape) {
             self.context_menu = None;
@@ -987,6 +1008,11 @@ impl App {
                     );
                 }
             }
+            Message::Reorder(event) => return self.reorder_event(event),
+            Message::SectionsReordered(account, request, result) => {
+                self.pending_ops -= 1;
+                self.sections_reordered(account, request, result);
+            }
             Message::SectionChanged(account, request, result) => {
                 self.pending_ops -= 1;
                 self.section_changed(account, request, result);
@@ -1212,6 +1238,7 @@ impl App {
         {
             self.stop_typing();
         }
+        self.validate_section_drag();
         self.validate_context_menu();
         self.validate_download();
         self.validate_invite();
@@ -1518,6 +1545,7 @@ impl App {
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
+            self.section_drag_subscription(),
             self.image_subscription(),
             if self.demo.is_some() {
                 Subscription::run(|| {
@@ -1548,6 +1576,7 @@ impl App {
                 })
             } else if (self.demo.is_none() && self.model.authentication.is_some())
                 || self.context_menu.is_some()
+                || self.section_dragging()
                 || self.composing
                 || self.reaction_picker.is_some()
                 || self.composer_picker.is_some()

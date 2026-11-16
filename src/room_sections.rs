@@ -89,6 +89,11 @@ pub(crate) async fn move_room(client: &Client, id: &str, destination: &str) -> R
 /// A stable tag is allocated when the create form opens, so retries reuse its ID.
 #[derive(Clone, Debug)]
 pub enum Change {
+    Reorder {
+        tag: String,
+        target: String,
+        before: bool,
+    },
     Create {
         tag: String,
         name: String,
@@ -105,7 +110,10 @@ pub enum Change {
 impl Change {
     pub fn tag(&self) -> &str {
         match self {
-            Self::Create { tag, .. } | Self::Rename { tag, .. } | Self::Remove { tag } => tag,
+            Self::Create { tag, .. }
+            | Self::Rename { tag, .. }
+            | Self::Remove { tag }
+            | Self::Reorder { tag, .. } => tag,
         }
     }
 }
@@ -120,8 +128,73 @@ pub fn new_section_tag() -> String {
     )
 }
 
+/// The two inferred chat groups share Element's single Chats order slot.
+pub fn reorder_tag(id: &str) -> Option<&str> {
+    match id {
+        "Rooms" | "Unread" | "chats" => Some("chats"),
+        "Direct messages" | "im.vector.fake.direct" => Some("im.vector.fake.direct"),
+        tag if tag.starts_with("element.io.section.") => Some(tag),
+        _ => None,
+    }
+}
+pub fn section_order(sections: &[crate::navigation::SectionEntry]) -> Vec<String> {
+    let mut order = Vec::new();
+    for tag in sections
+        .iter()
+        .filter_map(|section| reorder_tag(&section.id))
+    {
+        if !order.iter().any(|id| id == tag) {
+            order.push(tag.to_owned());
+        }
+    }
+    order
+}
+fn reorder_settings(
+    mut settings: Value,
+    source: &str,
+    target: &str,
+    before: bool,
+) -> Result<Value, String> {
+    let root = settings
+        .as_object()
+        .ok_or("The server returned invalid settings. No changes were made.")?;
+    if root
+        .get("RoomList.CustomSectionData")
+        .is_some_and(|value| !value.is_object())
+        || root
+            .get("RoomList.OrderedCustomSections")
+            .is_some_and(|value| !value.is_array())
+    {
+        return Err("The server returned invalid section settings. No changes were made.".into());
+    }
+    let mut order = section_order(&crate::navigation::sections_from_settings(&settings));
+    if reorder_tag(source) != Some(source)
+        || reorder_tag(target) != Some(target)
+        || !order.iter().any(|id| id == source)
+        || !order.iter().any(|id| id == target)
+    {
+        return Err("A section is no longer available for reordering.".into());
+    }
+    if source == target {
+        return Ok(settings);
+    }
+    order.retain(|id| id != source);
+    let index = order.iter().position(|id| id == target).unwrap() + usize::from(!before);
+    order.insert(index, source.to_owned());
+    settings["RoomList.OrderedCustomSections"] = json!(order);
+    Ok(settings)
+}
+
 /// Edit only the requested definition/order entries; preserve other clients' settings.
 pub fn change_settings(mut settings: Value, change: &Change) -> Result<Value, String> {
+    if let Change::Reorder {
+        tag,
+        target,
+        before,
+    } = change
+    {
+        return reorder_settings(settings, tag, target, *before);
+    }
     let tag = change.tag();
     if !tag.starts_with("element.io.section.") {
         return Err("Built-in sections cannot be edited.".into());
@@ -135,6 +208,7 @@ pub fn change_settings(mut settings: Value, change: &Change) -> Result<Value, St
             Some(name)
         }
         Change::Remove { .. } => None,
+        Change::Reorder { .. } => unreachable!(),
     };
     let root = settings
         .as_object_mut()
@@ -172,6 +246,7 @@ pub fn change_settings(mut settings: Value, change: &Change) -> Result<Value, St
         Change::Remove { .. } => {
             definitions.remove(tag);
         }
+        Change::Reorder { .. } => unreachable!(),
     }
     if !matches!(change, Change::Rename { .. }) {
         let order = root
@@ -541,6 +616,43 @@ mod tests {
             assert_eq!(data["new_remote_setting"], 123);
             assert_eq!(data["unrelated"], json!({"preserve":true}));
         }
+        let reorder = Change::Reorder {
+            tag: tag.clone(),
+            target: "chats".into(),
+            before: false,
+        };
+        directory
+            .clone()
+            .change_section(reorder.clone())
+            .await
+            .unwrap();
+        directory.clone().change_section(reorder).await.unwrap();
+        assert_eq!(
+            settings.lock().unwrap()["RoomList.OrderedCustomSections"],
+            json!([
+                "im.vector.fake.direct",
+                "chats",
+                tag,
+                "element.io.section.existing"
+            ])
+        );
+        assert_eq!(settings.lock().unwrap()["new_remote_setting"], 123);
+        assert_eq!(
+            settings.lock().unwrap()["RoomList.CustomSectionData"][&tag]["extension"],
+            json!({"keep":true})
+        );
+        assert!(
+            directory
+                .clone()
+                .change_section(Change::Reorder {
+                    tag: tag.clone(),
+                    target: "element.io.section.deleted".into(),
+                    before: true
+                })
+                .await
+                .unwrap_err()
+                .contains("no longer available")
+        );
         directory
             .clone()
             .change_section(Change::Remove { tag: tag.clone() })
@@ -604,7 +716,7 @@ mod tests {
             .into_iter()
             .filter(|req| req.method == "PUT")
             .collect();
-        assert_eq!(writes.len(), 3);
+        assert_eq!(writes.len(), 4);
         assert!(writes.iter().all(|req| req.url.path() == settings_path));
         read_status.store(404, std::sync::atomic::Ordering::SeqCst);
         write_status.store(403, std::sync::atomic::Ordering::SeqCst);
@@ -619,6 +731,85 @@ mod tests {
                 .unwrap_err()
                 .contains("Could not save")
         );
+    }
+
+    #[test]
+    fn reorder_preserves_definitions_and_hidden_sections_and_rejects_fixed_or_stale_ids() {
+        let original = json!({"other":{"keep":true},"RoomList.CustomSectionData":{
+            "element.io.section.a":{"tag":"element.io.section.a","name":"A","spaceId":"!hidden:example.org","extra":7},
+            "element.io.section.b":{"tag":"element.io.section.b","name":"B"}
+        },"RoomList.OrderedCustomSections":["element.io.section.a","chats","element.io.section.b","im.vector.fake.direct"]});
+        let change = Change::Reorder {
+            tag: "element.io.section.a".into(),
+            target: "element.io.section.b".into(),
+            before: false,
+        };
+        let result = change_settings(original.clone(), &change).unwrap();
+        assert_eq!(
+            result["RoomList.OrderedCustomSections"],
+            json!([
+                "chats",
+                "element.io.section.b",
+                "element.io.section.a",
+                "im.vector.fake.direct"
+            ])
+        );
+        assert_eq!(
+            result["RoomList.CustomSectionData"],
+            original["RoomList.CustomSectionData"]
+        );
+        assert_eq!(result["other"], original["other"]);
+        assert_eq!(change_settings(result.clone(), &change).unwrap(), result);
+        let result = change_settings(
+            result,
+            &Change::Reorder {
+                tag: "im.vector.fake.direct".into(),
+                target: "chats".into(),
+                before: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            result["RoomList.OrderedCustomSections"],
+            json!([
+                "im.vector.fake.direct",
+                "chats",
+                "element.io.section.b",
+                "element.io.section.a"
+            ])
+        );
+        for (tag, target) in [
+            ("m.favourite", "chats"),
+            ("chats", "m.lowpriority"),
+            ("chats", "element.io.section.deleted"),
+            ("element.io.section.deleted", "chats"),
+        ] {
+            assert!(
+                change_settings(
+                    original.clone(),
+                    &Change::Reorder {
+                        tag: tag.into(),
+                        target: target.into(),
+                        before: true
+                    }
+                )
+                .is_err()
+            );
+        }
+        let default = change_settings(
+            json!({"other":1}),
+            &Change::Reorder {
+                tag: "chats".into(),
+                target: "im.vector.fake.direct".into(),
+                before: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            default,
+            json!({"other":1,"RoomList.OrderedCustomSections":["chats","im.vector.fake.direct"]})
+        );
+        assert!(change_settings(json!({"RoomList.OrderedCustomSections":{}}), &change).is_err());
     }
 
     #[test]

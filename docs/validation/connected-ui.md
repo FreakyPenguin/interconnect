@@ -140,8 +140,29 @@ settings. Malformed data aborts the write. Submitted edits share the room-move
 serialization/deadline and shutdown accounting; dismissed/stale results cannot
 close a newer menu. Retries reuse the creation tag to avoid duplicate sections.
 Demo changes remain in memory. Cross-client GET/PUT races remain possible.
-Section reordering and Element's visibility/device expansion settings remain
-unimplemented.
+Drag the **⠿** handle at the right of a section header to reorder it. The blue
+line marks insertion above/below the target header. Favorites and Low priority
+stay pinned. Direct messages moves independently; Unread and Rooms move together
+in Element's `chats` order slot. Order is account-wide, including sections hidden
+by the current space/search, and keyboard room navigation follows the new order.
+Right-click a header for **Move section up/down**; the same commands are available
+for empty/off-screen custom sections through **⋯ → section name**.
+
+Reordering changes only `RoomList.OrderedCustomSections`, using fresh server
+settings and preserving definitions/metadata and unrelated settings. The saved
+order normalizes duplicate/stale entries and retains all valid sections, including
+those hidden in the current view. Relative before/after moves are idempotent on
+retry. Deletion of either endpoint before the write returns an error. Room tags,
+open conversations, drafts, scroll positions, and local collapse state are kept.
+Pending reorders disable new drags, errors appear in the room list, and shutdown
+waits for submitted writes using the existing 30-second settings-edit deadline.
+
+A handle click without a drop on another section makes no change. Release outside
+a valid header, Escape, right-click, wheel scrolling, focus loss, window resize,
+space/search changes, account changes, or a modal cancels a drag. There is no
+automatic scroll timer; scroll first or use the up/down commands for distant
+sections. Hover updates occur only during a drag and only when its target changes.
+Element's visibility/device expansion settings remain unimplemented.
 
 Automated coverage includes schema validation, duplicate labels and order entries,
 multiple-tag precedence, stale tags, room-tag sync, and settings-only syncs for
@@ -152,14 +173,21 @@ read/write failures, stale accounts/menus, shutdown, and draft/scroll preservati
 Section-management fixtures cover create/rename/removal without intervening sync,
 preserved remote settings and definition metadata, idempotent retries, deleted
 destinations, malformed settings, HTTP failures, empty-section scope visibility,
-confirmation/cancel, and conversation preservation.
+confirmation/cancel, and conversation preservation. Reorder fixtures cover both
+directions, Chats/People slots, pinned/stale endpoints, unchanged definitions,
+retries before sync, clipping/hover capture without scheduled redraws, cancellation,
+stale completions, shutdown, and unchanged conversation/draft/scroll/collapse state.
 An isolated headless Sway demo with tiny-skia was visually checked at 1280×900:
 right-clicking the unselected General room opened the menu, **Move to section…**
 showed the checked Favorites destination, and choosing Design moved General
 there while Design studio remained open. Section-management demo checks also
 created Projects via **⋯**, entered its name and submitted with Enter, renamed
 its empty header to Planning, and confirmed removal. The open Design studio
-conversation stayed selected throughout. Live Element interoperability and
+conversation stayed selected throughout. A subsequent reorder demo check verified
+both drag directions, the before/after insertion line, moving Design across the
+shared Chats slot and above Direct messages, and releasing outside all headers
+without changing order. Design studio remained selected. These checks used
+isolated headless Sway/tiny-skia at 1280×900. Live Element interoperability and
 native desktop acceptance still require manual checks:
 
 1. In Element on a dedicated test account, create two custom sections, move rooms
@@ -187,6 +215,14 @@ native desktop acceptance still require manual checks:
    collapse is preserved. Remove empty and populated sections; rooms stay joined
    and accessible. Cancel/escape must leave settings unchanged. Test read/write
    failures and dismissal/close during a pending save with a dedicated account.
+
+8. Drag a custom section above and below another header, and move Direct messages.
+   Verify the insertion line, pinned endpoints, and shared Unread/Rooms movement.
+   Compare the resulting order in Element after sync/relaunch. Use up/down commands
+   on empty custom sections via **⋯**. Try Escape, outside release, scrolling,
+   focus loss, account/space changes, and remote deletion during a drag. No canceled
+   drag should write or activate a room/header. Verify error feedback on a refused
+   reorder and closure while a submitted reorder is pending.
 
 ## Navigation and timelines
 

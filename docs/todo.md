@@ -8,7 +8,6 @@
 
 - Logout / account switching UI
 - mark unread
-- Reorder custom sections 
 
 ## Other ideas
 
@@ -17,3 +16,4 @@
 - Custom emoji
 - Search in room (Ctrl+F)
 - Search across rooms (Ctrl+Shift+F)
+- Ugly tooltips
