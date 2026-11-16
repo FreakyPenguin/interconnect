@@ -108,7 +108,10 @@ select **Interconnect-debian-stable-amd64-&lt;commit&gt;** or
 **Interconnect-debian-testing-amd64-&lt;commit&gt;** under **Artifacts**. As with the
 macOS builds, downloads require a GitHub login and repository read access and
 expire after 14 days. Choose the package matching your Debian distribution.
-Install the downloaded file with APT so dependencies are resolved:
+Extract the downloaded artifact ZIP, then install the `.deb` file with APT so
+dependencies are resolved. CI also uses this named ZIP artifact to transfer the
+package to its matching install job; raw uploads ignore the configured artifact
+name.
 
 ```sh
 sudo apt install ./interconnect_VERSION_amd64.deb
@@ -116,8 +119,10 @@ sudo apt install ./interconnect_VERSION_amd64.deb
 
 These are downloadable packages, not an APT repository with automatic updates.
 Package creation and clean-container installation were checked locally using
-the existing debug binary; the first hosted runs must still confirm release
-compilation against each suite. Desktop behavior remains manual validation.
+the existing debug binary. The hosted testing install log from November 15,
+2026 failed at artifact lookup before installation. The named ZIP upload fix
+still needs a hosted run to confirm artifact transfer and installation for both
+suites. Desktop behavior remains manual validation.
 
 ## Design preview
 

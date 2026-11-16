@@ -90,7 +90,9 @@ jobs:
         with:
           name: Interconnect-debian-${{ matrix.suite }}-amd64-${{ github.sha }}
           path: target/debian/*.deb
-          archive: false
+          # Raw uploads ignore `name`; install jobs need this stable artifact name.
+          archive: true
+          compression-level: 0
           if-no-files-found: error
           retention-days: 14
 
