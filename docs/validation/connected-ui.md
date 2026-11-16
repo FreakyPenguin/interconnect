@@ -67,8 +67,19 @@ keyboard focus, and connected-history acceptance require the manual checks above
 Global search combines the homeserver's message-body search (newest first, 30
 results per page) with a memory-only snapshot of recently loaded messages. The
 local cache retains at most 32 room/thread panes and 500 recent messages per pane;
-results are bounded to 200 and deduplicated by room/event ID. Encrypted history
-is searchable only within that local coverage. Search runs on explicit submit,
+results are bounded to 200 and deduplicated by room/event ID. The initial query
+searches encrypted history only within that local coverage. After submitting,
+**Search older encrypted messages** loads history without opening the rooms.
+Each click requests up to 20 pages of 50 events, rotating between encrypted
+rooms (including rooms with unknown encryption state); bookmark storage is
+excluded. The SDK decrypts pages using available keys. Progress counts checked
+events, finished rooms, events missing keys, and unavailable rooms. Stop cancels
+the current page; Continue resumes from the last finished page. Empty pages
+with a new token remain resumable, while repeated/cyclic tokens stop pagination.
+There is no plaintext search index or history-scan file. New queries reset the
+scan; leaving the panel cancels work. Matching edits are applied to their
+original event when found while scanning backwards; forged edits from another
+sender and redacted/unreadable events are not used as message matches. Search runs on explicit submit,
 with cancellable work and no background indexing or polling. Demo searches all
 sample room histories without an account or network. Server search terms use
 the homeserver's matching rules; yellow previews highlight literal,
@@ -83,6 +94,17 @@ a distinctive existing phrase in two rooms, load the next page, follow both a
 room hit and a thread reply, then confirm the original reading positions and
 drafts. Repeat with an encrypted message loaded during this session and with
 server search unavailable; the panel must communicate its partial coverage.
+Then search for an older encrypted message in a room not opened in this session:
+click **Search older encrypted messages**, check incremental matches and progress,
+stop during a request, resume, and follow a reply. Check a room without historical
+keys and an inaccessible room; both must be counted without preventing other
+rooms from being searched. Finish one batch with more history remaining and
+verify no further page is fetched until Continue. Change the query, close the
+panel, and change accounts during scanning to check stale-page rejection.
+Mock-homeserver tests cover ciphertext decryption, empty-page continuation,
+missing keys, cyclic tokens, failures, and historical edits. UI tests cover
+merging, stop/query/account/close rejection, and demo isolation; the connected
+acceptance steps above remain untested until run with a test account.
 
 ## Desktop login
 

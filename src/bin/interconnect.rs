@@ -530,6 +530,8 @@ impl App {
                             | global_search::Event::Edit(_)
                             | global_search::Event::Submit
                             | global_search::Event::More
+                            | global_search::Event::History
+                            | global_search::Event::StopHistory
                             | global_search::Event::Conversation(..)
                             | global_search::Event::Close
                     )
@@ -1245,6 +1247,7 @@ impl App {
                 }
             }
             Message::Stopped(result) => {
+                self.global_search.close();
                 self.stopped = true;
                 match result {
                     Ok(()) if self.closing => return iced::exit(),

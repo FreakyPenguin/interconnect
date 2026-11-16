@@ -13,6 +13,9 @@ use matrix_sdk::{
 };
 use std::{sync::Arc, time::Duration};
 
+mod history;
+pub use history::{HistoryCursor, HistoryPage};
+
 pub const PAGE_SIZE: usize = 30;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Hit {

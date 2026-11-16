@@ -6,7 +6,7 @@ use iced::{
 };
 use interconnect::{
     connected::{MessageRow, RowKind},
-    search::{Hit, Page},
+    search::{HistoryCursor, HistoryPage, Hit, Page},
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -14,6 +14,7 @@ use std::{
 };
 
 const MAX_RESULTS: usize = 200;
+const HISTORY_BATCH_PAGES: usize = 20;
 const CACHED_PANES: usize = 32;
 const CACHED_MESSAGES: usize = 500;
 type Cached = (Weak<Vec<MessageRow>>, Arc<Vec<Hit>>);
@@ -32,9 +33,23 @@ pub struct State {
     error: Option<String>,
     abort: Option<iced::task::Handle>,
     local_cancel: Option<tokio_util::sync::CancellationToken>,
+    history: Option<HistoryCursor>,
+    deep_loading: bool,
+    deep_remaining: usize,
+    deep_generation: u64,
+    deep_abort: Option<iced::task::Handle>,
+    deep_error: Option<String>,
 }
 impl State {
+    fn stop_history(&mut self) {
+        if let Some(abort) = self.deep_abort.take() {
+            abort.abort();
+        }
+        self.deep_generation += 1;
+        self.deep_loading = false;
+    }
     fn cancel(&mut self) {
+        self.stop_history();
         if let Some(cancel) = self.local_cancel.take() {
             cancel.cancel();
         }
@@ -57,7 +72,7 @@ impl State {
         };
     }
     fn loading(&self) -> bool {
-        self.local_loading || self.server_loading
+        self.local_loading || self.server_loading || self.deep_loading
     }
     fn merge(&mut self, hits: Vec<Hit>) {
         for hit in hits {
@@ -85,6 +100,9 @@ pub enum Event {
     Edit(String),
     Submit,
     More,
+    History,
+    StopHistory,
+    HistoryLoaded(u64, u64, Option<String>, Result<Box<HistoryPage>, String>),
     Loaded(u64, Option<String>, bool, Result<Page, String>),
     Conversation(u64, String, String),
 }
@@ -220,6 +238,8 @@ impl App {
                 self.global_search.submitted.clear();
                 self.global_search.error = None;
                 self.global_search.next = None;
+                self.global_search.history = None;
+                self.global_search.deep_error = None;
             }
             Event::Submit if self.global_search.open && !self.closing && !self.stopped => {
                 return self.start_global_search(false);
@@ -233,6 +253,70 @@ impl App {
                     && !self.stopped =>
             {
                 return self.start_global_search(true);
+            }
+            Event::History
+                if self.global_search.open
+                    && !self.global_search.loading()
+                    && !self.global_search.submitted.is_empty()
+                    && self.global_search.hits.len() < MAX_RESULTS
+                    && !self.closing
+                    && !self.stopped =>
+            {
+                self.global_search.stop_history();
+                self.global_search.deep_error = None;
+                if self.demo.is_some() {
+                    self.global_search.history = Some(HistoryCursor::default());
+                    return Task::none();
+                }
+                if self
+                    .global_search
+                    .history
+                    .as_ref()
+                    .is_some_and(HistoryCursor::complete)
+                {
+                    self.global_search.history = None;
+                }
+                self.global_search.deep_remaining = HISTORY_BATCH_PAGES;
+                self.global_search.deep_loading = true;
+                return self.load_search_history_page();
+            }
+            Event::StopHistory if self.global_search.open => {
+                self.global_search.stop_history();
+            }
+            Event::HistoryLoaded(epoch, generation, account, result)
+                if self.global_search.open
+                    && self.global_search.deep_loading
+                    && epoch == self.global_search.epoch
+                    && generation == self.global_search.deep_generation
+                    && account == self.account_id
+                    && !self.closing
+                    && !self.stopped =>
+            {
+                match result {
+                    Ok(page) => {
+                        let hits = page
+                            .hits
+                            .into_iter()
+                            .filter(|hit| self.model.rooms.iter().any(|room| room.id == hit.room))
+                            .collect();
+                        self.global_search.merge(hits);
+                        let complete = page.cursor.complete();
+                        self.global_search.history = Some(page.cursor);
+                        self.global_search.deep_remaining =
+                            self.global_search.deep_remaining.saturating_sub(1);
+                        if !complete
+                            && self.global_search.deep_remaining > 0
+                            && self.global_search.hits.len() < MAX_RESULTS
+                        {
+                            return self.load_search_history_page();
+                        }
+                        self.global_search.deep_loading = false;
+                    }
+                    Err(error) => {
+                        self.global_search.deep_loading = false;
+                        self.global_search.deep_error = Some(error);
+                    }
+                }
             }
             Event::Loaded(epoch, account, local, result)
                 if self.global_search.open
@@ -305,6 +389,8 @@ impl App {
             self.global_search.hits.clear();
             self.global_search.next = None;
             self.global_search.submitted = query.clone();
+            self.global_search.history = None;
+            self.global_search.deep_error = None;
             self.remember_search_messages();
         }
         let epoch = self.global_search.epoch;
@@ -368,6 +454,34 @@ impl App {
         self.global_search.abort = Some(abort.abort_on_drop());
         task
     }
+    fn load_search_history_page(&mut self) -> Task<Message> {
+        let Some(service) = self.model.search.clone() else {
+            self.global_search.deep_loading = false;
+            self.global_search.deep_error =
+                Some("History search is not ready. Try again when connected.".into());
+            return Task::none();
+        };
+        let epoch = self.global_search.epoch;
+        let generation = self.global_search.deep_generation;
+        let account = self.account_id.clone();
+        let cursor = self.global_search.history.clone();
+        let query = self.global_search.submitted.clone();
+        let (task, abort) = Task::perform(
+            async move { service.history_page(query, cursor).await.map(Box::new) },
+            move |result| {
+                message(Event::HistoryLoaded(
+                    epoch,
+                    generation,
+                    account.clone(),
+                    result,
+                ))
+            },
+        )
+        .abortable();
+        self.global_search.deep_abort = Some(abort.abort_on_drop());
+        task
+    }
+
     pub(super) fn global_search_view(&self) -> Element<'_, Message> {
         let state = &self.global_search;
         let heading = row![
@@ -393,7 +507,7 @@ impl App {
         let coverage = if self.demo.is_some() {
             "Search all demo conversations. Results stay on this device."
         } else {
-            "Search server history and recently loaded messages across all rooms. Encrypted history is limited to messages loaded in this session."
+            "Search all rooms. Use Search older encrypted messages to include history that is not loaded yet. Available room keys determine what can be decrypted."
         };
         let mut entries = column![].spacing(14);
         for hit in &state.hits {
@@ -445,9 +559,51 @@ impl App {
         if let Some(error) = &state.error {
             entries = entries.push(text(error).size(13).color(shell::MUTED));
         }
-        if state.loading() {
+        let mut history_controls = column![].spacing(6);
+        if let Some(error) = &state.deep_error {
+            history_controls = history_controls.push(text(error).size(13).color(shell::MUTED));
+        }
+        if let Some(history) = &state.history {
+            history_controls = history_controls.push(text(if self.demo.is_some() {
+                "All demo history is already included.".into()
+            } else {
+                format!("Checked {} events · {}/{} rooms finished · {} could not be decrypted · {} rooms unavailable{}",
+                    history.scanned, history.finished, history.rooms, history.missing_keys, history.failed,
+                    if state.deep_loading { " · searching older history…" } else if history.complete() { " · history scan finished" } else { " · paused; continue to search further" })
+            }).size(12).color(shell::MUTED));
+        }
+        if state.deep_loading {
+            history_controls = history_controls.push(
+                button(text("Stop history search").size(13))
+                    .style(shell::quiet_button)
+                    .on_press(message(Event::StopHistory)),
+            );
+        } else if !state.submitted.is_empty() && !state.loading() && state.hits.len() < MAX_RESULTS
+        {
+            let label = match &state.history {
+                Some(history) if !history.complete() => "Continue searching older messages",
+                Some(_) => "Search encrypted history again",
+                None => "Search older encrypted messages",
+            };
+            history_controls = history_controls.push(
+                button(text(label).size(13))
+                    .style(shell::quiet_button)
+                    .on_press_maybe(
+                        (self.demo.is_some() || self.model.search.is_some())
+                            .then_some(message(Event::History)),
+                    ),
+            );
+            if state.history.is_none() {
+                history_controls = history_controls.push(
+                    text("Loads up to 1,000 older events per batch. Stop or continue at any time.")
+                        .size(12)
+                        .color(shell::MUTED),
+                );
+            }
+        }
+        if state.loading() && !state.deep_loading {
             entries = entries.push(text("Searching…").size(13).color(shell::MUTED));
-        } else if !state.submitted.is_empty() && state.hits.is_empty() {
+        } else if !state.loading() && !state.submitted.is_empty() && state.hits.is_empty() {
             entries = entries.push(shell::empty_state(
                 "No matches",
                 "Try another word or phrase.",
@@ -481,6 +637,7 @@ impl App {
                 text(format!("{} results", state.hits.len()))
                     .size(12)
                     .color(shell::MUTED),
+                history_controls,
                 rule::horizontal(1),
                 scrollable(entries)
                     .id("global-search-results")
@@ -525,6 +682,118 @@ mod tests {
             local,
             Ok(Page { hits, next }),
         )));
+    }
+
+    fn history_result(hits: Vec<Hit>) -> Box<HistoryPage> {
+        let mut cursor = HistoryCursor::default();
+        cursor.scanned = 50;
+        Box::new(HistoryPage { hits, cursor })
+    }
+
+    #[test]
+    fn history_results_merge_and_stop_rejects_late_pages_without_losing_hits() {
+        let mut app = demo_app();
+        let _ = app.update(message(Event::Open));
+        app.global_search.submitted = "needle".into();
+        app.global_search.query = "needle".into();
+        app.global_search
+            .hits
+            .push(sample("studio", "one", "needle"));
+        app.global_search.deep_loading = true;
+        app.global_search.deep_remaining = HISTORY_BATCH_PAGES;
+        let epoch = app.global_search.epoch;
+        let generation = app.global_search.deep_generation;
+        let _ = app.update(message(Event::HistoryLoaded(
+            epoch,
+            generation,
+            None,
+            Ok(history_result(vec![
+                sample("studio", "one", "needle"),
+                sample("general", "two", "older needle"),
+            ])),
+        )));
+        assert_eq!(app.global_search.hits.len(), 2);
+        assert_eq!(app.global_search.history.as_ref().unwrap().scanned, 50);
+        assert!(!app.global_search.deep_loading);
+        app.global_search.deep_loading = true;
+        let _ = app.update(message(Event::StopHistory));
+        let _ = app.update(message(Event::HistoryLoaded(
+            epoch,
+            generation,
+            None,
+            Ok(history_result(vec![sample("studio", "late", "needle")])),
+        )));
+        assert_eq!(app.global_search.hits.len(), 2);
+        assert_eq!(app.global_search.history.as_ref().unwrap().scanned, 50);
+        assert!(!app.global_search.deep_loading);
+    }
+
+    #[test]
+    fn history_scan_is_scoped_to_query_account_and_open_panel() {
+        let mut app = demo_app();
+        let _ = app.update(message(Event::Open));
+        app.global_search.deep_loading = true;
+        let epoch = app.global_search.epoch;
+        let generation = app.global_search.deep_generation;
+        let _ = app.update(message(Event::HistoryLoaded(
+            epoch,
+            generation,
+            Some("other account".into()),
+            Ok(history_result(vec![sample(
+                "studio",
+                "wrong-account",
+                "needle",
+            )])),
+        )));
+        assert!(app.global_search.hits.is_empty());
+        let _ = app.update(message(Event::Edit("changed query".into())));
+        assert!(!app.global_search.deep_loading);
+        assert!(app.global_search.history.is_none());
+        let _ = app.update(message(Event::HistoryLoaded(
+            epoch,
+            generation,
+            None,
+            Ok(history_result(vec![sample(
+                "studio",
+                "wrong-query",
+                "needle",
+            )])),
+        )));
+        assert!(app.global_search.hits.is_empty());
+        app.global_search.deep_loading = true;
+        let epoch = app.global_search.epoch;
+        let generation = app.global_search.deep_generation;
+        let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::HistoryLoaded(
+            epoch,
+            generation,
+            None,
+            Ok(history_result(vec![sample("studio", "late", "needle")])),
+        )));
+        assert!(app.global_search.hits.is_empty());
+        assert!(!app.global_search.open);
+        let _ = app.update(message(Event::Open));
+        app.global_search.deep_loading = true;
+        let _ = app.update(Message::Stopped(Ok(())));
+        assert!(!app.global_search.open);
+        assert!(!app.global_search.deep_loading);
+    }
+
+    #[test]
+    fn history_action_requires_submission_and_demo_stays_local() {
+        let mut app = demo_app();
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::History));
+        assert!(app.global_search.history.is_none());
+        app.global_search.submitted = "needle".into();
+        app.global_search.query = "needle".into();
+        let selection = app.selection.clone();
+        let _ = app.update(message(Event::History));
+        assert!(app.global_search.history.as_ref().unwrap().complete());
+        assert!(!app.global_search.deep_loading);
+        assert_eq!(app.selection.room, selection.room);
+        assert_eq!(app.selection.thread, selection.thread);
+        assert!(!app.selection.conversation_visible);
     }
 
     #[test]

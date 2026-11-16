@@ -155,8 +155,13 @@ macOS), separately from Ctrl+F in-room search and Ctrl+K room navigation. The
 a timeout, and runtime-safe client ownership. The desktop owns request/account
 generations, cancellation, result pagination, and a bounded memory-only cache of
 recently loaded message projections. Local matching runs off the UI thread.
-There is no persistent search index or idle search worker. Encrypted history
-outside the loaded cache is not searched. See [search validation](validation/connected-ui.md#demo-checks).
+There is no persistent search index or idle search worker. **Search older
+encrypted messages** explicitly pages backwards through joined encrypted rooms
+(and rooms whose encryption state is unknown), using the SDK to decrypt each
+page. It rotates between rooms, processes up to 20 pages of 50 events per click,
+and offers Stop/Continue with in-memory pagination state. Missing keys and
+unavailable rooms are counted; selected UI timelines and read receipts are
+untouched. See [search validation](validation/connected-ui.md#demo-checks).
 
 ## Renderer selection
 
