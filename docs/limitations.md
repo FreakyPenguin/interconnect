@@ -13,8 +13,9 @@ Secret Service.
 - Formatted messages support common Matrix HTML. Inline-image authoring, code syntax
   highlighting, full tables, formatted media captions, and visual rich-text editing
   remain incomplete. Excerpts continue to use the plain fallback.
-- Custom emoji can use existing packs. Pack creation/management, standalone
-  stickers and animated emoji playback remain unfinished. Received emoji keep
+- Custom emoji support includes personal/room pack management and uploads.
+  Standalone stickers, bulk pack import/export and animated emoji playback remain
+  unfinished. Received emoji keep
   sender dimensions because the pinned SDK strips the emoticon HTML marker.
 - Keyboard shortcuts cover common workflows, but full button traversal and focus
   restoration are unfinished.

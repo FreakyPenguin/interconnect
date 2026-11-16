@@ -214,8 +214,48 @@ share its four download/decode slots and 96 MiB cache, with the existing inline
 image limits and static GIF frame. Closing the UI releases demand; cached pixels
 can remain in the bounded LRU. Packs are never bulk downloaded. Pack images are
 not encrypted, including when used in encrypted rooms; the picker states this.
-Pack creation, uploads, subscription management, standalone stickers and animated
-emoji playback remain follow-up work.
+Personal and room pack management, uploads and global enable/disable are described
+below. Standalone stickers, bulk import/export and animated emoji playback remain
+follow-up work.
 
 Protocol: [Matrix image packs](https://spec.matrix.org/v1.19/client-server-api/#image-packs)
 and [MSC2545](https://github.com/matrix-org/matrix-spec-proposals/blob/main/proposals/2545-emotes.md).
+
+### Pack management
+
+`custom_emoji::management::Service` is a runtime-owned, account-scoped handle
+with serialized writes. Opening or reloading the manager performs bounded fresh
+account-data/state reads for known sources (up to 128 packs). It does not add a
+background subscription. The existing pack sync worker discovers pack state keys;
+an initial open before that sync completes may require Reload to list every pack.
+The legacy personal pack is a single `im.ponies.user_emotes` account-data event.
+New room packs use `m.room.image_pack` with a stable, randomly allocated state key;
+existing stable/legacy packs are edited in their existing event type. New global
+references use `m.image_pack.rooms`; existing legacy references retain their type.
+
+Edits operate on retained JSON and preserve unknown pack, image and subscription
+fields. Duplicate shortcodes, invalid MXC URLs and oversized content (48 KiB)
+are rejected before writing. The same pure edit validator drives demo changes.
+Cached room permissions are rechecked immediately before writes; homeserver
+permission enforcement remains authoritative. Fresh pack reads detect intervening
+changes, including a stable pack superseding a legacy event. Matrix has no
+conditional state/account-data write here, so another client's change between
+the final GET and PUT remains a race. Global-reference edits read fresh data,
+modify only the selected room/state key and preserve other references.
+
+Local file reads and bounded static image decoding run on a blocking worker.
+Only explicit saving uploads bytes; no source paths/filenames are uploaded.
+Uploaded media uses the SDK's ordinary authenticated upload and is not encrypted.
+Metadata saves may fail after upload, leaving unused media. Pack deletions write
+empty content to suppress legacy fallback; global references to a deleted pack
+may remain inert. Existing messages and captured draft emoji keep their MXC URI.
+
+Read/file tasks are abortable and carry dialog request/account identity. Once
+submitted, writes finish against their captured account/pack; shutdown counts
+and waits for them (30-second load/global deadlines, 60-second save deadline).
+Late/duplicate callbacks cannot mutate a replacement dialog or decrement its
+operation count twice. The modal blocks conversation actions, suppresses read
+receipts/notification visibility and preserves unrelated pending completions.
+It disables cursor-blink timers and requests only the selected remote image;
+local upload previews use already decoded RGBA handles. Demo pack edits are
+stored only in memory and reproject into the shared emoji catalog.

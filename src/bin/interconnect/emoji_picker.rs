@@ -242,6 +242,7 @@ pub enum Event {
     Page(bool),
     Select(String),
     Close,
+    Manage,
 }
 
 pub struct State {
@@ -282,7 +283,7 @@ impl State {
                 self.revision += 1;
                 return None;
             }
-            Event::Close => return None,
+            Event::Close | Event::Manage => return None,
         }
         self.page = 0;
         self.revision += 1;
@@ -460,6 +461,13 @@ pub fn view<'a, Message: Clone + 'static>(
             text("Custom emoji images are visible to homeservers.")
                 .size(10)
                 .color(shell::MUTED),
+        );
+    }
+    if enabled {
+        content = content.push(
+            button(text("Manage packs…").size(12))
+                .style(shell::quiet_button)
+                .on_press(on_event(Event::Manage)),
         );
     }
     content.height(Length::Fill).into()

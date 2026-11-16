@@ -11,7 +11,7 @@
 ## Other ideas
 
 - Dashboard
-- Custom emoji pack creation/management and standalone stickers
+- Standalone stickers and animated custom emoji
 - Ugly tooltips
 - resizable/scrollable composer
 - edit with control in composer

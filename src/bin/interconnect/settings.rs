@@ -98,6 +98,7 @@ impl App {
         self.selection.conversation_visible = !self.bookmarks.open
             && !self.global_search.open
             && self.window_focused
+            && self.emoji_management.is_none()
             && self.settings.draft.is_none()
             && self.room_picker.is_none()
             && self.new_chat.is_none()
@@ -450,6 +451,7 @@ impl App {
             iced::widget::rule::horizontal(1),
             shell::title("Navigation", 15),
             visibility,
+            button("Manage emoji packs…").style(shell::quiet_button).on_press_maybe((available && (self.demo.is_some() || self.model.emoji_management.is_some())).then_some(Message::EmojiManagement(super::emoji_management::Event::Open))),
             shell::title("Messages", 15),
             row![text("Send with").size(14), shortcut]
                 .spacing(16)

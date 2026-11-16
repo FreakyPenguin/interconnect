@@ -30,6 +30,7 @@ primary platform and best-effort macOS builds.
 - People search, room creation, invitations, room topics, and pinned messages.
 - Reactions, Unicode and Matrix custom emoji pickers/completion, image viewing,
   and click-to-play GIFs.
+- Personal and room emoji pack management with image uploads.
 - Save original attachments or open them in the default application, including
   encrypted images, files, audio, and video in rooms and threads.
 - Attachments through file picking, clipboard paste, and drag-and-drop.

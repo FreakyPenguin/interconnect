@@ -807,3 +807,44 @@ existing environment-dependent tests ignored), and
 `cargo run --locked --bin interconnect -- --demo` instance started successfully
 on Wayland/wgpu and was terminated after a short startup smoke check. This did
 not exercise visual interactions, a connected account, or idle resource metrics.
+
+## Emoji pack management — 2026-11-16
+
+Automated mock-server coverage exercises personal and room pack creation,
+renaming/deletion, fresh-state conflicts, permission loss, stable-over-legacy
+conflicts, preserving unknown/sticker metadata, global reference edits and
+malformed global data. Local-file fixtures check size/type/decoding constraints,
+preview preparation without uploads, and upload/save payloads. UI fixtures cover
+demo creation/edit/removal/projection, confirmation cancellation, stale loads,
+account replacement, duplicate save callbacks, earlier reaction completions,
+draft/scroll preservation and 640×480 / 1280×900 layout without redraw timers.
+These are isolated fixtures; no connected-account changes are performed.
+
+Manual acceptance (not yet performed):
+
+- Launch `cargo run --locked --bin interconnect -- --demo`. Open **Manage packs…**
+  from both emoji pickers and Settings. Create a room pack, add/rename/remove an
+  emoji, enable a room pack globally and navigate away/back. Inspect the picker
+  and completion after each saved change; local drafts/scroll must survive.
+- Try valid and invalid shortcodes, duplicate names, invalid MXC URLs, oversized
+  and damaged files, canceling the native file chooser, Reload and modal Close.
+  Inspect remote/local previews and all controls in the minimum window.
+- With an authorized connected session, verify personal pack persistence across
+  clients, room permission denial/demotion, stable and legacy edits, global
+  enable/disable, and a concurrent edit from another client. Perform uploads or
+  destructive changes only on explicitly authorized packs. Check timeout/reload
+  behavior and that existing messages/drafts still display removed pack images.
+- Close the app during a submitted save and confirm bounded shutdown; switch
+  accounts during a load and reject its late result. Compare connected idle
+  resources with the earlier emoji baseline. Management adds no periodic worker.
+
+Bulk import/export, deleting media from the server, standalone stickers, live
+interoperability and native macOS behavior remain outside this validation.
+
+Validation performed for this extension: `cargo fmt --all -- --check`,
+`cargo clippy --locked --workspace --all-targets -- -D warnings`,
+`cargo test --locked --workspace`, subsequent targeted management/shutdown
+regressions, and `cargo build --locked --bin interconnect` all passed. Two
+existing environment-dependent library tests remain ignored. Desktop/manual,
+connected-account interoperability and production resource measurements were
+not performed; the user's connected client was not restarted or used for tests.

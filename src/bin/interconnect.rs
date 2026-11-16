@@ -17,6 +17,8 @@ mod downloads;
 mod emoji;
 #[path = "interconnect/emoji_completion.rs"]
 mod emoji_completion;
+#[path = "interconnect/emoji_management.rs"]
+mod emoji_management;
 #[path = "interconnect/emoji_picker.rs"]
 mod emoji_picker;
 #[path = "interconnect/file_drop.rs"]
@@ -151,6 +153,8 @@ struct App {
     composer_picker: Option<composer_picker::State>,
     attachment_picker: Option<attachments::Target>,
     clipboard_paste: Option<attachments::Paste>,
+    emoji_management: Option<emoji_management::State>,
+    emoji_management_writes: HashSet<u64>,
     emoji_catalog: std::sync::Arc<emoji_picker::Catalog>,
     emoji_completion: emoji_completion::State,
     topic_editor: Option<topic::State>,
@@ -194,6 +198,7 @@ enum Message {
     Download(downloads::Event),
     Reaction(reaction_picker::Event),
     ComposerEmoji(composer_picker::Event),
+    EmojiManagement(emoji_management::Event),
     Attachment(attachments::Event),
     EmojiCompletion(emoji_completion::Event),
     Space(Scope),
@@ -310,6 +315,8 @@ impl App {
             composer_picker: None,
             attachment_picker: None,
             clipboard_paste: None,
+            emoji_management: None,
+            emoji_management_writes: HashSet::new(),
             emoji_catalog: std::sync::Arc::new(emoji_picker::unicode().clone()),
             emoji_completion: emoji_completion::State::default(),
             topic_editor: None,
@@ -344,6 +351,52 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if let Message::EmojiManagement(event) = message {
+            let task = self.emoji_management_event(event);
+            self.refresh_media_demand();
+            self.publish_notification_context();
+            if self.closing && self.pending_ops == 0 {
+                return task.chain(self.update(Message::Close));
+            }
+            return task;
+        }
+        if self.emoji_management.is_some() {
+            if matches!(message, Message::Escape) {
+                return self.update(Message::EmojiManagement(emoji_management::Event::Close));
+            }
+            let completion = matches!(
+                &message,
+                Message::Reaction(
+                    reaction_picker::Event::Sent { .. } | reaction_picker::Event::ChipSent { .. }
+                ) | Message::CreateRoom(create_room::Event::Completed(..))
+                    | Message::NewChat(new_chat::Event::Completed(..))
+                    | Message::Invite(invite::Event::Completed(..))
+                    | Message::Topic(topic::Event::Saved(..))
+                    | Message::Attachment(
+                        attachments::Event::Picked(..) | attachments::Event::Pasted(..)
+                    )
+            );
+            if !completion
+                && matches!(
+                    &message,
+                    Message::Settings(settings::Event::Open)
+                        | Message::Verification(verification::Event::Open)
+                        | Message::QuickRoom(_)
+                        | Message::ContextMenu(_)
+                        | Message::ComposerEmoji(_)
+                        | Message::EmojiCompletion(_)
+                        | Message::Reaction(_)
+                        | Message::CreateRoom(_)
+                        | Message::NewChat(_)
+                        | Message::Image(_)
+                        | Message::Topic(_)
+                        | Message::Invite(_)
+                        | Message::Attachment(_)
+                )
+            {
+                return Task::none();
+            }
+        }
         if let Message::ContextMenu(event) = message {
             let _ = self.reorder_event(section_reorder::Event::Cancel);
             return self.context_menu_event(event);
@@ -504,7 +557,8 @@ impl App {
         {
             return self.update(dismiss);
         }
-        if self.create_room.is_some()
+        if self.emoji_management.is_some()
+            || self.create_room.is_some()
             || self.new_chat.is_some()
             || self.room_picker.is_some()
             || self.settings.draft.is_some()
@@ -698,6 +752,7 @@ impl App {
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::Attachment(event) => action_task = self.attachment_event(event),
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
+            Message::EmojiManagement(_) => unreachable!("handled before modal dispatch"),
             Message::EmojiCompletion(event) => action_task = self.emoji_completion_event(event),
             Message::Image(event) => self.image_event(event),
             Message::Download(event) => action_task = self.download_event(event),
@@ -1242,6 +1297,14 @@ impl App {
                         &state.custom_emoji.entries,
                     ));
                 }
+                if self
+                    .emoji_management
+                    .as_ref()
+                    .is_some_and(|manager| !manager.matches_account(&state.account_id))
+                    || state.authentication.is_some()
+                {
+                    self.emoji_management = None;
+                }
                 self.model = *state;
                 if bookmarks_changed && self.bookmarks.open {
                     action_task = self.load_bookmark_previews();
@@ -1279,6 +1342,7 @@ impl App {
             }
             Message::Close if self.demo.is_some() => return iced::exit(),
             Message::Close => {
+                self.emoji_management = None;
                 self.bookmarks.close();
                 self.global_search.close();
                 if self.stopped && self.pending_ops == 0 {
@@ -1447,6 +1511,10 @@ impl App {
         self.selection.avatars.clear();
         self.selection.images.clear();
         if self.demo.is_some() || self.closing || self.stopped {
+            return;
+        }
+        if self.emoji_management.is_some() {
+            self.selection.images = self.emoji_management_images();
             return;
         }
         let original = self.thread_original().cloned();
@@ -1864,6 +1932,9 @@ impl App {
         if self.settings.draft.is_some() {
             layers = layers.push(self.settings_view());
         }
+        if self.emoji_management.is_some() {
+            layers = layers.push(self.emoji_management_view());
+        }
         if self.image_view.is_some() {
             layers = layers.push(self.image_viewer());
         }
@@ -1880,7 +1951,23 @@ impl App {
                 .as_ref()
                 .map(|(_, id)| id.as_str())
                 .unwrap_or("");
-            if self.model.custom_emoji.room != room {
+            if let Some(packs) = self
+                .demo
+                .as_ref()
+                .and_then(|demo| demo.emoji_packs.as_ref())
+            {
+                let snapshot = interconnect::custom_emoji::management::project(
+                    packs,
+                    room,
+                    Some(emoji_management::demo_room(room)),
+                );
+                if *self.model.custom_emoji != snapshot {
+                    self.model.custom_emoji = std::sync::Arc::new(snapshot);
+                    self.emoji_catalog = std::sync::Arc::new(emoji_picker::Catalog::with_custom(
+                        &self.model.custom_emoji.entries,
+                    ));
+                }
+            } else if self.model.custom_emoji.room != room {
                 self.model.custom_emoji = std::sync::Arc::new(demo::custom_emoji(room));
                 self.emoji_catalog = std::sync::Arc::new(emoji_picker::Catalog::with_custom(
                     &self.model.custom_emoji.entries,

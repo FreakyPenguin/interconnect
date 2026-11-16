@@ -85,7 +85,7 @@ impl<K> Default for Demand<K> {
 }
 
 pub(crate) struct Decoded {
-    handle: Handle,
+    pub(crate) handle: Handle,
     animation: Option<Result<Arc<Animation>, &'static str>>,
     pub(crate) bytes: usize,
 }

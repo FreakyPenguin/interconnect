@@ -10,6 +10,7 @@ use std::{
 pub const MAX_EMOJI: usize = 1024;
 const ROOM_TYPES: [&str; 2] = ["m.room.image_pack", "im.ponies.room_emotes"];
 const GLOBAL_TYPES: [&str; 2] = ["m.image_pack.rooms", "im.ponies.emote_rooms"];
+pub mod management;
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct Emoji {

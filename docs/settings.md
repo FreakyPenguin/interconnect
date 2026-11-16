@@ -191,3 +191,41 @@ migration.
 completion handling. Live values come from `settings.current`; startup-only values
 take effect on the next launch. Unknown keys survive dialog saves. File operations
 run outside the UI thread, and settings have no idle subscription.
+
+## Emoji packs
+
+Open **Manage packs…** at the bottom of the composer/reaction emoji picker, or
+**Settings → Manage emoji packs…**. Pack changes apply per action to Matrix;
+Settings Save/Cancel does not apply or undo them. Closing the manager discards
+unsaved editor fields and preserves conversation drafts and reading positions.
+
+The manager lists your personal pack and known packs from the current room,
+globally enabled rooms and canonical spaces. Select a pack to inspect its emoji.
+Your personal pack is account-wide. **Create room pack** adds a shared pack to
+the currently open room, when your room permissions permit it. **Use in all
+rooms** enables a room pack for your account; disabling that setting keeps the
+shared pack intact. Other users' pack choices are unaffected.
+
+For editable packs, rename the pack or select **Add emoji**. Enter a shortcode
+and alternative-text description, then choose a local PNG, JPEG, WebP or GIF
+(or supply an existing `mxc://` URL). Local images are limited to 2 MiB and
+4096 pixels per dimension. Choosing a file prepares a static preview; **Add to
+pack** / **Save emoji** performs the upload and saves the pack. Selecting an
+existing emoji permits changing its shortcode, description or image. Shortcodes
+are unique within a pack and use 1–100 ASCII letters, digits, underscores or
+hyphens. Emoji GIF playback remains static.
+
+**Remove emoji**, **Delete pack** and **Clear personal pack** require an explicit
+confirmation in the manager. They remove pack references, not the uploaded media
+from the homeserver. Pack media is unencrypted, including when used in encrypted
+rooms. Existing fields from other clients, including sticker metadata, survive
+ordinary edits. The server enforces room permissions; denied packs remain usable
+but show read-only controls.
+
+Saves check fresh server content against the loaded pack and reject detected
+concurrent changes. **Reload** discards local editor changes and fetches current
+content. After a timeout/failure, reload before retrying to check whether the
+write succeeded. An upload whose subsequent pack save fails may remain unused
+on the homeserver. Newly created packs appear in pickers after SDK sync arrives.
+Demo management uses only in-memory packs and local file preparation, never an
+account or upload.

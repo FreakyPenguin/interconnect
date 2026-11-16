@@ -52,6 +52,7 @@ impl App {
                     .window_width
                     .is_some_and(|width| self.side_panel_replaces_room(width)))
             && self.account_id == target.account
+            && self.emoji_management.is_none()
             && self.settings.draft.is_none()
             && self.room_picker.is_none()
             && self.new_chat.is_none()

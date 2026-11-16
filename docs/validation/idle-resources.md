@@ -148,3 +148,13 @@ rows share the existing media slots and 96 MiB cache, with at most 80 additional
 unique demands. GIF emoji stay static. Automated fixtures check a nonzero sync
 long-poll timeout, no discovery media requests, shutdown cancellation and demand
 release. Connected idle CPU, large-pack memory and macOS behavior remain unmeasured.
+
+### Emoji management — 2026-11-16
+
+The manager adds explicit account/state reads and writes, not another periodic
+worker or sync connection. Its read/file tasks cancel on close/reload/account
+replacement. Submitted writes have bounded deadlines and participate in pending
+shutdown operations. Only the selected remote emoji enters media demand; local
+file previews are decoded off the UI thread. New text fields disable cursor
+blinking. Automated minimum-window redraw checks introduce no scheduled timer;
+production CPU, native file-dialog cancellation and macOS remain unmeasured.

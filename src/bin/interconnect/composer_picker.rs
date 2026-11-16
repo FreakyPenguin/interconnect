@@ -121,6 +121,11 @@ impl App {
                     .as_ref()
                     .is_some_and(|state| state.target == target) =>
             {
+                if matches!(event, emoji_picker::Event::Manage) {
+                    return Task::done(Message::EmojiManagement(
+                        super::emoji_management::Event::Open,
+                    ));
+                }
                 if matches!(event, emoji_picker::Event::Close) {
                     self.composer_picker = None;
                     self.typing_edited(&target.key);

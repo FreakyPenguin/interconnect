@@ -563,6 +563,7 @@ impl std::error::Error for SignInRequired {}
 #[derive(Clone, Debug)]
 pub struct Model {
     pub custom_emoji: Arc<crate::custom_emoji::Snapshot>,
+    pub emoji_management: Option<crate::custom_emoji::management::Service>,
     pub search: Option<crate::search::Service>,
     pub bookmarks_service: Option<crate::bookmarks::Service>,
     pub bookmarks: crate::bookmarks::Snapshot,
@@ -595,6 +596,7 @@ impl Default for Model {
     fn default() -> Self {
         Self {
             custom_emoji: Arc::default(),
+            emoji_management: None,
             search: None,
             bookmarks_service: None,
             bookmarks: Default::default(),
@@ -690,6 +692,9 @@ pub async fn run(
         let client = desktop.client.as_ref().expect("authenticated");
         state.send_modify(|s| {
             s.authentication = None;
+            s.emoji_management = Some(crate::custom_emoji::management::Service::new(
+                client.clone(),
+            ));
             s.search = Some(crate::search::Service::new(client.clone()));
             s.people_directory = Some(crate::people::Directory::new(client.clone()));
             s.bookmarks_service = Some(crate::bookmarks::Service::new(client.clone()));

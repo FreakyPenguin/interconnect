@@ -338,6 +338,11 @@ impl App {
                 if state.sending.is_some() {
                     return Task::none();
                 }
+                if matches!(event, emoji_picker::Event::Manage) {
+                    return Task::done(Message::EmojiManagement(
+                        super::emoji_management::Event::Open,
+                    ));
+                }
                 if self.composing && matches!(event, emoji_picker::Event::Select(_)) {
                     return Task::none();
                 }
@@ -526,6 +531,23 @@ mod tests {
             key: key.into(),
         });
         app.pending_ops += 1;
+    }
+    #[test]
+    fn an_earlier_reaction_completion_is_processed_while_pack_management_is_open() {
+        let mut app = crate::tests::demo_app();
+        let target = open(&mut app, false, "review");
+        pending(&mut app, &target, "🔥");
+        let _ = app.update(Message::EmojiManagement(
+            super::super::emoji_management::Event::Open,
+        ));
+        assert!(app.emoji_management.is_some());
+        let _ = app.update(message(Event::Sent {
+            target,
+            key: "🔥".into(),
+            result: Ok(()),
+        }));
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.reaction_sends.is_empty());
     }
 
     #[test]
