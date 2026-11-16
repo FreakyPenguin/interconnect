@@ -48,7 +48,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Threads | The reply arrow or Alt+T opens a thread. Its original appears once above replies; long originals and replies scroll independently. |
 | Pinned messages | Studio → Design starts with a compact **2 pinned messages** disclosure. Expand/collapse it to show bounded, scrollable previews and permission-gated unpin buttons. Previews use the conversation rich-text renderer: check emphasis, lists, quotes, code, clickable links, and concealed spoilers. Space filters and thread navigation keep the disclosure; a newly opened room starts collapsed. Check long pins, unavailable/loading pins, and live additions/removals without losing the timeline reading position or drafts. |
 | Thread activity | Studio → Thread activity has interleaved replies. **New sample reply** updates the latest summary and new count for its thread. |
-| Event layout | Studio → Room activity contains compact activity rows, long topics, and selectable text across message types. |
+| Event layout | Message-group timestamps sit beside sender names; same-sender continuations reveal their time in the avatar gutter on hover. Sender names truncate safely on narrow panes, with identity/date tooltips retained. Message content is capped at 840 px including padding on wide windows; the scrollbar stays at the pane edge. Check group spacing, text selection/copy, formatting, reactions, search, and scroll anchors after resizing. Studio → Room activity contains compact activity rows and long topics. |
 | Emoji | Studio → Emoji preview contains flags, skin tones, joined sequences, and text-presentation variants. Pickers insert glyphs; `:se` opens inline completion. |
 | Images | Studio → Images has ready and failed fixtures. Escape closes the original viewer, preserving drafts and scroll positions. Originals also open from threads. |
 | GIFs | Images open still. Play/Stop, once/duration settings, close, and focus loss control playback. Reopening stays still. |
@@ -70,6 +70,14 @@ resize/rename updates, row dimensions with unread badges, and the existing
 reorder/cancellation behavior. macOS, wgpu, and native RTL rendering remain manual
 acceptance checks. Label shaping is cached; tooltips use a single hover delay,
 without recurring timers or background polling.
+
+The conversation layout pass was visually checked in the same isolated demo at
+1280×900 and 640×480, including room messages, continuation-time hover, split
+threads, and the narrow thread replacement. Automated UI checks cover adjacent
+author/time bounds with long Unicode names, preserved body width for grouped
+messages, the 840 px reading-column cap, and the full-width scroll viewport.
+Existing selection, reactions, search, draft, and scroll-preservation tests also
+pass. macOS and wgpu rendering remain manual acceptance checks.
 
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.

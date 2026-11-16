@@ -2164,24 +2164,8 @@ impl App {
                     &message.display_name,
                 )
             } else {
-                let timestamp = tooltips::tooltip(
-                    text(presentation::time_label(message))
-                        .size(11)
-                        .color(shell::MUTED),
-                    presentation::time_detail(message),
-                    iced::widget::tooltip::Position::Top,
-                );
                 column![
-                    row![
-                        tooltips::tooltip(
-                            shell::title(&message.display_name, 13),
-                            &message.sender,
-                            iced::widget::tooltip::Position::Top,
-                        ),
-                        iced::widget::space().width(Length::Fill),
-                        timestamp,
-                    ]
-                    .spacing(12),
+                    presentation::heading(message),
                     selectable::message_view_with_assets(
                         message,
                         self.inline_assets(),
@@ -2193,7 +2177,7 @@ impl App {
                         })
                     ),
                 ]
-                .spacing(6)
+                .spacing(4)
                 .into()
             }
         } else {
@@ -2508,13 +2492,6 @@ impl App {
                 messages = messages.push(container(message_row).id(timeline::row_id(index)));
                 continue;
             }
-            let timestamp = tooltips::tooltip(
-                text(presentation::time_label(message))
-                    .size(11)
-                    .color(shell::MUTED),
-                presentation::time_detail(message),
-                iced::widget::tooltip::Position::Top,
-            );
             let body = if activity {
                 selectable::activity_view(
                     message.event_id.as_deref().unwrap_or(&message.body),
@@ -2539,22 +2516,9 @@ impl App {
                     iced::widget::tooltip::Position::Top,
                 )]
             } else if grouped {
-                column![row![body, timestamp].spacing(12)]
+                column![body]
             } else {
-                column![
-                    row![
-                        tooltips::tooltip(
-                            shell::title(&message.display_name, 13),
-                            &message.sender,
-                            iced::widget::tooltip::Position::Top
-                        ),
-                        iced::widget::space().width(Length::Fill),
-                        timestamp
-                    ]
-                    .spacing(12),
-                    body
-                ]
-                .spacing(6)
+                column![presentation::heading(message), body].spacing(4)
             };
             if message.image.is_some() {
                 entry = entry.push(self.image_preview(message, thread, *generation));
@@ -2579,7 +2543,13 @@ impl App {
                 ));
             }
             if !message.send_state.is_empty() && message.send_state != "Sent" {
-                entry = entry.push(text(&message.send_state).size(12));
+                entry = entry.push(text(&message.send_state).size(11).color(
+                    if message.retry.is_some() {
+                        iced::Color::from_rgb8(174, 73, 78)
+                    } else {
+                        shell::MUTED
+                    },
+                ));
             }
             if let Some(retry) = &message.retry {
                 let mut control = button(if self.retrying.contains(&retry.transaction) {
@@ -2641,24 +2611,40 @@ impl App {
                         .and_then(|uri| self.model.avatars.get(uri)),
                 )
             };
-            let body = container(row![avatar, entry.width(Length::Fill)].spacing(12)).padding(
-                iced::Padding {
-                    top: if activity {
-                        if previous.is_some_and(|row| row.kind == RowKind::Activity)
-                            && new_date.is_none()
-                        {
-                            4.0
-                        } else {
-                            12.0
-                        }
-                    } else if grouped {
-                        5.0
+            let body: Element<'_, Message> =
+                row![avatar, entry.width(Length::Fill)].spacing(12).into();
+            let body = if grouped {
+                iced::widget::hover(
+                    body,
+                    container(tooltips::tooltip(
+                        text(presentation::time_label(message))
+                            .size(10)
+                            .color(shell::MUTED),
+                        presentation::time_detail(message),
+                        iced::widget::tooltip::Position::Top,
+                    ))
+                    .center_x(32)
+                    .height(18),
+                )
+            } else {
+                body
+            };
+            let body = container(body).padding(iced::Padding {
+                top: if activity {
+                    if previous.is_some_and(|row| row.kind == RowKind::Activity)
+                        && new_date.is_none()
+                    {
+                        4.0
                     } else {
-                        18.0
-                    },
-                    ..iced::Padding::ZERO
+                        12.0
+                    }
+                } else if grouped {
+                    5.0
+                } else {
+                    16.0
                 },
-            );
+                ..iced::Padding::ZERO
+            });
             let body: Element<'_, Message> = if !activity && let Some(id) = &message.event_id {
                 let reply = (!thread && !self.closing && !self.stopped)
                     .then(|| Message::Thread(id.clone()));
@@ -2702,21 +2688,26 @@ impl App {
             });
         }
         let view_generation = *generation;
-        let timeline = scrollable(messages)
-            .direction(shell::scrollbar())
-            .anchor_bottom()
-            .on_scroll(move |viewport| Message::Scrolled {
-                thread,
-                generation: view_generation,
-                offset: viewport.absolute_offset().y,
-            })
-            .style(shell::scroll_style)
-            .id(if thread {
-                "thread-timeline"
-            } else {
-                "room-timeline"
-            })
-            .height(Length::Fill);
+        let timeline = scrollable(
+            container(messages)
+                .width(Length::Fill)
+                .max_width(presentation::MESSAGE_WIDTH),
+        )
+        .width(Length::Fill)
+        .direction(shell::scrollbar())
+        .anchor_bottom()
+        .on_scroll(move |viewport| Message::Scrolled {
+            thread,
+            generation: view_generation,
+            offset: viewport.absolute_offset().y,
+        })
+        .style(shell::scroll_style)
+        .id(if thread {
+            "thread-timeline"
+        } else {
+            "room-timeline"
+        })
+        .height(Length::Fill);
         // New view identity resets the scroll state; async rows retain that
         // state and a zero distance from the bottom follows loaded history.
         let keys = rows.iter().map(|row| Some(row.key())).collect();
@@ -3783,6 +3774,104 @@ mod tests {
         );
         app.model.room.as_mut().unwrap().generation += 1;
         assert!(app.thread_original().is_none());
+    }
+
+    #[test]
+    fn reading_column_caps_body_width_and_grouped_times_stay_in_the_gutter() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Probe {
+            bodies: Vec<(String, iced::Rectangle)>,
+            times: Vec<(String, iced::Rectangle)>,
+            viewport: Option<iced::Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn custom(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                state: &mut dyn std::any::Any,
+            ) {
+                if let Some(state) = state.downcast_ref::<selectable::State>() {
+                    self.bodies.push((state.id.clone(), bounds));
+                }
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, value: &str) {
+                self.times.push((value.into(), bounds));
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _: iced::Rectangle,
+                _: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("room-timeline")) {
+                    self.viewport = Some(bounds);
+                }
+            }
+        }
+        let mut app = demo_app();
+        let pane = app.model.room.as_mut().unwrap();
+        let mut first = pane.rows[0].clone();
+        first.key = "reading-first".into();
+        first.event_id = Some(first.key.clone());
+        first.thread_replies = 0;
+        first.timestamp_ms = Some(120_000);
+        first.body = "A readable line of conversation. ".repeat(20);
+        first.formatted = None;
+        let mut next = first.clone();
+        next.key = "reading-next".into();
+        next.event_id = Some(next.key.clone());
+        next.timestamp_ms = Some(180_000);
+        next.body = "A continuation with the same text width.".into();
+        let time = presentation::time_label(&next);
+        pane.rows = std::sync::Arc::new(vec![first, next]);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        for width in [360.0, 1200.0] {
+            let mut view = app.pane(false);
+            let mut tree = widget::Tree::new(&view);
+            let size = iced::Size::new(width, 800.0);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            let mut probe = Probe::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            assert_eq!(probe.viewport.unwrap().width, width);
+            let first = probe
+                .bodies
+                .iter()
+                .find(|(id, _)| id == "reading-first")
+                .unwrap()
+                .1;
+            let next = probe
+                .bodies
+                .iter()
+                .find(|(id, _)| id == "reading-next")
+                .unwrap()
+                .1;
+            assert!(
+                (first.width - next.width).abs() < 0.1,
+                "continuations retain the full body width"
+            );
+            assert!(first.width <= presentation::MESSAGE_WIDTH - 92.0);
+            let clock = probe
+                .times
+                .iter()
+                .find(|(value, _)| value == &time)
+                .unwrap()
+                .1;
+            assert!(clock.x >= 24.0 && clock.x + clock.width <= next.x - 8.0);
+        }
     }
 
     #[test]

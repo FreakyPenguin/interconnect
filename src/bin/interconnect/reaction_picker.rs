@@ -1018,8 +1018,7 @@ mod tests {
         let mut probe = Probe::default();
         view.as_widget_mut()
             .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
-        // Hover before clicking: this also opens the timestamp tooltip beneath
-        // the pinned original's action panel at the same coordinates.
+        // Hover before clicking to exercise the original's action overlays.
         let position = probe.add.expect("pinned original action").center();
         let cursor = mouse::Cursor::Available(position);
         let mut messages = Vec::new();

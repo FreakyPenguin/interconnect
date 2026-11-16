@@ -1,4 +1,4 @@
-//! Cached, grapheme-safe sidebar labels. Re-shape only when text or layout changes.
+//! Cached, grapheme-safe single-line labels. Re-shape only when text or layout changes.
 use iced::{
     Color, Element, Font, Length, Pixels, Rectangle, Size,
     advanced::{
@@ -17,6 +17,7 @@ pub(super) fn label(value: &str, size: u32) -> Label<'_> {
         size: size as f32,
         font: None,
         color: None,
+        width: Length::Fill,
     }
 }
 
@@ -25,8 +26,13 @@ pub(super) struct Label<'a> {
     size: f32,
     font: Option<Font>,
     color: Option<Color>,
+    width: Length,
 }
 impl Label<'_> {
+    pub(super) fn shrink(mut self) -> Self {
+        self.width = Length::Shrink;
+        self
+    }
     pub(super) fn font(mut self, font: Font) -> Self {
         self.font = Some(font);
         self
@@ -45,7 +51,7 @@ struct State {
 }
 impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Label<'_> {
     fn size(&self) -> Size<Length> {
-        Size::new(Length::Fill, Length::Fixed(self.size * 1.3))
+        Size::new(self.width, Length::Fixed(self.size * 1.3))
     }
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<State>()
@@ -60,7 +66,9 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Label<'
         limits: &layout::Limits,
     ) -> layout::Node {
         use text::Renderer as _;
-        let size = limits.resolve(Length::Fill, self.size * 1.3, Size::ZERO);
+        // Shape against available bounds before resolving intrinsic width. A
+        // shrink parent compresses Fill to zero until that width is measured.
+        let size = Size::new(limits.max().width, self.size * 1.3);
         let state = tree.state.downcast_mut::<State>();
         let font = self.font.unwrap_or_else(|| renderer.default_font());
         if state.source.as_deref() != Some(self.value)
@@ -116,7 +124,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Label<'
             state.width = size.width;
             state.display = display;
         }
-        layout::Node::new(size)
+        layout::Node::new(limits.resolve(self.width, self.size * 1.3, state.paragraph.min_bounds()))
     }
     fn operate(
         &mut self,
