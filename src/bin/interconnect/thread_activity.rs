@@ -169,6 +169,7 @@ mod tests {
             is_own: false,
             is_live: live,
             body: id.into(),
+            formatted: None,
             send_state: String::new(),
             retry: None,
         }

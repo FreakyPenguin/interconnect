@@ -18,6 +18,9 @@ The local Iced widget patch disables recurring editor caret blinking; its change
 are documented in [PATCH.md](../../vendor/iced_widget/PATCH.md).
 Wayland file drops use a [pinned Winit fork](winit-file-drops.md).
 
+Formatted room and thread messages use a bounded native document renderer; see
+[message formatting](message-formatting.md) for selection and extension points.
+
 ## Runtime and session ownership
 
 One Tokio runtime lives through final Iced teardown. `UiExecutor` borrows its

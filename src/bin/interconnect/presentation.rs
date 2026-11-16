@@ -52,6 +52,7 @@ mod tests {
             is_own: false,
             is_live: false,
             body: String::new(),
+            formatted: None,
             send_state: String::new(),
             retry: None,
         }

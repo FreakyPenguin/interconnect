@@ -248,7 +248,7 @@ impl Selection {
                 if let Some(state) = state.downcast_mut::<selectable::State>()
                     && state.id == self.id
                 {
-                    state.content.perform(Action::Click(self.point));
+                    state.hit(self.point);
                     self.position = state.content.cursor().position;
                 }
             }
@@ -613,6 +613,105 @@ mod tests {
         Event::Window(iced::window::Event::RedrawRequested(
             iced::time::Instant::now(),
         ))
+    }
+    #[test]
+    fn formatted_and_plain_messages_share_cross_row_copy_and_idle_behavior() {
+        let mut formatted = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        formatted.key = "formatted".into();
+        formatted.display_name = "Alice".into();
+        formatted.formatted = Some(std::sync::Arc::new(
+            interconnect::message_document::Document::parse(
+                "<p>café <b>bold 👋</b></p><p>second</p>",
+            )
+            .unwrap(),
+        ));
+        let mut h = Harness::new();
+        let mut element = super::super::timeline::view(
+            1,
+            vec![Some("formatted".into()), Some("plain".into())],
+            scrollable(
+                column![
+                    selectable::message_view(&formatted),
+                    selectable::named_view("plain", "goodbye", "Bob")
+                ]
+                .spacing(6),
+            )
+            .id("room-timeline")
+            .height(200)
+            .into(),
+        );
+        let node = h.layout(&mut element);
+        let data = h.read(&mut element, &node);
+        let from = Point::new(data.rows[0].bounds.x, data.rows[0].bounds.y + 5.0);
+        let to = Point::new(data.rows[1].bounds.x + 250.0, data.rows[1].bounds.y + 5.0);
+        h.event(&mut element, &node, down(), from);
+        h.event(&mut element, &node, moved(to), to);
+        h.event(&mut element, &node, up(), to);
+        assert_eq!(
+            h.copy(&mut element, &node),
+            "Alice:\ncafé bold 👋\n\nsecond\n\nBob:\ngoodbye"
+        );
+        let (redraw, messages) = h.event(&mut element, &node, redraw(), to);
+        assert_eq!(redraw, iced::window::RedrawRequest::Wait);
+        assert!(messages.is_empty());
+    }
+    #[test]
+    fn formatted_links_activate_on_click_and_never_on_selection_drags() {
+        let mut row = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        row.key = "link".into();
+        row.formatted = Some(std::sync::Arc::new(
+            interconnect::message_document::Document::parse(
+                "<p><a href='https://example.org/'>a long link label for selecting</a></p>",
+            )
+            .unwrap(),
+        ));
+        let mut h = Harness::new();
+        let mut element = super::super::timeline::view(
+            1,
+            vec![Some("link".into())],
+            scrollable(selectable::message_view(&row))
+                .id("room-timeline")
+                .height(200)
+                .into(),
+        );
+        let node = h.layout(&mut element);
+        let data = h.read(&mut element, &node);
+        let point = data.rows[0].bounds.position() + iced::Vector::new(5.0, 10.0);
+        h.event(&mut element, &node, down(), point);
+        let (_, messages) = h.event(&mut element, &node, up(), point);
+        assert!(
+            messages.iter().any(
+                |m| matches!(m, Message::OpenMessageLink(url) if url == "https://example.org/")
+            )
+        );
+        let end = point + iced::Vector::new(90.0, 0.0);
+        h.event(&mut element, &node, down(), point);
+        h.event(&mut element, &node, moved(end), end);
+        let (_, messages) = h.event(&mut element, &node, up(), end);
+        assert!(
+            !messages
+                .iter()
+                .any(|m| matches!(m, Message::OpenMessageLink(_)))
+        );
+        assert!(!h.copy(&mut element, &node).is_empty());
     }
     #[test]
     fn mixed_activity_and_messages_copy_inline_names_once_and_preserve_wrapping() {

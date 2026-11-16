@@ -142,3 +142,42 @@ hardware-renderer performance, host IME behavior, and native macOS behavior rema
 separate checks. Automated protocol success does not establish a live account's
 trust or historical-key availability. Acceptance results identify the build,
 platform, scenario, outcome, and remaining gaps.
+
+## Formatted messages
+
+Studio → **Message formatting** is a memory-only demo fixture for mixed styles,
+headings, nested quotes/lists, code with preserved whitespace, image alternative
+text, links, spoilers, emoji and bidirectional text. Launch only with
+`cargo run --locked --bin interconnect -- --demo` for local experiments.
+
+- Resize the room and thread panes; select across wrapped styles, paragraphs,
+  code lines and adjacent plain messages. Copy preserves visible Unicode text
+  and excludes markup and message controls.
+- Hover links to inspect destinations. Dragging selects without opening them.
+  Clicking opens an allowlisted destination through the system handler.
+- Copy a hidden spoiler, reveal it, then copy again. Hidden text must not appear
+  in the clipboard. Revealing must preserve the reading anchor.
+- Open a thread on a formatted fixture and check the original uses the same
+  renderer. Inline images remain alternative text with no download.
+- Keep a draft and a scrolled reading position while switching spaces/rooms.
+  Settled formatted messages must not schedule recurring redraws.
+
+Automated coverage exercises parsing limits, entities/whitespace, combined
+styles, code/image metadata, hidden spoiler text and nested links, narrow/wide
+Unicode layout and hit-testing, stable draw/layout, cross-message copy, and idle
+redraw behavior. Parser/cache tests and SDK projection tests distinguish plain
+fallbacks from HTML. History fixtures include formatted root messages and verify
+parsed-document reuse. They await timeline content separately from SDK page
+completion, since those are distinct event-driven updates.
+
+November 16, 2026: formatting checks, workspace Clippy with warnings denied, the
+locked desktop build, and workspace tests passed (101 library and 176 desktop
+tests; two opt-in library tests ignored). An isolated Linux Wayland/tiny-skia
+demo at 1100×800 and 640×480 covered styled text, nested lists/quotes, code and
+image alternative text, link-destination overlays, spoiler reveal with a stable
+reading position, and formatted thread originals. Link activation is covered by
+message-emission tests; the desktop check did not launch external handlers.
+
+Real-account formatting, hardware-renderer appearance, native macOS behavior,
+and measured idle resource use remain separate acceptance checks. Idle coverage
+here verifies that settled widgets request no further redraw deadlines.

@@ -75,6 +75,7 @@ pub struct MessageRow {
     pub is_own: bool,
     pub is_live: bool,
     pub body: String,
+    pub formatted: Option<Arc<crate::message_document::Document>>,
     pub send_state: String,
     pub retry: Option<RetrySend>,
 }
@@ -1171,7 +1172,15 @@ async fn publish(
     state: &watch::Sender<Model>,
     load_older: &mpsc::Sender<u64>,
 ) {
-    let rows = timeline_rows(timeline).await;
+    let previous = {
+        let model = state.borrow();
+        let pane = if thread { &model.thread } else { &model.room };
+        pane.as_ref()
+            .filter(|p| p.generation == generation)
+            .map(|p| p.rows.clone())
+            .unwrap_or_default()
+    };
+    let rows = timeline_rows_cached(timeline, previous).await;
     state.send_modify(|s| {
         let pane = if thread { &mut s.thread } else { &mut s.room };
         *pane = Some(Pane {
@@ -1188,79 +1197,128 @@ async fn publish(
 }
 
 async fn timeline_rows(timeline: &Timeline) -> Vec<MessageRow> {
+    timeline_rows_cached(timeline, Arc::default()).await
+}
+
+async fn timeline_rows_cached(
+    timeline: &Timeline,
+    previous: Arc<Vec<MessageRow>>,
+) -> Vec<MessageRow> {
     let items = timeline.items().await;
-    items
-        .iter()
-        .filter_map(|item| item.as_event())
-        .map(|event| {
-            let content = event.content();
-            MessageRow {
-                key: match event.identifier() {
-                    TimelineEventItemId::EventId(id) => id.to_string(),
-                    TimelineEventItemId::TransactionId(id) => format!("local:{id}"),
-                },
-                kind: RowKind::from_content(content),
-                event_id: event.event_id().map(ToString::to_string),
-                sender: event.sender().to_string(),
-                display_name: match event.sender_profile() {
-                    matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => profile
-                        .display_name
-                        .as_ref()
-                        .filter(|name| !name.trim().is_empty())
-                        .map(|name| {
-                            if profile.display_name_ambiguous {
-                                format!("{name} ({})", event.sender())
-                            } else {
-                                name.clone()
+    let own_user = timeline.room().own_user_id().to_owned();
+    let queue = timeline.room().send_queue();
+    let has_formatted = items.iter().filter_map(|item| item.as_event()).any(|event| {
+        matches!(event.content(), TimelineItemContent::MsgLike(content) if matches!(&content.kind,
+            matrix_sdk_ui::timeline::MsgLikeKind::Message(message) if crate::message_document::Document::html(message.msgtype()).is_some()))
+    });
+    // Dropping a view cannot interrupt a running blocking call. Stop between
+    // bounded messages so an obsolete projection does not finish an entire history.
+    let stopped = tokio_util::sync::CancellationToken::new();
+    let _cancel_on_drop = stopped.clone().drop_guard();
+    let project = move || {
+        let previous: std::collections::HashMap<_, _> =
+            previous.iter().map(|row| (row.key.as_str(), row)).collect();
+        items
+            .iter()
+            .take_while(|_| !stopped.is_cancelled())
+            .filter_map(|item| item.as_event())
+            .map(|event| {
+                let content = event.content();
+                MessageRow {
+                    key: match event.identifier() {
+                        TimelineEventItemId::EventId(id) => id.to_string(),
+                        TimelineEventItemId::TransactionId(id) => format!("local:{id}"),
+                    },
+                    kind: RowKind::from_content(content),
+                    event_id: event.event_id().map(ToString::to_string),
+                    sender: event.sender().to_string(),
+                    display_name: match event.sender_profile() {
+                        matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => profile
+                            .display_name
+                            .as_ref()
+                            .filter(|name| !name.trim().is_empty())
+                            .map(|name| {
+                                if profile.display_name_ambiguous {
+                                    format!("{name} ({})", event.sender())
+                                } else {
+                                    name.clone()
+                                }
+                            })
+                            .unwrap_or_else(|| event.sender().to_string()),
+                        _ => event.sender().to_string(),
+                    },
+                    avatar_url: match event.sender_profile() {
+                        matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => {
+                            profile.avatar_url.clone()
+                        }
+                        _ => None,
+                    },
+                    image: crate::image_media::Attachment::from_content(content),
+                    reactions: reactions(content, &own_user),
+                    can_react: event.event_id().is_some() && can_react(content),
+                    timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
+                    thread_replies: content
+                        .thread_summary()
+                        .map_or(0, |summary| summary.num_replies),
+                    thread_root: content.thread_root().map(|id| id.to_string()),
+                    is_own: event.is_own(),
+                    is_live: matches!(event.origin(), Some(EventItemOrigin::Sync)),
+                    formatted: match content {
+                        TimelineItemContent::MsgLike(content) => match &content.kind {
+                            matrix_sdk_ui::timeline::MsgLikeKind::Message(message) => {
+                                let key = match event.identifier() {
+                                    TimelineEventItemId::EventId(id) => id.to_string(),
+                                    TimelineEventItemId::TransactionId(id) => format!("local:{id}"),
+                                };
+                                crate::message_document::Document::from_message(
+                                    message.msgtype(),
+                                    previous
+                                        .get(key.as_str())
+                                        .and_then(|row| row.formatted.as_ref()),
+                                )
                             }
-                        })
-                        .unwrap_or_else(|| event.sender().to_string()),
-                    _ => event.sender().to_string(),
-                },
-                avatar_url: match event.sender_profile() {
-                    matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => {
-                        profile.avatar_url.clone()
-                    }
-                    _ => None,
-                },
-                image: crate::image_media::Attachment::from_content(content),
-                reactions: reactions(content, timeline.room().own_user_id()),
-                can_react: event.event_id().is_some() && can_react(content),
-                timestamp_ms: i64::try_from(u64::from(event.timestamp().get())).ok(),
-                thread_replies: content
-                    .thread_summary()
-                    .map_or(0, |summary| summary.num_replies),
-                thread_root: content.thread_root().map(|id| id.to_string()),
-                is_own: event.is_own(),
-                is_live: matches!(event.origin(), Some(EventItemOrigin::Sync)),
-                body: crate::event_text::body(content, event.sender()),
-                send_state: match event.send_state() {
-                    Some(EventSendState::NotSentYet { .. }) => "Pending".into(),
-                    Some(EventSendState::SendingFailed { error, .. }) => format!("Failed: {error}"),
-                    Some(EventSendState::Sent { .. }) => "Sent".into(),
-                    None if event.sender() == timeline.room().own_user_id() => "Sent".into(),
-                    None => String::new(),
-                },
-                retry: if matches!(
-                    event.send_state(),
-                    Some(EventSendState::SendingFailed { .. })
-                ) {
-                    event
-                        .local_echo_send_handle()
-                        .zip(event.transaction_id())
-                        .map(|(handle, id)| RetrySend {
-                            transaction: id.to_string(),
-                            state: RuntimeOwned::new(RetryState {
-                                handle,
-                                queue: timeline.room().send_queue(),
-                            }),
-                        })
-                } else {
-                    None
-                },
-            }
-        })
-        .collect()
+                            _ => None,
+                        },
+                        _ => None,
+                    },
+                    body: crate::event_text::body(content, event.sender()),
+                    send_state: match event.send_state() {
+                        Some(EventSendState::NotSentYet { .. }) => "Pending".into(),
+                        Some(EventSendState::SendingFailed { error, .. }) => {
+                            format!("Failed: {error}")
+                        }
+                        Some(EventSendState::Sent { .. }) => "Sent".into(),
+                        None if event.sender() == own_user => "Sent".into(),
+                        None => String::new(),
+                    },
+                    retry: if matches!(
+                        event.send_state(),
+                        Some(EventSendState::SendingFailed { .. })
+                    ) {
+                        event
+                            .local_echo_send_handle()
+                            .zip(event.transaction_id())
+                            .map(|(handle, id)| RetrySend {
+                                transaction: id.to_string(),
+                                state: RuntimeOwned::new(RetryState {
+                                    handle,
+                                    queue: queue.clone(),
+                                }),
+                            })
+                    } else {
+                        None
+                    },
+                }
+            })
+            .collect()
+    };
+    if has_formatted {
+        tokio::task::spawn_blocking(project)
+            .await
+            .expect("message projection worker panicked")
+    } else {
+        project()
+    }
 }
 
 #[cfg(test)]
@@ -2667,6 +2725,32 @@ mod tests {
         .unwrap()
     }
 
+    // SDK pagination completion and timeline-content publication are separate
+    // events. Await the actual content, including when parsing yields to a worker.
+    async fn wait_for_row(
+        snapshots: &mut watch::Receiver<Model>,
+        thread: bool,
+        body: &str,
+    ) -> Pane {
+        let model = tokio::time::timeout(
+            Duration::from_secs(5),
+            snapshots.wait_for(|model| {
+                let pane = if thread { &model.thread } else { &model.room };
+                pane.as_ref()
+                    .is_some_and(|pane| pane.rows.iter().any(|row| row.body == body))
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .clone();
+        if thread {
+            model.thread.unwrap()
+        } else {
+            model.room.unwrap()
+        }
+    }
+
     async fn history_fixture(
         cancel_history: bool,
         reconnect: bool,
@@ -2678,7 +2762,7 @@ mod tests {
         let online = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let versions_online = online.clone();
         let sync_online = online.clone();
-        let root = json!({"type":"m.room.message", "event_id":"$root", "sender":"@test:example.org", "origin_server_ts":1, "content":{"msgtype":"m.text", "body":"fixture root"}});
+        let root = json!({"type":"m.room.message", "event_id":"$root", "sender":"@test:example.org", "origin_server_ts":1, "content":{"msgtype":"m.text", "body":"fixture root", "format":"org.matrix.custom.html", "formatted_body":"<p><b>fixture root</b></p>"}});
         let mut required_state = vec![
             json!({"type":"m.room.member", "state_key":"@test:example.org", "sender":"@test:example.org", "event_id":"$member", "origin_server_ts":0,"content":{"membership":"join"}}),
         ];
@@ -2868,7 +2952,9 @@ mod tests {
                 Duration::from_secs(5),
                 snapshots.wait_for(|s| {
                     s.room.as_ref().is_some_and(|p| {
-                        p.generation == generation && !matches!(p.history, History::Loading)
+                        p.generation == generation
+                            && !matches!(p.history, History::Loading)
+                            && p.rows.iter().any(|row| row.body == "fixture root")
                     })
                 }),
             )
@@ -2878,10 +2964,31 @@ mod tests {
             .clone();
             let pane = model.room.unwrap();
             assert!(pane.error.is_none(), "{:?}", pane.error);
-            assert!(pane.rows.iter().any(|r| r.body == "fixture root"));
+            let root_document = pane
+                .rows
+                .iter()
+                .find(|r| r.body == "fixture root")
+                .unwrap()
+                .formatted
+                .clone()
+                .expect("formatted SDK content reaches the UI snapshot");
+            assert!(root_document.blocks[0].runs[0].style.bold);
             if generation == 1 {
-                let page = request_page(&mut snapshots, false).await;
+                request_page(&mut snapshots, false).await;
+                let page = wait_for_row(&mut snapshots, false, "hidden reply").await;
                 assert!(matches!(page.history, History::Ready));
+                let cached = page
+                    .rows
+                    .iter()
+                    .find(|r| r.body == "fixture root")
+                    .unwrap()
+                    .formatted
+                    .as_ref()
+                    .unwrap();
+                assert!(
+                    Arc::ptr_eq(&root_document, cached),
+                    "unchanged HTML reuses its parsed document"
+                );
                 let reply = page.rows.iter().find(|r| r.body == "hidden reply").unwrap();
                 assert_eq!(reply.thread_root.as_deref(), Some("$root"));
                 assert!(!reply.is_live, "paginated replies must not count as new");
@@ -2890,8 +2997,8 @@ mod tests {
                     page.load_older.is_some(),
                     "a reply-only page must allow further pagination"
                 );
-                let page = request_page(&mut snapshots, false).await;
-                assert!(page.rows.iter().any(|r| r.body == "older visible message"));
+                request_page(&mut snapshots, false).await;
+                let page = wait_for_row(&mut snapshots, false, "older visible message").await;
                 assert!(matches!(page.history, History::End));
                 assert!(page.load_older.is_none());
             }

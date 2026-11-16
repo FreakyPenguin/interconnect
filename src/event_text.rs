@@ -262,6 +262,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sdk_html_document_reuses_sanitized_content_and_reply_fallback_rules() {
+        let (_server, room) = fixture().await;
+        let event = json!({"type":"m.room.message", "event_id":"$formatted", "sender":"@alice:example.org", "origin_server_ts":1,
+            "content":{"msgtype":"m.text", "body":"> <@bob:example.org> old reply\n\nactual", "format":"org.matrix.custom.html", "formatted_body":"<mx-reply><blockquote>old reply</blockquote></mx-reply><p><b>actual</b><script>bad</script></p>", "m.relates_to":{"m.in_reply_to":{"event_id":"$old"}}}});
+        let content = TimelineItemContent::from_event(
+            &room,
+            TimelineEvent::from_plaintext(Raw::from_json_string(event.to_string()).unwrap()),
+        )
+        .await
+        .unwrap();
+        let TimelineItemContent::MsgLike(content) = content else {
+            panic!("message content");
+        };
+        let MsgLikeKind::Message(message) = content.kind else {
+            panic!("message");
+        };
+        let doc = crate::message_document::Document::from_message(message.msgtype(), None).unwrap();
+        // Ruma strips the script element but retains its inert text content.
+        assert_eq!(doc.text(&std::collections::BTreeSet::new()), "actualbad");
+        assert!(doc.blocks[0].runs[0].style.bold);
+    }
+    #[tokio::test]
     async fn sdk_event_kind_drives_activity_style_independently_of_message_text() {
         use crate::connected::RowKind;
         let (_server, room) = fixture().await;

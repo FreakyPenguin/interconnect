@@ -2747,6 +2747,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "unicode-segmentation",
+ "url",
  "wiremock",
  "zbus 6.3.0",
  "zeroize",

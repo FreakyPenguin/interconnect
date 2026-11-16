@@ -15,6 +15,8 @@ mod emoji_completion;
 mod emoji_picker;
 #[path = "interconnect/file_drop.rs"]
 mod file_drop;
+#[path = "interconnect/formatted.rs"]
+mod formatted;
 #[path = "interconnect/images.rs"]
 mod images;
 #[path = "interconnect/invite.rs"]
@@ -139,6 +141,8 @@ struct App {
 }
 #[derive(Clone, Debug)]
 enum Message {
+    OpenMessageLink(String),
+    LinkOpened,
     QuickRoom(room_picker::Event),
     NewChat(new_chat::Event),
     CreateRoom(create_room::Event),
@@ -477,6 +481,32 @@ impl App {
             );
         let mut action_task = Task::none();
         match message {
+            Message::OpenMessageLink(link) => {
+                if self.closing || self.stopped {
+                    return Task::none();
+                }
+                if let Some(link) = interconnect::message_document::safe_link(&link) {
+                    return Task::perform(
+                        async move {
+                            #[cfg(target_os = "macos")]
+                            let program = "open";
+                            #[cfg(not(target_os = "macos"))]
+                            let program = "xdg-open";
+                            let _ = tokio::process::Command::new(program)
+                                .arg(link)
+                                .stdin(std::process::Stdio::null())
+                                .stdout(std::process::Stdio::null())
+                                .stderr(std::process::Stdio::null())
+                                .kill_on_drop(true)
+                                .status()
+                                .await;
+                        },
+                        |_| Message::LinkOpened,
+                    );
+                }
+            }
+            Message::LinkOpened => {}
+
             Message::CreateRoom(event) => action_task = self.create_room_event(event),
             Message::NewChat(event) => action_task = self.new_chat_event(event),
             Message::Pin(event) => action_task = self.pin_event(event),
@@ -1567,11 +1597,7 @@ impl App {
                         timestamp,
                     ]
                     .spacing(12),
-                    selectable::named_view(
-                        message.event_id.as_deref().unwrap_or(&message.body),
-                        &message.body,
-                        &message.display_name,
-                    ),
+                    selectable::message_view(message),
                 ]
                 .spacing(6)
                 .into()
@@ -1850,11 +1876,7 @@ impl App {
                     &message.display_name,
                 )
             } else {
-                selectable::named_view(
-                    message.event_id.as_deref().unwrap_or(&message.body),
-                    &message.body,
-                    &message.display_name,
-                )
+                selectable::message_view(message)
             };
             let mut entry = if activity {
                 column![iced::widget::tooltip(

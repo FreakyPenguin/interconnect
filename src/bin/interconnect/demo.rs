@@ -70,6 +70,13 @@ pub const ROOMS: &[Room] = &[
         unread: 0,
     },
     Room {
+        id: "formatting",
+        name: "Message formatting",
+        space: 1,
+        section: "Rooms",
+        unread: 0,
+    },
+    Room {
         id: "emoji",
         name: "Emoji preview",
         space: 1,
@@ -278,9 +285,16 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         is_own: false,
         is_live: false,
         body: body.into(),
+        formatted: None,
         send_state: String::new(),
         retry: None,
     }
+}
+fn formatted(id: &str, html: &str) -> MessageRow {
+    let mut row = message(id, "Maya Chen", "Formatted message fallback");
+    row.formatted = interconnect::message_document::Document::parse(html).map(std::sync::Arc::new);
+    row.thread_replies = 1;
+    row
 }
 fn activity(id: &str, sender: &str, body: &str) -> MessageRow {
     MessageRow {
@@ -382,6 +396,13 @@ impl Demo {
                 reacted(message("review", "Alex Rivera", "That sounds right. Try opening a thread here — we can work through the details together."), &[("👩🏽‍💻", 2, false), ("👍", 1, true)]),
                 reacted(reply("review-reply-1", "review", "Maya Chen", "Yes — a little more breathing room makes a big difference."), &[("❤️", 1, false)]),
                 reply("review-reply-2", "review", "Jamie Davis", "Agreed. Let’s keep the details quiet and the conversation in focus."),
+            ],
+            "formatting" => vec![
+                formatted("format-intro", "<h2>Formatting preview</h2><p>Try <b>bold <i>and italic</i></b>, <u>underline</u>, <del>strikethrough</del>, and <code>inline code</code>. Emoji stay intact: café 👩🏽‍💻 ❤️ 🇩🇪.</p><p>Select across paragraphs and into the next message. العربية עברית 日本語</p>"),
+                formatted("format-blocks", "<blockquote><p>A quiet quotation.</p><blockquote>Nested quotation.</blockquote></blockquote><ol start='3'><li>Third item<ul><li>Nested item</li></ul></li><li>Fourth item</li></ol>"),
+                formatted("format-code", "<pre><code class='language-rust'>fn main() {\n    println!(\"hello 👋\");\n}</code></pre><p>An image placeholder: <img src='mxc://example.org/diagram' alt='Architecture diagram' width='320' height='160'></p>"),
+                formatted("format-links", "<p><a href='https://spec.matrix.org/'>Matrix specification</a> — hover to inspect the destination; drag to select.</p><p>The ending is <span data-mx-spoiler>hidden <b>until revealed</b></span>. Select and copy before and after revealing.</p>"),
+                message("format-plain", "Alex Rivera", "Plain messages stay literal: **bold?** <b>HTML?</b>"),
             ],
             "emoji" => vec![
                 root("emoji-original", "Maya Chen", "Faces and symbols: 😀 😂 ☺ ❤ ❤️ ♥ ☀️ ✈️ ☎️ ☕", 1),
