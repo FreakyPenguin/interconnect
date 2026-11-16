@@ -3,6 +3,8 @@
 mod attachments;
 #[path = "interconnect/bookmarks.rs"]
 mod bookmarks;
+#[path = "interconnect/composer.rs"]
+mod composer;
 #[path = "interconnect/composer_picker.rs"]
 mod composer_picker;
 #[path = "interconnect/context_menu.rs"]
@@ -2755,6 +2757,7 @@ impl App {
             );
         }
         content = content.push(message_area);
+        let mut writing = column![].spacing(0).width(Length::Fill);
         if let Some(key) = self.draft_key(thread)
             && let Some(draft) = self.drafts.get(&key)
         {
@@ -2770,16 +2773,15 @@ impl App {
                 })
                 .highlight_fonts_with::<emoji::Highlighter>(emoji::font(), |font| *font)
                 .cursor_blinking(false)
-                .height(80)
+                .height(56)
                 .size(14)
-                // Keep text and selection above the bottom action row.
                 .padding(iced::Padding {
-                    top: 8.0,
-                    right: 10.0,
-                    bottom: 34.0,
-                    left: 10.0,
+                    top: 12.0,
+                    right: 12.0,
+                    bottom: 8.0,
+                    left: 12.0,
                 })
-                .style(shell::editor_style)
+                .style(shell::composer_editor_style)
                 .placeholder(if draft.attachment.is_some() {
                     "Add a caption…"
                 } else if thread {
@@ -2804,11 +2806,11 @@ impl App {
                 } else {
                     icons::Kind::ArrowUp
                 }))
-                .center_x(26)
-                .center_y(26),
+                .center_x(32)
+                .center_y(32),
             )
             .padding(0)
-            .style(shell::icon_button);
+            .style(shell::send_button);
             if !self.closing
                 && !self.stopped
                 && !self.composing
@@ -2842,22 +2844,24 @@ impl App {
                 iced::widget::tooltip::Position::Top,
             );
             let actions = row![
+                row![
+                    self.attachment_button(&key, *generation),
+                    self.composer_emoji_button(&key, *generation),
+                ]
+                .spacing(2),
                 self.markdown_controls(&key, *generation),
                 iced::widget::space().width(Length::Fill),
-                self.attachment_button(&key, *generation),
-                self.composer_emoji_button(&key, *generation),
                 container(send).id("composer-send")
             ]
-            .spacing(4)
+            .spacing(8)
             .align_y(iced::Alignment::Center);
             if self.clipboard_pasting(&key) {
-                content = content.push(
+                writing = writing.push(
                     container(text("Reading clipboard…").size(12).color(shell::MUTED))
                         .padding([0, 24]),
                 );
-            }
-            if let Some(chip) = self.attachment_chip(&key, *generation) {
-                content = content.push(container(chip).padding([0, 24]));
+            } else {
+                writing = writing.push(container(iced::widget::space().height(0)));
             }
             // Reserve one static line so typing updates never resize the timeline.
             let label = self.typing_label();
@@ -2866,7 +2870,7 @@ impl App {
             } else {
                 label
             };
-            content = content.push(
+            writing = writing.push(
                 container(
                     text(label)
                         .size(12)
@@ -2880,25 +2884,67 @@ impl App {
                 .padding([0, 24]),
             );
             if let Some(preview) = self.markdown_preview(&key) {
-                content = content.push(container(preview).padding([0, 24]));
+                writing = writing.push(
+                    container(container(preview).padding([0, 24]))
+                        .width(Length::Fill)
+                        .max_width(presentation::MESSAGE_WIDTH),
+                );
+            } else {
+                writing = writing.push(container(iced::widget::space().height(0)));
             }
-            let composer = iced::widget::stack![
+            // Stable slots retain the editor's focus/scroll state as chips,
+            // previews, and errors arrive or disappear. Containers keep zero-height
+            // placeholders in Iced columns, which otherwise discard void children.
+            let chip: Element<'_, Message> = self
+                .attachment_chip(&key, *generation)
+                .map(|chip| container(chip).padding([8, 10]).into())
+                .unwrap_or_else(|| container(iced::widget::space().height(0)).into());
+            let error: Element<'_, Message> = if let Some(error) = &draft.error {
+                container(
+                    text(error)
+                        .size(12)
+                        .color(iced::Color::from_rgb8(174, 73, 78)),
+                )
+                .padding([4, 12])
+                .into()
+            } else {
+                container(iced::widget::space().height(0)).into()
+            };
+            let composer = column![
+                chip,
                 editor,
+                error,
                 container(actions)
-                    .align_bottom(Length::Fill)
-                    .padding([4, 6]),
-            ];
-            content = content.push(
-                container(self.composer_emoji_host(composer, &key, *generation)).padding([10, 24]),
+                    .padding([6, 8])
+                    .width(Length::Fill)
+                    .style(shell::composer_toolbar),
+            ]
+            .spacing(0)
+            .width(Length::Fill);
+            let composer = composer::frame(
+                container(composer).padding(1).into(),
+                if thread {
+                    "thread-composer"
+                } else {
+                    "room-composer"
+                },
             );
-            if let Some(error) = &draft.error {
-                content = content.push(text(error));
-            }
+            writing = writing.push(
+                container(
+                    container(self.composer_emoji_host(composer, &key, *generation))
+                        .padding([10, 24]),
+                )
+                .width(Length::Fill)
+                .max_width(presentation::MESSAGE_WIDTH),
+            );
         }
         let target = self
             .draft_key(thread)
             .and_then(|key| self.attachment_drop_target(&key, *generation));
-        file_drop::view(content.into(), target)
+        // Reserve the writing area before laying out the conversation. Long
+        // previews or thread originals must not squeeze the toolbar to zero.
+        let pane = column![container(content).height(Length::Fill), writing].height(Length::Fill);
+        file_drop::view(pane.into(), target)
     }
 }
 fn jump_to_newest(thread: bool) -> Task<Message> {

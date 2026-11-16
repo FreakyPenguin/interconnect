@@ -31,6 +31,7 @@ pub(super) enum Kind {
     AddReaction,
     Attach,
     Edit,
+    Eye,
 }
 
 pub(super) fn icon<'a, Message: 'a>(kind: Kind) -> Element<'a, Message> {
@@ -111,6 +112,18 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
             };
             use Kind::*;
             match self.kind {
+                Eye => {
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(Point::new(2.0, 12.0));
+                            p.quadratic_curve_to(Point::new(12.0, 1.0), Point::new(22.0, 12.0));
+                            p.quadratic_curve_to(Point::new(12.0, 23.0), Point::new(2.0, 12.0));
+                            p.close();
+                        }),
+                        stroke,
+                    );
+                    frame.stroke(&Path::circle(Point::new(12.0, 12.0), 3.0), stroke);
+                }
                 Plus => {
                     line(&[(5.0, 12.0), (19.0, 12.0)]);
                     line(&[(12.0, 5.0), (12.0, 19.0)]);

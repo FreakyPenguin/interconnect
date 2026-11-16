@@ -179,8 +179,8 @@ impl App {
         };
         let mut open = button(
             container(super::icons::icon(super::icons::Kind::Smile))
-                .center_x(26)
-                .center_y(26),
+                .center_x(28)
+                .center_y(28),
         )
         .padding(0)
         .style(shell::icon_button);
@@ -463,6 +463,7 @@ mod tests {
             open: Option<iced::Rectangle>,
             send: Option<iced::Rectangle>,
             choice: Option<iced::Rectangle>,
+            editor: Option<iced::Rectangle>,
         }
         impl widget::Operation for Probe {
             fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
@@ -477,6 +478,22 @@ mod tests {
                     if id == Some(&widget::Id::new(name)) {
                         *target = Some(bounds);
                     }
+                }
+            }
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _: &mut dyn widget::operation::Focusable,
+            ) {
+                if [
+                    widget::Id::new("room-composer"),
+                    widget::Id::new("thread-composer"),
+                ]
+                .iter()
+                .any(|target| id == Some(target))
+                {
+                    self.editor = Some(bounds);
                 }
             }
         }
@@ -502,10 +519,16 @@ mod tests {
                 .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
             let button = probe.open.unwrap();
             let send = probe.send.unwrap();
-            assert_eq!(button.width, 26.0);
-            assert_eq!(button.height, 26.0);
+            assert_eq!(button.width, 28.0);
+            assert_eq!(button.height, 28.0);
             assert!(button.x + button.width < send.x);
-            assert_eq!(button.y, send.y);
+            assert_eq!(button.center_y(), send.center_y());
+            assert!(send.x + send.width <= size.width);
+            let editor = probe.editor.unwrap();
+            assert!(
+                editor.y + editor.height <= button.y,
+                "toolbar never overlays editable text"
+            );
             let cursor = mouse::Cursor::Available(button.center());
             let mut messages = Vec::new();
             for event in [

@@ -42,6 +42,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
 | Room creation | Ctrl+Shift+N or the **Create room** icon opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
+| Composer | Text and toolbar occupy separate rows within one focus-highlighted surface, aligned with the reading column. Attachment/emoji controls sit together on the left; the format pill and eye icon control literal/Markdown mode and preview. Send is blue when enabled and muted when unavailable. Attachments use an inline chip with filename ellipsis; errors stay inside the surface. Check multiline editing/scrolling, focus, toolbar hit targets, staged captions, preview toggling, and keyboard shortcuts in room and thread panes at 640×480. |
 | Drafts and scrolling | Room/thread drafts and reading positions survive navigation and dialogs. Jump-to-newest resumes following incoming messages. |
 | Context menus | Right-click a room entry for **Open room**, **Move to section…**, and **Copy room ID**. The section picker includes empty custom sections, Favorites, Low priority, and Default; the current section is checked. Messages in rooms, thread originals, and replies offer **Copy text**, reactions, and permission-gated pin/unpin; room messages also offer **Reply in thread**. Thread summaries offer **Open thread** and **Copy thread ID**. Menus stay inside the window, dismiss on Escape/outside click/focus loss, and preserve drafts and reading positions. An outside click dismisses without activating the item underneath. |
 | Bookmarks | Hover a room message, thread original, or reply and use the outline/filled bookmark icon. **Saved messages** above the sections opens the account-wide view. Back/Escape restores drafts and reading positions. Demo bookmarks and previews stay in memory. |
@@ -78,6 +79,15 @@ author/time bounds with long Unicode names, preserved body width for grouped
 messages, the 840 px reading-column cap, and the full-width scroll viewport.
 Existing selection, reactions, search, draft, and scroll-preservation tests also
 pass. macOS and wgpu rendering remain manual acceptance checks.
+
+The composer pass was visually checked in an isolated Sway/tiny-skia demo at
+1280×900 and 640×480: empty/focused drafts, disabled/enabled Send, the format pill,
+eye preview control, formatted preview, and room/thread layouts. Automated checks
+cover editor focus tracking without recurring redraws, separate editor/toolbar hit
+areas, focus retention when preview appears, and usable Send bounds with a long
+preview and long thread original in a minimum-size pane. Existing draft, shortcut,
+IME, emoji, paste, attachment, and cancellation checks pass. Attachment-chip native
+rendering, macOS, wgpu, and connected-account acceptance remain manual checks.
 
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
@@ -533,7 +543,8 @@ connected account or external handler was launched for the automated checks.
 ## Markdown composer
 
 In demo mode, type `**bold**`, `_italic_`, `~~old~~`, a Markdown link, or a fenced
-code block into either composer. Choose **Preview** to inspect formatting, then
+code block into either composer. Choose the **Preview message formatting** eye
+icon to inspect formatting, then
 send a sample locally. The source stays editable; changing it hides the old
 preview. Preview appears only on request and has a bounded scroll area.
 

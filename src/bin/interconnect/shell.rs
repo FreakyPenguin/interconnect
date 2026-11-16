@@ -138,6 +138,64 @@ pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     style.border = Border::default().rounded(5);
     style
 }
+pub(super) fn send_button(_: &Theme, status: button::Status) -> button::Style {
+    let disabled = status == button::Status::Disabled;
+    button::Style {
+        background: Some(
+            match status {
+                button::Status::Disabled => Color::from_rgb8(235, 238, 243),
+                button::Status::Hovered => Color::from_rgb8(57, 87, 143),
+                button::Status::Pressed => Color::from_rgb8(49, 75, 124),
+                button::Status::Active => ACCENT,
+            }
+            .into(),
+        ),
+        text_color: if disabled {
+            MUTED.scale_alpha(0.7)
+        } else {
+            Color::WHITE
+        },
+        border: Border::default().rounded(8),
+        ..Default::default()
+    }
+}
+pub(super) fn composer_toggle(
+    theme: &Theme,
+    selected: bool,
+    status: button::Status,
+) -> button::Style {
+    let mut style = icon_button(theme, status);
+    if selected && status != button::Status::Disabled {
+        style.background = Some(SELECTED.into());
+        style.text_color = ACCENT;
+    }
+    style.border = Border::default().rounded(6);
+    style
+}
+pub(super) fn composer_toolbar(_: &Theme) -> container::Style {
+    container::Style {
+        border: Border {
+            radius: iced::border::Radius {
+                top_left: 0.0,
+                top_right: 0.0,
+                bottom_left: 9.0,
+                bottom_right: 9.0,
+            },
+            ..Default::default()
+        },
+        ..surface(Color::from_rgb8(248, 249, 251))
+    }
+}
+pub(super) fn composer_editor_style(
+    theme: &Theme,
+    status: text_editor::Status,
+) -> text_editor::Style {
+    let mut style = text_editor::default(theme, status);
+    style.background = Background::Color(Color::TRANSPARENT);
+    style.border = Border::default();
+    style.placeholder = MUTED.scale_alpha(0.85);
+    style
+}
 pub fn message_actions<'a>(
     body: impl Into<Element<'a, Message>>,
     reply: Option<Message>,

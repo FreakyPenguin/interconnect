@@ -255,16 +255,23 @@ impl App {
             Format::Markdown => "Markdown",
             Format::Plain => "Plain text",
         };
-        let mut mode = button(text(label).size(11))
-            .padding([3, 5])
-            .style(shell::quiet_button);
+        let mut mode = button(text(label).size(12))
+            .padding([4, 7])
+            .height(28)
+            .style(move |theme, status| {
+                shell::composer_toggle(theme, draft.markdown.format == Format::Markdown, status)
+            });
         let source = draft.content.text();
         let open = draft.markdown.preview.as_ref().is_some_and(|preview| {
             preview.source == source && preview.format == draft.markdown.format
         });
-        let mut preview = button(text(if open { "Hide preview" } else { "Preview" }).size(11))
-            .padding([3, 5])
-            .style(shell::quiet_button);
+        let mut preview = button(
+            container(super::icons::icon(super::icons::Kind::Eye))
+                .center_x(28)
+                .center_y(28),
+        )
+        .padding(0)
+        .style(move |theme, status| shell::composer_toggle(theme, open, status));
         if self.markdown_target_valid(&target) && self.settings.draft.is_none() {
             mode = mode.on_press(Message::Markdown(Event::Mode(target.clone())));
             if !source.trim().is_empty() {
@@ -277,7 +284,15 @@ impl App {
                 "Switch between Markdown and literal text",
                 tooltip::Position::Top
             ),
-            preview
+            super::tooltips::tooltip(
+                preview,
+                if open {
+                    "Hide message preview"
+                } else {
+                    "Preview message formatting"
+                },
+                tooltip::Position::Top
+            )
         ]
         .spacing(2)
         .into()
@@ -315,7 +330,14 @@ impl App {
             )
             .padding(10)
             .width(Length::Fill)
-            .style(container::rounded_box)
+            .style(|_| container::Style {
+                border: iced::Border {
+                    color: shell::LINE,
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                ..shell::surface(iced::Color::from_rgb8(248, 249, 251))
+            })
             .into(),
         )
     }
@@ -357,6 +379,102 @@ mod tests {
         let _ = app.update(Message::Room(room.key.room.clone()));
         assert_eq!(app.drafts[&room.key].markdown.format, Format::Plain);
     }
+    #[test]
+    fn long_preview_keeps_toolbar_visible_in_a_minimum_room_or_thread_pane() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Probe {
+            send: Option<iced::Rectangle>,
+            focused: bool,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("composer-send")) {
+                    self.send = Some(bounds);
+                }
+            }
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                _: iced::Rectangle,
+                state: &mut dyn widget::operation::Focusable,
+            ) {
+                if [
+                    widget::Id::new("room-composer"),
+                    widget::Id::new("thread-composer"),
+                ]
+                .iter()
+                .any(|target| id == Some(target))
+                {
+                    self.focused = state.is_focused();
+                }
+            }
+        }
+        for thread in [false, true] {
+            let mut app = crate::tests::demo_app();
+            let _ = app.update(Message::Thread("review".into()));
+            for row in Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows).iter_mut() {
+                if row.key == "review" {
+                    row.body = "A long thread original.\n".repeat(80);
+                    row.formatted = None;
+                }
+            }
+            let key = app.draft_key(thread).unwrap();
+            let source = "A long draft with multiple lines.\n".repeat(30);
+            let draft = app.drafts.get_mut(&key).unwrap();
+            draft.content = text_editor::Content::with_text(&source);
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+            let size = iced::Size::new(333.0, 446.0);
+            let mut tree = widget::Tree::empty();
+            {
+                let mut view = app.pane(thread);
+                tree.diff(view.as_widget());
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut widget::operation::focusable::focus(widget::Id::new(if thread {
+                        "thread-composer"
+                    } else {
+                        "room-composer"
+                    })),
+                );
+            }
+            app.drafts.get_mut(&key).unwrap().markdown.preview = Some(Preview {
+                source: source.clone(),
+                format: Format::Markdown,
+                result: Some(Ok(Arc::new(Prepared::plain(source)))),
+            });
+            let mut view = app.pane(thread);
+            tree.diff(view.as_widget());
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            let mut probe = Probe::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            assert!(probe.focused, "opening a preview retains editor focus");
+            let send = probe.send.unwrap();
+            assert_eq!(
+                send.height, 32.0,
+                "send stays usable with preview open (thread={thread}): {send:?}"
+            );
+            assert!(send.y + send.height <= size.height && send.x + send.width <= size.width);
+        }
+    }
+
     #[tokio::test]
     async fn previews_reject_edits_mode_changes_old_requests_and_other_accounts() {
         let mut app = crate::tests::demo_app();

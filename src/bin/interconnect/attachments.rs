@@ -297,8 +297,8 @@ impl App {
         let target = self.attachment_target(key, generation);
         let mut pick = button(
             container(super::icons::icon(super::icons::Kind::Attach))
-                .center_x(26)
-                .center_y(26),
+                .center_x(28)
+                .center_y(28),
         )
         .padding(0)
         .style(shell::icon_button);
@@ -334,20 +334,28 @@ impl App {
         Some(
             container(
                 row![
-                    text(format!(
-                        "{} · {} KiB",
-                        attachment.filename,
-                        attachment.size.div_ceil(1024)
-                    ))
-                    .size(12)
-                    .width(iced::Length::Fill),
+                    super::tooltips::tooltip(
+                        super::single_line::label(&attachment.filename, 12),
+                        &attachment.filename,
+                        tooltip::Position::Top,
+                    ),
+                    text(format!("{} KiB", attachment.size.div_ceil(1024)))
+                        .size(11)
+                        .color(shell::MUTED),
                     remove
                 ]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),
             )
             .padding([4, 8])
-            .style(container::rounded_box)
+            .style(|_| container::Style {
+                border: iced::Border {
+                    color: shell::LINE,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..shell::surface(iced::Color::from_rgb8(248, 249, 251))
+            })
             .into(),
         )
     }
