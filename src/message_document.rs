@@ -20,22 +20,45 @@ pub struct Style {
     pub spoilers: Vec<usize>,
 }
 
+/// Image identities are independent of transport. Local assets are supplied by
+/// the application (e.g. a future formula renderer), never by incoming HTML.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum ImageSource {
+    Matrix(matrix_sdk::ruma::OwnedMxcUri),
+    Local(u64),
+}
+impl std::fmt::Debug for ImageSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Matrix(_) => "MatrixImage",
+            Self::Local(_) => "LocalImage",
+        })
+    }
+}
 /// Embedded objects retain metadata even while the renderer only displays alternative text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Inline {
     Text(String),
     Image {
-        source: Option<String>,
+        source: Option<ImageSource>,
         alt: String,
         width: Option<u32>,
         height: Option<u32>,
+        /// Logical pixels below the text baseline; incoming HTML defaults to zero.
+        descent: u32,
     },
 }
 impl Inline {
     pub fn text(&self) -> &str {
         match self {
             Self::Text(text) => text,
-            Self::Image { alt, .. } => alt,
+            Self::Image { alt, .. } => {
+                if alt.is_empty() {
+                    "[Image]"
+                } else {
+                    alt
+                }
+            }
         }
     }
 }
@@ -109,6 +132,22 @@ impl Document {
             source: source.into(),
             blocks: builder.blocks,
         })
+    }
+    pub fn image_keys(&self) -> Vec<crate::image_media::Key> {
+        let mut keys = Vec::new();
+        for run in self.blocks.iter().flat_map(|block| &block.runs) {
+            if let Inline::Image {
+                source: Some(ImageSource::Matrix(uri)),
+                ..
+            } = &run.content
+            {
+                let key = crate::image_media::Key::inline(uri.clone());
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+        }
+        keys
     }
     /// Visible canonical text. Hidden spoilers never enter selection or clipboard text.
     pub fn text(&self, revealed: &BTreeSet<usize>) -> String {
@@ -321,12 +360,16 @@ impl Builder {
             "img" => {
                 return self.push(
                     Inline::Image {
-                        source: attr("src").filter(|s| s.starts_with("mxc://")),
+                        source: attr("src")
+                            .map(matrix_sdk::ruma::OwnedMxcUri::from)
+                            .filter(|uri| uri.is_valid())
+                            .map(ImageSource::Matrix),
                         alt: attr("alt")
                             .filter(|s| !s.is_empty())
                             .unwrap_or_else(|| "[Image]".into()),
                         width: attr("width").and_then(|s| s.parse().ok()),
                         height: attr("height").and_then(|s| s.parse().ok()),
+                        descent: 0,
                     },
                     style,
                 );
@@ -416,6 +459,27 @@ mod tests {
                 .any(|r| r.style.bold && r.style.italic)
         );
         assert_eq!(doc.blocks.last().unwrap().quote_depth, 1);
+    }
+    #[test]
+    fn inline_image_sources_and_dimensions_are_untrusted_metadata() {
+        for source in [
+            "https://example.org/image",
+            "file:///tmp/image",
+            "data:image/png,abc",
+            "mxc://",
+            "local:1",
+        ] {
+            let doc = Document::parse(&format!("<img src='{source}' alt='safe alternative' width='4294967295' height='0' data-baseline='999'>")).unwrap();
+            assert!(doc.image_keys().is_empty());
+            assert!(matches!(
+                &doc.blocks[0].runs[0].content,
+                Inline::Image {
+                    source: None,
+                    descent: 0,
+                    ..
+                }
+            ));
+        }
     }
     #[test]
     fn code_and_images_retain_extension_metadata() {

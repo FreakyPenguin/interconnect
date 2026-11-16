@@ -1,19 +1,23 @@
 //! Native formatted text. A single paragraph layout supplies drawing, hit-testing,
 //! decorations and selection geometry; the editor stores only logical positions.
-use super::{Message, emoji, shell};
+use super::{Message, emoji, inline_image, shell};
 use iced::advanced::{
     Renderer as _, layout, renderer,
     text::{self, Paragraph as _, Renderer as _},
 };
 use iced::{Font, Point, Rectangle, Size, Vector, font};
-use interconnect::message_document::{self as document, Block, BlockKind, Document};
+use interconnect::message_document::{
+    self as document, Block, BlockKind, Document, ImageSource, Inline,
+};
 use std::{cell::RefCell, collections::BTreeSet, ops::Range, sync::Arc};
 use unicode_segmentation::UnicodeSegmentation;
 
 type Paragraph = iced::advanced::graphics::text::Paragraph;
 #[derive(Debug)]
 struct LaidBlock {
-    paragraph: Paragraph,
+    paragraph: inline_image::Paragraph,
+    offsets: Vec<Offset>,
+    images: Vec<LaidImage>,
     bounds: Rectangle,
     range: Range<usize>,
     block: Block,
@@ -23,11 +27,44 @@ struct LaidBlock {
     size: f32,
 }
 #[derive(Debug)]
+struct Offset {
+    shaped: Range<usize>,
+    canonical: Range<usize>,
+    image: bool,
+}
+#[derive(Debug)]
+struct LaidImage {
+    source: Option<ImageSource>,
+    bounds: Rectangle,
+    run: usize,
+    canonical: Range<usize>,
+    placeholder: Paragraph,
+}
+impl LaidBlock {
+    fn canonical(&self, offset: usize) -> usize {
+        for mapping in &self.offsets {
+            if offset <= mapping.shaped.end {
+                if offset <= mapping.shaped.start {
+                    return mapping.canonical.start;
+                }
+                return if mapping.image {
+                    mapping.canonical.end
+                } else {
+                    mapping.canonical.start + offset - mapping.shaped.start
+                };
+            }
+        }
+        self.range.end - self.range.start
+    }
+}
+#[derive(Debug)]
 pub struct State {
     pub document: Arc<Document>,
     revealed: BTreeSet<usize>,
     blocks: Vec<LaidBlock>,
     width: Option<f32>,
+    image_metrics: Vec<inline_image::Metrics>,
+    pub assets: inline_image::Assets,
     pub pressed: Option<Point>,
     pub focused: bool,
     pub click: Option<iced::advanced::mouse::Click>,
@@ -41,6 +78,8 @@ impl State {
             revealed: BTreeSet::new(),
             blocks: Vec::new(),
             width: None,
+            image_metrics: Vec::new(),
+            assets: inline_image::Assets::default(),
             pressed: None,
             focused: false,
             click: None,
@@ -52,8 +91,46 @@ impl State {
         self.document.text(&self.revealed)
     }
     pub fn layout(&mut self, width: f32) -> layout::Node {
-        if self.width != Some(width) {
+        let mut image_metrics = Vec::new();
+        for block in &self.document.blocks {
+            let inset = ((block.quote_depth + block.list_depth.saturating_sub(1)).min(8) as f32
+                * 14.0)
+                .min(width / 3.0);
+            let padding = if matches!(block.kind, BlockKind::Code { .. }) {
+                16.0
+            } else {
+                0.0
+            };
+            for run in &block.runs {
+                if run
+                    .style
+                    .spoilers
+                    .iter()
+                    .all(|id| self.revealed.contains(id))
+                    && let Inline::Image {
+                        source,
+                        width: w,
+                        height: h,
+                        descent,
+                        ..
+                    } = &run.content
+                {
+                    image_metrics.push(inline_image::Metrics::resolve(
+                        *w,
+                        *h,
+                        *descent,
+                        source
+                            .as_ref()
+                            .and_then(|source| self.assets.intrinsic(source)),
+                        (width - inset - padding).max(1.0),
+                    ));
+                }
+            }
+        }
+        if self.width != Some(width) || self.image_metrics != image_metrics {
+            self.image_metrics = image_metrics;
             self.blocks.clear();
+            let mut image_index = 0;
             let visible = self.document.visible_blocks(&self.revealed);
             let mut y = 0.0;
             for (block, range) in visible.iter().zip(document::block_ranges(&visible)) {
@@ -69,7 +146,34 @@ impl State {
                 };
                 let mut spans: Vec<text::Span<'_, (), Font>> = Vec::new();
                 let mut runs = Vec::new();
+                let mut objects = Vec::new();
+                let mut object_runs = Vec::new();
+                let mut offsets = Vec::new();
+                let mut shaped_offset = 0;
+                let mut canonical_offset = 0;
                 for (i, run) in block.runs.iter().enumerate() {
+                    let text_len = run.content.text().len();
+                    let image = matches!(run.content, Inline::Image { .. });
+                    let shaped_len = if image { "\u{fffc}".len() } else { text_len };
+                    offsets.push(Offset {
+                        shaped: shaped_offset..shaped_offset + shaped_len,
+                        canonical: canonical_offset..canonical_offset + text_len,
+                        image,
+                    });
+                    shaped_offset += shaped_len;
+                    canonical_offset += text_len;
+                    if image {
+                        let metrics = self.image_metrics[image_index];
+                        image_index += 1;
+                        objects.push(inline_image::Object {
+                            span: spans.len(),
+                            metrics,
+                        });
+                        object_runs.push(i);
+                        spans.push(text::Span::new("\u{fffc}"));
+                        runs.push(i);
+                        continue;
+                    }
                     let style = &run.style;
                     let base = Font {
                         weight: if style.bold {
@@ -125,17 +229,51 @@ impl State {
                     spans.push(text::Span::new(""));
                     runs.push(0);
                 }
-                let paragraph = Paragraph::with_spans(text::Text {
-                    content: &spans,
-                    bounds: Size::new((width - x - padding).max(1.0), f32::INFINITY),
-                    size: iced::Pixels(size),
-                    line_height: text::LineHeight::Relative(1.45),
-                    font: Font::with_name("Inter"),
-                    align_x: text::Alignment::Default,
-                    align_y: iced::alignment::Vertical::Top,
-                    shaping: text::Shaping::Advanced,
-                    wrapping: text::Wrapping::WordOrGlyph,
-                });
+                let paragraph = inline_image::Paragraph::with_spans(
+                    &spans,
+                    (width - x - padding).max(1.0),
+                    size,
+                    &objects,
+                );
+                let mut images = Vec::new();
+                for (object, run_index) in objects.iter().zip(object_runs) {
+                    for line in paragraph.buffer().layout_runs() {
+                        if let Some(glyph) = line
+                            .glyphs
+                            .iter()
+                            .find(|glyph| glyph.metadata == object.span)
+                        {
+                            let Inline::Image { source, .. } = &block.runs[run_index].content
+                            else {
+                                continue;
+                            };
+                            images.push(LaidImage {
+                                source: source.clone(),
+                                bounds: Rectangle::new(
+                                    Point::new(
+                                        glyph.x,
+                                        line.line_y - object.metrics.size.height
+                                            + object.metrics.descent,
+                                    ),
+                                    object.metrics.size,
+                                ),
+                                run: run_index,
+                                canonical: offsets[run_index].canonical.clone(),
+                                placeholder: Paragraph::with_text(text::Text {
+                                    content: block.runs[run_index].content.text(),
+                                    bounds: object.metrics.size,
+                                    size: iced::Pixels(11.0),
+                                    line_height: text::LineHeight::default(),
+                                    font: Font::with_name("Inter"),
+                                    align_x: text::Alignment::Default,
+                                    align_y: iced::alignment::Vertical::Top,
+                                    shaping: text::Shaping::Advanced,
+                                    wrapping: text::Wrapping::WordOrGlyph,
+                                }),
+                            });
+                        }
+                    }
+                }
                 let height = paragraph.min_height().max(size * 1.45);
                 let mut offset = 0;
                 let lines = paragraph
@@ -150,6 +288,8 @@ impl State {
                     .collect();
                 self.blocks.push(LaidBlock {
                     paragraph,
+                    offsets,
+                    images,
                     bounds: Rectangle::new(
                         Point::new(x, y + padding),
                         Size::new((width - x - padding).max(1.0), height),
@@ -187,13 +327,35 @@ impl State {
         if point.y < block.bounds.y {
             return block.range.start;
         }
+        let image_point = Point::ORIGIN + (point - block.bounds.position());
+        if let Some(image) = block
+            .images
+            .iter()
+            .find(|image| image.bounds.contains(image_point))
+        {
+            let rtl = block
+                .paragraph
+                .buffer()
+                .layout_runs()
+                .flat_map(|line| line.glyphs)
+                .find(|g| block.runs.get(g.metadata) == Some(&image.run))
+                .is_some_and(|g| g.level.is_rtl());
+            let after = image_point.x >= image.bounds.center_x();
+            return block.range.start
+                + if after != rtl {
+                    image.canonical.end
+                } else {
+                    image.canonical.start
+                };
+        }
         let local = point - block.bounds.position();
         block
             .paragraph
             .buffer()
             .hit(local.x.max(0.0), local.y.max(0.0))
             .map_or(block.range.end, |hit| {
-                block.range.start + block.lines.get(hit.line).copied().unwrap_or(0) + hit.index
+                block.range.start
+                    + block.canonical(block.lines.get(hit.line).copied().unwrap_or(0) + hit.index)
             })
     }
     pub fn vertical(&self, offset: usize, down: bool) -> usize {
@@ -209,22 +371,27 @@ impl State {
             })
             .collect();
         let current = lines.iter().position(|(block, line)| {
-            let base = block.range.start + block.lines[line.line_i];
-            let start = line.glyphs.iter().map(|g| g.start).min().unwrap_or(0) + base;
-            let end = line.glyphs.iter().map(|g| g.end).max().unwrap_or(0) + base;
+            let base = block.lines[line.line_i];
+            let start = block.range.start
+                + block.canonical(line.glyphs.iter().map(|g| g.start).min().unwrap_or(0) + base);
+            let end = block.range.start
+                + block.canonical(line.glyphs.iter().map(|g| g.end).max().unwrap_or(0) + base);
             start <= offset && offset <= end
         });
         let Some(current) = current else {
             return offset;
         };
         let (block, line) = &lines[current];
-        let base = block.range.start + block.lines[line.line_i];
+        let base = block.lines[line.line_i];
         let x = line
             .glyphs
             .iter()
-            .find(|g| base + g.start <= offset && offset <= base + g.end)
+            .find(|g| {
+                block.range.start + block.canonical(base + g.start) <= offset
+                    && offset <= block.range.start + block.canonical(base + g.end)
+            })
             .map_or(block.bounds.x, |g| {
-                let after = offset == base + g.end;
+                let after = offset == block.range.start + block.canonical(base + g.end);
                 block.bounds.x + g.x + if after != g.level.is_rtl() { g.w } else { 0.0 }
             });
         let target = if down {
@@ -255,7 +422,41 @@ impl State {
         if !regions.iter().any(|r| r.contains(local)) {
             return None;
         }
-        block.block.runs.get(*block.runs.get(span)?)
+        let run = *block.runs.get(span)?;
+        if matches!(block.block.runs.get(run)?.content, Inline::Image { .. })
+            && !block
+                .images
+                .iter()
+                .any(|image| image.run == run && image.bounds.contains(local))
+        {
+            return None;
+        }
+        block.block.runs.get(run)
+    }
+    pub fn image_requests(
+        &self,
+        origin: Point,
+        viewport: Rectangle,
+    ) -> Vec<interconnect::image_media::Key> {
+        let mut keys = Vec::new();
+        for block in &self.blocks {
+            for image in &block.images {
+                if let Some(ImageSource::Matrix(uri)) = &image.source
+                    && (image.bounds
+                        + (origin - Point::ORIGIN)
+                        + (block.bounds.position() - Point::ORIGIN))
+                        .intersects(&viewport)
+                {
+                    let key = interconnect::image_media::Key::inline(uri.clone());
+                    if !keys.contains(&key)
+                        && keys.len() < interconnect::image_media::MAX_INLINE_IMAGES
+                    {
+                        keys.push(key);
+                    }
+                }
+            }
+        }
+        keys
     }
     pub fn interactive(&self, point: Point) -> bool {
         self.run_at(point).is_some_and(|run| {
@@ -370,6 +571,9 @@ impl State {
                 let Some(run) = block.block.runs.get(*run_index) else {
                     continue;
                 };
+                if matches!(run.content, Inline::Image { .. }) {
+                    continue;
+                }
                 let style = &run.style;
                 for region in block.paragraph.span_bounds(index) {
                     let region = region + (bounds.position() - Point::ORIGIN);
@@ -405,14 +609,20 @@ impl State {
             // Glyph clusters supply byte ranges and visual rectangles, including bidi runs.
             if let Some(selected) = &selection {
                 for line in block.paragraph.buffer().layout_runs() {
-                    let line_start = block.range.start + block.lines[line.line_i];
+                    let line_start = block.lines[line.line_i];
                     for glyph in line.glyphs {
-                        if line_start + glyph.start < selected.end
-                            && line_start + glyph.end > selected.start
-                        {
+                        if block.runs.get(glyph.metadata).is_some_and(|run| {
+                            matches!(block.block.runs[*run].content, Inline::Image { .. })
+                        }) {
+                            continue;
+                        }
+                        let glyph_start =
+                            block.range.start + block.canonical(line_start + glyph.start);
+                        let glyph_end = block.range.start + block.canonical(line_start + glyph.end);
+                        if glyph_start < selected.end && glyph_end > selected.start {
                             let cluster = &line.text[glyph.start..glyph.end];
                             let graphemes: Vec<_> = cluster.grapheme_indices(true).collect();
-                            let start = line_start + glyph.start;
+                            let start = glyph_start;
                             let from = graphemes
                                 .iter()
                                 .take_while(|(i, g)| start + i + g.len() <= selected.start)
@@ -439,7 +649,55 @@ impl State {
                     }
                 }
             }
-            renderer.fill_paragraph(&block.paragraph, bounds.position(), shell::INK, viewport);
+            block.paragraph.draw(renderer, bounds.position(), viewport);
+            for image in &block.images {
+                let image_bounds = image.bounds + (bounds.position() - Point::ORIGIN);
+                if !image_bounds.intersects(&viewport) {
+                    continue;
+                }
+                let handle = image
+                    .source
+                    .as_ref()
+                    .and_then(|source| self.assets.handle(source));
+                if let Some(handle) = handle {
+                    use iced::advanced::image::Renderer as _;
+                    let mut drawing = iced::advanced::image::Image::new(handle.clone());
+                    drawing.snap = false;
+                    renderer.draw_image(drawing, image_bounds, viewport);
+                } else {
+                    let failed = image
+                        .source
+                        .as_ref()
+                        .is_none_or(|source| self.assets.failed(source));
+                    quad(
+                        renderer,
+                        image_bounds,
+                        if failed {
+                            iced::Color::from_rgb8(247, 232, 230)
+                        } else {
+                            iced::Color::from_rgb8(234, 238, 244)
+                        },
+                    );
+                    if let Some(clip) = image_bounds.intersection(&viewport) {
+                        renderer.fill_paragraph(
+                            &image.placeholder,
+                            image_bounds.position(),
+                            shell::MUTED,
+                            clip,
+                        );
+                    }
+                }
+                if selection.as_ref().is_some_and(|range| {
+                    block.range.start + image.canonical.start < range.end
+                        && block.range.start + image.canonical.end > range.start
+                }) {
+                    quad(
+                        renderer,
+                        image_bounds,
+                        iced::Color::from_rgba8(73, 121, 211, 0.25),
+                    );
+                }
+            }
         }
     }
 }
@@ -493,6 +751,190 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn inline_images_reserve_exact_boxes_and_keep_alt_copy_offsets_across_loading() {
+        let alt = "a long alternative café 👋";
+        let doc = Arc::new(Document::parse(&format!("<p>before <img src='mxc://example.org/inline' alt='{alt}' width='80' height='40'> after</p>")).unwrap());
+        let mut state = State::new(doc);
+        let initial = state.layout(300.0).bounds();
+        assert_eq!(state.blocks[0].images.len(), 1);
+        let bounds = state.blocks[0].images[0].bounds;
+        assert_eq!(bounds.size(), Size::new(80.0, 40.0));
+        assert!(bounds.y >= 0.0);
+        assert!(bounds.y + bounds.height <= state.blocks[0].bounds.height);
+        let text = state.text();
+        let start = text.find(alt).unwrap();
+        let origin = state.blocks[0].bounds.position();
+        assert_eq!(
+            state.hit(origin + (bounds.position() - Point::ORIGIN) + Vector::new(2.0, 2.0)),
+            start
+        );
+        assert_eq!(
+            state.hit(origin + (bounds.position() - Point::ORIGIN) + Vector::new(78.0, 2.0)),
+            start + alt.len()
+        );
+        assert_eq!(
+            state
+                .image_requests(Point::ORIGIN, Rectangle::with_size(Size::new(300.0, 200.0)))
+                .len(),
+            1
+        );
+        assert!(
+            state
+                .image_requests(
+                    Point::new(0.0, 500.0),
+                    Rectangle::with_size(Size::new(300.0, 200.0))
+                )
+                .is_empty()
+        );
+        let key = interconnect::image_media::Key::inline("mxc://example.org/inline".into());
+        state.assets.remote.ready = Arc::new(
+            [(
+                key.clone(),
+                iced::widget::image::Handle::from_rgba(
+                    3,
+                    1,
+                    vec![20, 180, 80, 255, 20, 180, 80, 255, 20, 180, 80, 255],
+                ),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        assert_eq!(
+            state.layout(300.0).bounds(),
+            initial,
+            "explicit dimensions must survive decoded aspect ratio changes"
+        );
+        let mut renderer = crate::test_renderer(Font::with_name("Inter"), iced::Pixels(14.0));
+        let viewport = Rectangle::with_size(Size::new(300.0, 200.0));
+        renderer.reset(viewport);
+        state.draw(&mut renderer, Point::ORIGIN, viewport, None);
+        let iced::Renderer::Secondary(software) = &mut renderer else {
+            panic!("software renderer");
+        };
+        let mut pixels = tiny_skia::Pixmap::new(300, 200).unwrap();
+        let mut mask = tiny_skia::Mask::new(300, 200).unwrap();
+        software.draw(
+            &mut pixels.as_mut(),
+            &mut mask,
+            &iced::advanced::graphics::Viewport::with_physical_size(iced::Size::new(300, 200), 1.0),
+            &[viewport],
+            iced::Color::WHITE,
+        );
+        let green = pixels
+            .pixels()
+            .iter()
+            .filter(|p| {
+                p.green() > p.red().saturating_add(50) && p.green() > p.blue().saturating_add(50)
+            })
+            .count();
+        assert!(
+            green >= 3000,
+            "image pixels must be drawn inside the 80x40 reserved box: {green}"
+        );
+        state.assets.remote.ready = Arc::default();
+        state.assets.remote.failed = Arc::new([key].into_iter().collect());
+        assert_eq!(
+            state.layout(300.0).bounds(),
+            initial,
+            "failures keep their reserved box"
+        );
+        assert_eq!(state.text(), text);
+    }
+    #[test]
+    fn local_objects_wrap_and_reserve_baseline_descent_in_bidi_text() {
+        let mut doc = Document::parse("<p>قبل <img alt='formula' width='120' height='48'> אחרי <img alt='second' width='120' height='24'></p>").unwrap();
+        for run in &mut doc.blocks[0].runs {
+            if let Inline::Image {
+                source, descent, ..
+            } = &mut run.content
+            {
+                *source = Some(ImageSource::Local(7));
+                *descent = 8;
+            }
+        }
+        let mut state = State::new(Arc::new(doc));
+        for width in [300.0, 150.0, 50.0] {
+            state.layout(width);
+            let block = &state.blocks[0];
+            assert_eq!(block.images.len(), 2);
+            for image in &block.images {
+                assert!(image.bounds.width <= width);
+                let run = block
+                    .paragraph
+                    .buffer()
+                    .layout_runs()
+                    .find(|line| {
+                        line.glyphs
+                            .iter()
+                            .any(|glyph| block.runs[glyph.metadata] == image.run)
+                    })
+                    .unwrap();
+                assert!(image.bounds.y >= run.line_top - 0.01);
+                assert!(
+                    image.bounds.y + image.bounds.height <= run.line_top + run.line_height + 0.01
+                );
+                let expected_descent = 8.0 * image.bounds.width / 120.0;
+                assert!(
+                    (image.bounds.y + image.bounds.height - run.line_y - expected_descent).abs()
+                        < 0.01
+                );
+                let hit =
+                    state.hit(block.bounds.position() + (image.bounds.center() - Point::ORIGIN));
+                assert!(state.text().is_char_boundary(hit));
+            }
+            assert!(
+                state
+                    .image_requests(
+                        Point::ORIGIN,
+                        Rectangle::with_size(Size::new(300.0, 1000.0))
+                    )
+                    .is_empty(),
+                "local assets never enter Matrix demand"
+            );
+        }
+    }
+    #[test]
+    fn missing_dimensions_relayout_once_from_intrinsics_and_spoilers_do_not_fetch() {
+        let mut state = State::new(Arc::new(Document::parse("<p><img src='mxc://example.org/inline' alt='image' height='20'></p><p><span data-mx-spoiler><img src='mxc://example.org/hidden' alt='secret' width='40' height='30'></span></p>").unwrap()));
+        state.layout(300.0);
+        assert_eq!(
+            state.blocks[0].images[0].bounds.size(),
+            Size::new(20.0, 20.0)
+        );
+        let key = interconnect::image_media::Key::inline("mxc://example.org/inline".into());
+        state.assets.remote.ready = Arc::new(
+            [(
+                key,
+                iced::widget::image::Handle::from_rgba(4, 1, vec![0; 16]),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        state.layout(300.0);
+        assert_eq!(
+            state.blocks[0].images[0].bounds.size(),
+            Size::new(80.0, 20.0)
+        );
+        let keys = state.image_requests(
+            Point::ORIGIN,
+            Rectangle::with_size(Size::new(300.0, 1000.0)),
+        );
+        assert_eq!(keys.len(), 1);
+        assert!(!state.text().contains("secret"));
+        state.revealed.insert(1);
+        state.width = None;
+        state.layout(300.0);
+        assert_eq!(
+            state
+                .image_requests(
+                    Point::ORIGIN,
+                    Rectangle::with_size(Size::new(300.0, 1000.0))
+                )
+                .len(),
+            2
+        );
+    }
     #[test]
     fn layout_hit_testing_and_copy_offsets_share_wrapped_unicode_text() {
         let document = Arc::new(Document::parse("<h2>Title</h2><p>café <b>bold 👩🏽‍💻 text</b> that wraps over several lines. العربية עברית</p><pre><code class='language-rust'><b>let</b> x = 1;\n  x</code></pre><p><img src='mxc://example/image' alt='diagram'></p>").unwrap());

@@ -23,7 +23,8 @@ primary platform and best-effort macOS builds.
 - Spaces, room sections, direct messages, and quick room switching.
 - Room and thread timelines with history loading, separate drafts and reading
   positions, send status, and retry.
-- Formatted messages with styled text, lists, quotes, code, links, and spoilers.
+- Formatted messages with styled text, lists, quotes, code, links, spoilers, and
+  inline images with explicit dimensions.
 - Markdown composition, on-demand previews, and a per-conversation plain-text mode.
 - People search, room creation, invitations, room topics, and pinned messages.
 - Reactions, emoji pickers and completion, image viewing, and click-to-play GIFs.

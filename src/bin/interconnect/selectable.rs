@@ -1,6 +1,6 @@
 //! Read-only message text, using Iced's Unicode-aware selection engine.
 //! Selection lives in the widget tree, never in SDK snapshots or drafts.
-use super::{Message, emoji, formatted, shell};
+use super::{Message, emoji, formatted, inline_image, shell};
 use iced::advanced::Renderer as _;
 use iced::advanced::{
     Clipboard, Layout, Shell, Widget, layout, mouse, renderer,
@@ -29,6 +29,8 @@ pub fn named_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, 
         body: Cow::Borrowed(body),
         name,
         appearance: Appearance::Message,
+        assets: Default::default(),
+        context: None,
         document: None,
     })
 }
@@ -41,16 +43,28 @@ pub fn preview_view<'a>(
         body: Cow::Borrowed(body),
         name: "",
         appearance: Appearance::Message,
+        assets: Default::default(),
+        context: None,
         document,
     })
 }
+#[cfg(test)]
 pub fn message_view(message: &MessageRow) -> Element<'_, Message> {
+    message_view_with_assets(message, inline_image::Assets::default(), None)
+}
+pub fn message_view_with_assets(
+    message: &MessageRow,
+    assets: inline_image::Assets,
+    context: Option<inline_image::Context>,
+) -> Element<'_, Message> {
     Element::new(Selectable {
         id: &message.key,
         body: Cow::Borrowed(&message.body),
         name: &message.display_name,
         appearance: Appearance::Message,
         document: message.formatted.as_ref(),
+        assets,
+        context,
     })
 }
 pub fn activity_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, Message> {
@@ -60,10 +74,14 @@ pub fn activity_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'
         // The inline name is already part of the selectable/copyable text.
         name: "",
         appearance: Appearance::Activity,
+        assets: Default::default(),
+        context: None,
         document: None,
     })
 }
 struct Selectable<'a> {
+    assets: inline_image::Assets,
+    context: Option<inline_image::Context>,
     document: Option<&'a Arc<Document>>,
     name: &'a str,
     id: &'a str,
@@ -78,6 +96,7 @@ pub(super) struct State {
     pub selected: bool,
     pub clicks: u64,
     pub rich: Option<formatted::State>,
+    image_report: Option<(inline_image::Context, Vec<interconnect::image_media::Key>)>,
 }
 impl State {
     pub fn hit(&mut self, point: iced::Point) {
@@ -210,6 +229,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
             content: text_editor::Content::with_text(&body),
             body,
             rich,
+            image_report: None,
         })
     }
     fn children(&self) -> Vec<Tree> {
@@ -271,6 +291,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
     ) -> layout::Node {
         let state = tree.state.downcast_mut::<State>();
         if let Some(rich) = &mut state.rich {
+            rich.assets = self.assets.clone();
             return rich.layout(limits.max().width);
         }
         editor(&state.content, self.appearance).layout(&mut tree.children[0], renderer, limits)
@@ -301,6 +322,33 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
             return;
         }
         let state = tree.state.downcast_mut::<State>();
+        if matches!(
+            event,
+            Event::Window(iced::window::Event::RedrawRequested(_))
+        ) && let Some(context) = self.context
+        {
+            let keys = state.rich.as_ref().map_or_else(Vec::new, |rich| {
+                rich.image_requests(layout.position(), *viewport)
+            });
+            let report = (context, keys);
+            if state.image_report.as_ref() != Some(&report) {
+                let previous = state
+                    .image_report
+                    .as_ref()
+                    .is_some_and(|(_, keys)| !keys.is_empty());
+                if (!report.1.is_empty() || previous)
+                    && let Some(rich) = &state.rich
+                {
+                    shell.publish(Message::InlineImagesDemand {
+                        context,
+                        row: state.id.clone(),
+                        document: rich.document.clone(),
+                        keys: report.1.clone(),
+                    });
+                }
+                state.image_report = Some(report);
+            }
+        }
         if state.rich.is_some() {
             let point = cursor
                 .position_in(layout.bounds())
@@ -574,6 +622,68 @@ mod tests {
         }
     }
     #[test]
+    fn inline_image_demand_is_viewport_scoped_and_settles_without_timers() {
+        let document = Arc::new(
+            Document::parse(
+                "<img src='mxc://example.org/image' alt='image' width='30' height='20'>",
+            )
+            .unwrap(),
+        );
+        let mut view = Selectable {
+            id: "inline",
+            name: "Alice",
+            body: Cow::Borrowed("image"),
+            appearance: Appearance::Message,
+            document: Some(&document),
+            assets: Default::default(),
+            context: Some(inline_image::Context {
+                thread: false,
+                generation: 7,
+            }),
+        };
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
+        let node = view.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(300.0, 200.0)),
+        );
+        let mut clipboard = ClipboardText::default();
+        for (index, viewport) in [
+            Rectangle::with_size(Size::new(300.0, 200.0)),
+            Rectangle::with_size(Size::new(300.0, 200.0)),
+            Rectangle::new(iced::Point::new(0.0, 500.0), Size::new(300.0, 200.0)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut messages = vec![];
+            let mut shell = Shell::new(&mut messages);
+            view.update(
+                &mut tree,
+                &Event::Window(iced::window::Event::RedrawRequested(
+                    iced::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &viewport,
+            );
+            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+            match index {
+                0 => assert!(
+                    matches!(&messages[..],[Message::InlineImagesDemand {context,keys,..}] if context.generation == 7 && keys.len() == 1)
+                ),
+                1 => assert!(messages.is_empty()),
+                _ => assert!(
+                    matches!(&messages[..],[Message::InlineImagesDemand {keys,..}] if keys.is_empty())
+                ),
+            }
+        }
+    }
+    #[test]
     fn formatted_link_hover_invalidates_overlay_layout_and_then_settles() {
         let document =
             Arc::new(Document::parse("<p><a href='https://example.org/'>link</a></p>").unwrap());
@@ -583,6 +693,8 @@ mod tests {
             body: Cow::Borrowed("fallback"),
             document: Some(&document),
             appearance: Appearance::Message,
+            assets: Default::default(),
+            context: None,
         };
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
@@ -641,6 +753,8 @@ mod tests {
             name: "Alice",
             body: Cow::Borrowed("hello world café 👋"),
             appearance: Appearance::Message,
+            assets: Default::default(),
+            context: None,
             document: None,
         };
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));

@@ -158,7 +158,8 @@ text, links, spoilers, emoji and bidirectional text. Launch only with
 - Copy a hidden spoiler, reveal it, then copy again. Hidden text must not appear
   in the clipboard. Revealing must preserve the reading anchor.
 - Open a thread on a formatted fixture and check the original uses the same
-  renderer. Inline images remain alternative text with no download.
+  renderer. Inline images reserve declared dimensions and use viewport-scoped
+  authenticated media requests.
 - Keep a draft and a scrolled reading position while switching spaces/rooms.
   Settled formatted messages must not schedule recurring redraws.
 
@@ -214,3 +215,41 @@ local Markdown sends, literal-mode switching and local sends. The connected
 client was not restarted and no test messages were sent to Matrix. Native macOS,
 hardware-renderer appearance, live-account acceptance and measured idle resource
 use remain separate checks.
+
+## Inline images
+
+Studio → **Inline images** in demo mode contains mixed text/images, different
+widths/heights, narrow wrapping, a transparent local asset with baseline descent,
+loading/failure rectangles, a hidden spoiler and bidirectional text. All fixture
+pixels are in memory and no account/network access is required.
+
+- Resize room and thread panes, including 640×480. Images must wrap as indivisible
+  objects and enlarge their line boxes without overlapping neighboring lines.
+- Compare declared-size loading, ready and failed states: the surrounding layout
+  stays fixed. Intrinsic-size-only images may relayout when decoded; preserve the
+  visible message anchor and bottom-follow behavior.
+- Drag-select across text, images and adjacent messages in both directions. Copy
+  must contain complete alternative text and no U+FFFC layout markers.
+- Reveal the spoiler. Its image enters layout/demand then; hidden images must not
+  produce requests. Settled images must not schedule redraw deadlines or animate.
+- A local asset supplies RGBA pixels plus logical width/height/descent, without a
+  Matrix URI. This is the extension point for a later formula renderer; no math
+  parsing or formula generation is implemented in this step.
+
+Automated checks cover exact dimensions, intrinsic aspect ratios, bounded extreme
+sizes, baseline descent, bidi wrapping, object hit-testing, software-rendered
+pixels, alt-text copying, viewport demand, stale document/generation rejection,
+loading/failure stability, authenticated downloads and request deduplication.
+
+November 16, 2026: formatting checks, workspace Clippy with warnings denied,
+locked desktop builds and workspace tests passed (106 library and 188 desktop
+tests; two opt-in library tests ignored). Isolated Wayland checks covered mixed
+images/text and local transparent assets at 1100×800 and 640×480 with tiny-skia,
+plus thread originals and a run configured for wgpu with Mesa's software Vulkan
+ICD. The software-rendered pixel test checks the declared 80×40 rectangle, and
+an integration test preserves the visible message anchor across intrinsic-size
+arrival. A settled wgpu inline-image demo consumed zero CPU jiffies in a
+five-second `/proc` sample at 100 ticks/second; this short sample does not measure
+wakeups or power. Real-account media, hardware adapters and macOS remain separate
+acceptance checks. The connected client was not restarted and no Matrix test
+messages were sent.

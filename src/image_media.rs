@@ -13,12 +13,14 @@ use matrix_sdk_ui::timeline::{MsgLikeKind, TimelineItemContent};
 use crate::media::{DecodeLimits, Decoded, ImageRequest};
 
 pub const MAX_PREVIEWS: usize = 16;
+pub const MAX_INLINE_IMAGES: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Variant {
     Thumbnail,
     ThumbnailFile,
     Original,
+    Inline,
 }
 
 /// Account-scoped identity includes the complete encryption descriptor and
@@ -43,6 +45,9 @@ impl Key {
                 .into(),
             variant,
         }
+    }
+    pub fn inline(uri: matrix_sdk::ruma::OwnedMxcUri) -> Self {
+        Self::new(&MediaSource::Plain(uri), Variant::Inline)
     }
     fn source(&self) -> MediaSource {
         serde_json::from_str(&self.source).expect("internally serialized media source")
@@ -100,7 +105,7 @@ impl Attachment {
 impl ImageRequest for Key {
     const MEMORY_BYTES: usize = 96 * 1024 * 1024;
     // One original (<=16 MiB), GIF frames (<=64 MiB), and previews (<=12 MiB).
-    const MAX_REQUESTED: usize = MAX_PREVIEWS + 1;
+    const MAX_REQUESTED: usize = MAX_PREVIEWS + MAX_INLINE_IMAGES + 1;
     const RETAIN_READY: bool = true;
     fn parameters(&self) -> MediaRequestParameters {
         MediaRequestParameters {
@@ -109,7 +114,7 @@ impl ImageRequest for Key {
                 Variant::Thumbnail => {
                     MediaFormat::Thumbnail(MediaThumbnailSettings::new(uint!(512), uint!(384)))
                 }
-                Variant::ThumbnailFile | Variant::Original => MediaFormat::File,
+                Variant::ThumbnailFile | Variant::Original | Variant::Inline => MediaFormat::File,
             },
         }
     }
@@ -123,7 +128,13 @@ impl ImageRequest for Key {
             },
             dimension: 4096,
             allocation: 128 * 1024 * 1024,
-            target: if original { (2048, 2048) } else { (512, 384) },
+            target: if original {
+                (2048, 2048)
+            } else if self.variant == Variant::Inline {
+                (1024, 1024)
+            } else {
+                (512, 384)
+            },
             crop: false,
         };
         if original && matches!(image::guess_format(&bytes), Ok(image::ImageFormat::Gif)) {
@@ -228,6 +239,48 @@ mod tests {
         assert!(preview.decode(vec![0; 2 * 1024 * 1024 + 1]).is_err());
     }
 
+    #[tokio::test]
+    async fn inline_images_use_authenticated_static_files_and_deduplicate() {
+        let directory = tempfile::tempdir().unwrap();
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*/download/example.org/inline"))
+            .and(wiremock::matchers::header("authorization", "Bearer fake"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(gif()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let key = Key::inline("mxc://example.org/inline".into());
+        assert!(matches!(key.parameters().format, MediaFormat::File));
+        let client = client(&server, directory.path()).await;
+        let (control, requests) = watch::channel(Demand {
+            uris: vec![key.clone(), key.clone()],
+            ..Default::default()
+        });
+        let (output, mut images) = watch::channel(Snapshot::default());
+        let worker = tokio::spawn(crate::media::run_requests(
+            client,
+            requests,
+            output,
+            Arc::new(Semaphore::new(4)),
+        ));
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            images.wait_for(|images| images.ready.contains_key(&key)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(images.borrow().ready.len(), 1);
+        assert!(images.borrow().animations.is_empty());
+        drop(control);
+        worker.await.unwrap().unwrap();
+    }
     #[tokio::test]
     async fn plain_preview_defers_original_and_both_reopen_from_disk() {
         cache_fixture(false, false).await;

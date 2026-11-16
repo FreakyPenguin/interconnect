@@ -1,0 +1,42 @@
+--- a/src/buffer_line.rs
++++ b/src/buffer_line.rs
+@@ -228,6 +228,21 @@
+         self.shape_opt.get().expect("shape not found")
+     }
+ 
++    /// Customize cached shaping before layout, invalidating any previous layout.
++    ///
++    /// Embedded-object callers must reapply custom metrics after changing text,
++    /// attributes or fonts. Ordinary shaping remains unchanged.
++    pub fn customize_shape(
++        &mut self,
++        font_system: &mut FontSystem,
++        tab_width: u16,
++        customize: impl FnOnce(&mut ShapeLine),
++    ) {
++        self.shape(font_system, tab_width);
++        self.layout_opt.set_unused();
++        customize(self.shape_opt.get_mut().expect("shape initialized above"));
++    }
++
+     /// Get line shaping cache
+     pub const fn shape_opt(&self) -> Option<&ShapeLine> {
+         self.shape_opt.get()
+@@ -270,6 +285,17 @@
+         self.layout_opt.get()
+     }
+ 
++    /// Customize existing layout geometry without reshaping. Returns false if
++    /// layout has not been computed. The caller owns metric/cache consistency.
++    pub fn customize_layout(&mut self, customize: impl FnOnce(&mut [LayoutLine])) -> bool {
++        if let Some(lines) = self.layout_opt.get_mut() {
++            customize(lines);
++            true
++        } else {
++            false
++        }
++    }
++
+     /// Get line metadata. This will be None if [`BufferLine::set_metadata`] has not been called
+     /// after the last reset of shaping and layout caches
+     pub const fn metadata(&self) -> Option<usize> {

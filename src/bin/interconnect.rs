@@ -19,6 +19,8 @@ mod file_drop;
 mod formatted;
 #[path = "interconnect/images.rs"]
 mod images;
+#[path = "interconnect/inline_image.rs"]
+mod inline_image;
 #[path = "interconnect/invite.rs"]
 mod invite;
 #[path = "interconnect/login.rs"]
@@ -120,6 +122,8 @@ struct App {
     window_width: Option<f32>,
     thread_scroll_target: Option<(u64, f32)>,
     visible_rows: [Vec<String>; 2],
+    inline_demand: inline_image::Demand,
+    local_inline: inline_image::LocalImages,
     image_view: Option<images::Viewing>,
     reaction_picker: Option<reaction_picker::State>,
     reaction_sends: HashSet<reaction_picker::Sending>,
@@ -173,6 +177,12 @@ enum Message {
     Escape,
     Control(watch::Sender<Selection>),
     State(Box<Model>),
+    InlineImagesDemand {
+        context: inline_image::Context,
+        row: String,
+        document: std::sync::Arc<interconnect::message_document::Document>,
+        keys: Vec<interconnect::image_media::Key>,
+    },
     RowsVisible {
         thread: bool,
         generation: u64,
@@ -252,6 +262,8 @@ impl App {
             window_width: None,
             thread_scroll_target: None,
             visible_rows: Default::default(),
+            inline_demand: HashMap::new(),
+            local_inline: Default::default(),
             image_view: None,
             reaction_picker: None,
             reaction_sends: HashSet::new(),
@@ -282,6 +294,7 @@ impl App {
             app.shell.space = Scope::Space("studio-space".into());
             app.model.status = "Design preview · local sample data".into();
             app.model.images = demo::images();
+            app.local_inline = demo::inline_assets();
             let _ = app.update(Message::Room("studio".into()));
         }
         app
@@ -479,6 +492,7 @@ impl App {
             || matches!(
                 &message,
                 Message::State(_)
+                    | Message::InlineImagesDemand { .. }
                     | Message::RowsVisible { .. }
                     | Message::Close
                     | Message::Stopped(_)
@@ -525,6 +539,48 @@ impl App {
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
             Message::EmojiCompletion(event) => action_task = self.emoji_completion_event(event),
             Message::Image(event) => self.image_event(event),
+            Message::InlineImagesDemand {
+                context,
+                row,
+                document,
+                mut keys,
+            } => {
+                let selected = if context.thread {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                };
+                if !selected
+                    .as_ref()
+                    .is_some_and(|(generation, _)| *generation == context.generation)
+                {
+                    return Task::none();
+                }
+                let pane = if context.thread {
+                    &self.model.thread
+                } else {
+                    &self.model.room
+                };
+                let current = current_pane(pane, context.generation)
+                    .and_then(|pane| pane.rows.iter().find(|message| message.key == row))
+                    .or_else(|| {
+                        context
+                            .thread
+                            .then(|| self.thread_original())
+                            .flatten()
+                            .filter(|message| message.key == row)
+                    });
+                if current
+                    .and_then(|row| row.formatted.as_ref())
+                    .is_some_and(|current| std::sync::Arc::ptr_eq(current, &document))
+                {
+                    let allowed = document.image_keys();
+                    keys.retain(|key| allowed.contains(key));
+                    keys.truncate(interconnect::image_media::MAX_INLINE_IMAGES);
+                    self.inline_demand
+                        .insert((context.thread, context.generation, row), (document, keys));
+                }
+            }
             Message::RowsVisible {
                 thread,
                 generation,
@@ -1142,6 +1198,12 @@ impl App {
             scroll
         }
     }
+    fn inline_assets(&self) -> inline_image::Assets {
+        inline_image::Assets {
+            remote: self.model.images.clone(),
+            local: self.local_inline.clone(),
+        }
+    }
     fn refresh_media_demand(&mut self) {
         if self.closing || self.stopped {
             self.image_view = None;
@@ -1152,6 +1214,36 @@ impl App {
         if self.demo.is_some() || self.closing || self.stopped {
             return;
         }
+        let original = self.thread_original().cloned();
+        let room = &self.model.room;
+        let thread = &self.model.thread;
+        let selected_room = &self.selection.room;
+        let selected_thread = &self.selection.thread;
+        self.inline_demand
+            .retain(|(is_thread, generation, key), (document, _)| {
+                let selected = if *is_thread {
+                    selected_thread
+                } else {
+                    selected_room
+                };
+                if !selected
+                    .as_ref()
+                    .is_some_and(|(current, _)| current == generation)
+                {
+                    return false;
+                }
+                let pane = if *is_thread { thread } else { room };
+                current_pane(pane, *generation)
+                    .and_then(|pane| pane.rows.iter().find(|row| row.key == *key))
+                    .or_else(|| {
+                        is_thread
+                            .then_some(original.as_ref())
+                            .flatten()
+                            .filter(|row| row.key == *key)
+                    })
+                    .and_then(|row| row.formatted.as_ref())
+                    .is_some_and(|current| std::sync::Arc::ptr_eq(current, document))
+            });
         if let Some(uri) = &self.model.account_avatar_url {
             self.selection.avatars.push(uri.clone());
         }
@@ -1227,6 +1319,17 @@ impl App {
                     && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED
                 {
                     self.selection.avatars.push(uri.clone());
+                }
+            }
+        }
+        let mut inline_count = 0;
+        for (_, keys) in self.inline_demand.values() {
+            for key in keys {
+                if !self.selection.images.contains(key)
+                    && inline_count < interconnect::image_media::MAX_INLINE_IMAGES
+                {
+                    self.selection.images.push(key.clone());
+                    inline_count += 1;
                 }
             }
         }
@@ -1631,7 +1734,16 @@ impl App {
                         timestamp,
                     ]
                     .spacing(12),
-                    selectable::message_view(message),
+                    selectable::message_view_with_assets(
+                        message,
+                        self.inline_assets(),
+                        self.selection.thread.as_ref().map(|(generation, _)| {
+                            inline_image::Context {
+                                thread: true,
+                                generation: *generation,
+                            }
+                        })
+                    ),
                 ]
                 .spacing(6)
                 .into()
@@ -1910,7 +2022,14 @@ impl App {
                     &message.display_name,
                 )
             } else {
-                selectable::message_view(message)
+                selectable::message_view_with_assets(
+                    message,
+                    self.inline_assets(),
+                    Some(inline_image::Context {
+                        thread,
+                        generation: *generation,
+                    }),
+                )
             };
             let mut entry = if activity {
                 column![iced::widget::tooltip(
@@ -2630,6 +2749,7 @@ mod tests {
         app.model.rooms = demo::rooms().into();
         app.model.spaces = demo::spaces().into();
         app.model.images = demo::images();
+        app.local_inline = demo::inline_assets();
         app.shell.space = Scope::Space("studio-space".into());
         let _ = app.update(Message::Room("studio".into()));
         app
@@ -2656,6 +2776,49 @@ mod tests {
         assert!(app.selection.avatars.is_empty());
     }
 
+    #[test]
+    fn inline_demand_rejects_stale_documents_generations_and_offscreen_objects() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("inline-images".into()));
+        app.demo = None;
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let row = app.model.room.as_ref().unwrap().rows[0].clone();
+        let document = row.formatted.clone().unwrap();
+        let keys = document.image_keys();
+        let report = |generation, document, keys| Message::InlineImagesDemand {
+            context: inline_image::Context {
+                thread: false,
+                generation,
+            },
+            row: row.key.clone(),
+            document,
+            keys,
+        };
+        let _ = app.update(report(generation, document.clone(), keys.clone()));
+        assert!(keys.iter().all(|key| app.selection.images.contains(key)));
+        let _ = app.update(report(generation + 1, document.clone(), Vec::new()));
+        assert!(
+            keys.iter().all(|key| app.selection.images.contains(key)),
+            "stale empty reports cannot cancel current demand"
+        );
+        let _ = app.update(report(generation, document.clone(), Vec::new()));
+        assert!(
+            keys.iter().all(|key| !app.selection.images.contains(key)),
+            "leaving the viewport cancels demand"
+        );
+        let _ = app.update(report(generation, document.clone(), keys.clone()));
+        let mut model = app.model.clone();
+        let edited = Arc::make_mut(&mut model.room.as_mut().unwrap().rows);
+        edited[0].formatted = Some(Arc::new(
+            interconnect::message_document::Document::parse("<p>edited</p>").unwrap(),
+        ));
+        let _ = app.update(Message::State(Box::new(model)));
+        let _ = app.update(report(generation, document, keys.clone()));
+        assert!(
+            keys.iter().all(|key| !app.selection.images.contains(key)),
+            "old document reports cannot reload edited or redacted images"
+        );
+    }
     #[test]
     fn avatar_demand_uses_current_visible_rows_and_profile_updates() {
         let mut app = demo_app();

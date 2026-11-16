@@ -70,6 +70,13 @@ pub const ROOMS: &[Room] = &[
         unread: 0,
     },
     Room {
+        id: "inline-images",
+        name: "Inline images",
+        space: 1,
+        section: "Rooms",
+        unread: 0,
+    },
+    Room {
         id: "formatting",
         name: "Message formatting",
         space: 1,
@@ -251,6 +258,10 @@ pub fn images() -> interconnect::media::Snapshot<interconnect::image_media::Key>
     interconnect::media::Snapshot {
         ready: [
             (sample.preview.unwrap(), handle.clone()),
+            (
+                interconnect::image_media::Key::inline("mxc://demo.invalid/sample".into()),
+                handle.clone(),
+            ),
             (sample.original, handle),
             (gif.preview.unwrap(), first.clone()),
             (gif.original.clone(), first),
@@ -262,11 +273,51 @@ pub fn images() -> interconnect::media::Snapshot<interconnect::image_media::Key>
             .into_iter()
             .collect::<HashMap<_, _>>()
             .into(),
-        failed: [missing.preview.unwrap(), missing.original]
-            .into_iter()
-            .collect::<std::collections::HashSet<_>>()
-            .into(),
+        failed: [
+            missing.preview.unwrap(),
+            missing.original,
+            interconnect::image_media::Key::inline("mxc://demo.invalid/missing".into()),
+        ]
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>()
+        .into(),
     }
+}
+pub fn inline_assets() -> super::inline_image::LocalImages {
+    let pixels: Vec<u8> = (0..40)
+        .flat_map(|y| {
+            (0..120).flat_map(move |x| {
+                if (8..112).contains(&x)
+                    && ((17..21).contains(&y) || (x % 24 < 4 && (5..34).contains(&y)))
+                {
+                    [38, 65, 115, 255]
+                } else {
+                    [0, 0, 0, 0]
+                }
+            })
+        })
+        .collect();
+    [(1, iced::widget::image::Handle::from_rgba(120, 40, pixels))]
+        .into_iter()
+        .collect::<HashMap<_, _>>()
+        .into()
+}
+fn local_inline_fixture() -> MessageRow {
+    let mut row = formatted(
+        "inline-local",
+        "<p>Local asset: <img alt='local generated graphic' width='180' height='60'> aligned with this baseline.</p>",
+    );
+    let document = std::sync::Arc::make_mut(row.formatted.as_mut().unwrap());
+    for run in document.blocks.iter_mut().flat_map(|block| &mut block.runs) {
+        if let interconnect::message_document::Inline::Image {
+            source, descent, ..
+        } = &mut run.content
+        {
+            *source = Some(interconnect::message_document::ImageSource::Local(1));
+            *descent = 12;
+        }
+    }
+    row
 }
 fn message(id: &str, sender: &str, body: &str) -> MessageRow {
     MessageRow {
@@ -396,6 +447,13 @@ impl Demo {
                 reacted(message("review", "Alex Rivera", "That sounds right. Try opening a thread here — we can work through the details together."), &[("👩🏽‍💻", 2, false), ("👍", 1, true)]),
                 reacted(reply("review-reply-1", "review", "Maya Chen", "Yes — a little more breathing room makes a big difference."), &[("❤️", 1, false)]),
                 reply("review-reply-2", "review", "Jamie Davis", "Agreed. Let’s keep the details quiet and the conversation in focus."),
+            ],
+            "inline-images" => vec![
+                formatted("inline-mixed", "<p>Small <img src='mxc://demo.invalid/sample' alt='small diagram' width='40' height='24'> and tall <img src='mxc://demo.invalid/sample' alt='tall diagram' width='70' height='80'> images flow with <b>styled text</b>.</p>"),
+                formatted("inline-wrap", "<p>Resize this pane to wrap around <img src='mxc://demo.invalid/sample' alt='wide diagram' width='260' height='100'> and keep reading after the image.</p>"),
+                local_inline_fixture(),
+                formatted("inline-states", "<p>Loading <img src='mxc://demo.invalid/waiting' alt='pending image' width='60' height='40'> and failed <img src='mxc://demo.invalid/missing' alt='missing image' width='60' height='40'> keep their declared dimensions.</p><p><span data-mx-spoiler><img src='mxc://demo.invalid/sample' alt='hidden diagram' width='160' height='60'></span></p>"),
+                formatted("inline-bidi", "<p>قبل <img src='mxc://demo.invalid/sample' alt='diagram' width='80' height='30'> אחרי</p>"),
             ],
             "formatting" => vec![
                 formatted("format-intro", "<h2>Formatting preview</h2><p>Try <b>bold <i>and italic</i></b>, <u>underline</u>, <del>strikethrough</del>, and <code>inline code</code>. Emoji stay intact: café 👩🏽‍💻 ❤️ 🇩🇪.</p><p>Select across paragraphs and into the next message. العربية עברית 日本語</p>"),

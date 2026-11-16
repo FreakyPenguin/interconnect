@@ -44,3 +44,7 @@ activity text, and both composers. This avoids changing emoji widths after
 layout, which would invalidate wrapping, selection, and timeline scroll metrics.
 The GUI regressions check glyph color, joined sequences, first-layout stability,
 Unicode-preserving selection/copy, and the existing idle-caret behavior.
+
+The application also overrides the same pinned Cosmic Text 0.15.0 dependency
+for embedded inline-object metrics. This does not change Iced widget code; see
+[the separate text-engine patch](../cosmic-text/PATCH.md).

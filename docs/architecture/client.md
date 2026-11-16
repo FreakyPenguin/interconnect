@@ -14,6 +14,10 @@ read before Iced/Tokio initialization; a Unix re-exec applies environment values
 without mutating the environment of a threaded process. See
 [renderer selection](../development.md#renderer-selection).
 
+A small [Cosmic Text extension](../../vendor/cosmic-text/PATCH.md) supplies
+embedded-object metrics for inline images, including application-generated
+assets. The pinned dependency version is unchanged.
+
 The local Iced widget patch disables recurring editor caret blinking; its changes
 are documented in [PATCH.md](../../vendor/iced_widget/PATCH.md).
 Wayland file drops use a [pinned Winit fork](winit-file-drops.md).

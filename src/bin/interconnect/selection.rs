@@ -665,6 +665,145 @@ mod tests {
         assert!(messages.is_empty());
     }
     #[test]
+    fn intrinsic_image_arrival_preserves_the_visible_message_anchor() {
+        fn view<'a>(
+            rows: &'a [interconnect::connected::MessageRow],
+            assets: crate::inline_image::Assets,
+        ) -> Element<'a, Message> {
+            super::super::timeline::view(
+                1,
+                rows.iter().map(|row| Some(row.key.clone())).collect(),
+                scrollable(column(rows.iter().enumerate().map(|(index, row)| {
+                    container(selectable::message_view_with_assets(
+                        row,
+                        assets.clone(),
+                        None,
+                    ))
+                    .id(super::super::timeline::row_id(index))
+                    .into()
+                })))
+                .id("room-timeline")
+                .anchor_bottom()
+                .height(200)
+                .into(),
+            )
+        }
+        let mut row = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        row.formatted = Some(std::sync::Arc::new(
+            interconnect::message_document::Document::parse(
+                "<p>text <img src='mxc://example.org/sizing' alt='diagram' width='40'> after</p>",
+            )
+            .unwrap(),
+        ));
+        let rows: Vec<_> = (0..20)
+            .map(|index| {
+                let mut row = row.clone();
+                row.key = format!("image-{index}");
+                row
+            })
+            .collect();
+        let mut h = Harness::new();
+        let mut element = view(&rows, crate::inline_image::Assets::default());
+        let node = h.layout(&mut element);
+        h.event(
+            &mut element,
+            &node,
+            Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Lines { x: 0.0, y: 3.0 },
+            }),
+            Point::new(100.0, 100.0),
+        );
+        let before = h.read(&mut element, &node);
+        assert!(
+            before.maximum - before.translation.y > 1.0,
+            "read away from the bottom"
+        );
+        let anchor = before
+            .rows
+            .iter()
+            .find(|row| row.bounds.y + row.bounds.height > before.viewport.y)
+            .unwrap();
+        let (id, y) = (anchor.id.clone(), anchor.bounds.y);
+        let key = interconnect::image_media::Key::inline("mxc://example.org/sizing".into());
+        let mut assets = crate::inline_image::Assets::default();
+        assets.remote.ready = std::sync::Arc::new(
+            [(
+                key,
+                iced::widget::image::Handle::from_rgba(4, 8, vec![0; 4 * 8 * 4]),
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let mut element = view(&rows, assets);
+        let node = h.layout(&mut element);
+        let after = h.read(&mut element, &node);
+        let anchor = after.rows.iter().find(|row| row.id == id).unwrap();
+        assert!(
+            (anchor.bounds.y - y).abs() <= 1.0,
+            "anchor moved from {y} to {}",
+            anchor.bounds.y
+        );
+    }
+    #[test]
+    fn cross_message_copy_uses_alt_text_and_never_embedded_layout_markers() {
+        let mut row = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        row.key = "image".into();
+        row.display_name = "Alice".into();
+        row.formatted = Some(std::sync::Arc::new(
+            interconnect::message_document::Document::parse(
+                "<p>before <img alt='diagram café 👋' width='32' height='40'> after</p>",
+            )
+            .unwrap(),
+        ));
+        for reverse in [false, true] {
+            let mut h = Harness::new();
+            let mut element = super::super::timeline::view(
+                1,
+                vec![Some("image".into()), Some("plain".into())],
+                scrollable(
+                    column![
+                        selectable::message_view(&row),
+                        selectable::named_view("plain", "bye", "Bob")
+                    ]
+                    .spacing(6),
+                )
+                .id("room-timeline")
+                .height(200)
+                .into(),
+            );
+            let node = h.layout(&mut element);
+            let data = h.read(&mut element, &node);
+            let from = Point::new(data.rows[0].bounds.x, data.rows[0].bounds.y + 5.0);
+            let to = Point::new(data.rows[1].bounds.x + 250.0, data.rows[1].bounds.y + 5.0);
+            let (from, to) = if reverse { (to, from) } else { (from, to) };
+            h.event(&mut element, &node, down(), from);
+            h.event(&mut element, &node, moved(to), to);
+            h.event(&mut element, &node, up(), to);
+            assert_eq!(
+                h.copy(&mut element, &node),
+                "Alice:\nbefore diagram café 👋 after\n\nBob:\nbye"
+            );
+        }
+    }
+    #[test]
     fn formatted_links_activate_on_click_and_never_on_selection_drags() {
         let mut row = crate::demo::Demo::default()
             .pane(

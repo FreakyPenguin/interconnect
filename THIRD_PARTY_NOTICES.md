@@ -7,6 +7,10 @@ assets retain their own copyright notices and licenses.
   Copyright 2019 Héctor Ramón, Iced contributors. See the
   [original license](vendor/iced_widget/LICENSE) and
   [upstream provenance and local patches](vendor/iced_widget/PATCH.md).
+- **Vendored Cosmic Text** in `vendor/cosmic-text/` retains its MIT OR Apache-2.0
+  licenses. See [MIT](vendor/cosmic-text/LICENSE-MIT),
+  [Apache-2.0](vendor/cosmic-text/LICENSE-APACHE), and the
+  [embedded-object extension](vendor/cosmic-text/PATCH.md).
 - **Bundled Inter fonts** in `assets/fonts/` retain the upstream notices and
   licensing information recorded in [their license file](assets/fonts/LICENSE).
   The project's MIT license does not replace the font licenses.
