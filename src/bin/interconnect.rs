@@ -55,6 +55,8 @@ mod reactions;
 mod receipts;
 #[path = "interconnect/room_picker.rs"]
 mod room_picker;
+#[path = "interconnect/room_search.rs"]
+mod room_search;
 #[path = "interconnect/section_reorder.rs"]
 mod section_reorder;
 #[path = "interconnect/selectable.rs"]
@@ -153,6 +155,7 @@ struct App {
     inviting: HashSet<String>,
     pinning: HashSet<reaction_picker::Target>,
     pin_error: Option<(reaction_picker::Target, String)>,
+    room_search: room_search::State,
     room_picker: Option<room_picker::State>,
     new_chat: Option<new_chat::State>,
     create_room: Option<create_room::State>,
@@ -190,6 +193,7 @@ enum Message {
     EmojiCompletion(emoji_completion::Event),
     Space(Scope),
     Section(String),
+    RoomSearch(room_search::Event),
     Search(String),
     SearchFocus,
     SearchOpen,
@@ -307,6 +311,7 @@ impl App {
             inviting: HashSet::new(),
             pinning: HashSet::new(),
             pin_error: None,
+            room_search: room_search::State::default(),
             room_picker: None,
             new_chat: None,
             create_room: None,
@@ -363,6 +368,7 @@ impl App {
                 | Message::Space(_)
                 | Message::Section(_)
                 | Message::Search(_)
+                | Message::RoomSearch(_)
                 | Message::SearchFocus
                 | Message::AdjacentRoom(_)
                 | Message::OpenLastThread
@@ -420,6 +426,7 @@ impl App {
                 | Message::Exit
                 | Message::Send(_)
                 | Message::WindowFocused(false)
+                | Message::RoomSearch(_)
                 | Message::SearchFocus
                 | Message::Focus(_)
                 | Message::Settings(settings::Event::Open)
@@ -462,6 +469,7 @@ impl App {
                 | Message::AdjacentRoom(_)
                 | Message::OpenLastThread
                 | Message::OpenThreadLatest(_)
+                | Message::RoomSearch(_)
                 | Message::SearchFocus
                 | Message::Focus(_)
                 | Message::Close
@@ -509,6 +517,7 @@ impl App {
                 Message::Space(_)
                     | Message::Section(_)
                     | Message::Search(_)
+                    | Message::RoomSearch(_)
                     | Message::SearchFocus
                     | Message::SearchOpen
                     | Message::AdjacentRoom(_)
@@ -811,7 +820,8 @@ impl App {
                 {
                     self.timeline_metrics[usize::from(thread)] =
                         Some((generation, revision, metrics));
-                    if self.selection.event_focus[usize::from(thread)].is_some()
+                    if (self.selection.event_focus[usize::from(thread)].is_some()
+                        || (!thread && self.room_search_target().is_some()))
                         && let Some(key) = self.draft_key(thread)
                     {
                         self.scroll_positions
@@ -848,6 +858,9 @@ impl App {
                         } else {
                             Message::Room(id)
                         });
+                    }
+                    if !thread {
+                        self.room_search.current = None;
                     }
                     self.pending_scroll[usize::from(thread)] = None;
                     if thread {
@@ -893,6 +906,7 @@ impl App {
                     self.shell.collapsed.insert(section);
                 }
             }
+            Message::RoomSearch(event) => return self.room_search_event(event),
             Message::Search(query) => self.shell.query = query,
             Message::SearchOpen => {
                 if let Some(id) = self.visible_rooms().first().cloned() {
@@ -952,6 +966,9 @@ impl App {
                 };
             }
             Message::Escape => {
+                if self.room_search.open {
+                    return self.room_search_event(room_search::Event::Close);
+                }
                 if !self.shell.query.is_empty() {
                     self.shell.query.clear();
                 } else {
@@ -1469,9 +1486,10 @@ impl App {
                 continue;
             };
             let rows = if index == 0
-                && self.selection.event_focus[0]
-                    .as_ref()
-                    .is_some_and(|(view, _)| view == generation)
+                && (self.room_search_active()
+                    || self.selection.event_focus[0]
+                        .as_ref()
+                        .is_some_and(|(view, _)| view == generation))
             {
                 pane.rows.iter().map(thread_activity::Row::Event).collect()
             } else {
@@ -1524,6 +1542,7 @@ impl App {
     }
     fn select_room(&mut self, id: String) {
         self.bookmarks.close();
+        self.room_search = room_search::State::default();
         self.visible_rows = Default::default();
         self.generation += 1;
         self.selection.members = None;
@@ -2104,7 +2123,9 @@ impl App {
         ]
         .align_y(iced::Alignment::Center);
         if !thread {
-            header = header.push(self.member_badge());
+            header = header
+                .push(self.room_search_button())
+                .push(self.member_badge());
         }
         if !thread && self.demo.is_some() && selected_id == "threads" {
             header = header.push(
@@ -2136,6 +2157,7 @@ impl App {
                 .pinned_view(*generation)
                 .unwrap_or_else(|| iced::widget::space().height(0).into());
             content = content.push(iced::widget::keyed_column([(*generation, pins)]));
+            content = content.push(self.room_search_view());
         }
         if thread {
             // Reset the original's own scroll/selection state on thread changes.
@@ -2219,7 +2241,9 @@ impl App {
             .as_ref()
             .filter(|(view, _)| view == generation)
             .map(|(_, event)| event.clone());
-        let rows = if !thread && event_focus.is_some() {
+        let search_focus = (!thread).then(|| self.room_search_target()).flatten();
+        let event_focus = search_focus.clone().or(event_focus);
+        let rows = if !thread && (event_focus.is_some() || self.room_search_active()) {
             pane.rows.iter().map(thread_activity::Row::Event).collect()
         } else {
             thread_activity::project(&pane.rows, thread.then_some(selected_id.as_str()))
@@ -2445,7 +2469,14 @@ impl App {
                 body
             };
             message_row = message_row.push(body);
-            messages = messages.push(container(message_row).id(timeline::row_id(index)));
+            let mut message_row = container(message_row).id(timeline::row_id(index));
+            if search_focus.as_deref() == Some(projected.key().as_str()) {
+                message_row = message_row.style(|_| container::Style {
+                    background: Some(iced::Color::from_rgb8(226, 234, 247).into()),
+                    ..Default::default()
+                });
+            }
+            messages = messages.push(message_row);
         }
         if rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
             messages = messages.push(if thread {
@@ -2700,6 +2731,9 @@ fn shell_shortcut(
         Key::Named(Named::ArrowUp) if modifiers.alt() => Some(Message::AdjacentRoom(true)),
         Key::Named(Named::ArrowDown) if modifiers.alt() => Some(Message::AdjacentRoom(false)),
         Key::Character("t") if modifiers.alt() => Some(Message::OpenLastThread),
+        Key::Character("f" | "F") if modifiers.command() || modifiers.control() => {
+            Some(Message::RoomSearch(room_search::Event::Open))
+        }
         Key::Character("k") if modifiers.command() => Some(Message::SearchFocus),
         _ => None,
     }

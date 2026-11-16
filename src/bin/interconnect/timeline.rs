@@ -140,6 +140,7 @@ struct Identity {
     selection: super::selection::Selection,
     generation: u64,
     focused: bool,
+    target: Option<String>,
     snapshot: Option<Snapshot>,
     reported: Option<(Metrics, u64, bool)>,
     visible: Option<(Metrics, Vec<String>)>,
@@ -257,6 +258,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         widget::tree::State::new(Identity {
             generation: self.generation,
             focused: false,
+            target: self.target.clone(),
             snapshot: None,
             reported: None,
             visible: None,
@@ -269,6 +271,10 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
     }
     fn diff(&self, tree: &mut Tree) {
         let identity = tree.state.downcast_mut::<Identity>();
+        if identity.target != self.target {
+            identity.target = self.target.clone();
+            identity.focused = false;
+        }
         if identity.generation != self.generation {
             identity.generation = self.generation;
             identity.focused = false;
@@ -860,6 +866,21 @@ mod tests {
         assert!(screen_y(&above, "event-10") > screen_y(&focused, "event-10"));
         let next = harness.render_focus(&rows, 2, 200.0, None, Some("event-20"), true);
         assert_near(screen_y(&next, "event-20"), 80.0);
+    }
+
+    #[test]
+    fn changing_search_target_jumps_without_resetting_the_room_view() {
+        let mut harness = Harness::new();
+        let rows: Vec<_> = (0..40).map(|i| (format!("event-{i}"), 40.0)).collect();
+        let first = harness.render_focus(&rows, 1, 200.0, None, Some("event-10"), true);
+        assert_near(screen_y(&first, "event-10"), 80.0);
+        let next = harness.render_focus(&rows, 1, 200.0, None, Some("event-20"), true);
+        assert_near(screen_y(&next, "event-20"), 80.0);
+        let previous = harness.render_focus(&rows, 1, 200.0, None, Some("event-10"), true);
+        assert_near(screen_y(&previous, "event-10"), 80.0);
+        harness.render_focus(&rows, 1, 200.0, None, None, true);
+        let reopened = harness.render_focus(&rows, 1, 200.0, None, Some("event-10"), true);
+        assert_near(screen_y(&reopened, "event-10"), 80.0);
     }
 
     #[test]

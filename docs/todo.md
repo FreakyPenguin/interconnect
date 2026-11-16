@@ -15,3 +15,5 @@
 - Search in room (Ctrl+F)
 - Search across rooms (Ctrl+Shift+F)
 - Ugly tooltips
+- resizable/scrollable composer
+- edit with control in composer

@@ -36,6 +36,7 @@ see [renderer selection](../development.md#renderer-selection).
 | --- | --- |
 | Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
 | Navigation | Space selection filters the room list without switching the open conversation. Sections collapse independently; search filters rooms. |
+| In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. The selected message is highlighted and scrolled into view. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
 | Room creation | Ctrl+Shift+N or **#+** opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
@@ -51,12 +52,16 @@ see [renderer selection](../development.md#renderer-selection).
 | Attachments | Pick, paste, and drop stage one file per draft. The hover outline identifies the target; multiple files produce an error. Overlays block underlying drop targets. |
 | Settings | Save applies changes; Cancel discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
 
-Ctrl+, opens Settings, Ctrl+K focuses room search, Alt+Up/Down selects adjacent
+Ctrl+, opens Settings, Ctrl+K focuses the sidebar room filter, Alt+Up/Down selects adjacent
 filtered rooms, and Escape clears search or closes a thread. macOS uses Command
 for the primary shortcuts. Ctrl+Enter sends by default; Enter inserts a newline.
 With Enter-to-send enabled, Shift+Enter inserts a newline. IME composition
 suppresses sending and navigation shortcuts. Full button keyboard traversal and
 focus restoration remain unfinished.
+
+In-room search has automated coverage for matching, navigation, stale snapshots,
+draft preservation, room changes, and modal shortcut blocking. Native rendering,
+keyboard focus, and connected-history acceptance require the manual checks above.
 
 ## Desktop login
 
