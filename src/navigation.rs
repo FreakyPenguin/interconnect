@@ -24,6 +24,8 @@ pub struct RoomEntry {
     pub can_pin: bool,
     pub can_invite: bool,
     pub pinned_events: Vec<String>,
+    /// Room m.tag keys, including Element custom section membership.
+    pub tags: Vec<String>,
     pub favorite: bool,
     pub direct: bool,
     pub unread: bool,
@@ -31,9 +33,19 @@ pub struct RoomEntry {
     pub unread_count: u64,
 }
 impl RoomEntry {
+    /// Explicit tags win over inferred direct/unread grouping. Unknown tags fall back.
+    pub fn section_in<'a>(&'a self, sections: &'a [SectionEntry]) -> &'a str {
+        if self.favorite {
+            return "m.favourite";
+        }
+        sections
+            .iter()
+            .find(|section| self.tags.contains(&section.id))
+            .map_or_else(|| self.section(), |section| section.id.as_str())
+    }
     pub fn section(&self) -> &'static str {
         if self.favorite {
-            "Favorites"
+            "m.favourite"
         } else if self.direct {
             "Direct messages"
         } else if self.unread {
@@ -43,6 +55,72 @@ impl RoomEntry {
         }
     }
 }
+/// Element's account-level section definitions. IDs, rather than names, identify headers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SectionEntry {
+    pub id: String,
+    pub name: String,
+}
+
+pub const ELEMENT_SETTINGS: &str = "im.vector.web.settings";
+const CUSTOM_PREFIX: &str = "element.io.section.";
+
+/// Read only the interoperable schema; never repair or write another client's settings.
+/// Missing/invalid definitions leave tagged rooms in their usual fallback groups.
+pub fn sections_from_settings(settings: &serde_json::Value) -> Vec<SectionEntry> {
+    let mut custom = std::collections::BTreeMap::new();
+    if let Some(data) = settings["RoomList.CustomSectionData"].as_object() {
+        for (tag, entry) in data {
+            if tag.starts_with(CUSTOM_PREFIX)
+                && entry["tag"].as_str() == Some(tag)
+                && let Some(name) = entry["name"].as_str()
+            {
+                custom.insert(tag.clone(), name.to_owned());
+            }
+        }
+    }
+    let mut order = Vec::new();
+    if let Some(stored) = settings["RoomList.OrderedCustomSections"].as_array() {
+        for tag in stored.iter().filter_map(|value| value.as_str()) {
+            if (tag == "chats" || tag == "im.vector.fake.direct" || custom.contains_key(tag))
+                && !order.iter().any(|id| id == tag)
+            {
+                order.push(tag.to_owned());
+            }
+        }
+    }
+    if !order.iter().any(|id| id == "im.vector.fake.direct") {
+        order.insert(0, "im.vector.fake.direct".into());
+    }
+    // Keep valid definitions visible even when settings arrive out of order.
+    for tag in custom.keys() {
+        if !order.contains(tag) {
+            let index = order
+                .iter()
+                .position(|id| id == "chats")
+                .unwrap_or(order.len());
+            order.insert(index, tag.clone());
+        }
+    }
+    if !order.iter().any(|id| id == "chats") {
+        order.push("chats".into());
+    }
+    let section = |id: &str, name: &str| SectionEntry {
+        id: id.into(),
+        name: name.into(),
+    };
+    let mut result = vec![section("m.favourite", "Favorites")];
+    for tag in order {
+        match tag.as_str() {
+            "im.vector.fake.direct" => result.push(section("Direct messages", "Direct messages")),
+            "chats" => result.extend([section("Unread", "Unread"), section("Rooms", "Rooms")]),
+            _ => result.push(section(&tag, &custom[&tag])),
+        }
+    }
+    result.push(section("m.lowpriority", "Low priority"));
+    result
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SpaceEntry {
     pub id: String,
@@ -77,7 +155,16 @@ pub fn includes(scope: &Scope, members: &Option<HashSet<String>>, room: &RoomEnt
     }
 }
 
-pub async fn snapshot(client: &Client) -> anyhow::Result<(Vec<RoomEntry>, Vec<SpaceEntry>)> {
+pub async fn snapshot(
+    client: &Client,
+) -> anyhow::Result<(Vec<RoomEntry>, Vec<SpaceEntry>, Vec<SectionEntry>)> {
+    let settings = client
+        .account()
+        .account_data_raw(ELEMENT_SETTINGS.into())
+        .await?
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw.json().get()).ok())
+        .unwrap_or_default();
+    let sections = sections_from_settings(&settings);
     let mut rooms = Vec::new();
     let mut spaces = Vec::new();
     for room in client.joined_rooms() {
@@ -138,6 +225,13 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<(Vec<RoomEntry>, Vec<Sp
                     .into_iter()
                     .map(|id| id.to_string())
                     .collect(),
+                tags: room
+                    .tags()
+                    .await?
+                    .unwrap_or_default()
+                    .keys()
+                    .map(ToString::to_string)
+                    .collect(),
                 favorite: room.is_favourite(),
                 direct: room.is_direct().await?,
                 unread: room.is_marked_unread()
@@ -149,12 +243,69 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<(Vec<RoomEntry>, Vec<Sp
     }
     rooms.sort_by_cached_key(|r| (r.name.to_lowercase(), r.id.clone()));
     spaces.sort_by_cached_key(|s| (s.name.to_lowercase(), s.id.clone()));
-    Ok((rooms, spaces))
+    Ok((rooms, spaces, sections))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn element_sections_validate_definitions_and_preserve_order_and_identity() {
+        let settings = serde_json::json!({
+            "RoomList.CustomSectionData": {
+                "element.io.section.a":{"tag":"element.io.section.a","name":"Rooms","spaceId":"!space:example.org"},
+                "element.io.section.b":{"tag":"element.io.section.b","name":"Rooms"},
+                "element.io.section.c":{"tag":"element.io.section.c","name":"Unordered"},
+                "element.io.section.bad":{"tag":"element.io.section.mismatch","name":"Bad"},
+                "element.io.section.null":null,
+                "element.io.section.number":{"tag":"element.io.section.number","name":4},
+                "other":{"tag":"other","name":"Other"}
+            },
+            "RoomList.OrderedCustomSections":[null, 5, "chats", "element.io.section.b", "element.io.section.a", "element.io.section.b", "unknown"]
+        });
+        let sections = sections_from_settings(&settings);
+        let ids: Vec<_> = sections.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            [
+                "m.favourite",
+                "Direct messages",
+                "element.io.section.c",
+                "Unread",
+                "Rooms",
+                "element.io.section.b",
+                "element.io.section.a",
+                "m.lowpriority"
+            ]
+        );
+        let mut room = RoomEntry {
+            tags: vec![
+                "element.io.section.a".into(),
+                "element.io.section.b".into(),
+                "m.lowpriority".into(),
+            ],
+            direct: true,
+            unread: true,
+            ..Default::default()
+        };
+        assert_eq!(room.section_in(&sections), "element.io.section.b");
+        room.favorite = true;
+        assert_eq!(room.section_in(&sections), "m.favourite");
+        room.favorite = false;
+        room.tags = vec!["m.lowpriority".into()];
+        assert_eq!(room.section_in(&sections), "m.lowpriority");
+        room.tags = vec!["element.io.section.deleted".into()];
+        assert_eq!(room.section_in(&sections), "Direct messages");
+        for malformed in [
+            serde_json::Value::Null,
+            serde_json::json!({
+                "RoomList.CustomSectionData": [], "RoomList.OrderedCustomSections": {}
+            }),
+        ] {
+            assert_eq!(sections_from_settings(&malformed).len(), 5);
+        }
+    }
+
     #[test]
     fn nested_shared_and_cyclic_membership_is_unique() {
         let spaces = vec![
@@ -193,7 +344,7 @@ mod tests {
             unread_count: 2,
             ..Default::default()
         };
-        assert_eq!(room.section(), "Favorites");
+        assert_eq!(room.section(), "m.favourite");
         room.favorite = false;
         assert_eq!(room.section(), "Direct messages");
         assert!(includes(&Scope::Direct, &None, &room));

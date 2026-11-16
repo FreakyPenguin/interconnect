@@ -558,6 +558,7 @@ pub struct Model {
     pub status: String,
     pub rooms: Arc<Vec<RoomEntry>>,
     pub spaces: Arc<Vec<SpaceEntry>>,
+    pub sections: Arc<Vec<crate::navigation::SectionEntry>>,
     pub navigation_error: Option<String>,
     pub saved_navigation: Option<crate::navigation_preferences::Preferences>,
     pub preferences_error: Option<String>,
@@ -585,6 +586,7 @@ impl Default for Model {
             status: "Restoring saved session…".into(),
             rooms: Arc::default(),
             spaces: Arc::default(),
+            sections: crate::navigation::sections_from_settings(&serde_json::Value::Null).into(),
             navigation_error: None,
             saved_navigation: None,
             preferences_error: None,
@@ -1006,17 +1008,34 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
         .as_ref()
         .map(|d| d.navigation_changes());
     // Subscribe before reading the cache so startup changes cannot be missed.
+    let (settings_changed, mut settings_updates) = mpsc::channel(1);
+    let handler = client.add_event_handler(
+        move |event: matrix_sdk::ruma::events::AnyGlobalAccountDataEvent| {
+            let changed = settings_changed.clone();
+            async move {
+                if event.event_type() == crate::navigation::ELEMENT_SETTINGS.into() {
+                    let _ = changed.try_send(());
+                }
+            }
+        },
+    );
+    let _handler_guard = client.event_handler_drop_guard(handler);
     let mut rooms = client.subscribe_to_all_room_updates();
     let mut metadata = client.room_info_notable_update_receiver();
     loop {
         match crate::navigation::snapshot(client).await {
-            Ok((rooms, spaces)) => {
+            Ok((rooms, spaces, sections)) => {
                 state.send_if_modified(|s| {
-                    if *s.rooms == rooms && *s.spaces == spaces && s.navigation_error.is_none() {
+                    if *s.rooms == rooms
+                        && *s.spaces == spaces
+                        && *s.sections == sections
+                        && s.navigation_error.is_none()
+                    {
                         return false;
                     }
                     s.rooms = Arc::new(rooms);
                     s.spaces = Arc::new(spaces);
+                    s.sections = Arc::new(sections);
                     s.navigation_error = None;
                     true
                 });
@@ -1035,6 +1054,7 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
         }
         tokio::select! {
             _ = async { match &mut refresh { Some(receiver) => { if matches!(receiver.recv().await, Err(tokio::sync::broadcast::error::RecvError::Closed)) { pending::<()>().await; } }, None => pending::<()>().await } } => {},
+            _ = settings_updates.recv() => {},
             event = rooms.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
             event = metadata.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
         }
@@ -2328,6 +2348,63 @@ mod tests {
             .unwrap()
             .contains("!room:example.org")
         );
+        // Room tags can arrive before definitions. Unknown sections must not hide rooms.
+        *response.lock().unwrap() = json!({"next_batch":"section-tags","rooms":{"join":{
+            "!room:example.org":{"account_data":{"events":[{"type":"m.tag","content":{"tags":{"element.io.section.fixture":{}}}}]}}
+        }}});
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            snapshots.wait_for(|s| {
+                s.rooms[0].tags == ["element.io.section.fixture"]
+                    && s.rooms[0].section_in(&s.sections) == "Rooms"
+            }),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        // Settings-only syncs (no room updates) must create, rename, reorder, and remove headers.
+        for (batch, name, order, expected) in [
+            (
+                "section-created",
+                Some("Projects"),
+                json!(["element.io.section.fixture", "chats"]),
+                "element.io.section.fixture",
+            ),
+            (
+                "section-renamed",
+                Some("Renamed section"),
+                json!(["chats", "element.io.section.fixture"]),
+                "element.io.section.fixture",
+            ),
+            ("section-deleted", None, json!([]), "Rooms"),
+        ] {
+            let definitions = name.map_or(json!({}), |name| json!({
+                "element.io.section.fixture":{"tag":"element.io.section.fixture", "name":name, "spaceId":"!other:example.org"}
+            }));
+            let settings = json!({"RoomList.CustomSectionData":definitions, "RoomList.OrderedCustomSections":order});
+            *response.lock().unwrap() = json!({"next_batch":batch,"account_data":{"events":[{
+                "type":"im.vector.web.settings", "content":settings
+            }]}});
+            client
+                .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+                .await
+                .unwrap();
+            let expected_sections = crate::navigation::sections_from_settings(&settings);
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                snapshots.wait_for(|s| {
+                    *s.sections == expected_sections
+                        && s.rooms[0].section_in(&s.sections) == expected
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        }
         *response.lock().unwrap() = json!({"next_batch":"three","rooms":{"leave":{"!room:example.org":{"timeline":{"events":[event("m.room.member","@test:example.org",json!({"membership":"leave"}))]}}}}});
         client
             .sync_once(SyncSettings::default().timeout(Duration::ZERO))

@@ -34,6 +34,7 @@ see [renderer selection](../development.md#renderer-selection).
 
 | Area | Controls and expected behavior |
 | --- | --- |
+| Custom sections | Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
 | Navigation | Space selection filters the room list without switching the open conversation. Sections collapse independently; search filters rooms. |
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
@@ -75,6 +76,47 @@ a separate store and retains earlier stores/keys. If the server accepts login bu
 local setup fails, an abandoned device may remain visible in other clients.
 Restoration errors do not automatically replace the saved device. Verification
 and historical-key availability are separate from successful login.
+
+## Element custom sections
+
+Protocol references: Element's [section schema and ordering](https://github.com/element-hq/element-web/blob/develop/apps/web/src/stores/room-list-v3/section.ts),
+[section membership](https://github.com/element-hq/element-web/blob/develop/apps/web/src/stores/room-list-v3/skip-list/filters/SectionFilter.ts),
+and [account settings storage](https://github.com/element-hq/element-web/blob/develop/apps/web/src/settings/handlers/AccountSettingsHandler.ts).
+
+Display reads `RoomList.CustomSectionData` and `RoomList.OrderedCustomSections`
+from global `im.vector.web.settings` account data. Room `m.tag` keys of the form
+`element.io.section.<id>` supply membership. Names are labels; tags identify
+sections and local per-space collapse state. Valid definitions omitted from the
+order are placed before Chats; invalid definitions and stale order entries are
+ignored. Unknown/deleted tags leave rooms in their usual groups.
+
+Favorites stays first and Low priority last. Explicit tags win over inferred
+Direct messages/Unread grouping; multiple tags use the first displayed explicit
+section. Element's `chats` order slot retains this client's Unread and Rooms
+groups, and `im.vector.fake.direct` positions Direct messages. Empty sections are
+hidden, so `spaceId` does not limit nonempty sections: room membership in the
+selected space determines visibility. This display-only implementation does not
+write Element settings/tags or import Element's device-local expansion settings.
+Section management and Element's section/People visibility preferences are not
+implemented.
+
+Automated coverage includes schema validation, duplicate labels and order entries,
+multiple-tag precedence, stale tags, room-tag sync, and settings-only syncs for
+creation, rename, reorder, and deletion. UI state tests cover stable collapse
+identity and space filtering. An isolated headless Sway demo with tiny-skia
+was visually checked for the Design header and its two rooms. Live Element
+interoperability and native desktop acceptance still require manual checks:
+
+1. In Element on a dedicated test account, create two custom sections, move rooms
+   (including a DM) into them, and reorder them around Chats. Open the same account
+   here and compare names, membership, and order.
+2. Rename, reorder, and delete sections in Element while this client runs. Check
+   updates without navigating or reopening, and that a deleted section's rooms
+   remain accessible. Confirm this client makes no section/tag writes.
+3. Check All rooms, Direct messages, and nested/shared spaces. Empty sections stay
+   hidden; changing spaces preserves the conversation, thread, drafts, and scroll.
+4. Collapse a section, rename it remotely, and confirm it stays collapsed. Search
+   exposes matching rooms temporarily; clearing search restores collapse state.
 
 ## Navigation and timelines
 

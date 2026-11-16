@@ -8,7 +8,7 @@
 
 - Logout / account switching UI
 - mark unread
-- Sections
+- Custom sections: create, rename, reorder, delete, and move rooms (Element-compatible display implemented)
 
 ## Infrastructure
 

@@ -298,6 +298,7 @@ impl App {
             app.model.authentication = None;
             app.demo = Some(demo::Demo::default());
             app.model.rooms = demo::rooms().into();
+            app.model.sections = demo::sections().into();
             app.model.spaces = demo::spaces().into();
             app.shell.space = Scope::Space("studio-space".into());
             app.model.status = "Design preview · local sample data".into();
@@ -2811,6 +2812,7 @@ mod tests {
         let mut app = App::new();
         app.demo = Some(demo::Demo::default());
         app.model.rooms = demo::rooms().into();
+        app.model.sections = demo::sections().into();
         app.model.spaces = demo::spaces().into();
         app.model.images = demo::images();
         app.local_inline = demo::inline_assets();
@@ -3513,6 +3515,40 @@ mod tests {
         let _ = app.update(Message::AdjacentRoom(false));
         assert_eq!(app.selection.room.as_ref().unwrap().1, "home");
         assert!(app.selection.thread.is_none());
+    }
+
+    #[test]
+    fn custom_section_identity_survives_rename_and_space_filtering() {
+        let mut app = demo_app();
+        let tag = "element.io.section.demo-design";
+        assert_eq!(
+            app.model
+                .rooms
+                .iter()
+                .find(|r| r.id == "engineering")
+                .unwrap()
+                .section_in(&app.model.sections),
+            tag
+        );
+        let room = app.selection.room.clone();
+        let _ = app.update(Message::Section(tag.into()));
+        let key = app.section_key(tag);
+        assert!(app.shell.collapsed.contains(&key));
+        let mut model = app.model.clone();
+        std::sync::Arc::make_mut(&mut model.sections)
+            .iter_mut()
+            .find(|s| s.id == tag)
+            .unwrap()
+            .name = "Renamed".into();
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.shell.collapsed.contains(&key));
+        assert_eq!(app.selection.room, room);
+        let _ = app.update(Message::Search("Engineering".into()));
+        assert_eq!(app.visible_rooms(), ["engineering"]);
+        let _ = app.update(Message::Space(Scope::Space("home-space".into())));
+        assert!(!app.visible_rooms().contains(&"engineering".into()));
+        assert!(!app.shell.collapsed.contains(&app.section_key(tag)));
+        assert_eq!(app.selection.room, room);
     }
 
     #[test]

@@ -167,6 +167,11 @@ pub fn rooms() -> Vec<RoomEntry> {
             } else {
                 Vec::new()
             },
+            tags: if matches!(r.id, "engineering" | "long") {
+                vec!["element.io.section.demo-design".into()]
+            } else {
+                Vec::new()
+            },
             favorite: r.section == "Favorites",
             direct: r.section == "Direct messages",
             unread: r.unread > 0,
@@ -718,4 +723,14 @@ impl Demo {
             thread.push(incoming);
         }
     }
+}
+
+/// Isolated Element-format fixtures; never read account settings in demo mode.
+pub fn sections() -> Vec<interconnect::navigation::SectionEntry> {
+    interconnect::navigation::sections_from_settings(&serde_json::json!({
+        "RoomList.CustomSectionData": {
+            "element.io.section.demo-design": {"tag":"element.io.section.demo-design", "name":"Design"}
+        },
+        "RoomList.OrderedCustomSections": ["element.io.section.demo-design", "chats"]
+    }))
 }

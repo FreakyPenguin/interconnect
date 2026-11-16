@@ -405,6 +405,12 @@ impl App {
         }
     }
     pub(super) fn section_key(&self, section: &str) -> String {
+        // Retain the existing local collapse key for the built-in Favorites header.
+        let section = if section == "m.favourite" {
+            "Favorites"
+        } else {
+            section
+        };
         format!("{:?}/{section}", self.shell.space)
     }
     pub(super) fn visible_rooms(&self) -> Vec<String> {
@@ -422,13 +428,13 @@ impl App {
             })
             .collect();
         rooms.sort_by_cached_key(|r| {
+            let section_id = r.section_in(&self.model.sections);
             (
-                match r.section() {
-                    "Favorites" => 0,
-                    "Direct messages" => 1,
-                    "Unread" => 2,
-                    _ => 3,
-                },
+                self.model
+                    .sections
+                    .iter()
+                    .position(|section| section.id == section_id)
+                    .unwrap_or(usize::MAX),
                 r.name.to_lowercase(),
                 r.id.clone(),
             )
@@ -639,7 +645,7 @@ impl App {
                 .on_submit(Message::SearchOpen);
         }
         let mut rooms = column![].spacing(2);
-        let sections = ["Favorites", "Direct messages", "Unread", "Rooms"];
+        let sections = &*self.model.sections;
         let visible = self.visible_rooms();
         if let Some(error) = &self.model.preferences_error {
             rooms = rooms.push(text(error).size(12).color(MUTED));
@@ -675,19 +681,22 @@ impl App {
                 .model
                 .rooms
                 .iter()
-                .filter(|r| visible.contains(&r.id) && r.section() == section)
+                .filter(|r| visible.contains(&r.id) && r.section_in(sections) == section.id)
                 .collect();
             if entries.is_empty() {
                 continue;
             }
             matches += entries.len();
-            let collapsed = self.shell.collapsed.contains(&self.section_key(section))
+            let collapsed = self
+                .shell
+                .collapsed
+                .contains(&self.section_key(&section.id))
                 && self.shell.query.is_empty();
             rooms = rooms.push(
                 button(
                     row![
                         text(if collapsed { "›" } else { "⌄" }).size(12),
-                        title(section, 11).color(MUTED),
+                        title(&section.name, 11).color(MUTED),
                         widget::space().width(Length::Fill),
                         text(entries.len()).size(10).color(MUTED)
                     ]
@@ -697,7 +706,7 @@ impl App {
                 .width(Length::Fill)
                 .padding([6, 8])
                 .style(quiet_button)
-                .on_press(Message::Section(section.into())),
+                .on_press(Message::Section(section.id.clone())),
             );
             if collapsed {
                 continue;
