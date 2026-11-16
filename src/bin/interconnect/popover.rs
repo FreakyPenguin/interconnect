@@ -14,6 +14,41 @@ pub fn view<'a, Message: Clone + 'a>(
     make_view(base, anchor_id, content, dismiss, true)
 }
 
+/// A context trigger captures only right presses inside the visible widget.
+pub fn context_trigger<'a, Message: Clone + 'a>(
+    base: impl Into<Element<'a, Message>>,
+    open: impl Fn(iced::Point) -> Message + 'a,
+    dismiss: Message,
+) -> Element<'a, Message> {
+    Element::new(Popover {
+        base: base.into(),
+        anchor_id: None,
+        content: None,
+        dismiss,
+        modal: true,
+        position: None,
+        on_context: Some(Box::new(open)),
+    })
+}
+
+/// Host a modal menu at a captured window position.
+pub fn at_position<'a, Message: Clone + 'a>(
+    base: impl Into<Element<'a, Message>>,
+    position: Option<iced::Point>,
+    content: Option<Element<'a, Message>>,
+    dismiss: Message,
+) -> Element<'a, Message> {
+    Element::new(Popover {
+        base: base.into(),
+        anchor_id: None,
+        content,
+        dismiss,
+        modal: true,
+        position,
+        on_context: None,
+    })
+}
+
 /// Suggestions leave keyboard/IME input and outside clicks with the editor.
 pub fn suggestions<'a, Message: Clone + 'a>(
     base: impl Into<Element<'a, Message>>,
@@ -35,6 +70,8 @@ fn make_view<'a, Message: Clone + 'a>(
         content,
         dismiss,
         modal,
+        position: None,
+        on_context: None,
     })
 }
 struct Popover<'a, Message> {
@@ -43,11 +80,19 @@ struct Popover<'a, Message> {
     content: Option<Element<'a, Message>>,
     dismiss: Message,
     modal: bool,
+    position: Option<iced::Point>,
+    on_context: Option<Box<dyn Fn(iced::Point) -> Message + 'a>>,
+}
+#[derive(Default)]
+struct State {
+    translation: Vector,
 }
 impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
     fn tag(&self) -> widget::tree::Tag {
-        struct Identity;
-        widget::tree::Tag::of::<Identity>()
+        widget::tree::Tag::of::<State>()
+    }
+    fn state(&self) -> widget::tree::State {
+        widget::tree::State::new(State::default())
     }
     fn children(&self) -> Vec<Tree> {
         vec![
@@ -98,6 +143,23 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if let Some(open) = &self.on_context
+            && matches!(
+                event,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right))
+            )
+            && let Some(position) = cursor.position()
+            && layout.bounds().contains(position)
+            && viewport.contains(position)
+        {
+            // Scrollables give children a translated cursor. Overlay traversal
+            // supplies the inverse translation into window coordinates.
+            shell.publish(open(
+                position + tree.state.downcast_ref::<State>().translation,
+            ));
+            shell.capture_event();
+            return;
+        }
         self.base.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -153,6 +215,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
+        tree.state.downcast_mut::<State>().translation = translation;
         if let Some(content) = &mut self.content {
             // Host outside hover/tooltip wrappers so their overlays cannot
             // mask the popup. Only measure its inner anchor while open.
@@ -188,6 +251,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
                 anchor: bounds + translation,
                 dismiss: self.dismiss.clone(),
                 modal: self.modal,
+                position: self.position,
             })))
         } else {
             self.base.as_widget_mut().overlay(
@@ -206,6 +270,7 @@ struct Popup<'a, 'b, Message> {
     anchor: Rectangle,
     dismiss: Message,
     modal: bool,
+    position: Option<iced::Point>,
 }
 impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_, Message> {
     fn layout(&mut self, renderer: &Renderer, bounds: Size) -> layout::Node {
@@ -220,17 +285,22 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
             &layout::Limits::new(Size::ZERO, available),
         );
         let size = node.size();
-        let x = (if self.modal {
+        let x = (if let Some(position) = self.position {
+            position.x
+        } else if self.modal {
             self.anchor.x + self.anchor.width - size.width
         } else {
             self.anchor.x
         })
         .clamp(8.0, (bounds.width - size.width - 8.0).max(8.0));
-        let below = self.anchor.y + self.anchor.height + 4.0;
+        let anchor_y = self.position.map_or(self.anchor.y, |point| point.y);
+        let below = self
+            .position
+            .map_or(self.anchor.y + self.anchor.height + 4.0, |point| point.y);
         let y = if below + size.height <= bounds.height - 8.0 {
             below
         } else {
-            self.anchor.y - size.height - 4.0
+            anchor_y - size.height - 4.0
         };
         let y = y.clamp(8.0, (bounds.height - size.height - 8.0).max(8.0));
         layout::Node::with_children(bounds, vec![node.move_to(iced::Point::new(x, y))])
@@ -357,6 +427,121 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
 mod tests {
     use super::*;
     use iced::widget::{button, container, space};
+
+    #[test]
+    fn context_trigger_uses_window_cursor_and_ignores_clipped_content_and_left_clicks() {
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut view = context_trigger(container(space()).width(200).height(200), Some, None);
+        let mut tree = Tree::new(&view);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(400.0, 400.0)),
+        );
+        let viewport = Rectangle::new(iced::Point::new(100.0, 100.0), Size::new(100.0, 100.0));
+        let translation = Vector::new(0.0, -80.0);
+        let _ = view.as_widget_mut().overlay(
+            &mut tree,
+            Layout::new(&node),
+            &renderer,
+            &viewport,
+            translation,
+        );
+        for (button, position, opens) in [
+            (mouse::Button::Right, iced::Point::new(150.0, 150.0), true),
+            (mouse::Button::Right, iced::Point::new(50.0, 50.0), false),
+            (mouse::Button::Left, iced::Point::new(150.0, 150.0), false),
+        ] {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::ButtonPressed(button)),
+                Layout::new(&node),
+                mouse::Cursor::Available(position),
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+                &viewport,
+            );
+            assert_eq!(shell.is_event_captured(), opens);
+            assert!(!matches!(
+                shell.redraw_request(),
+                iced::window::RedrawRequest::At(_)
+            ));
+            assert_eq!(
+                messages,
+                if opens {
+                    vec![Some(position + translation)]
+                } else {
+                    vec![]
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn context_popup_clamps_cursor_position_and_escape_captures_once() {
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = Size::new(640.0, 480.0);
+        for position in [
+            iced::Point::new(100.0, 100.0),
+            iced::Point::new(638.0, 478.0),
+        ] {
+            let mut view = at_position(
+                space(),
+                Some(position),
+                Some(container(space()).width(200).height(150).into()),
+                true,
+            );
+            let mut tree = Tree::new(&view);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, size),
+            );
+            let mut overlay = view
+                .as_widget_mut()
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &Rectangle::with_size(size),
+                    Vector::ZERO,
+                )
+                .unwrap();
+            let overlay = overlay.as_overlay_mut();
+            let node = overlay.layout(&renderer, size);
+            let bounds = node.children()[0].bounds();
+            if position.x == 100.0 {
+                assert_eq!(bounds.position(), position);
+            }
+            assert!(bounds.x >= 8.0 && bounds.y >= 8.0);
+            assert!(bounds.x + bounds.width <= 632.0 && bounds.y + bounds.height <= 472.0);
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            overlay.update(
+                &Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                    modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                    physical_key: iced::keyboard::key::Physical::Code(
+                        iced::keyboard::key::Code::Escape,
+                    ),
+                    location: iced::keyboard::Location::Standard,
+                    modifiers: iced::keyboard::Modifiers::default(),
+                    text: None,
+                    repeat: false,
+                }),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+            );
+            assert!(shell.is_event_captured());
+            assert_eq!(messages, vec![true]);
+        }
+    }
 
     #[test]
     fn suggestions_pass_editor_input_and_outside_clicks_through() {

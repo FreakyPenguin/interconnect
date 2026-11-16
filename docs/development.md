@@ -140,6 +140,9 @@ The desktop modules under `src/bin/interconnect/` separate reusable picker and
 popover views from Matrix operations. `emoji_picker.rs` owns the catalog and
 selection API; reaction and composer adapters decide what a selection does.
 `emoji_completion.rs` shares catalog suggestions while keeping editor focus.
+`context_menu.rs` adapts the shared popup host to right-click actions for room
+entries, messages, and thread summaries. Actions are resolved again on selection
+to reject stale conversations and permission changes; the menu adds no timers.
 `people_picker.rs` provides reusable directory search for invitations and new
 chats. Hosts namespace asynchronous results by account and form/view generation.
 See [architecture](architecture/client.md) for ownership and lifecycle rules.

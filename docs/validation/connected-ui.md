@@ -40,6 +40,7 @@ see [renderer selection](../development.md#renderer-selection).
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
 | Room creation | Ctrl+Shift+N or **#+** opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
 | Drafts and scrolling | Room/thread drafts and reading positions survive navigation and dialogs. Jump-to-newest resumes following incoming messages. |
+| Context menus | Right-click a room entry for **Open room** and **Copy room ID**. Messages in rooms, thread originals, and replies offer **Copy text**, reactions, and permission-gated pin/unpin; room messages also offer **Reply in thread**. Thread summaries offer **Open thread** and **Copy thread ID**. Menus stay inside the window, dismiss on Escape/outside click/focus loss, and preserve drafts and reading positions. An outside click dismisses without activating the item underneath. |
 | Threads | The reply arrow or Alt+T opens a thread. Its original appears once above replies; long originals and replies scroll independently. |
 | Thread activity | Studio → Thread activity has interleaved replies. **New sample reply** updates the latest summary and new count for its thread. |
 | Event layout | Studio → Room activity contains compact activity rows, long topics, and selectable text across message types. |
@@ -458,3 +459,26 @@ Native acceptance remains required:
 - Check Linux FileChooser portal and `xdg-open`, and macOS save dialog and `open`.
   Opened temporary files remain available until client exit and are then removed;
   saved files remain. Confirm settled UI has no additional recurring wakeups.
+
+## Context menu validation
+
+Automated widget tests cover right-click capture, clipped targets, cursor-based
+placement at window edges, Escape/outside-click capture, and the absence of
+scheduled redraws. Demo state tests cover opening without navigation, room/thread
+actions, permission changes, stale and dismissed choices, modal exclusion, and
+draft/scroll preservation. Existing UI tests cover the reused SDK action handlers.
+
+A Linux Wayland demo smoke check on 2026-11-16 verified room-list menus,
+message menus positioned at the cursor in scrolled history, outside-click
+dismissal, opening a thread from a message menu, and thread-reply menus. This
+check used the GPU renderer at 1096×681; it did not validate native clipboard
+contents, every action, minimum-size rendering, or connected accounts.
+
+For desktop acceptance, use `--demo`: right-click both an unselected room and a
+message, copy to a separate editor, open a reaction picker, and pin/unpin. Open a
+thread and repeat on the original and a reply. In **Thread activity**, right-click
+a summary and open it. Check Escape, outside clicks, focus loss, and menus near
+all window edges at 640×480. Confirm scrolling remains blocked while the menu is
+open and resumes at the same position after dismissal. File drops must not stage
+an attachment through an open menu. Connected and native macOS checks, including
+secondary click and clipboard integration, require separate desktop acceptance.

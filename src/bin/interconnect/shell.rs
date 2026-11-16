@@ -751,7 +751,10 @@ impl App {
                 if !self.closing && !self.stopped {
                     control = control.on_press(Message::Room(room.id.clone()));
                 }
-                rooms = rooms.push(control);
+                rooms = rooms.push(super::context_menu::trigger(
+                    control,
+                    super::context_menu::Target::Room(room.id.clone()),
+                ));
             }
         }
         if matches == 0 {

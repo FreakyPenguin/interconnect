@@ -10,10 +10,6 @@
 - mark unread
 - Custom sections: create, rename, reorder, delete, and move rooms (Element-compatible display implemented)
 
-## Infrastructure
-
-- Context menu
-
 ## Other ideas
 
 - Bookmarks (MSC4482)

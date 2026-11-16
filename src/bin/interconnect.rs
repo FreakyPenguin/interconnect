@@ -3,6 +3,8 @@
 mod attachments;
 #[path = "interconnect/composer_picker.rs"]
 mod composer_picker;
+#[path = "interconnect/context_menu.rs"]
+mod context_menu;
 #[path = "interconnect/create_room.rs"]
 mod create_room;
 #[path = "interconnect/demo.rs"]
@@ -98,6 +100,7 @@ struct Draft {
 const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
+    context_menu: Option<context_menu::State>,
     settings: settings::State,
     login: login::State,
     verification: verification::State,
@@ -153,6 +156,7 @@ struct App {
 }
 #[derive(Clone, Debug)]
 enum Message {
+    ContextMenu(context_menu::Event),
     OpenMessageLink(String),
     LinkOpened,
     QuickRoom(room_picker::Event),
@@ -258,6 +262,7 @@ impl App {
             pending_ops: 0,
             composing: false,
             shell: shell::State::default(),
+            context_menu: None,
             demo: None,
             preferences_ready: false,
             pending_navigation: None,
@@ -310,6 +315,45 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if let Message::ContextMenu(event) = message {
+            return self.context_menu_event(event);
+        }
+        if self.context_menu.is_some() && matches!(message, Message::Escape) {
+            self.context_menu = None;
+            return Task::none();
+        }
+        if matches!(
+            message,
+            Message::Room(_)
+                | Message::Thread(_)
+                | Message::CloseThread
+                | Message::Space(_)
+                | Message::Section(_)
+                | Message::Search(_)
+                | Message::SearchFocus
+                | Message::AdjacentRoom(_)
+                | Message::OpenLastThread
+                | Message::OpenThreadLatest(_)
+                | Message::ToggleNavigation
+                | Message::WindowFocused(false)
+                | Message::WindowResized(_)
+                | Message::Close
+                | Message::Exit
+                | Message::Stopped(_)
+                | Message::QuickRoom(_)
+                | Message::NewChat(_)
+                | Message::CreateRoom(_)
+                | Message::Settings(_)
+                | Message::Verification(_)
+                | Message::Image(_)
+                | Message::Reaction(_)
+                | Message::ComposerEmoji(_)
+                | Message::Invite(_)
+                | Message::Topic(_)
+                | Message::Members(_)
+        ) {
+            self.context_menu = None;
+        }
         if let Message::QuickRoom(event) = message {
             let task = self.quick_room_event(event);
             self.publish_notification_context();
@@ -1158,6 +1202,7 @@ impl App {
         {
             self.stop_typing();
         }
+        self.validate_context_menu();
         self.validate_download();
         self.validate_invite();
         self.validate_pin_error();
@@ -1492,6 +1537,7 @@ impl App {
                     _ => None,
                 })
             } else if (self.demo.is_none() && self.model.authentication.is_some())
+                || self.context_menu.is_some()
                 || self.composing
                 || self.reaction_picker.is_some()
                 || self.composer_picker.is_some()
@@ -1576,7 +1622,7 @@ impl App {
         if self.verification.open {
             layers = layers.push(self.verification_view());
         }
-        layers.into()
+        self.context_menu_view(layers)
     }
     fn refresh_demo(&mut self) {
         if let Some(demo) = &mut self.demo {
@@ -1833,16 +1879,21 @@ impl App {
         };
         let original = if let Some(message) = self.thread_original() {
             let generation = self.selection.thread.as_ref().expect("thread original").0;
-            shell::message_actions(
-                self.pin_feedback(original, message, true, generation),
-                None,
-                self.reaction_action(message, true, generation),
-                self.pin_action(message, true, generation),
-                self.reaction_popup(
-                    true,
-                    generation,
-                    message.event_id.as_deref().unwrap_or_default(),
+            self.message_context(
+                shell::message_actions(
+                    self.pin_feedback(original, message, true, generation),
+                    None,
+                    self.reaction_action(message, true, generation),
+                    self.pin_action(message, true, generation),
+                    self.reaction_popup(
+                        true,
+                        generation,
+                        message.event_id.as_deref().unwrap_or_default(),
+                    ),
                 ),
+                message,
+                true,
+                generation,
             )
         } else {
             original
@@ -2050,8 +2101,16 @@ impl App {
                 replies,
             } = projected
             {
-                message_row =
-                    message_row.push(self.thread_activity_view(root, latest, original, replies));
+                let summary = self.thread_activity_view(root, latest, original, replies);
+                let summary = context_menu::trigger(
+                    summary,
+                    context_menu::Target::Thread {
+                        room: selected_id.clone(),
+                        generation: *generation,
+                        root: root.into(),
+                    },
+                );
+                message_row = message_row.push(summary);
                 messages = messages.push(container(message_row).id(timeline::row_id(index)));
                 continue;
             }
@@ -2217,6 +2276,11 @@ impl App {
                 )
             } else {
                 body.into()
+            };
+            let body = if !activity {
+                self.message_context(body, message, thread, *generation)
+            } else {
+                body
             };
             message_row = message_row.push(body);
             messages = messages.push(container(message_row).id(timeline::row_id(index)));

@@ -57,6 +57,7 @@ impl App {
             && !self.verification.open
             && self.image_view.is_none()
             && self.reaction_picker.is_none()
+            && self.context_menu.is_none()
             && self.composer_picker.is_none()
             && self.draft_key(thread).as_ref() == Some(&target.key)
             && selection
