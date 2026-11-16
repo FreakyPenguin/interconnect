@@ -15,6 +15,71 @@ const RAIL: Color = Color::from_rgb8(237, 240, 244);
 const LINE: Color = Color::from_rgb8(228, 232, 237);
 const SELECTED: Color = Color::from_rgb8(226, 234, 247);
 
+/// Static vector icons inherit the button's text color, including selection.
+struct RailIcon {
+    direct: bool,
+}
+impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RailIcon {
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size::new(Length::Fixed(24.0), Length::Fixed(24.0))
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        iced::advanced::layout::Node::new(limits.resolve(24, 24, iced::Size::ZERO))
+    }
+
+    fn draw(
+        &self,
+        _tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _viewport: &iced::Rectangle,
+    ) {
+        use iced::advanced::Renderer as _;
+        let origin = layout.position();
+        let mut outline = |x, y, width, height, radius: f32| {
+            renderer.fill_quad(
+                iced::advanced::renderer::Quad {
+                    bounds: iced::Rectangle::new(
+                        origin + iced::Vector::new(x, y),
+                        iced::Size::new(width, height),
+                    ),
+                    border: Border {
+                        color: style.text_color,
+                        width: 1.6,
+                        radius: radius.into(),
+                    },
+                    ..Default::default()
+                },
+                Color::TRANSPARENT,
+            );
+        };
+        if self.direct {
+            // Two people with a shared speech bubble.
+            outline(2.0, 8.0, 6.0, 6.0, 3.0);
+            outline(16.0, 8.0, 6.0, 6.0, 3.0);
+            outline(0.5, 16.0, 9.0, 6.0, 3.0);
+            outline(14.5, 16.0, 9.0, 6.0, 3.0);
+            outline(8.0, 1.0, 8.0, 5.0, 2.0);
+        } else {
+            // A grid of rooms represents the complete room collection.
+            for x in [2.0, 14.0] {
+                for y in [2.0, 14.0] {
+                    outline(x, y, 8.0, 8.0, 2.0);
+                }
+            }
+        }
+    }
+}
+
 pub struct State {
     pub space: Scope,
     pub collapsed: HashSet<String>,
@@ -502,7 +567,11 @@ impl App {
         let mut rail = column![].spacing(10).align_x(Alignment::Center);
         for (scope, initial, name, image) in entries {
             let selected = self.shell.space == scope;
-            let content: Element<'_, Message> = if let Some(handle) = image {
+            let content: Element<'_, Message> = if matches!(scope, Scope::All | Scope::Direct) {
+                Element::new(RailIcon {
+                    direct: scope == Scope::Direct,
+                })
+            } else if let Some(handle) = image {
                 widget::image(handle.clone())
                     .width(32)
                     .height(32)

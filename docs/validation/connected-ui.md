@@ -98,6 +98,9 @@ sections, unread indicators, and the last selected space/room use the navigation
 model. Selection generations prevent a late snapshot from a previous room/thread
 appearing in the current pane.
 
+The spaces bar uses a room-grid icon for All rooms and two people with a shared
+speech bubble for Direct messages. These static vector icons inherit the button
+color; their full names remain available in tooltips.
 The spaces bar displays each space's configured avatar through the shared static
 thumbnail cache. Missing, loading, or failed icons retain the initial fallback;
 the button size, selection highlight, and tooltip stay the same. Icon changes and
