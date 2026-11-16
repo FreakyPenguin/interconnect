@@ -440,18 +440,20 @@ impl Composer {
     }
 
     pub async fn send(self, body: String) -> Result<(), String> {
-        if body.trim().is_empty() {
-            return Err("Message is empty".into());
-        }
-        Box::pin(
-            self.0.send(
-                matrix_sdk::ruma::events::room::message::RoomMessageEventContent::text_plain(body)
-                    .into(),
-            ),
-        )
-        .await
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+        self.send_as(body, crate::composition::Format::Markdown)
+            .await
+    }
+
+    pub async fn send_as(
+        self,
+        body: String,
+        format: crate::composition::Format,
+    ) -> Result<(), String> {
+        let prepared = crate::composition::prepare(body, format).await?;
+        Box::pin(self.0.send(prepared.message_content().into()))
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -3055,7 +3057,7 @@ mod tests {
                     .clone()
                     .unwrap();
                 room_composer
-                    .send("room send fixture".into())
+                    .send("room **send** fixture".into())
                     .await
                     .unwrap();
                 let failed = tokio::time::timeout(
@@ -3064,7 +3066,7 @@ mod tests {
                         s.room.as_ref().is_some_and(|p| {
                             p.rows
                                 .iter()
-                                .any(|r| r.body == "room send fixture" && r.retry.is_some())
+                                .any(|r| r.body == "room **send** fixture" && r.retry.is_some())
                         })
                     }),
                 )
@@ -3084,9 +3086,9 @@ mod tests {
                     Duration::from_secs(10),
                     snapshots.wait_for(|s| {
                         s.room.as_ref().is_some_and(|p| {
-                            p.rows
-                                .iter()
-                                .any(|r| r.body == "room send fixture" && r.send_state == "Sent")
+                            p.rows.iter().any(|r| {
+                                r.body == "room **send** fixture" && r.send_state == "Sent"
+                            })
                         })
                     }),
                 )
@@ -3096,16 +3098,16 @@ mod tests {
                 let thread_composer = thread_pane.composer.clone().unwrap();
                 let decrypt_room = thread_composer.0.room().clone();
                 thread_composer
-                    .send("thread send fixture".into())
+                    .send("thread **send** fixture".into())
                     .await
                     .unwrap();
                 tokio::time::timeout(
                     Duration::from_secs(10),
                     snapshots.wait_for(|s| {
                         s.thread.as_ref().is_some_and(|p| {
-                            p.rows
-                                .iter()
-                                .any(|r| r.body == "thread send fixture" && r.send_state == "Sent")
+                            p.rows.iter().any(|r| {
+                                r.body == "thread **send** fixture" && r.send_state == "Sent"
+                            })
                         })
                     }),
                 )
@@ -3142,10 +3144,17 @@ mod tests {
                     assert_eq!(
                         content["body"],
                         if threaded {
-                            "thread send fixture"
+                            "thread **send** fixture"
                         } else {
-                            "room send fixture"
+                            "room **send** fixture"
                         }
+                    );
+                    assert_eq!(content["format"], "org.matrix.custom.html");
+                    assert!(
+                        content["formatted_body"]
+                            .as_str()
+                            .unwrap()
+                            .contains("<strong>send</strong>")
                     );
                     if threaded {
                         assert_eq!(content["m.relates_to"]["rel_type"], "m.thread");

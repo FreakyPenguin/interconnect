@@ -32,6 +32,18 @@ pub fn named_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, 
         document: None,
     })
 }
+pub fn preview_view<'a>(
+    body: &'a str,
+    document: Option<&'a Arc<Document>>,
+) -> Element<'a, Message> {
+    Element::new(Selectable {
+        id: "composer-preview",
+        body: Cow::Borrowed(body),
+        name: "",
+        appearance: Appearance::Message,
+        document,
+    })
+}
 pub fn message_view(message: &MessageRow) -> Element<'_, Message> {
     Element::new(Selectable {
         id: &message.key,

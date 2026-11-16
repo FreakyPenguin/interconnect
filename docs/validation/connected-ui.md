@@ -181,3 +181,36 @@ message-emission tests; the desktop check did not launch external handlers.
 Real-account formatting, hardware-renderer appearance, native macOS behavior,
 and measured idle resource use remain separate acceptance checks. Idle coverage
 here verifies that settled widgets request no further redraw deadlines.
+
+## Markdown composer
+
+In demo mode, type `**bold**`, `_italic_`, `~~old~~`, a Markdown link, or a fenced
+code block into either composer. Choose **Preview** to inspect formatting, then
+send a sample locally. The source stays editable; changing it hides the old
+preview. Preview appears only on request and has a bounded scroll area.
+
+- Switch **Markdown** to **Plain text** and confirm syntax sends literally.
+  Switching modes preserves source and selection; room/thread choices and drafts
+  remain independent across navigation and space filtering.
+- Check Ctrl+Enter, the configured Enter behavior, newlines, IME suppression,
+  emoji insertion/completion, and the minimum 640×480 window with preview open.
+- Simulate a format/queue error: source remains editable, and another draft is
+  untouched. A stale preview result after edits, mode/account changes or closing
+  the preview must not reopen it.
+- Raw HTML is literal; unsafe Markdown links are inert and image syntax shows
+  alternative text. Captions are explicitly plain text. No preview fetches links
+  or images.
+
+Automated parser tests compare preview documents and Matrix payloads. Mock
+protocol checks cover formatted local echoes, encrypted/unencrypted room and
+thread sends, and retries of the original transaction. No live-account test
+messages are needed for these checks.
+
+November 16, 2026: formatting checks, workspace Clippy with warnings denied,
+the locked desktop build, and workspace tests passed (104 library and 180
+desktop tests; two opt-in library tests ignored). Isolated Linux Wayland/tiny-skia
+checks at 1100×800 and 640×480 covered source entry, on-demand styled previews,
+local Markdown sends, literal-mode switching and local sends. The connected
+client was not restarted and no test messages were sent to Matrix. Native macOS,
+hardware-renderer appearance, live-account acceptance and measured idle resource
+use remain separate checks.

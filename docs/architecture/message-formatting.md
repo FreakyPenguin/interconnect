@@ -47,6 +47,39 @@ fonts). Syntax highlighting can add cached presentation ranges over the source,
 split spans at token boundaries, and supply styles while keeping canonical text
 and selection offsets unchanged. No highlighting engine is coupled to the model.
 
-Tables, inline-image loading, syntax highlighting, rich composing, and formatted
-media captions remain follow-up work. Room-list, pin and notification excerpts
+Tables, inline-image loading, syntax highlighting, visual rich-text editing, and
+formatted media captions remain follow-up work. Room-list, pin and notification excerpts
 continue to use the plain SDK fallback.
+
+## Markdown composition
+
+Room and thread drafts default to Markdown. The composer mode button switches
+that draft to literal **Plain text** without rewriting its source or selection.
+The choice is kept in memory per conversation, like the draft itself. Attachment
+captions remain plain text.
+
+Composition uses CommonMark with strikethrough enabled: emphasis, strong text,
+headings, quotes, lists, inline/fenced code and links. Soft line breaks become
+explicit breaks for chat. Raw HTML is escaped as literal text; Markdown images
+produce their alternative text. Tables, task-list extensions, spoiler authoring,
+inline-image loading and code syntax highlighting remain follow-up work.
+
+The explicit **Preview** button snapshots the source and runs the same conversion
+as Send. It uses the existing document renderer in a bounded panel above the
+source editor. Editing hides/invalidates the preview; typing never starts a
+parser or preview timer. Closing/replacing a preview aborts its task, and request,
+account, format and source checks reject obsolete results. Navigating may retain
+a completed preview with its original draft, without navigating on completion.
+
+Conversion has a two-worker semaphore, 64 KiB input/output bounds, 2048 parser
+events and 24 nesting levels. Ordinary text takes a conservative literal fast
+path. Generated HTML is checked against the renderer's document limits, and
+only allowlisted link destinations are emitted. Formatting errors retain the
+source draft and permit switching to Plain text.
+
+The original Markdown source is the Matrix `body` fallback; generated HTML is
+`formatted_body` with `org.matrix.custom.html`. Preview and send share this
+payload builder. The SDK owns queue admission, local echoes, thread relations,
+encryption and retries. Drafts clear only on successful admission. Demo conversion
+uses the same worker and renderer, entirely in memory with no account/network
+access. Editing previously sent messages is outside this composition workflow.

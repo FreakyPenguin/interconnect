@@ -23,6 +23,8 @@ mod images;
 mod invite;
 #[path = "interconnect/login.rs"]
 mod login;
+#[path = "interconnect/markdown_composer.rs"]
+mod markdown_composer;
 #[path = "interconnect/members.rs"]
 mod members;
 #[path = "interconnect/new_chat.rs"]
@@ -80,6 +82,7 @@ struct DraftKey {
 }
 #[derive(Default)]
 struct Draft {
+    markdown: markdown_composer::State,
     content: text_editor::Content,
     attachment: Option<interconnect::attachment::Attachment>,
     pending: bool,
@@ -210,6 +213,7 @@ enum Message {
     },
     Close,
     Exit,
+    Markdown(markdown_composer::Event),
     Edit(DraftKey, text_editor::Action),
     Send(DraftKey),
     Sent(DraftKey, Option<String>, Result<(), String>),
@@ -429,6 +433,9 @@ impl App {
                             | invite::Event::Cancel
                     )
                     | Message::Edit(..)
+                    | Message::Markdown(
+                        markdown_composer::Event::Mode(_) | markdown_composer::Event::Preview(_)
+                    )
                     | Message::Send(_)
                     | Message::Retry(_)
                     | Message::JumpToNewest { .. }
@@ -764,6 +771,7 @@ impl App {
                 }
             }
 
+            Message::Markdown(event) => action_task = self.markdown_event(event),
             Message::Composing(active) => {
                 self.composing = active;
                 if !active && let Some(key) = self.emoji_completion.editing.clone() {
@@ -780,6 +788,7 @@ impl App {
                     let refresh_completion = !matches!(action, text_editor::Action::Scroll { .. });
                     draft.content.perform(action);
                     if edit {
+                        draft.markdown.clear_preview();
                         self.typing_edited(&key);
                     }
                     if refresh_completion {
@@ -804,12 +813,35 @@ impl App {
                         let body = draft.content.text();
                         if !draft.pending && (!body.trim().is_empty() || draft.attachment.is_some())
                         {
+                            if draft.attachment.is_none()
+                                && interconnect::composition::needs_conversion(
+                                    &body,
+                                    draft.markdown.format,
+                                )
+                            {
+                                let format = draft.markdown.format;
+                                let account = self.account_id.clone();
+                                draft.pending = true;
+                                draft.error = None;
+                                self.pending_ops += 1;
+                                return Task::perform(
+                                    interconnect::composition::prepare(body, format),
+                                    move |result| {
+                                        Message::Markdown(markdown_composer::Event::DemoSent {
+                                            key: key.clone(),
+                                            account: account.clone(),
+                                            result,
+                                        })
+                                    },
+                                );
+                            }
                             self.demo.as_mut().unwrap().send_attachment_or_text(
                                 &key,
                                 body,
                                 draft.attachment.take(),
                             );
                             draft.content = text_editor::Content::new();
+                            draft.markdown.clear_preview();
                             draft.error = None;
                             self.refresh_demo();
                         }
@@ -822,6 +854,7 @@ impl App {
                     && (!draft.content.text().trim().is_empty() || draft.attachment.is_some())
                 {
                     let body = draft.content.text();
+                    let format = draft.markdown.format;
                     let attachment = draft.attachment.clone();
                     let account = self.account_id.clone();
                     draft.pending = true;
@@ -832,7 +865,7 @@ impl App {
                             if let Some(attachment) = attachment {
                                 composer.send_attachment(attachment, body).await
                             } else {
-                                composer.send(body).await
+                                composer.send_as(body, format).await
                             }
                         },
                         move |result| Message::Sent(key.clone(), account.clone(), result),
@@ -849,6 +882,7 @@ impl App {
                         Ok(()) => {
                             draft.attachment = None;
                             draft.content = text_editor::Content::new();
+                            draft.markdown.clear_preview();
                             draft.error = None;
                         }
                         Err(error) => {
@@ -2168,6 +2202,7 @@ impl App {
                 iced::widget::tooltip::Position::Top,
             );
             let actions = row![
+                self.markdown_controls(&key, *generation),
                 iced::widget::space().width(Length::Fill),
                 self.attachment_button(&key, *generation),
                 self.composer_emoji_button(&key, *generation),
@@ -2204,6 +2239,9 @@ impl App {
                 .height(18)
                 .padding([0, 24]),
             );
+            if let Some(preview) = self.markdown_preview(&key) {
+                content = content.push(container(preview).padding([0, 24]));
+            }
             let composer = iced::widget::stack![
                 editor,
                 container(actions)

@@ -496,6 +496,24 @@ impl Demo {
         self.send(key, label);
         // Demo sends stay entirely in memory; never upload or read file contents.
     }
+    pub fn send_prepared(&mut self, key: &DraftKey, prepared: interconnect::composition::Prepared) {
+        self.send(key, prepared.source);
+        for key in [
+            key.clone(),
+            DraftKey {
+                room: key.room.clone(),
+                root: None,
+            },
+        ] {
+            if let Some(row) = self
+                .conversations
+                .get_mut(&key)
+                .and_then(|rows| rows.last_mut())
+            {
+                row.formatted = prepared.document.clone();
+            }
+        }
+    }
     pub fn send(&mut self, key: &DraftKey, body: String) {
         if let Some(root) = &key.root
             && let Some(row) = self

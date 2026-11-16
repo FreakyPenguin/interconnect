@@ -8,7 +8,7 @@ Secret Service.
   composition, editing/redaction actions, and notification click navigation
   remain incomplete.
 - Formatted messages support common Matrix HTML. Inline images, code syntax
-  highlighting, full tables, formatted media captions, and rich composition
+  highlighting, full tables, formatted media captions, and visual rich-text editing
   remain incomplete. Excerpts continue to use the plain fallback.
 - Keyboard shortcuts cover common workflows, but full button traversal and focus
   restoration are unfinished.
