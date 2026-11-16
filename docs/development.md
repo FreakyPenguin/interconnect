@@ -85,32 +85,34 @@ on Linux.
 
 ## Debian package automation
 
-[Debian packages](../.github/workflows/debian.yml) builds separate amd64 `.deb`
-files in the official `debian:stable-slim` and `debian:testing-slim` containers.
-The moving suite names follow Debian's current stable/testing distributions;
-both packages contain bleeding-edge application code, not separate application
-release channels. Builds run on pushes, pull requests, manual dispatch, and
+[Debian packages](../.github/workflows/debian.yml) builds one amd64 `.deb`
+in the official `debian:stable-slim` container, then checks installation of that
+same package on both `debian:stable-slim` and `debian:testing-slim`.
+Building on stable keeps the system-library baseline suitable for stable;
+the testing check detects incompatible library or package transitions.
+The package contains bleeding-edge application code. Builds run on pushes,
+pull requests, manual dispatch, and
 daily at 05:13 UTC on the default branch.
 
 CI compiles with `cargo build --locked --release --bin interconnect`, then runs
-`scripts/package-debian.sh SUITE VERSION BINARY`. The script installs the client
+`scripts/package-debian.sh stable VERSION BINARY`. The script installs the client
 under `/usr/bin`, adds an application-menu entry, derives linked-library
 dependencies with `dpkg-shlibdeps`, and declares dynamically loaded graphics
 libraries and fonts explicitly. Portal and keyring services are recommended;
 native desktop integration still needs a running session and suitable providers.
 Version strings include the Cargo version, build timestamp, run number, commit,
-and Debian suite to distinguish builds. A separate job installs each package
-in a clean container for its suite, validates the desktop entry, and checks
+and a `+stable` build-suite suffix. Separate install jobs use the same artifact
+in clean containers for both suites, validate the desktop entry, and check
 linked libraries without launching the client or opening an account.
 
 To download, open **Actions → Debian packages**, choose a successful run, and
-select **Interconnect-debian-stable-amd64-&lt;commit&gt;** or
-**Interconnect-debian-testing-amd64-&lt;commit&gt;** under **Artifacts**. As with the
+select **Interconnect-debian-stable-amd64-&lt;commit&gt;** under **Artifacts** for
+either stable or testing. As with the
 macOS builds, downloads require a GitHub login and repository read access and
-expire after 14 days. Choose the package matching your Debian distribution.
+expire after 14 days.
 Extract the downloaded artifact ZIP, then install the `.deb` file with APT so
 dependencies are resolved. CI also uses this named ZIP artifact to transfer the
-package to its matching install job; raw uploads ignore the configured artifact
+package to both install jobs; raw uploads ignore the configured artifact
 name.
 
 ```sh
@@ -121,8 +123,9 @@ These are downloadable packages, not an APT repository with automatic updates.
 Package creation and clean-container installation were checked locally using
 the existing debug binary. The hosted testing install log from November 15,
 2026 failed at artifact lookup before installation. The named ZIP upload fix
-still needs a hosted run to confirm artifact transfer and installation for both
-suites. Desktop behavior remains manual validation.
+and the single stable-build workflow still need a hosted run to confirm artifact
+transfer and installation of the same package on both suites. Desktop behavior
+remains manual validation.
 
 ## Design preview
 

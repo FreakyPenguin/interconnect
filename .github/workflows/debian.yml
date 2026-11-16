@@ -16,14 +16,10 @@ concurrency:
 
 jobs:
   build:
-    name: Build Debian ${{ matrix.suite }} (amd64)
+    name: Build Debian stable (amd64)
     runs-on: ubuntu-24.04
-    container: debian:${{ matrix.suite }}-slim
+    container: debian:stable-slim
     timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      matrix:
-        suite: [stable, testing]
     env:
       DEBIAN_FRONTEND: noninteractive
       CARGO_HOME: /opt/cargo
@@ -67,28 +63,26 @@ jobs:
             /opt/cargo/registry/index
             /opt/cargo/registry/cache
             /opt/cargo/git/db
-          key: debian-${{ matrix.suite }}-cargo-downloads-${{ hashFiles('Cargo.lock') }}
+          key: debian-stable-cargo-downloads-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
-            debian-${{ matrix.suite }}-cargo-downloads-
+            debian-stable-cargo-downloads-
 
       - name: Build release client
         run: cargo build --locked --release --bin interconnect
 
       - name: Package client
-        env:
-          DEBIAN_SUITE: ${{ matrix.suite }}
         run: |
           version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
           version="${version}~dev$(date -u +%Y%m%d%H%M%S).${GITHUB_RUN_NUMBER}.g${GITHUB_SHA:0:12}"
           desktop-file-validate packaging/debian/interconnect.desktop
-          bash scripts/package-debian.sh "$DEBIAN_SUITE" "$version" target/release/interconnect
+          bash scripts/package-debian.sh stable "$version" target/release/interconnect
           dpkg-deb --info target/debian/*.deb
           dpkg-deb --contents target/debian/*.deb
 
       - name: Upload bleeding-edge package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: Interconnect-debian-${{ matrix.suite }}-amd64-${{ github.sha }}
+          name: Interconnect-debian-stable-amd64-${{ github.sha }}
           path: target/debian/*.deb
           # Raw uploads ignore `name`; install jobs need this stable artifact name.
           archive: true
@@ -117,7 +111,7 @@ jobs:
       - name: Download package
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: Interconnect-debian-${{ matrix.suite }}-amd64-${{ github.sha }}
+          name: Interconnect-debian-stable-amd64-${{ github.sha }}
           path: downloads
 
       - name: Install in a clean runtime container
