@@ -23,6 +23,8 @@ mod emoji_picker;
 mod file_drop;
 #[path = "interconnect/formatted.rs"]
 mod formatted;
+#[path = "interconnect/global_search.rs"]
+mod global_search;
 #[path = "interconnect/images.rs"]
 mod images;
 #[path = "interconnect/inline_image.rs"]
@@ -110,6 +112,7 @@ struct App {
     manual_unread_generation: Option<u64>,
     section_reorder: section_reorder::State,
     bookmarks: bookmarks::State,
+    global_search: global_search::State,
     settings: settings::State,
     login: login::State,
     verification: verification::State,
@@ -175,6 +178,7 @@ enum Message {
     OpenMessageLink(String),
     LinkOpened,
     Bookmark(bookmarks::Event),
+    GlobalSearch(global_search::Event),
     QuickRoom(room_picker::Event),
     NewChat(new_chat::Event),
     CreateRoom(create_room::Event),
@@ -263,6 +267,7 @@ impl App {
     fn new() -> Self {
         let mut app = Self {
             bookmarks: bookmarks::State::default(),
+            global_search: global_search::State::default(),
             settings: settings::State::default(),
             login: login::State::default(),
             verification: verification::State::default(),
@@ -368,6 +373,7 @@ impl App {
                 | Message::Space(_)
                 | Message::Section(_)
                 | Message::Search(_)
+                | Message::GlobalSearch(global_search::Event::Open)
                 | Message::RoomSearch(_)
                 | Message::SearchFocus
                 | Message::AdjacentRoom(_)
@@ -426,6 +432,7 @@ impl App {
                 | Message::Exit
                 | Message::Send(_)
                 | Message::WindowFocused(false)
+                | Message::GlobalSearch(global_search::Event::Open)
                 | Message::RoomSearch(_)
                 | Message::SearchFocus
                 | Message::Focus(_)
@@ -469,6 +476,7 @@ impl App {
                 | Message::AdjacentRoom(_)
                 | Message::OpenLastThread
                 | Message::OpenThreadLatest(_)
+                | Message::GlobalSearch(global_search::Event::Open)
                 | Message::RoomSearch(_)
                 | Message::SearchFocus
                 | Message::Focus(_)
@@ -517,6 +525,14 @@ impl App {
                 Message::Space(_)
                     | Message::Section(_)
                     | Message::Search(_)
+                    | Message::GlobalSearch(
+                        global_search::Event::Open
+                            | global_search::Event::Edit(_)
+                            | global_search::Event::Submit
+                            | global_search::Event::More
+                            | global_search::Event::Conversation(..)
+                            | global_search::Event::Close
+                    )
                     | Message::RoomSearch(_)
                     | Message::SearchFocus
                     | Message::SearchOpen
@@ -569,6 +585,9 @@ impl App {
         if matches!(message, Message::Escape) && self.topic_editor.is_some() {
             return self.update(Message::Topic(topic::Event::Cancel));
         }
+        if matches!(message, Message::Escape) && self.global_search.open {
+            return self.update(Message::GlobalSearch(global_search::Event::Close));
+        }
         if matches!(message, Message::Escape) && self.bookmarks.open {
             return self.update(Message::Bookmark(bookmarks::Event::Close));
         }
@@ -579,7 +598,7 @@ impl App {
             self.pending_navigation = None;
         }
 
-        if self.bookmarks.open
+        if (self.bookmarks.open || self.global_search.open)
             && matches!(
                 message,
                 Message::Edit(..)
@@ -599,6 +618,7 @@ impl App {
         let navigation = matches!(
             &message,
             Message::Bookmark(bookmarks::Event::Conversation(_))
+                | Message::GlobalSearch(global_search::Event::Conversation(..))
                 | Message::Room(_)
                 | Message::Thread(_)
                 | Message::CloseThread
@@ -612,7 +632,11 @@ impl App {
         let closing_image = matches!(&message, Message::Image(images::Event::Close));
         let refresh_media = matches!(
             &message,
-            Message::Members(_) | Message::Invite(_) | Message::NewChat(_) | Message::Bookmark(_)
+            Message::Members(_)
+                | Message::Invite(_)
+                | Message::NewChat(_)
+                | Message::Bookmark(_)
+                | Message::GlobalSearch(_)
         ) || navigation
             || matches!(
                 &message,
@@ -655,6 +679,7 @@ impl App {
 
             Message::CreateRoom(event) => action_task = self.create_room_event(event),
             Message::Bookmark(event) => action_task = self.bookmark_event(event),
+            Message::GlobalSearch(event) => action_task = self.global_search_event(event),
             Message::NewChat(event) => action_task = self.new_chat_event(event),
             Message::Pin(event) => action_task = self.pin_event(event),
             Message::Topic(event) => action_task = self.topic_event(event),
@@ -1151,6 +1176,7 @@ impl App {
                     self.pending_created_space = None;
                     self.pending_created_room = None;
                     self.bookmarks.reset();
+                    self.global_search.reset();
                 }
                 if let Some(room) = &self.pending_created_room {
                     if state.rooms.iter().any(|r| r.id == room.id) {
@@ -1231,6 +1257,7 @@ impl App {
             Message::Close if self.demo.is_some() => return iced::exit(),
             Message::Close => {
                 self.bookmarks.close();
+                self.global_search.close();
                 if self.stopped && self.pending_ops == 0 {
                     return iced::exit();
                 }
@@ -1286,6 +1313,9 @@ impl App {
         }
         if navigation {
             self.refresh_demo();
+        }
+        if observe_threads {
+            self.remember_search_messages();
         }
         if observe_threads
             && let Some((generation, room)) = &self.selection.room
@@ -1469,7 +1499,7 @@ impl App {
             }
         }
         let mut previews = 0;
-        if self.bookmarks.open {
+        if self.bookmarks.open || self.global_search.open {
             return;
         }
         for (index, (selected, snapshot)) in [
@@ -1542,6 +1572,7 @@ impl App {
     }
     fn select_room(&mut self, id: String) {
         self.bookmarks.close();
+        self.global_search.close();
         self.room_search = room_search::State::default();
         self.visible_rows = Default::default();
         self.generation += 1;
@@ -1556,6 +1587,7 @@ impl App {
     }
     fn select_thread(&mut self, id: String) {
         self.bookmarks.close();
+        self.global_search.close();
         self.visible_rows[1].clear();
         self.generation += 1;
         self.selection.members = None;
@@ -1572,7 +1604,7 @@ impl App {
             .unwrap_or(0.0)
     }
     fn restore_scroll(&mut self) -> Task<Message> {
-        if self.bookmarks.open {
+        if self.bookmarks.open || self.global_search.open {
             return Task::none();
         }
         let mut tasks = Vec::new();
@@ -2732,6 +2764,11 @@ fn shell_shortcut(
         Key::Named(Named::ArrowUp) if modifiers.alt() => Some(Message::AdjacentRoom(true)),
         Key::Named(Named::ArrowDown) if modifiers.alt() => Some(Message::AdjacentRoom(false)),
         Key::Character("t") if modifiers.alt() => Some(Message::OpenLastThread),
+        Key::Character("f" | "F")
+            if (modifiers.command() || modifiers.control()) && modifiers.shift() =>
+        {
+            Some(Message::GlobalSearch(global_search::Event::Open))
+        }
         Key::Character("f" | "F") if modifiers.command() || modifiers.control() => {
             Some(Message::RoomSearch(room_search::Event::Open))
         }

@@ -6,7 +6,7 @@ use iced::{
 };
 
 /// A small vector magnifier, independent of platform glyph coverage.
-struct SearchIcon;
+pub(super) struct SearchIcon;
 impl iced::advanced::Widget<Message, iced::Theme, iced::Renderer> for SearchIcon {
     fn size(&self) -> iced::Size<Length> {
         iced::Size::new(Length::Fixed(20.0), Length::Fixed(20.0))
@@ -146,7 +146,11 @@ impl App {
             return Task::none();
         }
         match event {
-            Event::Open if self.selection.room.is_some() && !self.bookmarks.open => {
+            Event::Open
+                if self.selection.room.is_some()
+                    && !self.bookmarks.open
+                    && !self.global_search.open =>
+            {
                 self.stop_typing();
                 // At narrow widths the side pane occupies the room's place.
                 // Return to the room so both the field and matches are visible.

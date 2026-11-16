@@ -553,6 +553,7 @@ impl std::error::Error for SignInRequired {}
 
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub search: Option<crate::search::Service>,
     pub bookmarks_service: Option<crate::bookmarks::Service>,
     pub bookmarks: crate::bookmarks::Snapshot,
     pub people_directory: Option<crate::people::Directory>,
@@ -583,6 +584,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            search: None,
             bookmarks_service: None,
             bookmarks: Default::default(),
             people_directory: None,
@@ -677,6 +679,7 @@ pub async fn run(
         let client = desktop.client.as_ref().expect("authenticated");
         state.send_modify(|s| {
             s.authentication = None;
+            s.search = Some(crate::search::Service::new(client.clone()));
             s.people_directory = Some(crate::people::Directory::new(client.clone()));
             s.bookmarks_service = Some(crate::bookmarks::Service::new(client.clone()));
             s.account_id = client.user_id().map(ToString::to_string);

@@ -36,6 +36,7 @@ see [renderer selection](../development.md#renderer-selection).
 | --- | --- |
 | Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
 | Navigation | Space selection filters the room list without switching the open conversation. Sections collapse independently; search filters rooms. |
+| Global message search | **Search messages** above Saved messages or Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a full-size panel. Enter or **Search** submits; typing cancels the previous request and clears its results. Results span all rooms regardless of the selected space and include room, sender, date, highlighted text, and **Go to message/reply**. Check pagination, duplicate suppression, no matches, server failure with local results, and switching to Saved messages or a room. Back/Escape restores the previous conversation, thread, drafts, and scroll; the panel sends no read receipts for hidden conversations. |
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
@@ -62,6 +63,26 @@ focus restoration remain unfinished.
 In-room search has automated coverage for matching, navigation, stale snapshots,
 draft preservation, room changes, and modal shortcut blocking. Native rendering,
 keyboard focus, and connected-history acceptance require the manual checks above.
+
+Global search combines the homeserver's message-body search (newest first, 30
+results per page) with a memory-only snapshot of recently loaded messages. The
+local cache retains at most 32 room/thread panes and 500 recent messages per pane;
+results are bounded to 200 and deduplicated by room/event ID. Encrypted history
+is searchable only within that local coverage. Search runs on explicit submit,
+with cancellable work and no background indexing or polling. Demo searches all
+sample room histories without an account or network. Server search terms use
+the homeserver's matching rules; yellow previews highlight literal,
+case-insensitive occurrences of the submitted phrase.
+
+Automated coverage includes the search endpoint's room filter, pagination,
+unavailable/unjoined events, Unicode local matching, stale results, modal guards,
+view navigation, and preservation of drafts/scroll. Native minimum-size layout,
+button/focus behavior, encrypted-room coverage, and live homeserver acceptance
+remain manual checks. For connected validation, use dedicated test rooms: submit
+a distinctive existing phrase in two rooms, load the next page, follow both a
+room hit and a thread reply, then confirm the original reading positions and
+drafts. Repeat with an encrypted message loaded during this session and with
+server search unavailable; the panel must communicate its partial coverage.
 
 ## Desktop login
 

@@ -490,7 +490,9 @@ impl App {
                     .push(self.room_navigation())
                     .push(widget::rule::vertical(1));
             }
-            if self.bookmarks.open {
+            if self.global_search.open {
+                body = body.push(container(self.global_search_view()).width(Length::Fill));
+            } else if self.bookmarks.open {
                 body = body.push(container(self.bookmarks_view()).width(Length::Fill));
             } else if self.side_panel_replaces_room(size.width) {
                 body = body.push(container(self.side_panel()).width(Length::Fill));
@@ -707,6 +709,25 @@ impl App {
             );
         }
         let mut rooms = column![
+            widget::tooltip(
+                button(
+                    row![
+                        Element::new(super::room_search::SearchIcon),
+                        text("Search messages").size(13)
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                )
+                .width(Length::Fill)
+                .padding([8, 10])
+                .style(move |_, status| navigation_button(self.global_search.open, status))
+                .on_press_maybe(
+                    (!self.closing && !self.stopped)
+                        .then_some(Message::GlobalSearch(super::global_search::Event::Open))
+                ),
+                text("Search all rooms · Ctrl+Shift+F / ⌘⇧F").size(12),
+                widget::tooltip::Position::Bottom,
+            ),
             button(saved_messages)
                 .width(Length::Fill)
                 .padding([8, 10])
@@ -809,6 +830,7 @@ impl App {
             }
             for room in entries {
                 let selected = !self.bookmarks.open
+                    && !self.global_search.open
                     && self
                         .selection
                         .room

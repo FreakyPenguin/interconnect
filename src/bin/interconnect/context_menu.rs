@@ -103,7 +103,8 @@ impl App {
     }
     fn context_actions(&self, target: &Target) -> Vec<(&'static str, Action)> {
         if !self.context_menu_allowed()
-            || (self.bookmarks.open && matches!(target, Target::Message(_) | Target::Thread { .. }))
+            || ((self.bookmarks.open || self.global_search.open)
+                && matches!(target, Target::Message(_) | Target::Thread { .. }))
         {
             return Vec::new();
         }

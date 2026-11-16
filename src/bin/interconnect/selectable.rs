@@ -35,6 +35,18 @@ pub fn named_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, 
         document: None,
     })
 }
+pub fn search_view<'a>(id: &'a str, body: &'a str, query: &'a str) -> Element<'a, Message> {
+    Element::new(Selectable {
+        search: Some(query),
+        id,
+        body: Cow::Borrowed(body),
+        name: "",
+        appearance: Appearance::Message,
+        assets: Default::default(),
+        context: None,
+        document: None,
+    })
+}
 pub fn preview_view<'a>(
     body: &'a str,
     document: Option<&'a Arc<Document>>,

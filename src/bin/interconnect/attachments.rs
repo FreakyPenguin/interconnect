@@ -46,6 +46,7 @@ impl App {
         !self.closing
             && !self.stopped
             && !self.bookmarks.open
+            && !self.global_search.open
             && (thread
                 || !self
                     .window_width

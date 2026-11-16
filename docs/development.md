@@ -147,6 +147,17 @@ to reject stale conversations and permission changes; the menu adds no timers.
 chats. Hosts namespace asynchronous results by account and form/view generation.
 See [architecture](architecture/client.md) for ownership and lifecycle rules.
 
+## Message search
+
+The navigator's **Search messages** view uses Ctrl+Shift+F (Cmd+Shift+F on
+macOS), separately from Ctrl+F in-room search and Ctrl+K room navigation. The
+`search` service wraps the homeserver search endpoint with joined-room filtering,
+a timeout, and runtime-safe client ownership. The desktop owns request/account
+generations, cancellation, result pagination, and a bounded memory-only cache of
+recently loaded message projections. Local matching runs off the UI thread.
+There is no persistent search index or idle search worker. Encrypted history
+outside the loaded cache is not searched. See [search validation](validation/connected-ui.md#demo-checks).
+
 ## Renderer selection
 
 `interconnect` builds both Iced renderers. **Settings → Graphics** controls the

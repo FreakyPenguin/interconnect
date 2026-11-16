@@ -164,6 +164,7 @@ impl App {
         match event {
             Event::Open if !self.closing && !self.stopped => {
                 self.stop_typing();
+                self.global_search.close();
                 self.bookmarks.open = true;
                 self.bookmarks.limit = 20;
                 self.bookmarks.error = None;
