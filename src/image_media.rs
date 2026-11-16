@@ -14,6 +14,7 @@ use crate::media::{DecodeLimits, Decoded, ImageRequest};
 
 pub const MAX_PREVIEWS: usize = 16;
 pub const MAX_INLINE_IMAGES: usize = 32;
+pub const MAX_CUSTOM_EMOJI: usize = 80;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Variant {
@@ -114,7 +115,7 @@ impl Attachment {
 impl ImageRequest for Key {
     const MEMORY_BYTES: usize = 96 * 1024 * 1024;
     // One original (<=16 MiB), GIF frames (<=64 MiB), and previews (<=12 MiB).
-    const MAX_REQUESTED: usize = MAX_PREVIEWS + MAX_INLINE_IMAGES + 1;
+    const MAX_REQUESTED: usize = MAX_PREVIEWS + MAX_INLINE_IMAGES + MAX_CUSTOM_EMOJI + 1;
     const RETAIN_READY: bool = true;
     fn parameters(&self) -> MediaRequestParameters {
         MediaRequestParameters {

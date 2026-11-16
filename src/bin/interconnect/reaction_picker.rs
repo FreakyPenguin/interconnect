@@ -22,6 +22,7 @@ pub struct Sending {
 pub struct State {
     target: Target,
     picker: emoji_picker::State,
+    catalog: std::sync::Arc<emoji_picker::Catalog>,
     sending: Option<String>,
     error: Option<String>,
 }
@@ -68,6 +69,13 @@ fn focus_composer(thread: bool) -> Task<Message> {
 }
 
 impl App {
+    pub(super) fn reaction_emoji_images(&self) -> Vec<interconnect::image_media::Key> {
+        self.reaction_picker
+            .as_ref()
+            .map(|state| state.picker.image_keys(&state.catalog))
+            .unwrap_or_default()
+    }
+
     pub(super) fn reaction_chips<'a>(
         &'a self,
         row: &'a MessageRow,
@@ -78,7 +86,7 @@ impl App {
             Some(Message::Reaction(Event::Open(target))) => Some(target),
             _ => None,
         };
-        let badges = super::reactions::view(&row.reactions, |reaction| {
+        let badges = super::reactions::view(&row.reactions, &self.model.images, |reaction| {
             let target = target.as_ref()?;
             if self.reaction_sends.contains(&Sending {
                 room: target.room.clone(),
@@ -292,9 +300,11 @@ impl App {
                     && self.reaction_picker.is_none() =>
             {
                 if self.reaction_row(&target).is_some() {
+                    let catalog = self.emoji_catalog_for(&target.room);
                     self.reaction_picker = Some(State {
                         target,
-                        picker: emoji_picker::State::new(emoji_picker::unicode()),
+                        picker: emoji_picker::State::new(&catalog),
+                        catalog,
                         sending: None,
                         error: None,
                     });
@@ -331,9 +341,15 @@ impl App {
                 if self.composing && matches!(event, emoji_picker::Event::Select(_)) {
                     return Task::none();
                 }
-                let Some(key) = state.picker.update(emoji_picker::unicode(), event) else {
+                let Some(key) = state.picker.update(&state.catalog, event) else {
                     return Task::none();
                 };
+                let key = state
+                    .catalog
+                    .get(&key)
+                    .and_then(|entry| entry.custom.as_ref())
+                    .map(|emoji| emoji.uri.to_string())
+                    .unwrap_or(key);
                 let target = state.target.clone();
                 let Some(row) = self.reaction_row(&target) else {
                     self.reaction_picker = None;
@@ -431,7 +447,8 @@ impl App {
         })?;
         let mut content = column![emoji_picker::view(
             &state.picker,
-            emoji_picker::unicode(),
+            &state.catalog,
+            &self.model.images,
             state.sending.is_none(),
             |event| message(Event::Picker {
                 target: state.target.clone(),
@@ -481,6 +498,25 @@ mod tests {
             target: target.clone(),
             event: emoji_picker::Event::Select(key.into()),
         }));
+    }
+    #[test]
+    fn custom_picker_uses_mxc_reaction_keys_instead_of_pack_ids() {
+        let mut app = crate::tests::demo_app();
+        let target = open(&mut app, false, "review");
+        pick(&mut app, &target, "demo-emoji-0");
+        assert!(
+            app.model
+                .room
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|row| row.key == "review")
+                .unwrap()
+                .reactions
+                .iter()
+                .any(|reaction| reaction.key == "mxc://demo.invalid/sample" && reaction.is_own)
+        );
     }
     fn pending(app: &mut App, target: &Target, key: &str) {
         app.reaction_picker.as_mut().unwrap().sending = Some(key.into());

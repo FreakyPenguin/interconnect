@@ -221,6 +221,28 @@ pub fn gif_attachment() -> interconnect::image_media::Attachment {
         matrix_sdk::ruma::events::room::MediaSource::Plain("mxc://demo.invalid/gif".into());
     interconnect::image_media::Attachment::new(&source, None)
 }
+pub fn custom_emoji(room: &str) -> interconnect::custom_emoji::Snapshot {
+    interconnect::custom_emoji::Snapshot {
+        room: room.into(),
+        sources: Vec::new(),
+        entries: [
+            ("wave", "Demo shapes", "A blue checker", "sample"),
+            ("wave", "Other shapes", "A missing checker", "missing"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(
+            |(index, (shortcode, pack, name, media))| interconnect::custom_emoji::Emoji {
+                id: format!("demo-emoji-{index}"),
+                shortcode: shortcode.into(),
+                pack: pack.into(),
+                name: name.into(),
+                uri: format!("mxc://demo.invalid/{media}").into(),
+            },
+        )
+        .collect(),
+    }
+}
 pub fn images() -> interconnect::media::Snapshot<interconnect::image_media::Key> {
     // A deterministic pixel fixture, generated once at demo startup. No files,
     // decoding, account access, or downloads are involved.
@@ -479,6 +501,7 @@ impl Demo {
                 message("format-plain", "Alex Rivera", "Plain messages stay literal: **bold?** <b>HTML?</b>"),
             ],
             "emoji" => vec![
+                { let mut row = formatted("custom-emoji", "<p>Custom emoji: <img data-mx-emoticon src='mxc://demo.invalid/sample' alt='A blue checker' title='wave' height='32'> missing: <img data-mx-emoticon src='mxc://demo.invalid/missing' alt='Missing checker' height='32'></p>"); row.reactions = vec![Reaction { key: "mxc://demo.invalid/sample".into(), count: 2, is_own: false }]; row },
                 root("emoji-original", "Maya Chen", "Faces and symbols: 😀 😂 ☺ ❤ ❤️ ♥ ☀️ ✈️ ☎️ ☕", 1),
                 reply("emoji-reply", "emoji-original", "Alex Rivera", "Joined sequences: 👍🏽 🇩🇪 👩🏽‍💻 👨‍👩‍👧‍👦 1️⃣ #️⃣"),
                 message("emoji-text", "Jamie Davis", "Explicit text presentation: ☺\u{fe0e} ❤\u{fe0e}\nOrdinary text: café # * 123"),

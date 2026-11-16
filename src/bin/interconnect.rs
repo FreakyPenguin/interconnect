@@ -151,6 +151,7 @@ struct App {
     composer_picker: Option<composer_picker::State>,
     attachment_picker: Option<attachments::Target>,
     clipboard_paste: Option<attachments::Paste>,
+    emoji_catalog: std::sync::Arc<emoji_picker::Catalog>,
     emoji_completion: emoji_completion::State,
     topic_editor: Option<topic::State>,
     members: members::State,
@@ -309,6 +310,7 @@ impl App {
             composer_picker: None,
             attachment_picker: None,
             clipboard_paste: None,
+            emoji_catalog: std::sync::Arc::new(emoji_picker::unicode().clone()),
             emoji_completion: emoji_completion::State::default(),
             topic_editor: None,
             members: members::State::default(),
@@ -634,7 +636,13 @@ impl App {
         let closing_image = matches!(&message, Message::Image(images::Event::Close));
         let refresh_media = matches!(
             &message,
-            Message::Members(_)
+            Message::ComposerEmoji(_)
+                | Message::EmojiCompletion(_)
+                | Message::Reaction(_)
+                | Message::Markdown(_)
+                | Message::Edit(..)
+                | Message::Composing(_)
+                | Message::Members(_)
                 | Message::Invite(_)
                 | Message::NewChat(_)
                 | Message::Bookmark(_)
@@ -1052,10 +1060,10 @@ impl App {
                         if !draft.pending && (!body.trim().is_empty() || draft.attachment.is_some())
                         {
                             if draft.attachment.is_none()
-                                && interconnect::composition::needs_conversion(
+                                && (interconnect::composition::needs_conversion(
                                     &body,
                                     draft.markdown.format,
-                                )
+                                ) || !draft.markdown.emoji.is_empty())
                             {
                                 let format = draft.markdown.format;
                                 let account = self.account_id.clone();
@@ -1063,7 +1071,11 @@ impl App {
                                 draft.error = None;
                                 self.pending_ops += 1;
                                 return Task::perform(
-                                    interconnect::composition::prepare(body, format),
+                                    interconnect::composition::prepare_with_emoji(
+                                        body,
+                                        format,
+                                        draft.markdown.emoji.clone(),
+                                    ),
                                     move |result| {
                                         Message::Markdown(markdown_composer::Event::DemoSent {
                                             key: key.clone(),
@@ -1078,6 +1090,7 @@ impl App {
                                 body,
                                 draft.attachment.take(),
                             );
+                            draft.markdown.emoji.clear();
                             draft.content = text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;
@@ -1093,6 +1106,7 @@ impl App {
                 {
                     let body = draft.content.text();
                     let format = draft.markdown.format;
+                    let emoji = draft.markdown.emoji.clone();
                     let attachment = draft.attachment.clone();
                     let account = self.account_id.clone();
                     draft.pending = true;
@@ -1103,7 +1117,7 @@ impl App {
                             if let Some(attachment) = attachment {
                                 composer.send_attachment(attachment, body).await
                             } else {
-                                composer.send_as(body, format).await
+                                composer.send_with_emoji(body, format, emoji).await
                             }
                         },
                         move |result| Message::Sent(key.clone(), account.clone(), result),
@@ -1133,6 +1147,7 @@ impl App {
                     match result {
                         Ok(()) => {
                             draft.attachment = None;
+                            draft.markdown.emoji.clear();
                             draft.content = text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;
@@ -1221,6 +1236,11 @@ impl App {
                     || state.verification.control.is_none() && self.demo.is_none()
                 {
                     self.verification.open = false;
+                }
+                if !std::sync::Arc::ptr_eq(&self.model.custom_emoji, &state.custom_emoji) {
+                    self.emoji_catalog = std::sync::Arc::new(emoji_picker::Catalog::with_custom(
+                        &state.custom_emoji.entries,
+                    ));
                 }
                 self.model = *state;
                 if bookmarks_changed && self.bookmarks.open {
@@ -1501,6 +1521,10 @@ impl App {
                 self.selection.avatars.push(uri);
             }
         }
+        let mut custom_keys = self.composer_emoji_images();
+        custom_keys.extend(self.reaction_emoji_images());
+        custom_keys.extend(self.completion_emoji_images());
+        custom_keys.extend(self.preview_emoji_images());
         let mut previews = 0;
         if self.bookmarks.open || self.global_search.open {
             return;
@@ -1539,6 +1563,13 @@ impl App {
                 let thread_activity::Row::Event(row) = projected else {
                     continue;
                 };
+                if visible.contains(projected.key().as_str()) {
+                    custom_keys.extend(row.reactions.iter().filter_map(|reaction| {
+                        let uri = matrix_sdk::ruma::OwnedMxcUri::from(reaction.key.as_str());
+                        uri.is_valid()
+                            .then(|| interconnect::image_media::Key::inline(uri))
+                    }));
+                }
                 let previous = position.checked_sub(1).and_then(|i| match rows[i] {
                     thread_activity::Row::Event(row) => Some(row),
                     _ => None,
@@ -1559,6 +1590,23 @@ impl App {
                 {
                     self.selection.avatars.push(uri.clone());
                 }
+            }
+        }
+        if let Some(original) = self.thread_original() {
+            custom_keys.extend(original.reactions.iter().filter_map(|reaction| {
+                let uri = matrix_sdk::ruma::OwnedMxcUri::from(reaction.key.as_str());
+                uri.is_valid()
+                    .then(|| interconnect::image_media::Key::inline(uri))
+            }));
+        }
+        let mut custom_count = 0;
+        for key in custom_keys {
+            if custom_count >= interconnect::image_media::MAX_CUSTOM_EMOJI {
+                break;
+            }
+            if !self.selection.images.contains(&key) {
+                self.selection.images.push(key);
+                custom_count += 1;
             }
         }
         let mut inline_count = 0;
@@ -1825,6 +1873,20 @@ impl App {
         self.context_menu_view(layers)
     }
     fn refresh_demo(&mut self) {
+        if self.demo.is_some() {
+            let room = self
+                .selection
+                .room
+                .as_ref()
+                .map(|(_, id)| id.as_str())
+                .unwrap_or("");
+            if self.model.custom_emoji.room != room {
+                self.model.custom_emoji = std::sync::Arc::new(demo::custom_emoji(room));
+                self.emoji_catalog = std::sync::Arc::new(emoji_picker::Catalog::with_custom(
+                    &self.model.custom_emoji.entries,
+                ));
+            }
+        }
         if let Some(demo) = &mut self.demo {
             self.model.typing = self.selection.room.as_ref().map(|(generation, room)| {
                 interconnect::connected::Typing {

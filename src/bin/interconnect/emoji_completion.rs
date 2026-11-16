@@ -1,5 +1,5 @@
 //! Event-driven shortcode suggestions; the composer retains keyboard focus.
-use super::{App, DraftKey, Message, current_pane, emoji, emoji_picker, shell};
+use super::{App, DraftKey, Message, current_pane, emoji_picker, shell};
 use iced::advanced::text::editor::{Cursor, Position};
 use iced::{
     Element, Task,
@@ -116,6 +116,21 @@ pub fn shortcut(
     }
 }
 impl App {
+    pub(super) fn completion_emoji_images(&self) -> Vec<interconnect::image_media::Key> {
+        self.emoji_completion
+            .active
+            .as_ref()
+            .map(|active| {
+                active
+                    .matches
+                    .iter()
+                    .filter_map(|choice| choice.custom.as_ref())
+                    .map(|emoji| interconnect::image_media::Key::inline(emoji.uri.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn completion_target_valid(&self, key: &DraftKey, generation: u64) -> bool {
         let thread = key.root.is_some();
         let selected = if thread {
@@ -173,7 +188,9 @@ impl App {
         self.emoji_completion.active = trigger
             .filter(|trigger| Some(trigger) != self.emoji_completion.dismissed.as_ref())
             .and_then(|trigger| {
-                let matches = emoji_picker::unicode().suggest(&trigger.query, LIMIT);
+                let matches = self
+                    .emoji_catalog_for(&trigger.key.room)
+                    .suggest(&trigger.query, LIMIT);
                 (!matches.is_empty()).then_some(Active {
                     trigger,
                     matches,
@@ -244,6 +261,15 @@ impl App {
             return Task::none();
         };
         let draft = self.drafts.get_mut(&active.trigger.key).unwrap();
+        let glyph = if let Some(custom) = &choice.custom {
+            let Some(token) = draft.markdown.insert_emoji(custom, &draft.content.text()) else {
+                return Task::none();
+            };
+            token
+        } else {
+            choice.glyph.clone()
+        };
+        draft.markdown.clear_preview();
         draft.content.move_to(Cursor {
             position: Position {
                 line: active.trigger.line,
@@ -257,7 +283,7 @@ impl App {
         draft
             .content
             .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                std::sync::Arc::new(choice.glyph.clone()),
+                std::sync::Arc::new(glyph),
             )));
         let edited_key = active.trigger.key.clone();
         let thread = edited_key.root.is_some();
@@ -315,10 +341,19 @@ impl App {
         for (index, choice) in active.matches.iter().enumerate() {
             let selected = index == active.selected;
             let content = row![
-                container(emoji::preview(choice.glyph.clone()).size(20)).center_x(30),
-                text(format!(":{}:", choice.shortcode))
-                    .size(13)
-                    .width(iced::Length::Fill)
+                container(emoji_picker::glyph(
+                    choice.custom.as_ref(),
+                    &choice.glyph,
+                    &self.model.images,
+                    20.0
+                ))
+                .center_x(30),
+                text(choice.custom.as_ref().map_or_else(
+                    || format!(":{}:", choice.shortcode),
+                    |emoji| format!(":{}: · {}", choice.shortcode, emoji.pack)
+                ))
+                .size(13)
+                .width(iced::Length::Fill)
             ]
             .spacing(8)
             .align_y(iced::Alignment::Center);
@@ -384,6 +419,37 @@ mod tests {
             selection: None,
         });
         content
+    }
+    #[test]
+    fn duplicate_custom_shortcodes_keep_distinct_choices_and_bind_only_the_selected_image() {
+        let mut app = app();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content = at(":wa", 3);
+        app.refresh_emoji_completion(&key);
+        let active = app.emoji_completion.active.as_ref().unwrap();
+        assert_eq!(
+            active
+                .matches
+                .iter()
+                .filter(|choice| choice.custom.is_some())
+                .count(),
+            2
+        );
+        let trigger = active.trigger.clone();
+        let _ = app.update(Message::EmojiCompletion(Event::Choose {
+            trigger: trigger.clone(),
+            key: "demo-emoji-1".into(),
+        }));
+        assert_eq!(app.drafts[&key].content.text(), ":wave:");
+        assert_eq!(
+            app.drafts[&key].markdown.emoji[0].emoji.uri.as_str(),
+            "mxc://demo.invalid/missing"
+        );
+        let _ = app.update(Message::EmojiCompletion(Event::Choose {
+            trigger,
+            key: "demo-emoji-0".into(),
+        }));
+        assert_eq!(app.drafts[&key].markdown.emoji.len(), 1);
     }
     #[test]
     fn trigger_requires_two_shortcode_characters_and_valid_boundaries_at_the_caret() {

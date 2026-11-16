@@ -10,11 +10,38 @@ use std::sync::Arc;
 #[derive(Default)]
 pub struct State {
     pub format: Format,
+    pub emoji: Vec<interconnect::custom_emoji::Selection>,
     request: u64,
     task: Option<iced::task::Handle>,
     preview: Option<Preview>,
 }
 impl State {
+    pub fn insert_emoji(
+        &mut self,
+        emoji: &interconnect::custom_emoji::Emoji,
+        source: &str,
+    ) -> Option<String> {
+        self.emoji.retain(|choice| source.contains(&choice.token));
+        if let Some(choice) = self.emoji.iter().find(|choice| choice.emoji == *emoji) {
+            return Some(choice.token.clone());
+        }
+        if self.emoji.len() >= 256 {
+            return None;
+        }
+        let mut token = format!(":{}:", emoji.shortcode);
+        let mut index = 2;
+        while source.contains(&token) || self.emoji.iter().any(|choice| choice.token == token) {
+            token = format!(":{}/{index}:", emoji.shortcode);
+            index += 1;
+        }
+        self.emoji.push(interconnect::custom_emoji::Selection {
+            token: token.clone(),
+            emoji: emoji.clone(),
+        });
+        self.clear_preview();
+        Some(token)
+    }
+
     pub fn clear_preview(&mut self) {
         self.request = self.request.wrapping_add(1);
         self.task = None;
@@ -48,6 +75,30 @@ pub enum Event {
     },
 }
 impl App {
+    pub(super) fn preview_emoji_images(&self) -> Vec<interconnect::image_media::Key> {
+        [false, true]
+            .into_iter()
+            .filter_map(|thread| self.draft_key(thread))
+            .filter_map(|key| self.drafts.get(&key))
+            .filter(|draft| {
+                draft.attachment.is_none()
+                    && draft.markdown.preview.as_ref().is_some_and(|preview| {
+                        preview.source == draft.content.text()
+                            && preview.format == draft.markdown.format
+                    })
+            })
+            .flat_map(|draft| {
+                draft
+                    .markdown
+                    .emoji
+                    .iter()
+                    .filter(|choice| draft.content.text().contains(&choice.token))
+            })
+            .map(|choice| interconnect::image_media::Key::inline(choice.emoji.uri.clone()))
+            .take(32)
+            .collect()
+    }
+
     fn markdown_target_valid(&self, target: &Target) -> bool {
         let thread = target.key.root.is_some();
         let selection = if thread {
@@ -101,13 +152,18 @@ impl App {
                 }
                 let request = state.request;
                 let format = state.format;
+                let emoji = state.emoji.clone();
                 state.preview = Some(Preview {
                     source: source.clone(),
                     format,
                     result: None,
                 });
                 let (task, handle) = Task::perform(
-                    async move { composition::prepare(source, format).await.map(Arc::new) },
+                    async move {
+                        composition::prepare_with_emoji(source, format, emoji)
+                            .await
+                            .map(Arc::new)
+                    },
                     move |result| {
                         Message::Markdown(Event::Prepared {
                             target: target.clone(),
@@ -159,6 +215,7 @@ impl App {
                     match result {
                         Ok(prepared) => {
                             self.demo.as_mut().unwrap().send_prepared(&key, prepared);
+                            draft.markdown.emoji.clear();
                             draft.content = iced::widget::text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;
@@ -239,9 +296,14 @@ impl App {
                 .color(shell::MUTED)
                 .into(),
             Some(Err(error)) => text(error).size(12).color(shell::MUTED).into(),
-            Some(Ok(prepared)) => {
-                selectable::preview_view(&prepared.source, prepared.document.as_ref())
-            }
+            Some(Ok(prepared)) => selectable::preview_view(
+                &prepared.source,
+                prepared.document.as_ref(),
+                super::inline_image::Assets {
+                    remote: self.model.images.clone(),
+                    local: self.local_inline.clone(),
+                },
+            ),
         };
         Some(
             container(

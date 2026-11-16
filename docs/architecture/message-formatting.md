@@ -165,3 +165,57 @@ payload builder. The SDK owns queue admission, local echoes, thread relations,
 encryption and retries. Drafts clear only on successful admission. Demo conversion
 uses the same worker and renderer, entirely in memory with no account/network
 access. Editing previously sent messages is outside this composition workflow.
+
+## Custom emoji
+
+Existing image packs feed the composer picker, reaction picker and `:shortcode:`
+completion. Stable `m.room.image_pack` / `m.image_pack.rooms` events take priority
+per pack over `im.ponies.room_emotes` / `im.ponies.emote_rooms`; legacy personal
+`im.ponies.user_emotes` packs are also read. Discovery includes globally enabled
+packs in joined rooms, the current room, and up to eight canonical parents that
+are joined spaces. Empty global room references have no meaning. Sticker-only
+packs are excluded; legacy per-image usage overrides are respected.
+
+Discovery reads SDK state and owns a separate, narrow `emoji-packs` sliding-sync
+connection because SDK 0.19.1's RoomListService does not expose additional required
+state. It requests only both pack event types and canonical parents, with zero
+message history and no encryption extensions. The subscription follows the room
+and known global/parent sources; its future and event handler end with the
+connection. SDK long polling is used, with no application refresh timer. Errors
+retain cached packs and retry on subsequent room/account/navigation updates.
+At most 64 globally referenced rooms, 64 packs per source and 1024 emoji are
+projected. Unknown/inaccessible referenced rooms are skipped.
+
+Choosing an emoji inserts a readable token such as `:wave:` and binds it to that
+image in the captured conversation draft. Duplicate choices receive distinct
+`:wave/2:` tokens. Completion shows pack names and never silently resolves a
+manually typed shortcode. Picker catalogs are frozen while open; changes to packs
+cannot redirect existing draft choices. Up to 256 choices are retained per draft;
+unused bindings are pruned on insertion and successful sends clear them.
+
+Preview and Send share the same bounded conversion. Explicit choices become
+escaped `<img data-mx-emoticon ... height="32">` HTML in both composer modes;
+Plain text otherwise remains literal. Code spans/blocks, raw HTML and Markdown
+image alternatives stay literal. Private parser markers prevent underscore-heavy
+shortcodes becoming Markdown; literal contexts restore the original tokens.
+The plain body preserves the source tokens. Attachment captions remain plain.
+
+Incoming MXC images already use the inline-image pipeline, including selection,
+copying and spoilers. Directly parsed `data-mx-emoticon` images reserve a 24-pixel
+height and retain the intrinsic aspect ratio. The pinned SDK's sanitizer removes
+this marker from received messages/local echoes, so those retain the sender's
+ordinary image dimensions (normally height 32); rendering still works. No SDK
+sanitizer bypass is introduced. MXC reaction keys render as static image chips;
+other keys keep their existing text/Unicode rendering.
+
+Picker pages, completion results, visible reaction rows and open previews add at
+most 80 unique custom image demands to the existing bounded media worker. They
+share its four download/decode slots and 96 MiB cache, with the existing inline
+image limits and static GIF frame. Closing the UI releases demand; cached pixels
+can remain in the bounded LRU. Packs are never bulk downloaded. Pack images are
+not encrypted, including when used in encrypted rooms; the picker states this.
+Pack creation, uploads, subscription management, standalone stickers and animated
+emoji playback remain follow-up work.
+
+Protocol: [Matrix image packs](https://spec.matrix.org/v1.19/client-server-api/#image-packs)
+and [MSC2545](https://github.com/matrix-org/matrix-spec-proposals/blob/main/proposals/2545-emotes.md).

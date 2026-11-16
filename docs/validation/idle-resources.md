@@ -135,3 +135,16 @@ changes. Raw recordings remain in ignored local artifact directories. Comparison
 with later builds require fresh measurements. The helper's `initial_thread_set`
 scope requires separate transient worker accounting for whole-process scheduler totals; stable endpoint TIDs alone
 are insufficient.
+
+## Custom emoji — 2026-11-16
+
+Pack metadata uses one additional SDK sliding-sync connection while a conversation
+is selected. It requests only image-pack/canonical-parent state, with zero timeline
+history, using normal SDK long polling. Cache projection is driven by SDK updates
+and navigation; no periodic application refresh or animation subscription is added.
+This adds network wakeups relative to previous captures; production CPU/wakeups
+have not been remeasured. Picker pages, completion, previews and visible reaction
+rows share the existing media slots and 96 MiB cache, with at most 80 additional
+unique demands. GIF emoji stay static. Automated fixtures check a nonzero sync
+long-poll timeout, no discovery media requests, shutdown cancellation and demand
+release. Connected idle CPU, large-pack memory and macOS behavior remain unmeasured.

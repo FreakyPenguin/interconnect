@@ -471,8 +471,16 @@ impl Builder {
                         alt: attr("alt")
                             .filter(|s| !s.is_empty())
                             .unwrap_or_else(|| "[Image]".into()),
-                        width: attr("width").and_then(|s| s.parse().ok()),
-                        height: attr("height").and_then(|s| s.parse().ok()),
+                        width: if attr("data-mx-emoticon").is_some() {
+                            None
+                        } else {
+                            attr("width").and_then(|s| s.parse().ok())
+                        },
+                        height: if attr("data-mx-emoticon").is_some() {
+                            Some(24)
+                        } else {
+                            attr("height").and_then(|s| s.parse().ok())
+                        },
                         descent: 0,
                     },
                     style,
@@ -756,6 +764,20 @@ mod tests {
                 }
             ));
         }
+    }
+
+    #[test]
+    fn custom_emoticons_override_sender_dimensions_and_keep_accessible_text() {
+        let doc = Document::parse("<p>Hi <img data-mx-emoticon='' src='mxc://example.org/cat' alt='A waving cat' width='800' height='900'></p>").unwrap();
+        assert_eq!(doc.text(&Default::default()), "Hi A waving cat");
+        assert!(matches!(
+            &doc.blocks[0].runs[1].content,
+            Inline::Image {
+                width: None,
+                height: Some(24),
+                ..
+            }
+        ));
     }
     #[test]
     fn code_and_images_retain_extension_metadata() {

@@ -13,6 +13,7 @@ pub struct Target {
 pub struct State {
     target: Target,
     picker: emoji_picker::State,
+    catalog: std::sync::Arc<emoji_picker::Catalog>,
     cursor: iced::advanced::text::editor::Cursor,
 }
 impl State {
@@ -39,6 +40,24 @@ fn focus(target: &Target) -> Task<Message> {
     })
 }
 impl App {
+    pub(super) fn emoji_catalog_for(&self, room: &str) -> std::sync::Arc<emoji_picker::Catalog> {
+        if self.model.custom_emoji.room == room {
+            self.emoji_catalog.clone()
+        } else {
+            static UNICODE: std::sync::OnceLock<std::sync::Arc<emoji_picker::Catalog>> =
+                std::sync::OnceLock::new();
+            UNICODE
+                .get_or_init(|| std::sync::Arc::new(emoji_picker::unicode().clone()))
+                .clone()
+        }
+    }
+    pub(super) fn composer_emoji_images(&self) -> Vec<interconnect::image_media::Key> {
+        self.composer_picker
+            .as_ref()
+            .map(|state| state.picker.image_keys(&state.catalog))
+            .unwrap_or_default()
+    }
+
     fn composer_picker_valid(&self, target: &Target) -> bool {
         let thread = target.key.root.is_some();
         let selected = if thread {
@@ -87,9 +106,11 @@ impl App {
                     && self.composer_picker_valid(&target) =>
             {
                 let cursor = self.drafts[&target.key].content.cursor();
+                let catalog = self.emoji_catalog_for(&target.key.room);
                 self.composer_picker = Some(State {
                     target,
-                    picker: emoji_picker::State::new(emoji_picker::unicode()),
+                    picker: emoji_picker::State::new(&catalog),
+                    catalog,
                     cursor,
                 });
                 return iced::widget::operation::focus(emoji_picker::SEARCH_ID);
@@ -113,15 +134,26 @@ impl App {
                     return Task::none();
                 }
                 let state = self.composer_picker.as_mut().unwrap();
-                if let Some(key) = state.picker.update(emoji_picker::unicode(), event)
-                    && let Some(entry) = emoji_picker::unicode().get(&key)
+                if let Some(key) = state.picker.update(&state.catalog, event)
+                    && let Some(entry) = state.catalog.get(&key)
                 {
                     let draft = self.drafts.get_mut(&target.key).unwrap();
+                    let glyph = if let Some(custom) = &entry.custom {
+                        let Some(token) =
+                            draft.markdown.insert_emoji(custom, &draft.content.text())
+                        else {
+                            return Task::none();
+                        };
+                        token
+                    } else {
+                        entry.glyph.clone()
+                    };
+                    draft.markdown.clear_preview();
                     draft.content.move_to(state.cursor);
                     draft
                         .content
                         .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                            std::sync::Arc::new(entry.glyph.clone()),
+                            std::sync::Arc::new(glyph),
                         )));
                     self.composer_picker = None;
                     return focus(&target);
@@ -167,13 +199,18 @@ impl App {
             .as_ref()
             .filter(|state| &state.target.key == key && state.target.generation == generation);
         if let Some(state) = state {
-            let picker =
-                emoji_picker::view(&state.picker, emoji_picker::unicode(), true, |event| {
+            let picker = emoji_picker::view(
+                &state.picker,
+                &state.catalog,
+                &self.model.images,
+                true,
+                |event| {
                     Message::ComposerEmoji(Event::Picker {
                         target: state.target.clone(),
                         event,
                     })
-                });
+                },
+            );
             return popover::view(
                 composer,
                 Some(iced::advanced::widget::Id::new("composer-emoji")),
@@ -213,6 +250,60 @@ mod tests {
             target: target.clone(),
             event: emoji_picker::Event::Select(key.into()),
         }));
+    }
+    #[tokio::test]
+    async fn custom_choices_bind_duplicate_shortcodes_to_distinct_images_and_survive_navigation() {
+        let mut app = crate::tests::demo_app();
+        let target = target(&app, false);
+        for id in ["demo-emoji-0", "demo-emoji-1"] {
+            open(&mut app, &target);
+            pick(&mut app, &target, id);
+        }
+        let draft = &app.drafts[&target.key];
+        assert_eq!(draft.markdown.emoji.len(), 2);
+        assert_ne!(draft.markdown.emoji[0].token, draft.markdown.emoji[1].token);
+        let prepared = interconnect::composition::prepare_with_emoji(
+            draft.content.text(),
+            draft.markdown.format,
+            draft.markdown.emoji.clone(),
+        )
+        .await
+        .unwrap();
+        let html = prepared.html.unwrap();
+        assert!(html.contains("mxc://demo.invalid/sample"));
+        assert!(html.contains("mxc://demo.invalid/missing"));
+        let _ = app.update(Message::Room("general".into()));
+        assert!(
+            app.drafts[&app.draft_key(false).unwrap()]
+                .markdown
+                .emoji
+                .is_empty()
+        );
+        // A delayed selection from the departed conversation cannot bind a new image.
+        pick(&mut app, &target, "demo-emoji-0");
+        let _ = app.update(Message::Room(target.key.room.clone()));
+        assert_eq!(
+            app.drafts[&app.draft_key(false).unwrap()]
+                .markdown
+                .emoji
+                .len(),
+            2
+        );
+    }
+    #[test]
+    fn picker_images_follow_the_open_page_and_release_demand_when_closed() {
+        let mut app = crate::tests::demo_app();
+        let target = target(&app, false);
+        open(&mut app, &target);
+        app.demo = None;
+        app.refresh_media_demand();
+        let key = interconnect::image_media::Key::inline("mxc://demo.invalid/sample".into());
+        assert!(app.selection.images.contains(&key));
+        let _ = app.update(Message::ComposerEmoji(Event::Picker {
+            target,
+            event: emoji_picker::Event::Close,
+        }));
+        assert!(!app.selection.images.contains(&key));
     }
     #[test]
     fn inserts_complete_emoji_at_the_caret_or_over_selection_in_the_captured_draft() {

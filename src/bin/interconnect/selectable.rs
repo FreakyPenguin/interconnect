@@ -50,6 +50,7 @@ pub fn search_view<'a>(id: &'a str, body: &'a str, query: &'a str) -> Element<'a
 pub fn preview_view<'a>(
     body: &'a str,
     document: Option<&'a Arc<Document>>,
+    assets: inline_image::Assets,
 ) -> Element<'a, Message> {
     Element::new(Selectable {
         search: None,
@@ -57,7 +58,7 @@ pub fn preview_view<'a>(
         body: Cow::Borrowed(body),
         name: "",
         appearance: Appearance::Message,
-        assets: Default::default(),
+        assets,
         context: None,
         document,
     })

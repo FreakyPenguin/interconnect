@@ -28,7 +28,8 @@ primary platform and best-effort macOS builds.
 - Matrix-compatible inline and display LaTeX math, rendered locally with RaTeX.
 - Markdown composition, on-demand previews, and a per-conversation plain-text mode.
 - People search, room creation, invitations, room topics, and pinned messages.
-- Reactions, emoji pickers and completion, image viewing, and click-to-play GIFs.
+- Reactions, Unicode and Matrix custom emoji pickers/completion, image viewing,
+  and click-to-play GIFs.
 - Save original attachments or open them in the default application, including
   encrypted images, files, audio, and video in rooms and threads.
 - Attachments through file picking, clipboard paste, and drag-and-drop.

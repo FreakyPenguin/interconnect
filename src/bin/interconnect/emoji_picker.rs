@@ -20,15 +20,17 @@ pub fn panel<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Eleme
 }
 
 /// The key is the selected value, independent of the display name and glyph.
-/// A future custom catalog can supply its own keys and image-backed rendering
-/// in `entry_view` without changing picker events or its consumers.
+/// Custom entries use pack identity as their key and authenticated MXC pixels.
+#[derive(Clone)]
 pub struct Entry {
+    pub custom: Option<interconnect::custom_emoji::Emoji>,
     pub key: String,
     pub name: String,
     pub glyph: String,
     pub category: String,
     pub aliases: Vec<String>,
 }
+#[derive(Clone)]
 pub struct Catalog {
     entries: Vec<Entry>,
     search: Vec<String>,
@@ -36,11 +38,27 @@ pub struct Catalog {
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Suggestion {
+    pub custom: Option<interconnect::custom_emoji::Emoji>,
     pub key: String,
     pub shortcode: String,
     pub glyph: String,
 }
 impl Catalog {
+    pub fn with_custom(entries: &[interconnect::custom_emoji::Emoji]) -> Self {
+        let mut all: Vec<_> = entries
+            .iter()
+            .map(|emoji| Entry {
+                key: emoji.id.clone(),
+                name: format!("{} · {}", emoji.name, emoji.pack),
+                glyph: format!(":{}:", emoji.shortcode),
+                category: format!("Pack · {}", emoji.pack),
+                aliases: vec![emoji.shortcode.clone()],
+                custom: Some(emoji.clone()),
+            })
+            .collect();
+        all.extend(unicode().entries.iter().cloned());
+        Self::new(all)
+    }
     pub fn new(entries: Vec<Entry>) -> Self {
         let mut categories = vec![Category::All];
         for entry in &entries {
@@ -92,6 +110,7 @@ impl Catalog {
                     .filter(|alias| alias.contains(&query))
                     .min_by(|a, b| (rank(a), a).cmp(&(rank(b), b)))?;
                 Some(Suggestion {
+                    custom: entry.custom.clone(),
                     key: entry.key.clone(),
                     shortcode: alias,
                     glyph: entry.glyph.clone(),
@@ -99,7 +118,11 @@ impl Catalog {
             })
             .collect();
         matches.sort_by(|a, b| {
-            (rank(&a.shortcode), &a.shortcode).cmp(&(rank(&b.shortcode), &b.shortcode))
+            (rank(&a.shortcode), a.custom.is_none(), &a.shortcode).cmp(&(
+                rank(&b.shortcode),
+                b.custom.is_none(),
+                &b.shortcode,
+            ))
         });
         matches.truncate(limit);
         matches
@@ -148,6 +171,7 @@ pub fn unicode() -> &'static Catalog {
             for emoji in variants {
                 if seen.insert(emoji.as_str()) {
                     entries.push(Entry {
+                        custom: None,
                         key: emoji.as_str().into(),
                         name: emoji.name().into(),
                         glyph: emoji.as_str().into(),
@@ -170,6 +194,32 @@ pub fn unicode() -> &'static Catalog {
         }
         Catalog::new(entries)
     })
+}
+
+pub fn glyph<'a, M: 'static>(
+    custom: Option<&interconnect::custom_emoji::Emoji>,
+    fallback: &str,
+    images: &interconnect::media::Snapshot<interconnect::image_media::Key>,
+    size: f32,
+) -> Element<'a, M> {
+    if let Some(handle) = custom.and_then(|emoji| {
+        images
+            .ready
+            .get(&interconnect::image_media::Key::inline(emoji.uri.clone()))
+    }) {
+        iced::widget::image(handle.clone())
+            .width(size)
+            .height(size)
+            .content_fit(iced::ContentFit::Contain)
+            .into()
+    } else if custom.is_some() {
+        container(text("◇").size(size))
+            .center_x(size)
+            .center_y(size)
+            .into()
+    } else {
+        emoji::preview(fallback.to_owned()).size(size).into()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -202,6 +252,12 @@ pub struct State {
     revision: u64,
 }
 impl State {
+    pub fn image_keys(&self, catalog: &Catalog) -> Vec<interconnect::image_media::Key> {
+        self.visible()
+            .filter_map(|index| catalog.entries[index].custom.as_ref())
+            .map(|emoji| interconnect::image_media::Key::inline(emoji.uri.clone()))
+            .collect()
+    }
     pub fn new(catalog: &Catalog) -> Self {
         Self {
             query: String::new(),
@@ -276,11 +332,12 @@ impl State {
 
 fn entry_view<'a, Message: Clone + 'static>(
     entry: &'a Entry,
+    images: &'a interconnect::media::Snapshot<interconnect::image_media::Key>,
     select: Option<Message>,
 ) -> Element<'a, Message> {
     tooltip(
         button(
-            container(emoji::preview(entry.glyph.clone()).size(22))
+            container(glyph(entry.custom.as_ref(), &entry.glyph, images, 22.0))
                 .center_x(34)
                 .center_y(34)
                 .id(format!("emoji-choice:{}", entry.key)),
@@ -288,7 +345,11 @@ fn entry_view<'a, Message: Clone + 'static>(
         .padding(0)
         .style(shell::quiet_button)
         .on_press_maybe(select),
-        text(entry.name.clone()).size(12),
+        text(entry.custom.as_ref().map_or_else(
+            || entry.name.clone(),
+            |emoji| format!(":{}: · {} · {}", emoji.shortcode, emoji.pack, emoji.name),
+        ))
+        .size(12),
         tooltip::Position::Top,
     )
     .into()
@@ -298,6 +359,7 @@ fn entry_view<'a, Message: Clone + 'static>(
 pub fn view<'a, Message: Clone + 'static>(
     state: &'a State,
     catalog: &'a Catalog,
+    images: &'a interconnect::media::Snapshot<interconnect::image_media::Key>,
     enabled: bool,
     on_event: impl Fn(Event) -> Message + Clone + 'a,
 ) -> Element<'a, Message> {
@@ -331,6 +393,7 @@ pub fn view<'a, Message: Clone + 'static>(
         let entry = &catalog.entries[index];
         entry_view(
             entry,
+            images,
             enabled.then(|| on_event(Event::Select(entry.key.clone()))),
         )
     }))
@@ -392,6 +455,13 @@ pub fn view<'a, Message: Clone + 'static>(
             .spacing(8)
             .align_y(iced::Alignment::Center),
         );
+    if catalog.entries.iter().any(|entry| entry.custom.is_some()) {
+        content = content.push(
+            text("Custom emoji images are visible to homeservers.")
+                .size(10)
+                .color(shell::MUTED),
+        );
+    }
     content.height(Length::Fill).into()
 }
 
@@ -407,6 +477,7 @@ mod tests {
     fn shortcode_suggestions_rank_exact_and_prefix_matches_and_keep_catalog_keys() {
         let catalog = Catalog::new(vec![
             Entry {
+                custom: None,
                 key: "custom:sea".into(),
                 name: "Sea mascot".into(),
                 glyph: "★".into(),
@@ -414,6 +485,7 @@ mod tests {
                 aliases: vec!["sea".into(), "seaside".into()],
             },
             Entry {
+                custom: None,
                 key: "suffix".into(),
                 name: "Suffix".into(),
                 glyph: "x".into(),
@@ -421,6 +493,7 @@ mod tests {
                 aliases: vec!["confused".into()],
             },
             Entry {
+                custom: None,
                 key: "prefix".into(),
                 name: "Prefix".into(),
                 glyph: "y".into(),
@@ -481,6 +554,7 @@ mod tests {
         assert_eq!(state.pages(), 0);
 
         let catalog = Catalog::new(vec![Entry {
+            custom: None,
             key: "catalog:mascot".into(),
             name: "Our mascot".into(),
             glyph: "★".into(),
@@ -522,7 +596,8 @@ mod tests {
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         for enabled in [true, false] {
             // Using Event as the message type proves this view has no App binding.
-            let mut picker = view(&state, catalog, enabled, |event| event);
+            let images = Default::default();
+            let mut picker = view(&state, catalog, &images, enabled, |event| event);
             let mut tree = Tree::new(&picker);
             let size = iced::Size::new(296.0, 376.0);
             let node = picker.as_widget_mut().layout(

@@ -466,7 +466,16 @@ impl Composer {
         body: String,
         format: crate::composition::Format,
     ) -> Result<(), String> {
-        let prepared = crate::composition::prepare(body, format).await?;
+        self.send_with_emoji(body, format, Vec::new()).await
+    }
+
+    pub async fn send_with_emoji(
+        self,
+        body: String,
+        format: crate::composition::Format,
+        emoji: Vec<crate::custom_emoji::Selection>,
+    ) -> Result<(), String> {
+        let prepared = crate::composition::prepare_with_emoji(body, format, emoji).await?;
         Box::pin(self.0.send(prepared.message_content().into()))
             .await
             .map(|_| ())
@@ -553,6 +562,7 @@ impl std::error::Error for SignInRequired {}
 
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub custom_emoji: Arc<crate::custom_emoji::Snapshot>,
     pub search: Option<crate::search::Service>,
     pub bookmarks_service: Option<crate::bookmarks::Service>,
     pub bookmarks: crate::bookmarks::Snapshot,
@@ -584,6 +594,7 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            custom_emoji: Arc::default(),
             search: None,
             bookmarks_service: None,
             bookmarks: Default::default(),
@@ -824,6 +835,8 @@ async fn connected(
     let mut retry_epoch = 0;
     let profile = account_profile_updates(client, state);
     tokio::pin!(profile);
+    let emoji = crate::custom_emoji::run(client.clone(), selection.clone(), state.clone());
+    tokio::pin!(emoji);
     let navigation = navigation_updates(client, state);
     tokio::pin!(navigation);
     let bookmarks_service = state.borrow().bookmarks_service.clone();
@@ -949,6 +962,7 @@ async fn connected(
                 }
                 changed = selection.changed() => { if changed.is_err() { break; } }
                 _ = &mut profile => {},
+                _ = &mut emoji => anyhow::bail!("Emoji update stream ended"),
                 _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
                 _ = &mut bookmarks => anyhow::bail!("Bookmarks update stream ended"),
                 _ = &mut typing_view => typing_view = inactive(),

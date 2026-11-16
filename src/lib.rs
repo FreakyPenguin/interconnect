@@ -4,6 +4,7 @@ pub mod bookmarks;
 pub mod clipboard;
 pub mod composition;
 pub mod connected;
+pub mod custom_emoji;
 pub mod diagnostics;
 pub mod download;
 mod event_text;

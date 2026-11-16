@@ -763,3 +763,47 @@ Formatting, locked workspace Clippy with warnings denied, the locked desktop
 build, and workspace tests passed (145 library and 222 desktop tests; two
 existing opt-in fixtures ignored). Native desktop and connected-account visual
 acceptance remain pending. No connected client was restarted or messages sent.
+
+## Custom emoji — 2026-11-16
+
+Automated checks cover pack/usage validation, stable state overriding legacy packs
+(including empty removals), the narrow SDK state subscription, live state arrival,
+worker cancellation without media fetching, escaped payloads, code/raw-HTML
+fallbacks, underscore shortcodes, source preservation, duplicate pack choices,
+stale completion/picker actions, per-conversation bindings, MXC reaction keys and
+picker demand release. Existing room/thread sending, encryption, selection and
+renderer tests also run. These are local fixtures, not connected-account results.
+
+Manual checks (not yet performed for this change):
+
+- Build, then launch `cargo run --locked --bin interconnect -- --demo`. In
+  **Emoji preview**, inspect the custom inline images, missing image fallback and
+  image reaction. Choose either `wave` from the two demo packs via the composer
+  picker and `:wa` completion. Open Preview; verify the selected image and fallback.
+- Choose both packs in the same room/thread draft. Verify different tokens and
+  images, keyboard/mouse selection, Plain text mode, code literals and navigating
+  away/back. Space filtering must leave the open conversation and draft intact.
+- Verify the 640×480 window and narrow thread pane, search/category/page changes,
+  failed image placeholders, copy alternatives and settled redraw behavior.
+- With an authorized connected session, use existing personal, global, room and
+  canonical-space packs. Verify both stable and legacy packs and a pack update
+  from another client. Confirm leaving a room/replacing an account cannot expose
+  the previous room/account catalog. Unknown global rooms should be skipped.
+- Send only with explicit authorization. Inspect inline HTML, plain token fallback,
+  room/thread relations, encrypted queue/retry behavior and reactions in another
+  client. SDK 0.19.1 removes the emoticon marker when sanitizing received/local-echo
+  HTML, which leaves normal inline-image dimensions instead of the local 24 px
+  override. GIF emoji intentionally stay static. Pack management/stickers are
+  outside this release.
+
+See [formatting architecture](../architecture/message-formatting.md#custom-emoji)
+for subscription/media bounds and the fact that pack media is unencrypted.
+
+Validation performed for this change: `cargo fmt --all -- --check`,
+`cargo clippy --locked --workspace --all-targets -- -D warnings`,
+`cargo test --locked --workspace` (153 library and 244 UI tests passed; two
+existing environment-dependent tests ignored), and
+`cargo build --locked --bin interconnect`. A separate
+`cargo run --locked --bin interconnect -- --demo` instance started successfully
+on Wayland/wgpu and was terminated after a short startup smoke check. This did
+not exercise visual interactions, a connected account, or idle resource metrics.

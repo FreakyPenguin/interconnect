@@ -2,12 +2,13 @@
 use super::{Message, emoji, shell};
 use iced::{
     Border, Color, Element,
-    widget::{button, container, row},
+    widget::{button, container, image, row, text},
 };
 use interconnect::connected::Reaction;
 
 pub fn view<'a>(
     reactions: &'a [Reaction],
+    images: &'a interconnect::media::Snapshot<interconnect::image_media::Key>,
     on_toggle: impl Fn(&Reaction) -> Option<Message>,
 ) -> Option<Element<'a, Message>> {
     if reactions.is_empty() {
@@ -15,8 +16,35 @@ pub fn view<'a>(
     }
     let badges = reactions.iter().map(|reaction| {
         let is_own = reaction.is_own;
+        let uri = matrix_sdk::ruma::OwnedMxcUri::from(reaction.key.as_str());
+        let custom = uri.is_valid();
+        let label: Element<'a, Message> = if custom {
+            let glyph: Element<'a, Message> = if let Some(handle) = images
+                .ready
+                .get(&interconnect::image_media::Key::inline(uri))
+            {
+                image(handle.clone())
+                    .width(18)
+                    .height(18)
+                    .content_fit(iced::ContentFit::Contain)
+                    .into()
+            } else {
+                container(text("◇").size(14))
+                    .center_x(18)
+                    .center_y(18)
+                    .into()
+            };
+            row![glyph, text(reaction.count.to_string()).size(12)]
+                .spacing(5)
+                .align_y(iced::Alignment::Center)
+                .into()
+        } else {
+            emoji::preview(format!("{}  {}", reaction.key, reaction.count))
+                .size(12)
+                .into()
+        };
         container(
-            button(emoji::preview(format!("{}  {}", reaction.key, reaction.count)).size(12))
+            button(label)
                 .padding([3, 8])
                 .on_press_maybe(on_toggle(reaction))
                 .style(move |_, status| button::Style {
@@ -77,11 +105,12 @@ mod tests {
                 is_own: index % 2 == 0,
             })
             .collect();
-        assert!(view(&[], |_| None).is_none());
+        assert!(view(&[], &Default::default(), |_| None).is_none());
+        let images = Default::default();
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         let mut heights = Vec::new();
         for width in [700.0, 120.0, 64.0] {
-            let mut badges = view(&reactions, |_| None).unwrap();
+            let mut badges = view(&reactions, &images, |_| None).unwrap();
             let mut tree = Tree::new(&badges);
             let size = Size::new(width, 1000.0);
             let node = badges.as_widget_mut().layout(
