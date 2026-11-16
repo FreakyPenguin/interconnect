@@ -2,6 +2,7 @@
 use super::{
     App, Message,
     icons::{Kind, icon, sized},
+    single_line,
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Theme, font,
@@ -623,7 +624,7 @@ impl App {
         ]
         .spacing(8)
         .align_y(Alignment::Center);
-        if self.model.bookmarks.complete {
+        if self.model.bookmarks.complete && !self.model.bookmarks.entries.is_empty() {
             saved_messages = saved_messages.push(
                 container(
                     text(self.model.bookmarks.entries.len().to_string())
@@ -690,12 +691,16 @@ impl App {
                 for child in children {
                     rooms = rooms.push(
                         button(
-                            row![sized(Kind::ChevronRight, 14.0), text(&child.name).size(13)]
-                                .spacing(6)
-                                .align_y(Alignment::Center),
+                            row![
+                                sized(Kind::ChevronRight, 14.0),
+                                single_line::label(&child.name, 13)
+                            ]
+                            .spacing(6)
+                            .align_y(Alignment::Center),
                         )
                         .width(Length::Fill)
                         .padding([4, 10])
+                        .height(32)
                         .style(quiet_button)
                         .on_press(Message::Space(Scope::Space(child.id.clone()))),
                     );
@@ -731,25 +736,37 @@ impl App {
                         },
                         12.0
                     ),
-                    title(&section.name, 11).color(MUTED),
-                    widget::space().width(Length::Fill),
-                    text(entries.len()).size(10).color(MUTED),
-                    text(
-                        if interconnect::room_sections::reorder_tag(&section.id).is_some() {
-                            "⠿"
-                        } else {
-                            ""
-                        }
-                    )
-                    .size(12)
+                    single_line::label(&section.name, 11)
+                        .color(MUTED)
+                        .font(Font {
+                            weight: font::Weight::Semibold,
+                            ..Font::with_name("Inter")
+                        }),
+                    text(if collapsed && !entries.is_empty() {
+                        entries.len().to_string()
+                    } else {
+                        String::new()
+                    })
+                    .size(10)
                     .color(MUTED),
+                    widget::space().width(
+                        if interconnect::room_sections::reorder_tag(&section.id).is_some() {
+                            16
+                        } else {
+                            0
+                        }
+                    ),
                 ]
                 .spacing(7)
                 .align_y(Alignment::Center),
             )
             .width(Length::Fill)
             .padding([6, 8])
-            .style(quiet_button)
+            .style(|theme, status| {
+                let mut style = quiet_button(theme, status);
+                style.text_color = MUTED;
+                style
+            })
             .on_press(Message::Section(section.id.clone()));
             let header = self.reorder_header(header.into(), &section.id);
             rooms = rooms.push(
@@ -775,10 +792,25 @@ impl App {
                         .is_some_and(|(_, id)| id == &room.id);
                 let unread = room.unread_count;
                 let mut label = row![
-                    text(if room.direct { "·" } else { "#" })
-                        .color(MUTED)
-                        .size(16),
-                    text(&room.name).size(13).width(Length::Fill)
+                    container(
+                        text(if room.direct { "·" } else { "#" })
+                            .color(MUTED)
+                            .size(16)
+                    )
+                    .center_x(16),
+                    super::tooltips::tooltip(
+                        single_line::label(&room.name, 13).font(Font {
+                            weight: if room.unread {
+                                font::Weight::Semibold
+                            } else {
+                                font::Weight::Normal
+                            },
+                            ..Font::with_name("Inter")
+                        }),
+                        &room.name,
+                        widget::tooltip::Position::Right,
+                    )
+                    .delay(std::time::Duration::from_millis(450))
                 ]
                 .spacing(9)
                 .align_y(Alignment::Center);
@@ -803,12 +835,13 @@ impl App {
                 let mut control = button(label)
                     .width(Length::Fill)
                     .padding([4, 10])
+                    .height(32)
                     .style(move |_, status| navigation_button(selected, status));
                 if !self.closing && !self.stopped {
                     control = control.on_press(Message::Room(room.id.clone()));
                 }
                 rooms = rooms.push(super::context_menu::trigger(
-                    control,
+                    container(control).id(format!("navigation-room:{}", room.id)),
                     super::context_menu::Target::Room(room.id.clone()),
                 ));
             }
@@ -846,9 +879,12 @@ impl App {
         container(
             column![
                 row![
-                    container(title(name, 18))
-                        .padding([4, 4])
-                        .width(Length::Fill),
+                    container(single_line::label(name, 18).font(Font {
+                        weight: font::Weight::Semibold,
+                        ..Font::with_name("Inter")
+                    }))
+                    .padding([4, 4])
+                    .width(Length::Fill),
                     new_chat,
                     create_room,
                     super::tooltips::tooltip(
@@ -912,6 +948,59 @@ mod avatar_tests {
                 sizes[0], sizes[1],
                 "loading an avatar must not move timeline rows"
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod navigation_tests {
+    use super::*;
+    use iced::advanced::{layout, widget};
+
+    #[test]
+    fn room_rows_keep_their_height_and_bounds_with_long_names_and_unread_badges() {
+        let mut app = crate::tests::demo_app();
+        let rooms = std::sync::Arc::make_mut(&mut app.model.rooms);
+        rooms[0].name = "A long room name 👩🏽‍💻\nwith a second line and many references".repeat(4);
+        rooms[0].unread = true;
+        rooms[0].unread_count = 120;
+        #[derive(Default)]
+        struct Probe {
+            ids: Vec<widget::Id>,
+            bounds: Vec<iced::Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id.is_some_and(|id| self.ids.contains(id)) {
+                    self.bounds.push(bounds);
+                }
+            }
+        }
+        let mut view = app.room_navigation();
+        let mut tree = widget::Tree::new(&view);
+        let renderer = crate::test_renderer(Font::DEFAULT, iced::Pixels(13.0));
+        let size = iced::Size::new(242.0, 480.0);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        let mut probe = Probe {
+            ids: app
+                .model
+                .rooms
+                .iter()
+                .map(|room| widget::Id::from(format!("navigation-room:{}", room.id)))
+                .collect(),
+            ..Default::default()
+        };
+        view.as_widget_mut()
+            .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut probe);
+        assert!(probe.bounds.len() >= 4);
+        for bounds in probe.bounds {
+            assert_eq!(bounds.height, 32.0);
+            assert!(bounds.x >= 0.0 && bounds.x + bounds.width <= 242.0);
         }
     }
 }

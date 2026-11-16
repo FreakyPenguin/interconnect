@@ -35,7 +35,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Area | Controls and expected behavior |
 | --- | --- |
 | Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
-| Navigation | Space selection filters the room list without switching the open conversation. Sections collapse independently; search filters rooms. |
+| Navigation | Space selection filters the room list without switching the open conversation. Room rows stay 32 px high, including long names and unread badges. Long room, section, and space labels use a grapheme-safe ellipsis; hovering a room name reveals its full name after a short delay. Unread room names are semibold. Expanded section counts and zero-count Saved messages badges are hidden; collapsed sections retain nonzero room counts. Sections collapse independently; search filters rooms. |
 | Tooltips | Hover the account avatar, spaces, room-list toggle, header controls, composer actions, message timestamps/senders, and emoji choices. Hints use compact 11 px light text in a charcoal rounded surface with consistent padding, a subtle border/shadow, and a gap from the control. Check long topics and multiline read receipts wrap within the surface, and hints stay inside the window near its edges. Native rendering remains a manual check. |
 | Global message search | **Search messages** above Saved messages or Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a full-size panel. Enter or **Search** submits; typing cancels the previous request and clears its results. Results span all rooms regardless of the selected space and include room, sender, date, highlighted text, and **Go to message/reply**. Check pagination, duplicate suppression, no matches, server failure with local results, and switching to Saved messages or a room. Back/Escape restores the previous conversation, thread, drafts, and scroll; the panel sends no read receipts for hidden conversations. |
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
@@ -60,6 +60,16 @@ Tooltip styling was visually checked in an isolated headless Sway demo with
 tiny-skia at 1280×900: account name, header search, message timestamp near the
 right edge, and room-list toggle. macOS, wgpu, long topics, and multiline read
 receipts remain manual acceptance checks.
+
+The sidebar pass was visually checked in an isolated headless Sway/tiny-skia demo
+at 1280×900 and 640×480: fixed-height room rows, long-name ellipsis and hover
+tooltips, unread emphasis, hidden empty badges, collapsed section counts, and
+hover-only drag handles. Dragging a collapsed custom section below Rooms retained
+the open conversation. Automated checks cover Unicode grapheme boundaries,
+resize/rename updates, row dimensions with unread badges, and the existing
+reorder/cancellation behavior. macOS, wgpu, and native RTL rendering remain manual
+acceptance checks. Label shaping is cached; tooltips use a single hover delay,
+without recurring timers or background polling.
 
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
@@ -219,7 +229,9 @@ settings. Malformed data aborts the write. Submitted edits share the room-move
 serialization/deadline and shutdown accounting; dismissed/stale results cannot
 close a newer menu. Retries reuse the creation tag to avoid duplicate sections.
 Demo changes remain in memory. Cross-client GET/PUT races remain possible.
-Drag the **⠿** handle at the right of a section header to reorder it. The blue
+Hover a movable section header to reveal its six-dot handle at the right, then
+drag it to reorder the section. Handles also remain visible during a drag; their
+space stays reserved so labels do not shift when they appear. The blue
 line marks insertion above/below the target header. Favorites and Low priority
 stay pinned. Direct messages moves independently; Unread and Rooms move together
 in Element's `chats` order slot. Order is account-wide, including sections hidden

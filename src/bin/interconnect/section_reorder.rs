@@ -393,6 +393,33 @@ impl Widget<Message, Theme, Renderer> for Header<'_> {
             cursor,
             viewport,
         );
+        let bounds = layout.bounds();
+        if self.enabled && (self.active || (cursor.is_over(bounds) && cursor.is_over(*viewport))) {
+            use iced::advanced::Renderer as _;
+            // The hit area stays reserved, so revealing the grip never moves labels.
+            for x in [
+                bounds.x + bounds.width - 18.0,
+                bounds.x + bounds.width - 14.0,
+            ] {
+                for y in [
+                    bounds.center_y() - 4.0,
+                    bounds.center_y(),
+                    bounds.center_y() + 4.0,
+                ] {
+                    let dot = Rectangle::new(iced::Point::new(x, y - 1.0), Size::new(2.0, 2.0));
+                    if let Some(bounds) = dot.intersection(viewport) {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds,
+                                border: iced::Border::default().rounded(1),
+                                ..Default::default()
+                            },
+                            shell::MUTED,
+                        );
+                    }
+                }
+            }
+        }
         if let Some(before) = self.target {
             let bounds = layout.bounds();
             let line = Rectangle {

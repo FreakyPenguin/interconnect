@@ -73,6 +73,8 @@ mod selection;
 mod settings;
 #[path = "interconnect/shell.rs"]
 mod shell;
+#[path = "interconnect/single_line.rs"]
+mod single_line;
 #[path = "interconnect/thread_activity.rs"]
 mod thread_activity;
 #[path = "interconnect/timeline.rs"]
