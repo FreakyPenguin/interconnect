@@ -384,7 +384,7 @@ impl App {
                 | Message::Invite(_)
                 | Message::Topic(_)
                 | Message::Members(_)
-                | Message::Bookmark(bookmarks::Event::Open)
+                | Message::Bookmark(bookmarks::Event::Open | bookmarks::Event::Conversation(_))
         ) {
             self.context_menu = None;
         }
@@ -589,7 +589,8 @@ impl App {
         }
         let navigation = matches!(
             &message,
-            Message::Room(_)
+            Message::Bookmark(bookmarks::Event::Conversation(_))
+                | Message::Room(_)
                 | Message::Thread(_)
                 | Message::CloseThread
                 | Message::Members(
@@ -810,6 +811,12 @@ impl App {
                 {
                     self.timeline_metrics[usize::from(thread)] =
                         Some((generation, revision, metrics));
+                    if self.selection.event_focus[usize::from(thread)].is_some()
+                        && let Some(key) = self.draft_key(thread)
+                    {
+                        self.scroll_positions
+                            .insert(key, metrics.maximum() - metrics.translation);
+                    }
                     let top = self.pending_scroll[usize::from(thread)]
                         .map_or(metrics.translation, |offset| metrics.maximum() - offset);
                     if matches!(pane.history, History::Ready) && top < metrics.buffer() {
@@ -831,6 +838,17 @@ impl App {
                     .as_ref()
                     .is_some_and(|(current, _)| *current == generation)
                 {
+                    if self.selection.event_focus[usize::from(thread)].is_some() {
+                        if let Some(key) = self.draft_key(thread) {
+                            self.scroll_positions.insert(key, 0.0);
+                        }
+                        let id = selected.as_ref().unwrap().1.clone();
+                        return self.update(if thread {
+                            Message::Thread(id)
+                        } else {
+                            Message::Room(id)
+                        });
+                    }
                     self.pending_scroll[usize::from(thread)] = None;
                     if thread {
                         self.thread_scroll_target = Some((generation, 0.0));
@@ -1205,29 +1223,12 @@ impl App {
             }
             Message::Exit => return self.update(Message::Close),
             Message::Room(id) if !self.closing && !self.stopped => {
-                self.bookmarks.close();
-                self.visible_rows = Default::default();
-                self.generation += 1;
-                self.selection.members = None;
-                self.selection.room = Some((self.generation, id));
-                self.selection.thread = None;
-                self.pending_scroll = [Some(self.saved_scroll(false)), None];
-                self.drafts
-                    .entry(self.draft_key(false).unwrap())
-                    .or_default();
+                self.select_room(id);
             }
             Message::Thread(id)
                 if !self.closing && !self.stopped && self.selection.room.is_some() =>
             {
-                self.bookmarks.close();
-                self.visible_rows[1].clear();
-                self.generation += 1;
-                self.selection.members = None;
-                self.selection.thread = Some((self.generation, id));
-                self.pending_scroll[1] = Some(self.saved_scroll(true));
-                if let Some(key) = self.draft_key(true) {
-                    self.drafts.entry(key).or_default();
-                }
+                self.select_thread(id);
             }
             Message::LoadOlder {
                 thread,
@@ -1260,6 +1261,7 @@ impl App {
             Message::CloseThread => {
                 self.visible_rows[1].clear();
                 self.selection.thread = None;
+                self.selection.event_focus[1] = None;
                 self.pending_scroll[1] = None;
                 self.pending_scroll[0] = Some(self.saved_scroll(false));
             }
@@ -1466,10 +1468,18 @@ impl App {
             let Some(pane) = current_pane(snapshot, *generation) else {
                 continue;
             };
-            let rows = thread_activity::project(
-                &pane.rows,
-                (index == 1).then_some(selected.as_ref().unwrap().1.as_str()),
-            );
+            let rows = if index == 0
+                && self.selection.event_focus[0]
+                    .as_ref()
+                    .is_some_and(|(view, _)| view == generation)
+            {
+                pane.rows.iter().map(thread_activity::Row::Event).collect()
+            } else {
+                thread_activity::project(
+                    &pane.rows,
+                    (index == 1).then_some(selected.as_ref().unwrap().1.as_str()),
+                )
+            };
             let visible: HashSet<_> = self.visible_rows[index]
                 .iter()
                 .map(String::as_str)
@@ -1510,6 +1520,31 @@ impl App {
                     inline_count += 1;
                 }
             }
+        }
+    }
+    fn select_room(&mut self, id: String) {
+        self.bookmarks.close();
+        self.visible_rows = Default::default();
+        self.generation += 1;
+        self.selection.members = None;
+        self.selection.event_focus = Default::default();
+        self.selection.room = Some((self.generation, id));
+        self.selection.thread = None;
+        self.pending_scroll = [Some(self.saved_scroll(false)), None];
+        self.drafts
+            .entry(self.draft_key(false).unwrap())
+            .or_default();
+    }
+    fn select_thread(&mut self, id: String) {
+        self.bookmarks.close();
+        self.visible_rows[1].clear();
+        self.generation += 1;
+        self.selection.members = None;
+        self.selection.event_focus[1] = None;
+        self.selection.thread = Some((self.generation, id));
+        self.pending_scroll[1] = Some(self.saved_scroll(true));
+        if let Some(key) = self.draft_key(true) {
+            self.drafts.entry(key).or_default();
         }
     }
     fn saved_scroll(&self, thread: bool) -> f32 {
@@ -2180,7 +2215,15 @@ impl App {
             }
             History::Ready | History::End => {}
         }
-        let rows = thread_activity::project(&pane.rows, thread.then_some(selected_id.as_str()));
+        let event_focus = self.selection.event_focus[usize::from(thread)]
+            .as_ref()
+            .filter(|(view, _)| view == generation)
+            .map(|(_, event)| event.clone());
+        let rows = if !thread && event_focus.is_some() {
+            pane.rows.iter().map(thread_activity::Row::Event).collect()
+        } else {
+            thread_activity::project(&pane.rows, thread.then_some(selected_id.as_str()))
+        };
         let mut messages = column![history_controls].spacing(0).padding([16, 24]);
         for (index, projected) in rows.iter().copied().enumerate() {
             let message = projected.message();
@@ -2433,33 +2476,27 @@ impl App {
         // New view identity resets the scroll state; async rows retain that
         // state and a zero distance from the bottom follows loaded history.
         let keys = rows.iter().map(|row| Some(row.key())).collect();
-        let observed = if thread {
-            timeline::thread_history_view(
-                *generation,
-                keys,
-                timeline.into(),
+        let focus = event_focus;
+        let observed = timeline::focused_history_view(
+            *generation,
+            keys,
+            timeline.into(),
+            (
+                thread,
                 pane.history_revision,
-                matches!(pane.history, History::Ready),
-                self.selection.conversation_visible
-                    && self.pending_scroll[1].is_none()
-                    && !matches!(pane.history, History::Loading),
-            )
-        } else {
-            timeline::room_history_view(
-                *generation,
-                keys,
-                timeline.into(),
-                pane.history_revision,
-                matches!(pane.history, History::Ready),
-                self.selection.conversation_visible
-                    && self.pending_scroll[0].is_none()
-                    && !matches!(pane.history, History::Loading),
-            )
-        };
+                !matches!(pane.history, History::Loading),
+            ),
+            self.selection.conversation_visible
+                && self.pending_scroll[usize::from(thread)].is_none()
+                && !matches!(pane.history, History::Loading),
+            focus.clone(),
+        );
         let mut message_area = iced::widget::stack![observed];
         // Keep the timeline in the same widget slot as this overlay appears and
         // disappears. The one-pixel tolerance accounts for layout rounding.
-        if self.pending_scroll[usize::from(thread)].is_none() && self.saved_scroll(thread) > 1.0 {
+        if self.pending_scroll[usize::from(thread)].is_none()
+            && (self.saved_scroll(thread) > 1.0 || focus.is_some())
+        {
             let jump = iced::widget::tooltip(
                 button(container(text("⌄").size(24)).center_x(36).center_y(36))
                     .padding(0)

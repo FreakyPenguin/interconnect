@@ -29,6 +29,8 @@ pub struct Selection {
     pub read: [Option<ReadTarget>; 2],
     pub room: Option<(u64, String)>,
     pub thread: Option<(u64, String)>,
+    /// Event-centered navigation, scoped to each pane generation.
+    pub event_focus: [Option<(u64, String)>; 2],
     /// Unique request generation; only load the selected room while People is open.
     pub members: Option<u64>,
     pub shutdown: bool,
@@ -863,7 +865,7 @@ async fn connected(
             state.send_if_modified(|s| {
                 if s.status == status { false } else { s.status = status.into(); true }
             });
-            if active.room != next.room {
+            if active.room != next.room || active.event_focus[0] != next.event_focus[0] {
                 // Drop the old subscriptions before constructing replacements.
                 members_view = inactive();
                 typing_view = inactive();
@@ -889,7 +891,7 @@ async fn connected(
                     pinned_view = Box::pin(pinned::view(client.clone(), id.to_string(), *generation, state.clone()));
                 }
             }
-            if active.thread != next.thread || active.room != next.room {
+            if active.thread != next.thread || active.room != next.room || active.event_focus != next.event_focus {
                 thread_view = inactive();
                 state.send_modify(|s| s.thread = None);
                 if let (Some((_, room)), Some((generation, root))) = (&next.room, &next.thread) {
@@ -1109,18 +1111,21 @@ async fn view(
     let diagnostics = state.borrow().diagnostics.clone();
     let _lifetime = diagnostics.view(root.is_some());
     let is_thread = root.is_some();
+    let target = selection.borrow().event_focus[usize::from(is_thread)]
+        .as_ref()
+        .filter(|(view, _)| *view == generation)
+        .map(|(_, event)| event.clone());
     let result: anyhow::Result<()> = async {
         let setup = async {
             let room_id: matrix_sdk::ruma::OwnedRoomId = room_id.parse()?;
             let room = client.get_room(&room_id).context("Room is not loaded")?;
             // The SDK handles both room types and chooses encryption when sending.
-            let focus = match root {
+            let focus = match &root {
                 Some(root) => TimelineFocus::Thread {
                     root_event_id: root.parse()?,
                 },
                 None => TimelineFocus::Live {
-                    // The UI coalesces replies at their latest position. Keep
-                    // them even when their root is outside the loaded history.
+                    // Keep thread activity in the same ordinary room view.
                     hide_threaded_events: false,
                 },
             };
@@ -1144,19 +1149,61 @@ async fn view(
         let (load_older, mut requests) = mpsc::channel(1);
         let mut history = History::Ready;
         let mut revision = 0;
-        // Typical threads load completely; long threads switch to viewport demand.
-        for _ in 0..if is_thread { INITIAL_THREAD_PAGES } else { 1 } {
-            revision += 1;
-            history = load_history(
-                &timeline, generation, is_thread, revision, &mut updates, &state, &load_older,
-            ).await?;
-            let loaded_events = timeline.items().await.iter()
-                .filter(|item| item.as_event().is_some()).count();
-            if !matches!(history, History::Ready)
-                || loaded_events >= INITIAL_THREAD_EVENTS
-            {
-                break;
+        // Saved-event navigation uses the ordinary live/thread timeline. Load the
+        // intervening history asynchronously, plus one page before the target so
+        // its first stable layout has enough context to center it.
+        let initial_history = async {
+            let mut pages = 0;
+            loop {
+                let had_target = if let Some(target) = &target {
+                    timeline.item_by_event_id(&target.parse::<matrix_sdk::ruma::OwnedEventId>()?).await.is_some()
+                } else { false };
+                revision += 1;
+                history = load_history(
+                    &timeline, generation, is_thread, revision, &mut updates, &state, &load_older,
+                ).await?;
+                pages += 1;
+                if let Some(target) = &target {
+                    let found = timeline.item_by_event_id(&target.parse::<matrix_sdk::ruma::OwnedEventId>()?).await.is_some();
+                    if had_target || (found && matches!(history, History::End)) { break; }
+                    if matches!(history, History::End) {
+                        // Cache pagination can complete before the SDK publishes its
+                        // timeline projection. Wait on that stream if the target is
+                        // cached; missing targets fail without an idle retry loop.
+                        let room_id = room_id.parse::<matrix_sdk::ruma::OwnedRoomId>()?;
+                        let event_id = target.parse::<matrix_sdk::ruma::OwnedEventId>()?;
+                        let cached = if let Some(root) = &root {
+                            let (cache, _guard) = client.event_cache().thread(&room_id, &root.parse::<matrix_sdk::ruma::OwnedEventId>()?).await?;
+                            cache.find_event_with_relations(&event_id, None).await?.is_some()
+                        } else {
+                            let (cache, _guard) = client.event_cache().room(&room_id).await?;
+                            cache.find_event(&event_id).await?.is_some()
+                        };
+                        ensure!(cached, "Saved message is unavailable in this conversation's history");
+                        while timeline.item_by_event_id(&event_id).await.is_none() {
+                            ensure!(updates.next().await.is_some(), "Timeline subscription ended");
+                        }
+                        break;
+                    }
+                    if let History::Failed(error) = &history {
+                        anyhow::bail!("Could not load the saved message: {error}");
+                    }
+                } else {
+                    let loaded_events = timeline.items().await.iter()
+                        .filter(|item| item.as_event().is_some()).count();
+                    if !matches!(history, History::Ready)
+                        || pages >= if is_thread { INITIAL_THREAD_PAGES } else { 1 }
+                        || loaded_events >= INITIAL_THREAD_EVENTS
+                    { break; }
+                }
             }
+            Ok::<_, anyhow::Error>(())
+        };
+        if target.is_some() {
+            tokio::time::timeout(Duration::from_secs(60), initial_history).await
+                .context("Loading history around the saved message timed out")??;
+        } else {
+            initial_history.await?;
         }
         publish(&timeline, generation, is_thread, revision, &history, &state, &load_older).await;
         loop {
@@ -1417,6 +1464,161 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path, path_regex, query_param},
     };
+
+    #[tokio::test]
+    async fn event_navigation_loads_room_and_thread_targets_outside_live_history_and_cancels() {
+        use matrix_sdk::config::SyncSettings;
+        for thread in [false, true] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/_matrix/client/versions"))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})),
+                )
+                .mount(&server)
+                .await;
+            let state_event = |kind: &str, key: &str, content: serde_json::Value| {
+                json!({
+                    "type":kind,"state_key":key,"content":content,"event_id":format!("${kind}"),
+                    "sender":"@test:example.org","origin_server_ts":1
+                })
+            };
+            let message = |id: &str, timestamp: u64| {
+                let mut event = json!({"type":"m.room.message","event_id":id,"room_id":"!room:example.org","sender":"@test:example.org","origin_server_ts":timestamp,"content":{"msgtype":"m.text","body":id}});
+                if thread && id != "$root" {
+                    event["content"]["m.relates_to"] =
+                        json!({"rel_type":"m.thread","event_id":"$root","is_falling_back":false});
+                }
+                event
+            };
+            let root = message("$root", 1);
+            let response = Arc::new(std::sync::Mutex::new(
+                json!({"next_batch":"one","rooms":{"join":{"!room:example.org":{
+                    "state":{"events":[state_event("m.room.create","",json!({"creator":"@test:example.org","room_version":"11"})),state_event("m.room.member","@test:example.org",json!({"membership":"join"}))]},
+                    "timeline":{"events":[root.clone(), message("$newest", 100)],"prev_batch":"before-newest","limited":true}
+                }}}}),
+            ));
+            let body = response.clone();
+            Mock::given(method("GET"))
+                .and(path("/_matrix/client/v3/sync"))
+                .respond_with(move |_: &wiremock::Request| {
+                    ResponseTemplate::new(200).set_body_json(body.lock().unwrap().clone())
+                })
+                .mount(&server)
+                .await;
+            Mock::given(method("GET")).and(path_regex(".*/messages"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"start":"before-newest","end":"before-saved","chunk":[message("$after", 60), message("$saved", 50)],"state":[]})))
+                .mount(&server).await;
+            Mock::given(method("GET")).and(path_regex(".*/messages")).and(query_param("from", "before-saved"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"start":"before-saved","end":"before-context","chunk":[message("$before", 40)],"state":[]})))
+                .with_priority(1).mount(&server).await;
+            Mock::given(method("GET"))
+                .and(path_regex(".*/messages"))
+                .and(query_param("from", "before-context"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"start":"before-context","chunk":[],"state":[]})),
+                )
+                .with_priority(1)
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path_regex(".*/event/.*"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(root))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET")).and(path_regex(".*/relations/.*"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[message("$after", 60),message("$saved",50),message("$before",40)]})))
+                .mount(&server).await;
+            let client = Client::builder()
+                .homeserver_url(server.uri())
+                .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
+                .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
+                    with_subscriptions: false,
+                })
+                .build()
+                .await
+                .unwrap();
+            client.matrix_auth().restore_session(serde_json::from_value::<MatrixSession>(json!({"user_id":"@test:example.org","device_id":"TEST","access_token":"fake"})).unwrap(),Default::default()).await.unwrap();
+            client.event_cache().subscribe().unwrap();
+            client
+                .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+                .await
+                .unwrap();
+            let mut selection = Selection {
+                room: Some((7, "!room:example.org".into())),
+                thread: thread.then(|| (7, "$root".into())),
+                ..Default::default()
+            };
+            selection.event_focus[usize::from(thread)] = Some((7, "$saved".into()));
+            let (_control, selected) = watch::channel(selection);
+            let (state, mut snapshots) = watch::channel(Model::default());
+            let task = tokio::spawn(view(
+                client.clone(),
+                "!room:example.org".into(),
+                thread.then(|| "$root".into()),
+                7,
+                state,
+                selected,
+            ));
+            let pane = tokio::time::timeout(
+                Duration::from_secs(5),
+                snapshots.wait_for(|model| {
+                    let pane = if thread { &model.thread } else { &model.room };
+                    pane.as_ref()
+                        .is_some_and(|pane| !matches!(pane.history, History::Loading))
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .clone();
+            let pane = if thread { pane.thread } else { pane.room }.unwrap();
+            assert!(
+                pane.error.is_none(),
+                "thread={thread}, {:?}, requests={:?}",
+                pane.error,
+                server
+                    .received_requests()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|r| r.url.to_string())
+                    .collect::<Vec<_>>()
+            );
+            let ids: Vec<_> = pane
+                .rows
+                .iter()
+                .filter_map(|row| row.event_id.as_deref())
+                .collect();
+            assert!(ids.contains(&"$before"), "older context: {ids:?}");
+            assert!(ids.contains(&"$saved"), "saved target: {ids:?}");
+            assert!(ids.contains(&"$after"), "newer context: {ids:?}");
+            assert!(ids.contains(&"$newest"), "regular live history: {ids:?}");
+            // Reaching the target must retain the ordinary sync subscription.
+            *response.lock().unwrap() = json!({"next_batch":"two","rooms":{"join":{"!room:example.org":{"timeline":{"events":[message("$incoming", 110)],"limited":false}}}}});
+            client
+                .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+                .await
+                .unwrap();
+            let pane = wait_for_row(&mut snapshots, thread, "$incoming").await;
+            assert!(
+                pane.rows
+                    .iter()
+                    .any(|row| row.event_id.as_deref() == Some("$saved"))
+            );
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+            assert!(
+                !server
+                    .received_requests()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .any(|request| request.url.path().contains("/context/"))
+            );
+        }
+    }
 
     #[test]
     fn final_ui_handle_drop_enters_runtime_and_drains_blocking_cleanup() {

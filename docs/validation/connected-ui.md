@@ -615,7 +615,10 @@ thread replies and the thread original. **Saved messages** above the sidebar
 sections opens an account-wide view. Back/Escape restores the open conversation;
 space changes still only filter navigation. The view shows 20 live source
 previews per page, allows removal even when the source is unavailable, and opens
-the source room/thread. Exact source-event scroll navigation is deferred.
+the source room/thread. **Go to message** uses the regular live room/thread
+timeline, loads back to the saved event and centers it once after history settles.
+Newer history remains below it and live updates continue. **Jump to newest**
+returns to the latest messages.
 
 See [bookmark protocol and lifecycle](../bookmarks.md) for experimental MSC4482
 wire names, extensible-text fallback limits, storage recovery, and write/retry
@@ -663,6 +666,12 @@ Manual acceptance:
    Check that the sidebar count follows saves/removals, includes bookmarks from
    other spaces and pages, and reaches zero when all saved messages are removed.
    In connected mode the count stays hidden until bookmark history is complete.
+   Use **Go to message** on an older room message and thread reply. Confirm the
+   saved event is centered where surrounding history permits, scroll both up and
+   down past it to the latest messages, and check new incoming events remain live.
+   Confirm manual scrolling is retained on redraw, drafts survive, and **Jump to
+   newest** reaches the latest messages. Navigate away during loading
+   and check late results cannot change the new conversation.
 2. In an independently authorized connected session, bookmark an existing
    message. Check that exactly one private encrypted Bookmarks room is created
    lazily and that its account-data pointer survives restart. No test message
@@ -685,3 +694,24 @@ controls and message context menus; a regression checks that Saved messages
 dismisses conversation menus and rejects stale message menus while keeping room
 sidebar menus available. No native desktop or connected session was launched;
 the manual acceptance items above remain pending.
+
+Saved-event navigation follow-up: the library suite passed 145 tests (two
+existing opt-in fixtures ignored), and the final desktop suite passed all 221
+tests. Formatting, locked workspace Clippy with warnings denied, and the locked
+desktop build passed. Mock-server coverage loads room/thread targets outside
+live history and cancels their views. Widget coverage waits for asynchronous
+rows, jumps once, preserves manual scrolling, and resets on new navigation;
+demo state coverage retains drafts and reading offsets and returns to live mode.
+Native desktop and connected-account acceptance remain pending. No connected
+client was restarted or Matrix test messages sent.
+
+Regular-timeline correction: saved-event navigation now backfills the ordinary
+live room/thread timeline and centers the target after loading settles. The
+mock-server regression checks older and newer context, retained newest history,
+and a subsequent incoming sync event. An actual room-pane layout regression
+checks centering and scrolling from the saved event down to the newest message;
+widget coverage also checks scrolling in both directions after the jump.
+Formatting, locked workspace Clippy with warnings denied, the locked desktop
+build, and workspace tests passed (145 library and 222 desktop tests; two
+existing opt-in fixtures ignored). Native desktop and connected-account visual
+acceptance remain pending. No connected client was restarted or messages sent.

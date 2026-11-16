@@ -7,8 +7,13 @@ source rooms and senders, and removal/open-conversation actions. **Back** or
 Escape restores the conversation; drafts and reading positions are retained.
 The sidebar badge shows the total saved-message count, including zero, once
 bookmark history is complete. It updates as bookmarks are added or removed.
-**Open conversation** opens the source room and, for a reply, its thread. It
-does not yet position the source timeline at the exact saved event.
+**Go to message** opens the regular room timeline and centers the saved event,
+loading older history as needed. Messages after it remain available below, and
+live updates continue; scroll freely in either direction. Replies open their
+regular thread when its metadata is available. Centering happens once, after
+history settles, so subsequent scrolling stays under your control. **Jump to
+newest** returns to the latest messages.
+Unavailable events show a loading error; the bookmark remains removable.
 
 The view has no composer. Saved message previews resolve the original events
 through SDK event-focused timelines and follow edits/redactions while open.
@@ -79,6 +84,11 @@ subscriptions, with four setups at a time and a 25-second setup deadline.
 Paging, closing, navigation and account changes cancel old preview streams;
 generation checks reject already queued results. Settled workers wait on SDK
 events, with no polling, recurring animation timer, or automatic read receipts.
+Saved-event navigation uses the normal SDK live/thread timeline and asynchronously
+loads the intervening history from newest to the saved event, plus older context.
+This initial navigation has a 60-second deadline and ends on navigation/shutdown;
+its memory and rendering cost scale with the intervening history. No separate
+context-only timeline or forward-pagination boundary is introduced.
 Actual desktop CPU/wakeups and large-account memory have not been measured.
 
 See [connected validation](validation/connected-ui.md#message-bookmarks--2026-11-15)

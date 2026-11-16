@@ -223,11 +223,19 @@ impl App {
                     .iter()
                     .find(|preview| preview.pointer == pointer)
                     .and_then(|preview| preview.thread_root.clone());
-                let open = self.update(Message::Room(pointer.room_id));
+                self.select_room(pointer.room_id);
+                let thread = root.is_some();
                 if let Some(root) = root {
-                    return Task::batch([open, self.update(Message::Thread(root))]);
+                    self.select_thread(root);
                 }
-                return open;
+                let generation = if thread {
+                    self.selection.thread.as_ref().unwrap().0
+                } else {
+                    self.selection.room.as_ref().unwrap().0
+                };
+                self.selection.event_focus[usize::from(thread)] =
+                    Some((generation, pointer.event_id));
+                self.pending_scroll[usize::from(thread)] = None;
             }
             Event::Set(target, saved) => {
                 if !self.bookmarks_available()
@@ -387,7 +395,7 @@ impl App {
                 .any(|room| room.id == entry.pointer.room_id)
             {
                 actions = actions.push(
-                    button(text("Open conversation").size(12))
+                    button(text("Go to message").size(12))
                         .style(shell::quiet_button)
                         .on_press(message(Event::Conversation(entry.pointer.clone()))),
                 );
@@ -564,6 +572,161 @@ mod tests {
         )));
         assert!(app.context_menu.is_some());
         assert!(app.bookmarks.open);
+    }
+
+    #[test]
+    fn opening_saved_room_and_thread_messages_targets_the_event_and_newest_restores_live_mode() {
+        for thread in [false, true] {
+            let mut app = demo_app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let pane = if thread {
+                &app.model.thread
+            } else {
+                &app.model.room
+            };
+            let row = pane
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|row| row.can_react && (!thread || row.thread_root.is_some()))
+                .unwrap();
+            let target = target(&app, thread, &row.key);
+            let draft_key = app.draft_key(thread).unwrap();
+            app.drafts.get_mut(&draft_key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("Preserve this draft");
+            let _ = app.update(message(Event::Set(target.clone(), true)));
+            let pointer = app.model.bookmarks.entries[0].pointer.clone();
+            let _ = app.update(message(Event::Open));
+            let _ = app.update(message(Event::Conversation(pointer)));
+            assert!(!app.bookmarks.open);
+            let selected = if thread {
+                &app.selection.thread
+            } else {
+                &app.selection.room
+            };
+            let generation = selected.as_ref().unwrap().0;
+            assert_eq!(
+                app.selection.event_focus[usize::from(thread)],
+                Some((generation, target.event))
+            );
+            assert_eq!(app.pending_scroll[usize::from(thread)], None);
+            assert_eq!(app.drafts[&draft_key].content.text(), "Preserve this draft");
+            let pane = if thread {
+                &app.model.thread
+            } else {
+                &app.model.room
+            };
+            let revision = pane.as_ref().unwrap().history_revision;
+            let _ = app.update(Message::TimelineMeasured {
+                thread,
+                generation,
+                revision,
+                metrics: crate::timeline::Metrics {
+                    height: 200.0,
+                    content_height: 1000.0,
+                    translation: 300.0,
+                },
+            });
+            assert_eq!(app.scroll_positions[&draft_key], 500.0);
+            let _ = app.update(Message::JumpToNewest { thread, generation });
+            assert!(app.selection.event_focus[usize::from(thread)].is_none());
+        }
+    }
+
+    #[test]
+    fn saved_message_is_centered_in_the_regular_room_pane_and_newer_messages_are_reachable() {
+        use iced::advanced::{
+            Layout, layout,
+            widget::{self, Tree},
+        };
+        use iced::{Rectangle, Size, Vector};
+        struct Probe {
+            viewport: Rectangle,
+            translation: f32,
+            target: Rectangle,
+            newest: Rectangle,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, children: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                children(self);
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: Rectangle,
+                _: Rectangle,
+                translation: Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("room-timeline")) {
+                    self.viewport = bounds;
+                    self.translation = translation.y;
+                }
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+                if id == Some(&crate::timeline::row_id(75)) {
+                    self.target = bounds;
+                }
+                if id == Some(&crate::timeline::row_id(149)) {
+                    self.newest = bounds;
+                }
+            }
+        }
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("busy".into()));
+        let target = target(&app, false, "busy-75");
+        let _ = app.update(message(Event::Set(target, true)));
+        let pointer = app.model.bookmarks.entries[0].pointer.clone();
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::Conversation(pointer)));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut pane = app.pane(false);
+        let mut tree = Tree::new(pane.as_widget());
+        let node = pane.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(700.0, 600.0)),
+        );
+        let inspect = |pane: &mut Element<'_, Message>, tree: &mut Tree| {
+            let mut probe = Probe {
+                viewport: Rectangle::default(),
+                translation: 0.0,
+                target: Rectangle::default(),
+                newest: Rectangle::default(),
+            };
+            pane.as_widget_mut()
+                .operate(tree, Layout::new(&node), &renderer, &mut probe);
+            probe
+        };
+        let centered = inspect(&mut pane, &mut tree);
+        assert!(centered.viewport.height > 0.0);
+        assert!(
+            (centered.target.center_y() - centered.translation - centered.viewport.center_y())
+                .abs()
+                <= 1.0
+        );
+        pane.as_widget_mut().operate(
+            &mut tree,
+            Layout::new(&node),
+            &renderer,
+            &mut widget::operation::scrollable::scroll_to::<()>(
+                "room-timeline".into(),
+                iced::widget::operation::AbsoluteOffset {
+                    x: None,
+                    y: Some(0.0),
+                },
+            ),
+        );
+        let bottom = inspect(&mut pane, &mut tree);
+        assert!(bottom.newest.center_y() - bottom.translation > bottom.viewport.y);
+        assert!(
+            bottom.newest.center_y() - bottom.translation
+                < bottom.viewport.y + bottom.viewport.height
+        );
+        assert!(bottom.translation > centered.translation);
     }
 
     #[test]

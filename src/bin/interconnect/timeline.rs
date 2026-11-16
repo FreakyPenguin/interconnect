@@ -36,23 +36,7 @@ pub fn history_view(
     )
 }
 
-pub fn room_history_view(
-    generation: u64,
-    keys: Vec<Option<String>>,
-    content: Element<'_, Message>,
-    revision: u64,
-    ready: bool,
-    observe_visible: bool,
-) -> Element<'_, Message> {
-    make_view(
-        generation,
-        keys,
-        content,
-        Some((false, revision, ready)),
-        observe_visible,
-    )
-}
-
+#[cfg(test)]
 pub fn thread_history_view(
     generation: u64,
     keys: Vec<Option<String>>,
@@ -70,6 +54,29 @@ pub fn thread_history_view(
     )
 }
 
+pub fn focused_history_view(
+    generation: u64,
+    keys: Vec<Option<String>>,
+    content: Element<'_, Message>,
+    history: (bool, u64, bool),
+    observe_visible: bool,
+    target: Option<String>,
+) -> Element<'_, Message> {
+    Element::new(Timeline {
+        generation,
+        history: Some(history),
+        observe_visible,
+        target,
+        keys: keys
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, key)| key.map(|key| (row_id(index), key)))
+            .collect(),
+        content,
+    })
+}
+
+#[cfg(test)]
 fn make_view(
     generation: u64,
     keys: Vec<Option<String>>,
@@ -81,6 +88,7 @@ fn make_view(
         generation,
         history,
         observe_visible,
+        target: None,
         keys: keys
             .into_iter()
             .enumerate()
@@ -93,6 +101,7 @@ struct Timeline<'a> {
     generation: u64,
     history: Option<(bool, u64, bool)>,
     observe_visible: bool,
+    target: Option<String>,
     keys: HashMap<widget::Id, String>,
     content: Element<'a, Message>,
 }
@@ -130,6 +139,7 @@ struct Snapshot {
 struct Identity {
     selection: super::selection::Selection,
     generation: u64,
+    focused: bool,
     snapshot: Option<Snapshot>,
     reported: Option<(Metrics, u64, bool)>,
     visible: Option<(Metrics, Vec<String>)>,
@@ -222,6 +232,23 @@ fn anchored_offset(previous: &Snapshot, current: &Snapshot) -> f32 {
     (current.metrics.maximum() - translation).clamp(0.0, current.metrics.maximum())
 }
 
+struct Restore(f32);
+impl widget::Operation for Restore {
+    fn traverse(&mut self, _: &mut dyn FnMut(&mut dyn widget::Operation)) {}
+    fn scrollable(
+        &mut self,
+        _: Option<&widget::Id>,
+        _: Rectangle,
+        _: Rectangle,
+        _: Vector,
+        state: &mut dyn widget::operation::Scrollable,
+    ) {
+        state.scroll_to(iced::widget::operation::AbsoluteOffset {
+            x: None,
+            y: Some(self.0),
+        });
+    }
+}
 impl Widget<Message, Theme, Renderer> for Timeline<'_> {
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<Identity>()
@@ -229,6 +256,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
     fn state(&self) -> widget::tree::State {
         widget::tree::State::new(Identity {
             generation: self.generation,
+            focused: false,
             snapshot: None,
             reported: None,
             visible: None,
@@ -243,6 +271,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         let identity = tree.state.downcast_mut::<Identity>();
         if identity.generation != self.generation {
             identity.generation = self.generation;
+            identity.focused = false;
             identity.snapshot = None;
             identity.reported = None;
             identity.visible = None;
@@ -279,23 +308,6 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         let mut current = measure.snapshot;
         if let Some(previous) = &tree.state.downcast_ref::<Identity>().snapshot {
             let offset = anchored_offset(previous, &current);
-            struct Restore(f32);
-            impl widget::Operation for Restore {
-                fn traverse(&mut self, _: &mut dyn FnMut(&mut dyn widget::Operation)) {}
-                fn scrollable(
-                    &mut self,
-                    _: Option<&widget::Id>,
-                    _: Rectangle,
-                    _: Rectangle,
-                    _: Vector,
-                    state: &mut dyn widget::operation::Scrollable,
-                ) {
-                    state.scroll_to(iced::widget::operation::AbsoluteOffset {
-                        x: None,
-                        y: Some(self.0),
-                    });
-                }
-            }
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
                 Layout::new(&node),
@@ -303,6 +315,25 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
                 &mut Restore(offset),
             );
             current.metrics.translation = (current.metrics.maximum() - offset).round();
+        }
+        if !tree.state.downcast_ref::<Identity>().focused
+            && self.history.is_some_and(|(_, _, ready)| ready)
+            && let Some(target) = &self.target
+            && let Some(row) = current.rows.iter().find(|row| &row.key == target)
+        {
+            // Center short messages; show the start of a message taller than the viewport.
+            let center = row.y + row.height.min(current.metrics.height) / 2.0;
+            let translation =
+                (center - current.metrics.height / 2.0).clamp(0.0, current.metrics.maximum());
+            let offset = current.metrics.maximum() - translation;
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                Layout::new(&node),
+                renderer,
+                &mut Restore(offset),
+            );
+            current.metrics.translation = translation.round();
+            tree.state.downcast_mut::<Identity>().focused = true;
         }
         let identity = tree.state.downcast_mut::<Identity>();
         if identity
@@ -653,6 +684,17 @@ mod tests {
             height: f32,
             offset: Option<f32>,
         ) -> Snapshot {
+            self.render_focus(rows, generation, height, offset, None, true)
+        }
+        fn render_focus(
+            &mut self,
+            rows: &[(String, f32)],
+            generation: u64,
+            height: f32,
+            offset: Option<f32>,
+            target: Option<&str>,
+            ready: bool,
+        ) -> Snapshot {
             let messages = column(rows.iter().enumerate().map(|(index, (_, height))| {
                 Element::from(container(space().height(*height)).id(row_id(index)))
             }));
@@ -660,10 +702,13 @@ mod tests {
                 .id("test-timeline")
                 .anchor_bottom()
                 .height(Length::Fill);
-            let mut timeline = view(
+            let mut timeline = focused_history_view(
                 generation,
                 rows.iter().map(|(key, _)| Some(key.clone())).collect(),
                 scroll.into(),
+                (false, 0, ready),
+                false,
+                target.map(str::to_owned),
             );
             self.tree.diff(timeline.as_widget());
             let node = timeline.as_widget_mut().layout(
@@ -791,6 +836,30 @@ mod tests {
             vec![vec!["reply-2", "reply-3"]]
         );
         assert!(frame(&mut harness, &rows, true, None).is_empty());
+    }
+
+    #[test]
+    fn event_focus_waits_for_rows_jumps_once_and_preserves_manual_scrolling() {
+        let mut harness = Harness::new();
+        let rows: Vec<_> = (0..40).map(|i| (format!("event-{i}"), 40.0)).collect();
+        harness.render_focus(&[], 1, 200.0, None, Some("event-10"), true);
+        let loading = harness.render_focus(&rows, 1, 200.0, None, Some("event-10"), false);
+        assert!(
+            screen_y(&loading, "event-10") < 0.0,
+            "wait for surrounding history before centering"
+        );
+        let focused = harness.render_focus(&rows, 1, 200.0, None, Some("event-10"), true);
+        assert_near(screen_y(&focused, "event-10"), 80.0);
+        let scrolled = harness.render_focus(&rows, 1, 200.0, Some(200.0), Some("event-10"), true);
+        let settled = harness.render_focus(&rows, 1, 200.0, None, Some("event-10"), true);
+        assert_near(
+            screen_y(&settled, "event-10"),
+            screen_y(&scrolled, "event-10"),
+        );
+        let above = harness.render_focus(&rows, 1, 200.0, Some(1200.0), Some("event-10"), true);
+        assert!(screen_y(&above, "event-10") > screen_y(&focused, "event-10"));
+        let next = harness.render_focus(&rows, 2, 200.0, None, Some("event-20"), true);
+        assert_near(screen_y(&next, "event-20"), 80.0);
     }
 
     #[test]
