@@ -92,6 +92,7 @@ pub struct Block {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Document {
     source: String,
+    plain: bool,
     pub blocks: Vec<Block>,
 }
 // Documents can contain private messages. Do not print their contents in model diagnostics.
@@ -104,11 +105,40 @@ impl std::fmt::Debug for Document {
 }
 impl Document {
     pub fn from_message(message: &MessageType, previous: Option<&Arc<Self>>) -> Option<Arc<Self>> {
-        let source = Self::html(message)?;
-        if let Some(previous) = previous.filter(|doc| doc.source == source) {
+        let body = match message {
+            MessageType::Text(m) => &m.body,
+            MessageType::Notice(m) => &m.body,
+            MessageType::Emote(m) => &m.body,
+            _ => return None,
+        };
+        let html = Self::html(message);
+        let source = html.unwrap_or(body);
+        if let Some(previous) =
+            previous.filter(|doc| doc.source == source && doc.plain == html.is_none())
+        {
             return Some(previous.clone());
         }
-        Self::parse_with_formulas(source).map(Arc::new)
+        html.and_then(Self::parse_with_formulas)
+            .or_else(|| Self::plain_links(body))
+            .map(Arc::new)
+    }
+    /// Literal text with clickable web URLs; no Markdown or HTML interpretation.
+    /// Messages without links keep the ordinary plain-text renderer.
+    pub fn plain_links(source: &str) -> Option<Self> {
+        if source.len() > MAX_BYTES {
+            return None;
+        }
+        let runs = linked_runs(source, &Style::default());
+        runs.iter()
+            .any(|run| run.style.link.is_some())
+            .then(|| Self {
+                source: source.into(),
+                plain: true,
+                blocks: vec![Block {
+                    runs,
+                    ..Block::default()
+                }],
+            })
     }
     pub(crate) fn html(message: &MessageType) -> Option<&str> {
         let formatted = match message {
@@ -147,6 +177,7 @@ impl Document {
         }
         (!builder.blocks.is_empty()).then(|| Self {
             source: source.into(),
+            plain: false,
             blocks: builder.blocks,
         })
     }
@@ -212,6 +243,48 @@ impl Document {
             .collect()
     }
 }
+/// Split only text runs. Existing anchors, code and embedded objects stay intact.
+fn linked_runs(text: &str, style: &Style) -> Vec<Run> {
+    let mut finder = linkify::LinkFinder::new();
+    finder.kinds(&[linkify::LinkKind::Url]);
+    finder.url_must_have_scheme(false);
+    let mut runs = Vec::new();
+    let mut end = 0;
+    for found in finder.links(text) {
+        let value = found.as_str();
+        let destination = if value
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("www."))
+        {
+            safe_link(&format!("https://{value}"))
+        } else {
+            safe_link(value).filter(|url| url.starts_with("https:") || url.starts_with("http:"))
+        };
+        let Some(destination) = destination else {
+            continue;
+        };
+        if found.start() > end {
+            runs.push(Run {
+                content: Inline::Text(text[end..found.start()].into()),
+                style: style.clone(),
+            });
+        }
+        let mut link_style = style.clone();
+        link_style.link = Some(destination);
+        runs.push(Run {
+            content: Inline::Text(value.into()),
+            style: link_style,
+        });
+        end = found.end();
+    }
+    if end < text.len() {
+        runs.push(Run {
+            content: Inline::Text(text[end..].into()),
+            style: style.clone(),
+        });
+    }
+    runs
+}
 /// The opener accepts only these explicit schemes; relative and executable URLs are inert.
 pub fn safe_link(value: &str) -> Option<String> {
     if value.chars().any(|c| c.is_control() || c.is_whitespace()) {
@@ -234,6 +307,7 @@ struct Builder {
     lists: Vec<Option<u64>>,
     spoiler: usize,
     pre: usize,
+    anchors: usize,
     formulas: bool,
     formula_count: usize,
     formula_pixels: usize,
@@ -279,7 +353,14 @@ impl Builder {
             }
             normalized
         };
-        self.push(Inline::Text(text), style)
+        if self.anchors > 0 || style.link.is_some() || style.code {
+            self.push(Inline::Text(text), style)
+        } else {
+            for run in linked_runs(&text, &style) {
+                self.push(run.content, run.style)?;
+            }
+            Some(())
+        }
     }
     fn visit(&mut self, node: &NodeRef, mut style: Style, depth: usize) -> Option<()> {
         self.nodes += 1;
@@ -343,7 +424,10 @@ impl Builder {
                     };
                 }
             }
-            "a" => style.link = attr("href").and_then(|v| safe_link(&v)),
+            "a" => {
+                self.anchors += 1;
+                style.link = attr("href").and_then(|v| safe_link(&v));
+            }
             "br" => return self.push(Inline::Text("\n".into()), style),
             "blockquote" => {
                 self.quotes += 1;
@@ -457,6 +541,7 @@ impl Builder {
                 self.lists.pop();
             }
             "pre" => self.pre -= 1,
+            "a" => self.anchors -= 1,
             _ => {}
         }
         self.current.quote_depth = self.quotes;
@@ -484,6 +569,84 @@ pub fn block_ranges(blocks: &[Block]) -> impl Iterator<Item = Range<usize>> + '_
 mod tests {
     use super::*;
 
+    fn links(doc: &Document) -> Vec<&str> {
+        doc.blocks
+            .iter()
+            .flat_map(|b| &b.runs)
+            .filter_map(|r| r.style.link.as_deref())
+            .collect()
+    }
+    #[test]
+    fn bare_links_preserve_literal_text_and_trim_surrounding_punctuation() {
+        let source = "  café 👩🏽‍💻 **literal** <b>HTML</b>\n\n(https://en.wikipedia.org/wiki/Matrix_(protocol)).\nhttps://example.org/search?q=café&lang=en, www.matrix.org!\n  trailing  ";
+        let doc = Document::plain_links(source).unwrap();
+        assert_eq!(doc.text(&BTreeSet::new()), source);
+        assert_eq!(
+            links(&doc),
+            vec![
+                "https://en.wikipedia.org/wiki/Matrix_(protocol)",
+                "https://example.org/search?q=caf%C3%A9&lang=en",
+                "https://www.matrix.org/",
+            ]
+        );
+        assert!(
+            Document::plain_links("example.org file:///tmp/a javascript:alert(1) user@example.org")
+                .is_none()
+        );
+        assert!(
+            Document::plain_links(&format!("https://example.org/{}", "a".repeat(MAX_BYTES)))
+                .is_none()
+        );
+    }
+    #[test]
+    fn bare_links_in_html_keep_styles_anchors_code_and_spoilers() {
+        let doc = Document::parse("<p><b>https://example.org/</b> <a href='https://destination.org/'>https://label.org/</a> <code>https://code.org/</code></p><pre>https://block.org/</pre><span data-mx-spoiler>https://hidden.org/</span>").unwrap();
+        assert_eq!(
+            links(&doc),
+            vec![
+                "https://example.org/",
+                "https://destination.org/",
+                "https://hidden.org/"
+            ]
+        );
+        assert!(doc.blocks[0].runs[0].style.bold);
+        assert!(!doc.text(&BTreeSet::new()).contains("hidden.org"));
+        assert_eq!(
+            links(&Document {
+                blocks: doc.visible_blocks(&BTreeSet::new()),
+                ..doc.clone()
+            }),
+            vec!["https://example.org/", "https://destination.org/"]
+        );
+    }
+    #[test]
+    fn plain_link_documents_reuse_and_invalidate_without_html_source_collisions() {
+        use matrix_sdk::ruma::events::room::message::{
+            EmoteMessageEventContent, NoticeMessageEventContent, TextMessageEventContent,
+        };
+        for message in [
+            MessageType::Text(TextMessageEventContent::plain("https://example.org/")),
+            MessageType::Notice(NoticeMessageEventContent::plain("https://example.org/")),
+            MessageType::Emote(EmoteMessageEventContent::plain("https://example.org/")),
+        ] {
+            let first = Document::from_message(&message, None).unwrap();
+            let again = Document::from_message(&message, Some(&first)).unwrap();
+            assert!(Arc::ptr_eq(&first, &again));
+            let html = MessageType::Text(TextMessageEventContent::html(
+                "fallback",
+                "https://example.org/",
+            ));
+            let formatted = Document::from_message(&html, Some(&first)).unwrap();
+            assert!(!Arc::ptr_eq(&first, &formatted));
+            let edited = MessageType::Text(TextMessageEventContent::plain("https://edited.org/"));
+            assert_eq!(
+                links(&Document::from_message(&edited, Some(&first)).unwrap()),
+                vec!["https://edited.org/"]
+            );
+            let removed = MessageType::Text(TextMessageEventContent::plain("removed"));
+            assert!(Document::from_message(&removed, Some(&first)).is_none());
+        }
+    }
     #[test]
     fn matrix_math_uses_attribute_source_display_blocks_and_document_lifetime() {
         use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
@@ -630,6 +793,9 @@ mod tests {
         assert!(doc.blocks[0].runs[0].style.link.is_none());
         assert!(safe_link("file:///etc/passwd").is_none());
         assert!(safe_link("https://example.org").is_some());
+        let anchor =
+            Document::parse("<a href='javascript:alert(1)'>https://example.org/</a>").unwrap();
+        assert!(links(&anchor).is_empty(), "an inert anchor must stay inert");
         assert!(Document::parse(&"a".repeat(MAX_BYTES + 1)).is_none());
         assert!(Document::parse(&format!("{}x{}", "<b>".repeat(40), "</b>".repeat(40))).is_none());
     }

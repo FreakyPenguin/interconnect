@@ -338,7 +338,8 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         is_own: false,
         is_live: false,
         body: body.into(),
-        formatted: None,
+        formatted: interconnect::message_document::Document::plain_links(body)
+            .map(std::sync::Arc::new),
         send_state: String::new(),
         retry: None,
     }
@@ -467,6 +468,8 @@ impl Demo {
                 formatted("format-blocks", "<blockquote><p>A quiet quotation.</p><blockquote>Nested quotation.</blockquote></blockquote><ol start='3'><li>Third item<ul><li>Nested item</li></ul></li><li>Fourth item</li></ol>"),
                 formatted("format-code", "<pre><code class='language-rust'>fn main() {\n    println!(\"hello 👋\");\n}</code></pre><p>An image placeholder: <img src='mxc://example.org/diagram' alt='Architecture diagram' width='320' height='160'></p>"),
                 formatted("format-links", "<p><a href='https://spec.matrix.org/'>Matrix specification</a> — hover to inspect the destination; drag to select.</p><p>The ending is <span data-mx-spoiler>hidden <b>until revealed</b></span>. Select and copy before and after revealing.</p>"),
+                root("bare-links", "Alex Rivera", "Bare links: https://example.org/docs?q=café&lang=en, (https://en.wikipedia.org/wiki/Matrix_(protocol)).\nTry www.matrix.org too; drag to select without opening.", 1),
+                reply("bare-link-reply", "bare-links", "Maya Chen", "Thread links also work: https://spec.matrix.org/"),
                 message("format-plain", "Alex Rivera", "Plain messages stay literal: **bold?** <b>HTML?</b>"),
             ],
             "emoji" => vec![
@@ -581,7 +584,10 @@ impl Demo {
                 .get_mut(&key)
                 .and_then(|rows| rows.last_mut())
             {
-                row.formatted = prepared.document.clone();
+                row.formatted = prepared.document.clone().or_else(|| {
+                    interconnect::message_document::Document::plain_links(&row.body)
+                        .map(std::sync::Arc::new)
+                });
             }
         }
     }

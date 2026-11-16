@@ -804,53 +804,65 @@ mod tests {
         }
     }
     #[test]
-    fn formatted_links_activate_on_click_and_never_on_selection_drags() {
-        let mut row = crate::demo::Demo::default()
-            .pane(
-                crate::DraftKey {
-                    room: "studio".into(),
-                    root: None,
-                },
+    fn message_links_activate_on_click_and_never_on_selection_drags() {
+        for plain in [false, true] {
+            let mut row = crate::demo::Demo::default()
+                .pane(
+                    crate::DraftKey {
+                        room: "studio".into(),
+                        root: None,
+                    },
+                    1,
+                )
+                .rows[0]
+                .clone();
+            row.key = "link".into();
+            row.formatted = Some(std::sync::Arc::new(
+                interconnect::message_document::Document::parse(
+                    "<p><a href='https://example.org/'>a long link label for selecting</a></p>",
+                )
+                .unwrap(),
+            ));
+            if plain {
+                row.body = "https://example.org/a/long/path/for/selecting".into();
+                row.formatted = interconnect::message_document::Document::plain_links(&row.body)
+                    .map(std::sync::Arc::new);
+            }
+            let destination = if plain {
+                "https://example.org/a/long/path/for/selecting"
+            } else {
+                "https://example.org/"
+            };
+            let mut h = Harness::new();
+            let mut element = super::super::timeline::view(
                 1,
-            )
-            .rows[0]
-            .clone();
-        row.key = "link".into();
-        row.formatted = Some(std::sync::Arc::new(
-            interconnect::message_document::Document::parse(
-                "<p><a href='https://example.org/'>a long link label for selecting</a></p>",
-            )
-            .unwrap(),
-        ));
-        let mut h = Harness::new();
-        let mut element = super::super::timeline::view(
-            1,
-            vec![Some("link".into())],
-            scrollable(selectable::message_view(&row))
-                .id("room-timeline")
-                .height(200)
-                .into(),
-        );
-        let node = h.layout(&mut element);
-        let data = h.read(&mut element, &node);
-        let point = data.rows[0].bounds.position() + iced::Vector::new(5.0, 10.0);
-        h.event(&mut element, &node, down(), point);
-        let (_, messages) = h.event(&mut element, &node, up(), point);
-        assert!(
-            messages.iter().any(
-                |m| matches!(m, Message::OpenMessageLink(url) if url == "https://example.org/")
-            )
-        );
-        let end = point + iced::Vector::new(90.0, 0.0);
-        h.event(&mut element, &node, down(), point);
-        h.event(&mut element, &node, moved(end), end);
-        let (_, messages) = h.event(&mut element, &node, up(), end);
-        assert!(
-            !messages
-                .iter()
-                .any(|m| matches!(m, Message::OpenMessageLink(_)))
-        );
-        assert!(!h.copy(&mut element, &node).is_empty());
+                vec![Some("link".into())],
+                scrollable(selectable::message_view(&row))
+                    .id("room-timeline")
+                    .height(200)
+                    .into(),
+            );
+            let node = h.layout(&mut element);
+            let data = h.read(&mut element, &node);
+            let point = data.rows[0].bounds.position() + iced::Vector::new(5.0, 10.0);
+            h.event(&mut element, &node, down(), point);
+            let (_, messages) = h.event(&mut element, &node, up(), point);
+            assert!(
+                messages
+                    .iter()
+                    .any(|m| matches!(m, Message::OpenMessageLink(url) if url == destination))
+            );
+            let end = point + iced::Vector::new(90.0, 0.0);
+            h.event(&mut element, &node, down(), point);
+            h.event(&mut element, &node, moved(end), end);
+            let (_, messages) = h.event(&mut element, &node, up(), end);
+            assert!(
+                !messages
+                    .iter()
+                    .any(|m| matches!(m, Message::OpenMessageLink(_)))
+            );
+            assert!(!h.copy(&mut element, &node).is_empty());
+        }
     }
     #[test]
     fn mixed_activity_and_messages_copy_inline_names_once_and_preserve_wrapping() {

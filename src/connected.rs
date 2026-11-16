@@ -1230,9 +1230,9 @@ async fn timeline_rows_cached(
     let items = timeline.items().await;
     let own_user = timeline.room().own_user_id().to_owned();
     let queue = timeline.room().send_queue();
-    let has_formatted = items.iter().filter_map(|item| item.as_event()).any(|event| {
+    let has_text = items.iter().filter_map(|item| item.as_event()).any(|event| {
         matches!(event.content(), TimelineItemContent::MsgLike(content) if matches!(&content.kind,
-            matrix_sdk_ui::timeline::MsgLikeKind::Message(message) if crate::message_document::Document::html(message.msgtype()).is_some()))
+            matrix_sdk_ui::timeline::MsgLikeKind::Message(message) if matches!(message.msgtype(), matrix_sdk::ruma::events::room::message::MessageType::Text(_) | matrix_sdk::ruma::events::room::message::MessageType::Notice(_) | matrix_sdk::ruma::events::room::message::MessageType::Emote(_))))
     });
     // Dropping a view cannot interrupt a running blocking call. Stop between
     // bounded messages so an obsolete projection does not finish an entire history.
@@ -1346,7 +1346,7 @@ async fn timeline_rows_cached(
             })
             .collect()
     };
-    if has_formatted {
+    if has_text {
         tokio::task::spawn_blocking(project)
             .await
             .expect("message projection worker panicked")

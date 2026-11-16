@@ -2,13 +2,12 @@
 
 ## Rooms
 
-- Formatting
 - Member invite link?
 
 ## Account and navigation
 
 - Logout / account switching UI
-- Mark unread
+- mark unread
 - Sections
 
 ## Infrastructure

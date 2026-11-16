@@ -237,6 +237,31 @@ Real-account formatting, hardware-renderer appearance, native macOS behavior,
 and measured idle resource use remain separate acceptance checks. Idle coverage
 here verifies that settled widgets request no further redraw deadlines.
 
+## Clickable message links
+
+Studio → **Message formatting** includes a bare-link message and thread reply.
+HTTP/HTTPS URLs and `www.` addresses work in ordinary text and formatted text;
+`www.` opens with HTTPS. Hover shows the normalized destination. URL punctuation
+is excluded while balanced parentheses and query parameters remain part of it.
+Code spans/blocks stay literal and existing anchors retain their destinations.
+
+Automated checks cover literal whitespace/markup, Unicode, punctuation, schemes,
+input limits, document reuse/edit invalidation, plain/HTML source identity,
+spoilers and inert anchors. Widget tests exercise both explicit and bare links:
+clicks emit the opening action, selection drags do not, hover exposes an overlay,
+and settled widgets request no recurring redraw deadline.
+
+November 16, 2026: formatting, workspace Clippy with warnings denied, the locked
+desktop build and workspace tests passed (127 library and 196 desktop tests;
+two existing opt-in library tests ignored).
+
+For native acceptance, launch `cargo run --locked --bin interconnect -- --demo`,
+open the fixture and its thread, and click a sample URL to check the default
+browser. Drag-select and copy the message, resize to 640×480, and switch rooms
+with a draft and scrolled position. Browser/system-handler launch, native macOS
+appearance, and measured idle resources remain manual acceptance checks. No
+connected account or external handler was launched for the automated checks.
+
 ## Markdown composer
 
 In demo mode, type `**bold**`, `_italic_`, `~~old~~`, a Markdown link, or a fenced

@@ -684,67 +684,71 @@ mod tests {
         }
     }
     #[test]
-    fn formatted_link_hover_invalidates_overlay_layout_and_then_settles() {
-        let document =
-            Arc::new(Document::parse("<p><a href='https://example.org/'>link</a></p>").unwrap());
-        let mut view = Selectable {
-            id: "link",
-            name: "Alice",
-            body: Cow::Borrowed("fallback"),
-            document: Some(&document),
-            appearance: Appearance::Message,
-            assets: Default::default(),
-            context: None,
-        };
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-        let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
-        let node = view.layout(
-            &mut tree,
-            &renderer,
-            &layout::Limits::new(Size::ZERO, Size::new(300.0, 200.0)),
-        );
-        let point = iced::Point::new(5.0, 10.0);
-        let mut clipboard = ClipboardText::default();
-        let mut messages = vec![];
-        let mut shell = Shell::new(&mut messages);
-        view.update(
-            &mut tree,
-            &Event::Mouse(mouse::Event::CursorMoved { position: point }),
-            Layout::new(&node),
-            mouse::Cursor::Available(point),
-            &renderer,
-            &mut clipboard,
-            &mut shell,
-            &Rectangle::with_size(Size::new(300.0, 200.0)),
-        );
-        assert!(
-            shell.is_layout_invalid(),
-            "new overlays must be laid out immediately"
-        );
-        assert!(
-            view.overlay(
+    fn message_link_hover_invalidates_overlay_layout_and_then_settles() {
+        for document in [
+            Document::parse("<p><a href='https://example.org/'>link</a></p>").unwrap(),
+            Document::plain_links("https://example.org/").unwrap(),
+        ] {
+            let document = Arc::new(document);
+            let mut view = Selectable {
+                id: "link",
+                name: "Alice",
+                body: Cow::Borrowed("fallback"),
+                document: Some(&document),
+                appearance: Appearance::Message,
+                assets: Default::default(),
+                context: None,
+            };
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+            let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
+            let node = view.layout(
                 &mut tree,
-                Layout::new(&node),
                 &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(300.0, 200.0)),
+            );
+            let point = iced::Point::new(5.0, 10.0);
+            let mut clipboard = ClipboardText::default();
+            let mut messages = vec![];
+            let mut shell = Shell::new(&mut messages);
+            view.update(
+                &mut tree,
+                &Event::Mouse(mouse::Event::CursorMoved { position: point }),
+                Layout::new(&node),
+                mouse::Cursor::Available(point),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
                 &Rectangle::with_size(Size::new(300.0, 200.0)),
-                iced::Vector::ZERO
-            )
-            .is_some()
-        );
-        let mut shell = Shell::new(&mut messages);
-        view.update(
-            &mut tree,
-            &Event::Window(iced::window::Event::RedrawRequested(
-                iced::time::Instant::now(),
-            )),
-            Layout::new(&node),
-            mouse::Cursor::Available(point),
-            &renderer,
-            &mut clipboard,
-            &mut shell,
-            &Rectangle::with_size(Size::new(300.0, 200.0)),
-        );
-        assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+            );
+            assert!(
+                shell.is_layout_invalid(),
+                "new overlays must be laid out immediately"
+            );
+            assert!(
+                view.overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &Rectangle::with_size(Size::new(300.0, 200.0)),
+                    iced::Vector::ZERO
+                )
+                .is_some()
+            );
+            let mut shell = Shell::new(&mut messages);
+            view.update(
+                &mut tree,
+                &Event::Window(iced::window::Event::RedrawRequested(
+                    iced::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                mouse::Cursor::Available(point),
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &Rectangle::with_size(Size::new(300.0, 200.0)),
+            );
+            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+        }
     }
     #[test]
     fn partial_selection_copies_but_cannot_edit_or_schedule_a_timer() {

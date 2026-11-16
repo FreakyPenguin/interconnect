@@ -5,6 +5,13 @@ including edits, sanitization, and reply-fallback handling. `m.text`, `m.notice`
 and `m.emote` messages with `org.matrix.custom.html` are converted to a native
 `message_document::Document`. Other formats and messages beyond parsing limits
 use the SDK's plain body. Plain messages are never interpreted as Markdown.
+Bare HTTP/HTTPS URLs and `www.` addresses become clickable in plain messages
+and HTML text runs. Plain whitespace and literal markup remain unchanged;
+`www.` destinations use HTTPS. Detection uses `linkify`, trims surrounding
+punctuation, and retains balanced URL parentheses. Code spans/blocks, existing
+anchors and embedded-object alternatives are not scanned. Spoiler links stay
+hidden and inactive until revealed. Plain messages with no recognized URLs or
+over 64 KiB retain the ordinary text renderer.
 
 The document stores blocks and styled inline runs, independently of Iced.
 Paragraphs, headings, quotes, ordered/unordered lists, code, links, spoilers,
@@ -18,6 +25,11 @@ HTML input is capped at 64 KiB, traversal at 4096 nodes and 32 levels, and outpu
 at 64 KiB. Projection runs on a blocking worker, outside the UI thread. Unchanged
 formatted content reuses the previous pane's document; formatting-only edits
 invalidate it. There is no global document cache retaining departed messages.
+Plain URL detection also runs on the projection worker, reuses unchanged
+documents, and replaces them on edits. Source identity distinguishes literal
+text from HTML, even when their source strings match. No URL previews are fetched
+and no timer is introduced. Link clicks use the existing asynchronous system
+opener; dragging continues to select and copy text in rooms and threads.
 Dropping the projection cancels further rows after the current bounded message.
 Existing view cancellation and generation checks still govern publication.
 
