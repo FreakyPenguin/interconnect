@@ -92,7 +92,7 @@ rendering, macOS, wgpu, and connected-account acceptance remain manual checks.
 The composer resize/scrollbar extension was checked in the isolated demo at
 1280×900 and 640×480 with a long wrapped draft. Drag the centered top grip upward
 to enlarge the editor or downward to shrink it; the toolbar remains below the
-editor. Heights are remembered per room/thread draft for the current session and
+editor. The grip uses an open-hand cursor on hover and a closed hand while dragged. Heights are remembered per room/thread draft for the current session and
 clamped to available pane space. Overflow shows a muted draggable scrollbar;
 wheel scrolling and caret movement continue through the native editor. Automated
 checks cover full-view grip routing, resize limits/deduplication/cancellation,

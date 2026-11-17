@@ -401,7 +401,11 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                         .position()
                         .is_some_and(|point| point.y <= bounds.y + GRIP)))
         {
-            return mouse::Interaction::ResizingVertically;
+            return if matches!(state.drag, Some(Drag::Resize { .. })) {
+                mouse::Interaction::Grabbing
+            } else {
+                mouse::Interaction::Grab
+            };
         }
         let rail = Self::rail(bounds);
         if self.enabled
