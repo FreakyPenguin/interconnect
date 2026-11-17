@@ -55,6 +55,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Images | Studio → Images has ready and failed fixtures. Escape closes the original viewer, preserving drafts and scroll positions. Originals also open from threads. |
 | GIFs | Images open still. Play/Stop, once/duration settings, close, and focus loss control playback. Reopening stays still. |
 | Attachments | Pick, paste, and drop stage one file per draft. The hover outline identifies the target; multiple files produce an error. Overlays block underlying drop targets. |
+| Account utilities | The account avatar opens Settings, Find room, and device verification. Routine connection/device status lives in this menu; the normal bottom bar is hidden. Incoming verification requests, connection problems, settings/notification failures, media errors, and stopped-session Exit remain visible when applicable. An account attention dot also marks issues and graphics restart notices. Demo identity stays visible in the space rail. |
 | Settings | The fixed header and footer keep Close, Cancel, and Save visible while the preferences body scrolls. Check 640×480 and ordinary desktop sizes: long descriptions, paths, and errors wrap within the card; controls use compact type and outlined fields. Save applies changes; Cancel/Close discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
 | Control icons | Navigation, header, message actions, pins, and composer use shared static outline icons. Check consistent size/stroke, hover/disabled colors, recognizable pin/unpin and bookmark states, and action tooltips. User-authored emoji and reaction glyphs remain emoji. |
 
@@ -132,6 +133,23 @@ motion, preserved drafts/saved scroll positions, and stale/modal rejection.
 Formatting, workspace Clippy, all 263 UI tests, and the desktop build pass. No
 polling or animation subscription was added. macOS/wgpu, connected-account
 behavior, and production idle-resource measurements remain untested for this pass.
+
+The utility-clutter pass moves routine Settings, Find room, and verification
+actions into the account-avatar menu, with connection status in its heading.
+Normal connected/demo views have no bottom status bar. Incoming verification
+requests, connection problems, settings/notification errors, media errors, and
+stopped-session Exit use a conditional bottom banner. The avatar shows an
+attention dot for these states and graphics restart notices; the menu explains
+the restart notice. Demo mode retains a small rail label. Existing shortcuts,
+verification handling, and native dialog behavior are unchanged. Automated checks
+cover menu dispatch/dismissal, stale modal actions, alert visibility/recovery,
+draft/saved-scroll preservation, and the live timeline reading position as the
+banner changes height. Visual checks used the isolated Sway/tiny-skia demo at
+1280×900 and 640×480, including the avatar menu and Settings entry. Connected
+alerts were exercised only as fixtures; real incoming requests, macOS/wgpu, and
+production resource measurements remain manual acceptance checks. Formatting,
+workspace Clippy, all 266 UI tests, and the desktop build pass. This pass adds
+no subscription or timer.
 
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.

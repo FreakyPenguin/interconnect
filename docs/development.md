@@ -127,7 +127,9 @@ sign-in; see [desktop login validation](validation/connected-ui.md#desktop-login
 
 ## Device verification
 
-The desktop footer opens own-device SAS verification with another Matrix client.
+The account-avatar menu’s **Verify device…** action opens own-device SAS
+verification with another Matrix client. Incoming requests also show a review
+banner without opening the dialog automatically.
 The session-owned worker subscribes to SDK trust and incoming to-device requests,
 loads devices on demand, and sends confirmation only for the current displayed
 comparison. See [verification validation](validation/verification.md) for protocol

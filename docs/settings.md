@@ -1,6 +1,7 @@
 # Application settings
 
-Open **Settings** in the bottom bar, or press Ctrl+, (Command+, on macOS).
+Open the account-avatar menu at the top left and choose **Settings…**, or press
+Ctrl+, (Command+, on macOS).
 Change values and choose **Save** to apply them. **Cancel** or Escape discards
 unsaved changes. **Use defaults** changes the dialog values; save to keep them.
 The dialog blocks room navigation and sending while open, preserving drafts and

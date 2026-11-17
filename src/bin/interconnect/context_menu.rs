@@ -11,6 +11,7 @@ mod section_management;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
+    Account,
     Sections,
     Section(String),
     Room(String),
@@ -109,6 +110,30 @@ impl App {
             return Vec::new();
         }
         match target {
+            Target::Account => {
+                let mut actions = vec![
+                    (
+                        "Settings…",
+                        Action::Dispatch(Message::Settings(super::settings::Event::Open)),
+                    ),
+                    ("Find room…", Action::Dispatch(Message::SearchFocus)),
+                ];
+                if self.demo.is_some() || self.model.verification.control.is_some() {
+                    actions.push((
+                        if self.model.verification.incoming.is_some() {
+                            "Review verification request…"
+                        } else if self.model.verification.trust
+                            == matrix_sdk::encryption::VerificationState::Verified
+                        {
+                            "Device verified…"
+                        } else {
+                            "Verify device…"
+                        },
+                        Action::Dispatch(Message::Verification(super::verification::Event::Open)),
+                    ));
+                }
+                actions
+            }
             Target::Sections => vec![("New section…", Action::CreateSection)],
             Target::Section(tag) => {
                 if !self.model.sections.iter().any(|section| &section.id == tag) {
@@ -477,20 +502,26 @@ impl App {
                 }
                 items
             } else {
-                let mut items =
-                    actions
-                        .into_iter()
-                        .fold(column![].spacing(2), |items, (label, _)| {
-                            items.push(
-                                button(text(label).size(13))
-                                    .width(iced::Length::Fill)
-                                    .padding([7, 10])
-                                    .style(shell::quiet_button)
-                                    .on_press_maybe((state.pending.is_none()).then(|| {
-                                        message(Event::Choose(state.target.clone(), label.into()))
-                                    })),
-                            )
-                        });
+                let heading = if state.target == Target::Account {
+                    column![
+                        self.account_menu_heading(),
+                        iced::widget::rule::horizontal(1)
+                    ]
+                    .spacing(2)
+                } else {
+                    column![].spacing(2)
+                };
+                let mut items = actions.into_iter().fold(heading, |items, (label, _)| {
+                    items.push(
+                        button(text(label).size(13))
+                            .width(iced::Length::Fill)
+                            .padding([7, 10])
+                            .style(shell::quiet_button)
+                            .on_press_maybe((state.pending.is_none()).then(|| {
+                                message(Event::Choose(state.target.clone(), label.into()))
+                            })),
+                    )
+                });
                 if state.pending.is_some() {
                     items = items.push(text("Saving…").size(12));
                 }
@@ -523,6 +554,8 @@ impl App {
                     .max_height(360)
                     .width(if state.form.is_some() {
                         280
+                    } else if state.target == Target::Account {
+                        260
                     } else if state.sections {
                         240
                     } else {

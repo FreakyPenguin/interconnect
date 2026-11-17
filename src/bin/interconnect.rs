@@ -91,6 +91,8 @@ mod tooltips;
 mod topic;
 #[path = "interconnect/typing.rs"]
 mod typing;
+#[path = "interconnect/utilities.rs"]
+mod utilities;
 #[path = "interconnect/verification.rs"]
 mod verification;
 

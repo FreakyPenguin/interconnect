@@ -2,7 +2,7 @@
 
 ## Scope
 
-The footer's **Verify device** action opens a dialog for SAS verification with
+The account-avatar menu's **Verify device…** action opens a dialog for SAS verification with
 another device on the same Matrix account. Choose your existing trusted client
 from the device list and accept its request. Alternatively, initiate verification
 on that client, then select **Verification requested** and **Accept request** in
@@ -49,10 +49,10 @@ It preserves the open conversation, drafts, and scroll positions. Escape closes
 and cancels the dialog, including during input-method composition. General
 keyboard button traversal/focus restoration remains pending in the UI.
 Conversation notification suppression is suspended while the dialog covers it.
-The footer updates when a request arrives but does not steal focus or open a
-modal automatically.
+A review banner and an attention dot on the account avatar appear when a request
+arrives, without stealing focus or opening a modal automatically.
 
-Demo mode offers a local sample device and comparison through the same footer.
+Demo mode offers a local sample device and comparison through the same account menu.
 The sample never changes device trust, accesses saved accounts, or sends Matrix
 requests.
 
@@ -86,7 +86,7 @@ Two-client acceptance requires a test account with another trusted Matrix client
    account/local device identity, and choose the intended peer by device ID.
 2. Accept on the other client. Compare the complete emojis/numbers, confirm on
    both, and wait for completion. Record the reported own-device trust separately.
-3. Initiate a fresh request from the other client. Check the footer prompt and
+3. Initiate a fresh request from the other client. Check the review banner and
    explicit acceptance. Exercise mismatch, cancellation, peer cancellation,
    timeout, and application close during a pending exchange.
 4. Open an existing encrypted test conversation and check whether historical

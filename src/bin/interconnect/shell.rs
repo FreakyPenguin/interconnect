@@ -15,7 +15,7 @@ use std::collections::HashSet;
 pub const INK: Color = Color::from_rgb8(39, 46, 56);
 pub const MUTED: Color = Color::from_rgb8(112, 121, 134);
 pub const ACCENT: Color = Color::from_rgb8(66, 99, 157);
-const SIDEBAR: Color = Color::from_rgb8(246, 247, 249);
+pub(super) const SIDEBAR: Color = Color::from_rgb8(246, 247, 249);
 const RAIL: Color = Color::from_rgb8(237, 240, 244);
 pub(super) const LINE: Color = Color::from_rgb8(228, 232, 237);
 const SELECTED: Color = Color::from_rgb8(226, 234, 247);
@@ -540,89 +540,60 @@ impl App {
                         .push(container(self.side_panel()).width(width));
                 }
             }
-            let mut footer = row![
-                text(if self.demo.is_some() { "○" } else { "·" }).color(ACCENT),
-                text(&self.model.status).size(11).color(MUTED),
-                widget::space().width(Length::Fill),
-                button(
-                    text(
-                        if self.settings.error.is_some() || self.model.notification_error.is_some()
-                        {
-                            "Settings · needs attention"
-                        } else if self.demo.is_none() && self.settings.graphics_restart_required() {
-                            "Settings · restart required"
-                        } else {
-                            "Settings"
-                        }
-                    )
-                    .size(11)
-                )
-                .style(quiet_button)
-                .on_press(Message::Settings(super::settings::Event::Open)),
-                button(text("Find room").size(11))
-                    .style(quiet_button)
-                    .on_press(Message::SearchFocus),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center);
-            if self.demo.is_some() || self.model.verification.control.is_some() {
-                footer = footer.push(
-                    button(
-                        text(if self.model.verification.incoming.is_some() {
-                            "Verification requested"
-                        } else if self.model.verification.trust
-                            == matrix_sdk::encryption::VerificationState::Verified
-                        {
-                            "Device verified"
-                        } else {
-                            "Verify device"
-                        })
-                        .size(11),
-                    )
-                    .style(quiet_button)
-                    .on_press(Message::Verification(super::verification::Event::Open)),
-                );
-            }
-            if let Some(error) = &self.model.media_error {
-                footer = footer.push(super::tooltips::tooltip(
-                    text("Media unavailable").size(11).color(MUTED),
-                    error,
-                    widget::tooltip::Position::Top,
-                ));
-            }
-            if self.stopped {
-                footer = footer.push(button("Exit").on_press(Message::Exit).style(quiet_button));
-            }
-            column![
-                body,
-                widget::rule::horizontal(1),
-                container(footer)
-                    .padding([5, 14])
-                    .style(|_| surface(SIDEBAR))
-            ]
-            .into()
+            // Keep a stable bottom slot: ordinary connection status belongs in
+            // the account menu, while actionable states can still surface here.
+            let status = self
+                .utility_banner()
+                .unwrap_or_else(|| container(widget::space().height(0)).into());
+            column![body, status].into()
         })
         .into()
     }
     fn space_rail(&self) -> Element<'_, Message> {
-        let account_name = if self.demo.is_some() {
-            "Jamie Davis"
-        } else {
-            &self.model.account_name
-        };
+        let account_name = self.account_label();
         let account_image = self
             .model
             .account_avatar_url
             .as_ref()
             .and_then(|uri| self.model.avatars.get(uri));
+        let account = button(
+            container(avatar(account_name, account_image))
+                .center_x(40)
+                .center_y(40),
+        )
+        .padding(0)
+        .style(icon_button)
+        .on_press_maybe(
+            (self.context_menu_allowed() && self.emoji_management.is_none()).then_some(
+                Message::ContextMenu(super::context_menu::Event::Open(
+                    super::context_menu::Target::Account,
+                    iced::Point::new(60.0, 12.0),
+                )),
+            ),
+        );
+        let mut account = widget::stack![container(account).id("account-menu-button")];
+        if self.utilities_need_attention() {
+            account = account.push(
+                container(container(widget::space().width(6).height(6)).style(|_| {
+                    container::Style {
+                        background: Some(Color::from_rgb8(183, 133, 58).into()),
+                        border: Border::default().rounded(3),
+                        ..Default::default()
+                    }
+                }))
+                .align_right(Length::Fill)
+                .align_bottom(Length::Fill)
+                .padding(2),
+            );
+        }
         let mut spaces = column![
             container(super::tooltips::tooltip(
-                avatar(account_name, account_image),
-                account_name,
-                widget::tooltip::Position::Right,
+                account,
+                format!("{account_name} · Account & settings"),
+                widget::tooltip::Position::Right
             ))
             .center_x(56)
-            .padding([12, 0])
+            .padding([8, 0])
         ]
         .spacing(10)
         .align_x(Alignment::Center);
@@ -690,6 +661,9 @@ impl App {
                 .style(scroll_style)
                 .height(Length::Fill),
         );
+        if self.demo.is_some() {
+            spaces = spaces.push(text("Demo").size(10).color(MUTED));
+        }
         spaces = spaces.push(super::tooltips::tooltip(
             button(container(icon(Kind::Sidebar)).center_x(36).center_y(36))
                 .padding(0)
