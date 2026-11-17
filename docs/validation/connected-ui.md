@@ -48,7 +48,8 @@ see [renderer selection](../development.md#renderer-selection).
 | Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
 | Navigation | Space selection filters the room list without switching the open conversation. Room and child-space rows stay 26 px high with no gaps between rows, including long names and unread badges. Long room, section, and space labels use a grapheme-safe ellipsis; hovering a room name reveals its full name after a short delay. Unread room names are semibold. Expanded section counts and zero-count Saved messages badges are hidden; collapsed sections retain nonzero room counts. Sections collapse independently; search filters rooms. |
 | Unread section | Unread stays above Favorites and includes all unread rooms in the selected space/filter, including DMs, favorites, and custom sections. Rooms remain in their usual groups. Collapse it independently; search temporarily expands it. It hides when empty. **Settings → Navigation → Show unread section** defaults on; Save/Reload applies immediately, Cancel discards changes. Marking a room read removes its shortcut while preserving its usual row, open conversation, drafts, and timeline position. |
-| Presence | Message-group avatars (rooms and threads) show an 8 px status mark; DM navigator rows show the peer’s status. Maya is online (green), Alex away (amber with a dash), Jamie offline (gray); other demo senders have no status mark. Hover a mark for its text label. Group continuations and room activity do not add marks. Switch spaces without changing the open conversation; check 26 px DM rows and minimum-window clipping. |
+| Space unread dots | A small blue dot at the bottom right of a rail icon means its scope contains unread rooms or DMs, including manually marked unread rooms and nested spaces. All rooms covers every room; Direct messages covers DMs. The dot clears when the last unread room is read or removed. Indicators ignore room search, collapsed sections, and the Show unread section setting. In the demo, All rooms and Studio start with a dot for Release notes. Hover adds **Unread messages** to the space hint; clicking the dot still selects the space without switching the open conversation. |
+| Presence | Opening a DM or People page checks status on demand; Refresh status rechecks the current view. Marks are last-checked snapshots, with a 60-second cache and no polling. Message-group avatars (rooms and threads) show an 8 px status mark; DM navigator rows reuse the peer’s checked status. Maya is online (green), Alex away (amber with a dash), Jamie offline (gray); other demo senders have no status mark. Hover a mark for its text label. Group continuations and room activity do not add marks. Switch spaces without changing the open conversation; check 26 px DM rows and minimum-window clipping. |
 | Tooltips | Hover the account avatar, spaces, room-list toggle, header controls, composer actions, message timestamps/senders, and emoji choices. Hints use compact 11 px light text in a charcoal rounded surface with consistent padding, a subtle border/shadow, and a gap from the control. Check long topics and multiline read receipts wrap within the surface, and hints stay inside the window near its edges. Native rendering remains a manual check. |
 | Global message search | **Search messages** above Saved messages or Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a full-size panel. Enter or **Search** submits; typing cancels the previous request and clears its results. Results span all rooms regardless of the selected space and include room, sender, date, highlighted text, and **Go to message/reply**. Check pagination, duplicate suppression, no matches, server failure with local results, and switching to Saved messages or a room. Back/Escape restores the previous conversation, thread, drafts, and scroll; the panel sends no read receipts for hidden conversations. |
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
@@ -76,6 +77,14 @@ see [renderer selection](../development.md#renderer-selection).
 | Account utilities | The account avatar opens Settings, Find room, and device verification. Routine connection/device status lives in this menu; the normal bottom bar is hidden. Incoming verification requests, connection problems, settings/notification failures, media errors, and stopped-session Exit remain visible when applicable. An account attention dot also marks issues and graphics restart notices. Demo identity stays visible in the space rail. |
 | Settings | The fixed header and footer keep Close, Cancel, and Save visible while the preferences body scrolls. Check 640×480 and ordinary desktop sizes: long descriptions, paths, and errors wrap within the card; controls use compact type and outlined fields. Save applies changes; Cancel/Close discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
 | Control icons | Navigation, header, message actions, pins, and composer use shared static outline icons. Check consistent size/stroke, hover/disabled colors, recognizable pin/unpin and bookmark states, and action tooltips. User-authored emoji and reaction glyphs remain emoji. |
+
+Space unread dots (2026-11-17): rendered-widget coverage checks room/DM updates,
+zero-count manual unread flags, nested/shared/cyclic space membership, empty and
+removed rooms, fixed icon/dot bounds, and clicking the dot without changing the
+conversation, draft, or saved scroll. Settled redraws request `Wait`. Formatting,
+all 310 desktop tests, workspace Clippy with warnings denied, and the locked
+desktop build pass. Native desktop and connected-account acceptance remain
+manual; no connected client was restarted.
 
 Unread section (2026-11-17): rendered-widget coverage checks the fixed top header,
 unread favorites/DMs/custom rooms, manual unread flags with zero message counts,
@@ -228,6 +237,39 @@ alerts were exercised only as fixtures; real incoming requests, macOS/wgpu, and
 production resource measurements remain manual acceptance checks. Formatting,
 workspace Clippy, all 266 UI tests, and the desktop build pass. This pass adds
 no subscription or timer.
+
+On-demand presence (2026-11-17) replaces the extra classic sync stream with
+per-user status lookups. This removes the shared-cursor collision that caused
+repeated HTTP 400 responses for `extensions.to_device.since`, status flicker, and
+high CPU. The temporary Matrix SDK patch and vendored source have been removed;
+all SDK crates use their stock, pinned 0.19.1 releases.
+
+Before restoring a saved account, a one-time migration runs under the existing
+profile process lock. A native checkpoint saved by the temporary patch is copied
+to the stock SDK cursor through its store API; otherwise only the old cursor is
+removed so pending device events can replay. No device keys, identity, account,
+or timelines are replaced. A small marker prevents later startups from resetting
+native progress. Migration uses the already-pinned crypto store APIs, without
+SQL modifications or an SDK fork. A malformed native checkpoint fails visibly
+before sync starts and leaves the cursor unchanged.
+
+Encrypted SQLite fixtures cover patched/unpatched cursors, malformed checkpoints,
+idempotence, retained unrelated data and device signing keys, and reopening with
+the stock SDK against a strict server expecting the native cursor. A separate
+mock keeps `/versions` available while sync fails and then restores sync, checking
+recovery during pending long polls. Connection status remains event-driven and
+can be traced with `RUST_LOG=interconnect::connection=info` without account or
+message content. The single-line connection banner retains full text on hover;
+widget tests cover stable banner/timeline bounds at 640 and 1280 px.
+
+Formatting, workspace Clippy with warnings denied, all 172 library and 314 desktop
+tests (two existing opt-in library tests skipped), and the locked desktop build
+pass. The authorized connected launch completed cursor migration and restored the
+existing account with the stock SDK: Connecting → Connected, with no sync errors
+through an 85.01-second passive sample. The store migration marker was present.
+No test messages, new login, or device/key reset was performed. Native visual
+acceptance of the refresh controls and other platforms remains manual; widgets
+and lookup behavior were verified in fixtures. Logs remain outside the repository.
 
 The compact header pass reduces vertical padding and aligns room actions with
 the title row. The topic uses a cached single-line ellipsis label, with its full
@@ -1287,42 +1329,47 @@ saved account, network access, or real Matrix test messages.
 
 ## User presence
 
-The pinned SDK's sliding-sync response has no incoming presence field. An
-account-scoped, filtered classic `/sync` long poll (30-second server timeout)
-provides presence alongside the existing sliding-sync services. Its filter
-excludes all rooms and account data. Responses go through SDK `sync_once`,
-including any to-device encryption/verification events, before advancing the
-classic token; discarding those events could acknowledge undelivered keys.
-The SDK's existing default sync presence applies; this change adds no manual
-status or local inactivity policy. Protocol reference: [Matrix presence](https://spec.matrix.org/v1.16/client-server-api/#presence).
+Opening a DM requests its unambiguous Matrix peer's current status. Opening People,
+changing its search, or paging requests the visible joined members, excluding
+self and invitees. Each demand is capped at 50 users with four concurrent requests
+and a five-second per-request timeout. Responses use the standard
+[per-user presence endpoint](https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv3presenceuseridstatus)
+through the stock SDK. Presence never calls `/sync` or changes encryption cursors.
 
-The UI projects server `online`, `unavailable`, and `offline` to Online, Away,
-and Offline. It does not infer status from message timestamps or typing.
-Unknown/missing/unsupported presence has no mark or status tooltip; DM rows
-keep their icon slot empty and message avatars have no badge or badge backing.
-Only an unambiguous Matrix peer from `m.direct` supplies a DM row's status;
-self IDs, third-party identifiers, and multiple targets cannot select an
-arbitrary peer. Presence projections use Matrix user IDs, independently of
-sender display names, and retain up to 8192 users. An outage hides cached status;
-a successful incremental response restores it with missed deltas. Ending or
-replacing the connection releases requests and the projection. Avatar bounds,
-timeline rows, drafts, and scroll anchors stay unchanged during status changes.
+Results are last-checked snapshots, not continuous live presence. Opening another
+view reuses results checked within 60 seconds. Cache age is checked only on view
+demand; no timer expires entries or polls the server. **Refresh status** in a DM
+header or People panel bypasses the cache for the current view; **Checking…**
+disables duplicate refreshes. A failed or unsupported lookup hides that user's
+mark and is cached as unknown until another eligible lookup or explicit refresh.
+The memory cache retains at most 8192 users and is released with the account.
 
-Mock fixtures cover status mapping, malformed/duplicate events, bounded cache,
-filtered incremental sync with nonzero timeout, to-device event delivery,
-in-flight cancellation, and failure/recovery with an unchanged token. Widget
-coverage checks fixed avatar bounds with images/initials, no idle redraw timer,
-and room/thread reading position, editor focus, drafts, and selection through
-status changes. Isolated `--demo` tiny-skia screenshots were checked for
-online/away/offline avatar marks and online/away DM navigator rows. Capture
-harnesses and images stayed under `/tmp`; the connected client was left running.
-Real-account presence transitions, coexistence with ongoing
-encrypted traffic/verification on a live server, disabled-presence servers,
-macOS/wgpu rendering, and fresh idle resource measurements remain manual checks.
+Online/away/offline marks retain their existing colors and dimensions. Tooltips
+say **Last checked**; People explains the snapshot behavior. Unknown status has
+no mark and is never presented as Offline. Room/thread avatars and DM navigator
+rows can reuse previously checked users; opening a group conversation alone does
+not request every sender. Space filtering preserves the open conversation and
+its demand. Modal dialogs cancel demand. Demo fixtures stay in memory and issue
+no presence requests, including when Refresh is clicked.
 
-With authorized test accounts, change the peer's status from another Matrix
-client and check the same indicator in a room group, thread, and DM row without
-navigating. Check a user with the same display name but a different Matrix ID,
-server disconnect/reconnect, and shutdown while the long poll is pending. Use
-dedicated test rooms for encrypted sends and verification; avoid the user's
-ordinary conversations. Demo fixtures require no network or saved session.
+A superseding room, People view, page, or refresh cancels its pending batch.
+Responses are checked against current demand before entering the cache, and a
+session owns its own worker/cache. Lookup completion cannot replace conversation
+selection, drafts, reading positions, or another account's data. Connection status
+is independent of presence lookup failures. The existing SDK default for our own
+presence remains unchanged.
+
+Fixtures cover cache reuse, manual refresh, unknown/failed responses, bounded and
+validated user demand, no idle/classic-sync requests, navigation/shutdown
+cancellation, and rejection of late results. UI tests cover visible member pages,
+self/invite exclusion, stale refresh controls, modal/draft/scroll preservation,
+click routing, and demo isolation. Existing avatar tests cover fixed bounds and
+idle redraw behavior. Cursor migration and stock-SDK reopening are covered above.
+
+For manual acceptance, open a DM and People at ordinary and 640×480 window sizes.
+Hover a status mark, change a test peer's status in another client, then click
+Refresh and check the new snapshot. Navigate away during a pending request; check
+that the new view's statuses and drafts stay intact. Test unsupported presence,
+People search/paging, account replacement, and shutdown while a lookup is pending.
+Use dedicated authorized test accounts for encrypted message/verification checks;
+no test sends or new logins are necessary for ordinary demo/fixture validation.

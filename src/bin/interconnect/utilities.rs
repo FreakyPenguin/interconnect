@@ -44,12 +44,11 @@ impl App {
         let mut items = column![].spacing(3).width(Length::Fill);
         let connection = self.demo.is_none() && self.model.status != "Connected";
         if connection || self.stopped {
-            let mut status = row![
-                text(&self.model.status)
-                    .size(11)
-                    .color(shell::MUTED)
-                    .width(Length::Fill)
-            ]
+            let mut status = row![super::tooltips::tooltip(
+                super::single_line::label(&self.model.status, 11).color(shell::MUTED),
+                &self.model.status,
+                iced::widget::tooltip::Position::Top,
+            )]
             .spacing(8)
             .align_y(iced::Alignment::Center);
             if self.stopped {
@@ -98,6 +97,7 @@ impl App {
             column![
                 iced::widget::rule::horizontal(1),
                 container(items)
+                    .id("utility-banner")
                     .padding([5, 14])
                     .width(Length::Fill)
                     .style(|_| shell::surface(shell::SIDEBAR))
@@ -198,6 +198,75 @@ mod tests {
         assert!(app.utility_banner().is_none());
         app.stopped = true;
         assert!(app.utility_banner().is_some());
+    }
+
+    #[test]
+    fn reconnect_status_text_keeps_banner_and_conversation_bounds_stable() {
+        #[derive(Default)]
+        struct Probe {
+            banner: Option<Rectangle>,
+            timeline: Option<Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+                if id == Some(&widget::Id::new("utility-banner")) {
+                    self.banner = Some(bounds);
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: Rectangle,
+                _: Rectangle,
+                _: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("room-timeline")) {
+                    self.timeline = Some(bounds);
+                }
+            }
+        }
+        let mut app = crate::tests::demo_app();
+        app.demo = None;
+        app.model.authentication = None;
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = widget::Tree::empty();
+        // Long translated/error text must not make the whole conversation resize.
+        for width in [640.0, 1280.0] {
+            let size = Size::new(width, 480.0);
+            let mut previous = None;
+            for status in [
+                "Connecting… Messages and drafts are retained.",
+                "Offline — reconnecting automatically. You can still compose and queue messages.",
+                "Synchronization interrupted. Session retained.",
+                &"A long connection error. ".repeat(60),
+                "Connecting… Messages and drafts are retained.",
+            ] {
+                app.model.status = status.into();
+                let mut view = app.view();
+                tree.diff(view.as_widget());
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                let bounds = (probe.banner.unwrap(), probe.timeline.unwrap());
+                if let Some(previous) = previous {
+                    assert_eq!(bounds, previous);
+                }
+                previous = Some(bounds);
+            }
+        }
     }
 
     #[test]

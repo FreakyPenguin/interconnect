@@ -14,8 +14,9 @@ iced = { version = "=0.14.0", default-features = false, features = ["tokio", "wa
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 matrix-sdk = { version = "=0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs", "sso-login"] }
 matrix-sdk-common = { version = "=0.19.1", default-features = false }
+matrix-sdk-crypto = { version = "=0.19.1", default-features = false }
 matrix-sdk-ui = { version = "=0.19.1", default-features = false }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "process", "fs"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -47,7 +48,6 @@ notify-rust = { version = "=4.19.0", default-features = false, features = ["prev
 
 [dev-dependencies]
 iced_tiny_skia = { version = "=0.14.1", default-features = false }
-matrix-sdk-crypto = { version = "=0.19.1", default-features = false }
 tiny-skia = { version = "=0.11.4", default-features = false }
 wiremock = "0.6"
 

@@ -512,7 +512,12 @@ fn presence_dot<'a, M: 'a>(status: interconnect::connected::Presence) -> Element
         },
         ..Default::default()
     });
-    super::tooltips::tooltip(mark, status.label(), widget::tooltip::Position::Top).into()
+    super::tooltips::tooltip(
+        mark,
+        format!("{} · Last checked", status.label()),
+        widget::tooltip::Position::Top,
+    )
+    .into()
 }
 
 pub fn activity_avatar<'a, M: 'a>(
@@ -811,6 +816,12 @@ impl App {
         let mut rail = column![].spacing(10).align_x(Alignment::Center);
         for (scope, initial, name, image) in entries {
             let selected = self.shell.space == scope;
+            let members = navigation::members(&scope, &self.model.spaces);
+            let unread = self
+                .model
+                .rooms
+                .iter()
+                .any(|room| room.unread && navigation::includes(&scope, &members, room));
             let content: Element<'_, Message> = if matches!(scope, Scope::All | Scope::Direct) {
                 sized(
                     if scope == Scope::Direct {
@@ -830,7 +841,33 @@ impl App {
             } else {
                 text(initial).size(14).into()
             };
-            let mut control = button(container(content).center_x(38).center_y(38))
+            let mut content = widget::stack![
+                container(content)
+                    .center_x(38)
+                    .center_y(38)
+                    .id(format!("space-rail-icon:{scope:?}"))
+            ];
+            if unread {
+                content = content.push(
+                    container(
+                        container(widget::space().width(8).height(8))
+                            .style(|_| container::Style {
+                                background: Some(ACCENT.into()),
+                                border: Border {
+                                    color: RAIL,
+                                    width: 1.0,
+                                    radius: 4.0.into(),
+                                },
+                                ..Default::default()
+                            })
+                            .id(format!("space-rail-unread:{scope:?}")),
+                    )
+                    .align_right(Length::Fill)
+                    .align_bottom(Length::Fill)
+                    .padding(2),
+                );
+            }
+            let mut control = button(content)
                 .padding(0)
                 .style(move |_, status| navigation_button(selected, status));
             if !self.closing && !self.stopped {
@@ -838,7 +875,11 @@ impl App {
             }
             rail = rail.push(super::tooltips::tooltip(
                 control,
-                name,
+                if unread {
+                    format!("{name} · Unread messages")
+                } else {
+                    name
+                },
                 widget::tooltip::Position::Right,
             ));
         }
@@ -1428,6 +1469,188 @@ mod avatar_tests {
 mod navigation_tests {
     use super::*;
     use iced::advanced::{layout, widget};
+
+    #[test]
+    fn space_unread_dots_follow_room_snapshots_and_keep_space_buttons_clickable() {
+        use iced::advanced::{Shell, mouse};
+        use interconnect::navigation::SpaceEntry;
+
+        fn inspect(app: &App, click: Option<&Scope>) -> (Vec<Scope>, Vec<Message>) {
+            struct Probe {
+                scopes: Vec<Scope>,
+                icons: Vec<(Scope, iced::Rectangle)>,
+                dots: Vec<(Scope, iced::Rectangle)>,
+            }
+            impl widget::Operation for Probe {
+                fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                    f(self);
+                }
+                fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                    for scope in &self.scopes {
+                        if id == Some(&widget::Id::from(format!("space-rail-icon:{scope:?}"))) {
+                            self.icons.push((scope.clone(), bounds));
+                        }
+                        if id == Some(&widget::Id::from(format!("space-rail-unread:{scope:?}"))) {
+                            self.dots.push((scope.clone(), bounds));
+                        }
+                    }
+                }
+            }
+            let mut probe = Probe {
+                scopes: [Scope::All, Scope::Direct]
+                    .into_iter()
+                    .chain(
+                        app.model
+                            .spaces
+                            .iter()
+                            .map(|space| Scope::Space(space.id.clone())),
+                    )
+                    .collect(),
+                icons: Vec::new(),
+                dots: Vec::new(),
+            };
+            let renderer = crate::test_renderer(Font::DEFAULT, iced::Pixels(13.0));
+            let mut view = app.space_rail(1280.0);
+            let mut tree = widget::Tree::new(&view);
+            let size = iced::Size::new(64.0, 720.0);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            assert_eq!(probe.icons.len(), probe.scopes.len());
+            for (_, bounds) in &probe.icons {
+                assert_eq!(bounds.size(), iced::Size::new(38.0, 38.0));
+            }
+            for (scope, dot) in &probe.dots {
+                let icon = probe.icons.iter().find(|(id, _)| id == scope).unwrap().1;
+                assert_eq!(dot.size(), iced::Size::new(8.0, 8.0));
+                assert!(
+                    icon.contains(dot.position())
+                        && icon.contains(dot.position() + iced::Vector::new(8.0, 8.0))
+                );
+            }
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Window(iced::window::Event::RedrawRequested(
+                    iced::time::Instant::now(),
+                )),
+                layout::Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+                &iced::Rectangle::with_size(size),
+            );
+            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+            assert!(messages.is_empty());
+            if let Some(scope) = click {
+                let point = probe
+                    .dots
+                    .iter()
+                    .find(|(id, _)| id == scope)
+                    .unwrap()
+                    .1
+                    .center();
+                for event in [
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ] {
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &iced::Event::Mouse(event),
+                        layout::Layout::new(&node),
+                        mouse::Cursor::Available(point),
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &iced::Rectangle::with_size(size),
+                    );
+                }
+            }
+            (
+                probe.dots.into_iter().map(|(scope, _)| scope).collect(),
+                messages,
+            )
+        }
+
+        let mut app = crate::tests::demo_app();
+        let selection = app.selection.room.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Unsent");
+        app.scroll_positions.insert(key.clone(), 51.0);
+        assert_eq!(
+            inspect(&app, None).0,
+            [Scope::All, Scope::Space("studio-space".into())]
+        );
+
+        let mut snapshot = app.model.clone();
+        for room in std::sync::Arc::make_mut(&mut snapshot.rooms) {
+            room.unread = room.id == "maya";
+            room.unread_count = 0;
+        }
+        snapshot.spaces = [
+            ("parent", vec!["child"]),
+            ("child", vec!["parent", "maya"]),
+            ("shared", vec!["maya"]),
+            ("empty", vec!["unknown"]),
+        ]
+        .into_iter()
+        .map(|(id, children)| SpaceEntry {
+            id: id.into(),
+            name: id.into(),
+            children: children.into_iter().map(String::from).collect(),
+            ..Default::default()
+        })
+        .collect::<Vec<_>>()
+        .into();
+        let _ = app.update(Message::State(Box::new(snapshot)));
+        // Rail indicators ignore the current room filter and optional Unread section.
+        app.shell.query = "no matching rooms".into();
+        app.settings.current.navigation.show_unread_section = false;
+        let parent = Scope::Space("parent".into());
+        let (dots, messages) = inspect(&app, Some(&parent));
+        assert_eq!(
+            dots,
+            [
+                Scope::All,
+                Scope::Direct,
+                parent.clone(),
+                Scope::Space("child".into()),
+                Scope::Space("shared".into())
+            ]
+        );
+        assert!(matches!(messages.as_slice(), [Message::Space(scope)] if scope == &parent));
+        for message in messages {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.shell.space, parent);
+        assert_eq!(app.selection.room, selection);
+        assert_eq!(app.drafts[&key].content.text().trim_end(), "Unsent");
+        assert_eq!(app.scroll_positions[&key], 51.0);
+
+        let unread_snapshot = app.model.clone();
+        let mut snapshot = unread_snapshot.clone();
+        for room in std::sync::Arc::make_mut(&mut snapshot.rooms) {
+            room.unread = false;
+        }
+        let _ = app.update(Message::State(Box::new(snapshot)));
+        assert!(inspect(&app, None).0.is_empty());
+        // Dropping a room from the snapshot also clears every affected indicator.
+        let _ = app.update(Message::State(Box::new(unread_snapshot)));
+        assert!(!inspect(&app, None).0.is_empty());
+        let mut snapshot = app.model.clone();
+        snapshot.rooms = Default::default();
+        let _ = app.update(Message::State(Box::new(snapshot)));
+        assert!(inspect(&app, None).0.is_empty());
+    }
 
     #[test]
     fn unread_shortcuts_follow_filters_collapse_read_state_and_settings() {

@@ -10,6 +10,7 @@
 
 - Logout / account switching UI
 - optionally move unread rooms to the top of their sections? (setting)
+- add "home space for unspaced rooms
 
 ## Other ideas
 

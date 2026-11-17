@@ -1,20 +1,12 @@
-//! Presence is absent from sliding-sync responses in the pinned SDK. A filtered
-//! classic sync supplies it, with no room history or account-data projection.
+//! Bounded, cached presence snapshots fetched only for explicit view demand.
 use super::Model;
 use matrix_sdk::{
     Client,
-    config::{SyncSettings, SyncToken},
-    ruma::{
-        api::client::{filter::FilterDefinition, sync::sync_events::v3::Filter},
-        events::presence::PresenceEvent,
-        presence::PresenceState,
-        serde::Raw,
-    },
+    ruma::{api::client::presence::get_presence, presence::PresenceState},
 };
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::sync::watch;
 
-const LONG_POLL: Duration = Duration::from_secs(30);
 const MAX_USERS: usize = 8192;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -45,77 +37,135 @@ impl Status {
 }
 pub type Users = BTreeMap<String, Status>;
 
-fn filter() -> Filter {
-    let mut definition = FilterDefinition::ignore_all();
-    definition.presence = Default::default();
-    Filter::FilterDefinition(definition)
+/// Explicit view demand. The account session owns the cache and cancels a batch
+/// when its room, People generation/page, or refresh request is superseded.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Demand {
+    pub users: Vec<String>,
+    pub refresh: u64,
 }
 
-fn apply(events: &[Raw<PresenceEvent>], users: &mut Users) {
-    for event in events.iter().filter_map(|event| event.deserialize().ok()) {
-        let user = event.sender.to_string();
-        if !users.contains_key(&user) && users.len() >= MAX_USERS {
-            users.pop_first();
-        }
-        users.insert(user, Status::from_presence(&event.content.presence));
+const CACHE_TTL: Duration = Duration::from_secs(60);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_REQUESTED: usize = 50;
+const CONCURRENCY: usize = 4;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Request {
+    room: Option<(u64, String)>,
+    members: Option<u64>,
+    demand: Demand,
+}
+fn requested(client: &Client, selection: &super::Selection) -> Request {
+    let mut demand = selection.presence.clone();
+    if selection.shutdown || selection.room.is_none() {
+        demand.users.clear();
+    }
+    demand.users.retain(|user| {
+        user.parse::<matrix_sdk::ruma::OwnedUserId>()
+            .is_ok_and(|user| Some(user.as_ref()) != client.user_id())
+    });
+    demand.users.sort();
+    demand.users.dedup();
+    demand.users.truncate(MAX_REQUESTED);
+    Request {
+        room: selection.room.clone(),
+        members: selection.members,
+        demand,
     }
 }
 
-fn publish(users: &Users, state: &watch::Sender<Model>) {
+fn publish(state: &watch::Sender<Model>, users: &Users, loading: bool) {
     state.send_if_modified(|model| {
-        if *users == *model.presence {
+        if *model.presence == *users && model.presence_loading == loading {
             return false;
         }
         model.presence = Arc::new(users.clone());
+        model.presence_loading = loading;
         true
     });
 }
 
 pub(super) fn clear(state: &watch::Sender<Model>) {
-    state.send_if_modified(|model| {
-        if model.presence.is_empty() {
-            return false;
-        }
-        model.presence = Arc::default();
-        true
-    });
+    publish(state, &Users::new(), false);
 }
 
-/// Owned by the authenticated connection future; dropping it cancels requests
-/// and backoff. Never run raw `/sync` and discard its to-device events: advancing
-/// that token can acknowledge encryption/verification messages. `sync_once`
-/// processes them through the same SDK before returning the next token.
-pub(super) async fn run(client: &Client, state: &watch::Sender<Model>) {
-    let mut users = Users::new();
-    let mut token = SyncToken::NoToken;
-    let mut backoff = Duration::from_secs(2);
+/// No classic sync, timer, or automatic retry. Cache age is checked only when a
+/// view requests users; Refresh bypasses it for the currently requested users.
+pub(super) async fn run(
+    client: &Client,
+    mut selection: watch::Receiver<super::Selection>,
+    state: &watch::Sender<Model>,
+) {
+    use iced::futures::{StreamExt, stream};
+    use tokio::time::Instant;
+    let mut cache = BTreeMap::<String, (Status, Instant)>::new();
+    let mut current = requested(client, &selection.borrow_and_update());
+    let mut last_refresh = current.demand.refresh;
     loop {
-        let started = tokio::time::Instant::now();
-        let settings = SyncSettings::default()
-            .filter(filter())
-            .token(token.clone())
-            .timeout(LONG_POLL);
-        match client.sync_once(settings).await {
-            Ok(response) => {
-                token = SyncToken::Specific(response.next_batch);
-                apply(&response.presence, &mut users);
-                publish(&users, state);
-                backoff = Duration::from_secs(2);
-                // Protect against servers returning immediately despite the long
-                // poll. Normal idle responses never schedule an extra timer.
-                let earliest = started + Duration::from_secs(1);
-                if tokio::time::Instant::now() < earliest {
-                    tokio::time::sleep_until(earliest).await;
+        let force = current.demand.refresh != last_refresh;
+        last_refresh = current.demand.refresh;
+        let wanted: Vec<_> = current
+            .demand
+            .users
+            .iter()
+            .filter(|user| {
+                force
+                    || cache
+                        .get(*user)
+                        .is_none_or(|(_, at)| at.elapsed() >= CACHE_TTL)
+            })
+            .cloned()
+            .collect();
+        let users = || {
+            cache
+                .iter()
+                .filter(|(_, (status, _))| *status != Status::Unknown)
+                .map(|(user, (status, _))| (user.clone(), *status))
+                .collect::<Users>()
+        };
+        publish(state, &users(), !wanted.is_empty());
+        let batch = stream::iter(wanted.into_iter().map(|user| async move {
+            let request = get_presence::v3::Request::new(user.parse().expect("validated user ID"));
+            let result = tokio::time::timeout(REQUEST_TIMEOUT, client.send(request)).await;
+            let status = match result {
+                Ok(Ok(response)) => Status::from_presence(&response.presence),
+                _ => Status::Unknown,
+            };
+            (user, status)
+        }))
+        .buffer_unordered(CONCURRENCY)
+        .collect::<Vec<_>>();
+        tokio::pin!(batch);
+        loop {
+            tokio::select! {
+                results = &mut batch => {
+                    let next = requested(client, &selection.borrow_and_update());
+                    if next != current { current = next; break; }
+                    for (user, status) in results {
+                        if !cache.contains_key(&user) && cache.len() >= MAX_USERS
+                            && let Some(oldest) = cache.iter().min_by_key(|(_, (_, at))| *at).map(|(user, _)| user.clone()) {
+                            cache.remove(&oldest);
+                        }
+                        cache.insert(user, (status, Instant::now()));
+                    }
+                    let users = cache.iter().filter(|(_, (status, _))| *status != Status::Unknown)
+                        .map(|(user, (status, _))| (user.clone(), *status)).collect();
+                    publish(state, &users, false);
+                    // A settled batch waits for explicit new demand. Unrelated UI
+                    // updates do not expire the cache or trigger more requests.
+                    loop {
+                        if selection.changed().await.is_err() { return; }
+                        let next = requested(client, &selection.borrow_and_update());
+                        if next != current { current = next; break; }
+                    }
+                    break;
                 }
-            }
-            Err(_) => {
-                // Do not present cached online users as live during an outage.
-                clear(state);
-                // Retain the last processed token/cache privately. Recovery can
-                // replay deltas and restore unchanged users, even if the SDK
-                // deduplicates a response with the same next_batch token.
-                tokio::time::sleep(backoff).await;
-                backoff = (backoff * 2).min(Duration::from_secs(60));
+                result = selection.changed() => {
+                    if result.is_err() { return; }
+                    let next = requested(client, &selection.borrow_and_update());
+                    if next != current { current = next; break; }
+                }
             }
         }
     }

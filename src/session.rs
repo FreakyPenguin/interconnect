@@ -17,6 +17,8 @@ use secret_service::{EncryptionType, SecretService};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+mod presence_cursor;
+
 // Keep the original keyring namespace so existing saved accounts remain readable.
 const APPLICATION: &str = "chatclient-milestone-0";
 
@@ -240,6 +242,13 @@ async fn connect() -> anyhow::Result<SecretService<'static>> {
 async fn client(profile: &Profile, saved: &SavedSession) -> anyhow::Result<Client> {
     // Retain before opening SQLite, including build failures/cancellation.
     profile.retain_lock_until_exit()?;
+    if saved.session.is_some() && saved.device_key.is_some() {
+        presence_cursor::migrate(
+            &profile.directory.join(&saved.store_directory),
+            &saved.store_key,
+        )
+        .await?;
+    }
     Ok(Client::builder()
         .cross_process_store_config(
             matrix_sdk_common::cross_process_lock::CrossProcessLockConfig::SingleProcess,

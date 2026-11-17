@@ -1,74 +1,12 @@
+use super::super::{PresenceDemand, Selection};
 use super::*;
 use matrix_sdk::authentication::matrix::MatrixSession;
 use serde_json::json;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
-    matchers::{method, path},
+    matchers::{method, path, path_regex},
 };
-
-fn event(user: &str, status: &str) -> Raw<PresenceEvent> {
-    Raw::from_json_string(
-        json!({
-            "type":"m.presence", "sender":user, "content":{"presence":status}
-        })
-        .to_string(),
-    )
-    .unwrap()
-}
-
-fn project(events: &[Raw<PresenceEvent>], state: &watch::Sender<Model>) {
-    let mut users = (*state.borrow().presence).clone();
-    apply(events, &mut users);
-    publish(&users, state);
-}
-
-#[test]
-fn projection_deduplicates_and_keeps_unknown_distinct_from_offline() {
-    let (state, mut updates) = watch::channel(Model::default());
-    project(
-        &[
-            event("@alice:example.org", "online"),
-            event("@bob:example.org", "unavailable"),
-        ],
-        &state,
-    );
-    assert!(updates.has_changed().unwrap());
-    assert_eq!(
-        updates.borrow_and_update().presence["@alice:example.org"],
-        Status::Online
-    );
-    project(&[event("@alice:example.org", "online")], &state);
-    assert!(!updates.has_changed().unwrap());
-    project(
-        &[
-            event("@alice:example.org", "offline"),
-            event("@bob:example.org", "future-status"),
-        ],
-        &state,
-    );
-    assert_eq!(
-        state.borrow().presence["@alice:example.org"],
-        Status::Offline
-    );
-    assert_eq!(state.borrow().presence["@bob:example.org"], Status::Unknown);
-    clear(&state);
-    assert!(state.borrow().presence.is_empty());
-    updates.borrow_and_update();
-    clear(&state);
-    assert!(!updates.has_changed().unwrap());
-}
-
-#[test]
-fn projection_is_bounded_and_ignores_malformed_events() {
-    let (state, _updates) = watch::channel(Model::default());
-    let events: Vec<_> = (0..MAX_USERS + 10)
-        .map(|n| event(&format!("@user{n}:example.org"), "online"))
-        .collect();
-    project(&events, &state);
-    assert_eq!(state.borrow().presence.len(), MAX_USERS);
-    project(&[Raw::from_json_string("{}".into()).unwrap()], &state);
-    assert_eq!(state.borrow().presence.len(), MAX_USERS);
-}
 
 async fn client(server: &MockServer) -> Client {
     Mock::given(method("GET"))
@@ -78,6 +16,7 @@ async fn client(server: &MockServer) -> Client {
         .await;
     let client = Client::builder()
         .homeserver_url(server.uri())
+        .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
         .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
         .build()
         .await
@@ -95,123 +34,186 @@ async fn client(server: &MockServer) -> Client {
         .unwrap();
     client
 }
-
-#[tokio::test]
-async fn filtered_sync_delivers_presence_and_to_device_before_advancing_and_cancels() {
-    let server = MockServer::start().await;
-    let client = client(&server).await;
-    let (seen, mut received) = tokio::sync::mpsc::unbounded_channel();
-    let handler = client.add_event_handler(move |_event: matrix_sdk::ruma::events::key::verification::request::ToDeviceKeyVerificationRequestEvent| {
-        let seen = seen.clone();
-        async move { let _ = seen.send(()); }
-    });
-    let _guard = client.event_handler_drop_guard(handler);
-    Mock::given(method("GET")).and(path("/_matrix/client/v3/sync"))
-        .and(wiremock::matchers::query_param_is_missing("since"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "next_batch":"presence-1",
-            "presence":{"events":[{"type":"m.presence","sender":"@alice:example.org","content":{"presence":"online"}}]},
-            "to_device":{"events":[{"type":"m.key.verification.request","sender":"@alice:example.org","content":{
-                "from_device":"OTHER", "methods":["m.sas.v1"], "timestamp":1, "transaction_id":"presence-test"
-            }}]}
-        }))).expect(1).mount(&server).await;
-    Mock::given(method("GET"))
-        .and(path("/_matrix/client/v3/sync"))
-        .and(wiremock::matchers::query_param("since", "presence-1"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_delay(Duration::from_secs(60))
-                .set_body_json(json!({"next_batch":"presence-2"})),
-        )
-        .expect(1)
-        .mount(&server)
-        .await;
-    let (state, mut updates) = watch::channel(Model::default());
-    let owned = client.clone();
-    let task = tokio::spawn(async move { run(&owned, &state).await });
+fn selection(users: &[&str]) -> Selection {
+    Selection {
+        room: Some((1, "!room:example.org".into())),
+        presence: PresenceDemand {
+            users: users.iter().map(|user| (*user).into()).collect(),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+async fn ready(updates: &mut watch::Receiver<Model>, user: &str, status: Status) {
     tokio::time::timeout(
-        Duration::from_secs(10),
-        updates.wait_for(|s| s.presence.get("@alice:example.org") == Some(&Status::Online)),
+        Duration::from_secs(3),
+        updates.wait_for(|state| {
+            !state.presence_loading
+                && state.presence.get(user).copied().unwrap_or_default() == status
+        }),
     )
     .await
     .unwrap()
     .unwrap();
-    tokio::time::timeout(Duration::from_secs(2), received.recv())
-        .await
-        .unwrap()
-        .unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if server.received_requests().await.unwrap().iter().any(|r| {
-                r.url
-                    .query_pairs()
-                    .any(|(k, v)| k == "since" && v == "presence-1")
-            }) {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-    })
-    .await
-    .unwrap();
-    task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
-    let requests = server.received_requests().await.unwrap();
-    let sync = requests
-        .iter()
-        .filter(|r| r.url.path().ends_with("/sync"))
-        .collect::<Vec<_>>();
-    assert_eq!(sync.len(), 2);
-    for request in sync {
-        let query: BTreeMap<_, _> = request.url.query_pairs().into_owned().collect();
-        assert_eq!(query["timeout"], "30000");
-        let filter: serde_json::Value = serde_json::from_str(&query["filter"]).unwrap();
-        assert_eq!(filter["room"]["rooms"], json!([]));
-        assert_eq!(filter["account_data"]["types"], json!([]));
-        assert!(filter.get("presence").is_none());
-    }
 }
 
 #[tokio::test]
-async fn failed_sync_hides_stale_status_and_recovery_restores_unchanged_users() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+async fn opening_views_uses_cache_and_explicit_refresh_rechecks_without_sync_or_idle_requests() {
     let server = MockServer::start().await;
     let client = client(&server).await;
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
-    Mock::given(method("GET")).and(path("/_matrix/client/v3/sync"))
-        .respond_with(move |request: &wiremock::Request| {
+    Mock::given(method("GET"))
+        .and(path_regex(".*/presence/[^/]+/status"))
+        .respond_with(move |_: &wiremock::Request| {
             let n = count.fetch_add(1, Ordering::SeqCst);
-            if n > 0 {
-                assert!(request.url.query_pairs().any(|(key, value)| key == "since" && value == "one"));
-            }
-            match n {
-                0 => ResponseTemplate::new(200).set_body_json(json!({
-                    "next_batch":"one", "presence":{"events":[{
-                        "type":"m.presence", "sender":"@alice:example.org", "content":{"presence":"online"}
-                    }]}
-                })),
-                1 => ResponseTemplate::new(500).set_body_json(json!({"errcode":"M_UNKNOWN", "error":"test"})),
-                2 => ResponseTemplate::new(200).set_body_json(json!({"next_batch":"one"})),
-                _ => ResponseTemplate::new(200).set_delay(Duration::from_secs(60)).set_body_json(json!({"next_batch":"two"})),
-            }
-        }).mount(&server).await;
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"presence":if n == 0 {"online"} else {"unavailable"}}))
+        })
+        .mount(&server)
+        .await;
+    let (control, desired) = watch::channel(selection(&["@alice:example.org"]));
     let (state, mut updates) = watch::channel(Model::default());
-    let task = tokio::spawn(async move { run(&client, &state).await });
-    for online in [true, false, true] {
-        tokio::time::timeout(
-            Duration::from_secs(10),
-            updates.wait_for(|s| !s.presence.is_empty() == online),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-    }
+    let task = tokio::spawn(async move { run(&client, desired, &state).await });
+    ready(&mut updates, "@alice:example.org", Status::Online).await;
+    control.send_modify(|s| s.room.as_mut().unwrap().0 += 1);
+    control.send_modify(|s| s.notifications.enabled = false);
+    tokio::time::sleep(Duration::from_millis(80)).await;
     assert_eq!(
-        updates.borrow().presence["@alice:example.org"],
-        Status::Online
+        calls.load(Ordering::SeqCst),
+        1,
+        "cached navigation and settled views make no requests"
     );
+    control.send_modify(|s| s.presence.refresh += 1);
+    ready(&mut updates, "@alice:example.org", Status::Away).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
-    assert!(calls.load(Ordering::SeqCst) >= 3);
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .all(|request| !request.url.path().ends_with("/sync"))
+    );
+}
+
+#[tokio::test]
+async fn superseded_room_results_and_shutdown_cannot_publish_late_presence() {
+    let server = MockServer::start().await;
+    let client = client(&server).await;
+    let started = Arc::new(tokio::sync::Notify::new());
+    let notify = started.clone();
+    Mock::given(method("GET"))
+        .and(path(
+            "/_matrix/client/v3/presence/@alice:example.org/status",
+        ))
+        .respond_with(move |_: &wiremock::Request| {
+            notify.notify_one();
+            ResponseTemplate::new(200)
+                .set_delay(Duration::from_millis(200))
+                .set_body_json(json!({"presence":"online"}))
+        })
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/_matrix/client/v3/presence/@bob:example.org/status"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"presence":"offline"})))
+        .mount(&server)
+        .await;
+    let (control, desired) = watch::channel(selection(&["@alice:example.org"]));
+    let (state, mut updates) = watch::channel(Model::default());
+    let task = tokio::spawn(async move { run(&client, desired, &state).await });
+    tokio::time::timeout(Duration::from_secs(3), started.notified())
+        .await
+        .unwrap();
+    control.send_modify(|s| {
+        s.room = Some((2, "!other:example.org".into()));
+        s.presence.users = vec!["@bob:example.org".into()];
+    });
+    ready(&mut updates, "@bob:example.org", Status::Offline).await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(!updates.borrow().presence.contains_key("@alice:example.org"));
+    control.send_modify(|s| {
+        s.presence.users = vec!["@alice:example.org".into()];
+        s.presence.refresh += 1;
+    });
+    tokio::time::timeout(Duration::from_secs(3), started.notified())
+        .await
+        .unwrap();
+    control.send_modify(|s| s.shutdown = true);
+    tokio::time::sleep(Duration::from_millis(250)).await;
+    assert!(!updates.borrow().presence.contains_key("@alice:example.org"));
+    assert!(!updates.borrow().presence_loading);
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+}
+
+#[tokio::test]
+async fn lookup_failures_hide_the_requested_cached_status_and_refresh_can_retry() {
+    let server = MockServer::start().await;
+    let client = client(&server).await;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    Mock::given(method("GET"))
+        .and(path_regex(".*/presence/[^/]+/status"))
+        .respond_with(
+            move |_: &wiremock::Request| match count.fetch_add(1, Ordering::SeqCst) {
+                0 => ResponseTemplate::new(200).set_body_json(json!({"presence":"online"})),
+                1 => ResponseTemplate::new(403)
+                    .set_body_json(json!({"errcode":"M_FORBIDDEN","error":"presence disabled"})),
+                _ => ResponseTemplate::new(200).set_body_json(json!({"presence":"offline"})),
+            },
+        )
+        .mount(&server)
+        .await;
+    let (control, desired) = watch::channel(selection(&["@alice:example.org"]));
+    let (state, mut updates) = watch::channel(Model::default());
+    let task = tokio::spawn(async move { run(&client, desired, &state).await });
+    ready(&mut updates, "@alice:example.org", Status::Online).await;
+    control.send_modify(|s| s.presence.refresh += 1);
+    ready(&mut updates, "@alice:example.org", Status::Unknown).await;
+    control.send_modify(|s| s.room.as_mut().unwrap().0 += 1);
+    tokio::time::sleep(Duration::from_millis(60)).await;
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "failure is cached instead of automatically retried"
+    );
+    control.send_modify(|s| s.presence.refresh += 1);
+    ready(&mut updates, "@alice:example.org", Status::Offline).await;
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+}
+
+#[tokio::test]
+async fn demand_is_bounded_and_rejects_self_invalid_and_duplicate_users() {
+    let server = MockServer::start().await;
+    let client = client(&server).await;
+    let mut selected = selection(&[
+        "bad",
+        "@test:example.org",
+        "@alice:example.org",
+        "@alice:example.org",
+    ]);
+    assert_eq!(
+        requested(&client, &selected).demand.users,
+        ["@alice:example.org"]
+    );
+    selected.presence.users = (0..100).map(|n| format!("@user{n}:example.org")).collect();
+    assert_eq!(
+        requested(&client, &selected).demand.users.len(),
+        MAX_REQUESTED
+    );
+    selected.shutdown = true;
+    assert!(requested(&client, &selected).demand.users.is_empty());
+    for (input, output) in [
+        ("online", Status::Online),
+        ("unavailable", Status::Away),
+        ("offline", Status::Offline),
+        ("future", Status::Unknown),
+    ] {
+        assert_eq!(Status::from_presence(&PresenceState::from(input)), output);
+    }
 }

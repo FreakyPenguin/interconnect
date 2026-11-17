@@ -100,6 +100,7 @@ fn message(event: Event) -> Message {
 }
 impl App {
     pub(super) fn update_notification_context(&mut self) {
+        self.refresh_presence_demand();
         self.selection.notifications = self.settings.current.notifications.clone();
         self.selection.conversation_visible = self.message_delete.is_none()
             && !self.bookmarks.open

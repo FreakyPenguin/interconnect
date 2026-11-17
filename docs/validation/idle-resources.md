@@ -14,6 +14,30 @@ updates. It adds no SDK work, worker, subscription, polling, or timer. Unread
 shortcuts reuse ordinary room navigation and read handling. Production CPU and
 wakeup measurements were not repeated for this change (2026-11-17).
 
+Space-rail unread dots derive from the same room snapshot and descendant-space
+membership during view updates. They add no workers, SDK subscriptions, polling,
+or animation timers. Rendered-widget coverage checks that settled rail redraws
+request `Wait`; production CPU/wakeups remain unmeasured for this addition
+(2026-11-17).
+
+On-demand presence (2026-11-17) removes the extra classic-sync connection and
+temporary SDK fork. Cached per-user reads run only when opening a DM/People page
+or explicitly refreshing. The one-time saved-cursor migration runs before SDK
+startup under the profile lock and retains account/device keys. There is no
+presence polling, retry worker, expiry timer, or recovery delay. See
+[presence validation](connected-ui.md#user-presence).
+
+Earlier connected diagnostics observed a shared-cursor retry loop at roughly one
+CPU core; the temporary SDK patch recovered and a 45.71-second passive sample
+used 0.45 CPU seconds. Those observations predate on-demand presence and are not
+an idle-resource baseline for this implementation.
+
+After the authorized on-demand launch and cursor migration, an 85.01-second
+passive connected-process sample used 0.16 CPU seconds (0.19% of one core), with
+no sync errors. Focus, incoming traffic, and user activity were uncontrolled;
+scheduler wakeups and battery impact were not measured. This is a short functional
+observation, not a general resource budget. Raw diagnostics stay outside the repo.
+
 ## Message bookmarks — 2026-11-15
 
 The account-wide bookmarks worker adds one storage-room cache subscription and
@@ -179,15 +203,16 @@ measurements remain separate manual checks; no production resource claim is made
 
 ### User presence — 2026-11-17
 
-Presence adds one filtered classic SDK sync connection per authenticated account,
-with a 30-second long-poll timeout and no room/account-data events. SDK processing
-preserves any to-device traffic. There is no per-user polling, UI animation,
-periodic redraw, or separate status-aging timer. Failures use exponential backoff
-from 2 to 60 seconds; unexpectedly immediate responses have a one-second minimum
-turnaround to prevent spinning. These waits and the in-flight request cancel with
-the connection. Empty/unchanged presence batches do not publish UI snapshots;
-the projected cache is capped at 8192 users. Existing SDK response handling can
-still wake other subscribers. This adds network/SDK work relative to previous
-captures; production CPU, wakeups, large-account behavior, and battery impact
-have not been remeasured. Automated checks cover long-poll configuration,
-cancellation, reconnect recovery, and static widget idle redraw behavior.
+Presence uses explicit GET requests for at most 50 users per view, with four in
+flight at once and five-second request deadlines. A 60-second memory cache is
+checked only on new demand; it has no expiry timer and is capped at 8192 users.
+Manual Refresh bypasses cache age. Failures become unknown, with no automatic
+retry. A settled worker waits for selection changes and makes no requests.
+Navigation/account replacement/shutdown cancel pending reads. UI status marks
+remain static, and their tooltips identify last-checked snapshots.
+
+The earlier filtered classic sync stream and SDK patch are removed. Cursor
+migration uses the pinned SDK store API once per saved store, under the profile
+lock, before any sync starts. Fixtures cover cancellation, stale-result rejection,
+cache/refresh behavior, no idle/classic-sync requests, and stock-SDK reopening.
+Production wakeups, large-account behavior, and battery impact remain unmeasured.

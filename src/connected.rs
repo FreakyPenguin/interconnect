@@ -28,7 +28,7 @@ pub use typing::{Activity as TypingActivity, Typing};
 mod members;
 pub use members::{Member, Members};
 mod presence;
-pub use presence::{Status as Presence, Users as PresenceUsers};
+pub use presence::{Demand as PresenceDemand, Status as Presence, Users as PresenceUsers};
 mod pinned;
 pub use pinned::Pinned;
 
@@ -49,6 +49,7 @@ pub struct Selection {
     pub image_retry: u64,
     pub notifications: crate::settings::Notifications,
     pub conversation_visible: bool,
+    pub presence: PresenceDemand,
     /// Source rooms for the currently displayed saved messages only.
     pub bookmark_rooms: Vec<String>,
 }
@@ -597,6 +598,7 @@ pub struct Model {
     pub account_avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     pub avatars: Arc<crate::media::Images>,
     pub presence: Arc<PresenceUsers>,
+    pub presence_loading: bool,
     pub images: crate::media::Snapshot<crate::image_media::Key>,
     pub media_error: Option<String>,
     pub notification_error: Option<String>,
@@ -631,6 +633,7 @@ impl Default for Model {
             account_avatar_url: None,
             avatars: Arc::default(),
             presence: Arc::default(),
+            presence_loading: false,
             images: Default::default(),
             media_error: None,
             notification_error: None,
@@ -823,15 +826,14 @@ fn connection_status(sync: &State, rooms: &RoomState) -> &'static str {
         State::Offline => {
             "Offline — reconnecting automatically. You can still compose and queue messages."
         }
-        State::Running
-            if matches!(
-                rooms,
-                RoomState::SettingUp | RoomState::Running | RoomState::Recovering
-            ) =>
-        {
-            "Connected"
-        }
-        State::Running | State::Idle => "Connecting… Messages and drafts are retained.",
+        State::Running => match rooms {
+            RoomState::SettingUp | RoomState::Running | RoomState::Recovering => "Connected",
+            RoomState::Error { .. } | RoomState::Terminated { .. } => {
+                "Offline — reconnecting automatically. You can still compose and queue messages."
+            }
+            RoomState::Init => "Connecting… Messages and drafts are retained.",
+        },
+        State::Idle => "Connecting… Messages and drafts are retained.",
         State::Error(_) | State::Terminated => "Synchronization interrupted. Session retained.",
     }
 }
@@ -857,7 +859,7 @@ async fn connected(
     tokio::pin!(profile);
     let emoji = crate::custom_emoji::run(client.clone(), selection.clone(), state.clone());
     tokio::pin!(emoji);
-    let presence = presence::run(client, state);
+    let presence = presence::run(client, selection.clone(), state);
     tokio::pin!(presence);
     let navigation = navigation_updates(client, state);
     tokio::pin!(navigation);
@@ -901,7 +903,10 @@ async fn connected(
             });
             let status = connection_status(&sync_states.get(), &room_states.get());
             state.send_if_modified(|s| {
-                if s.status == status { false } else { s.status = status.into(); true }
+                if s.status == status { false } else {
+                    tracing::info!(target: "interconnect::connection", status, "Connection status changed");
+                    s.status = status.into(); true
+                }
             });
             let room_changed = active.room != next.room || active.event_focus[0] != next.event_focus[0];
             if room_changed {
@@ -2726,6 +2731,124 @@ mod tests {
     #[tokio::test]
     async fn shutdown_cancels_pending_initial_history() {
         history_fixture(true, false, 3, 3, true).await;
+    }
+
+    #[tokio::test]
+    async fn reachable_server_with_failing_sync_keeps_offline_until_real_recovery() {
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(".*/keys/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "device_keys":{}, "one_time_key_counts":{"signed_curve25519":50}
+            })))
+            .mount(&server)
+            .await;
+        let healthy = Arc::new(AtomicBool::new(false));
+        let failures = Arc::new(AtomicUsize::new(0));
+        let requests = Arc::new(tokio::sync::Notify::new());
+        let responding = healthy.clone();
+        let attempts = failures.clone();
+        let notified = requests.clone();
+        Mock::given(method("POST"))
+            .and(path("/_matrix/client/unstable/org.matrix.simplified_msc3575/sync"))
+            .respond_with(move |request: &wiremock::Request| {
+                if !responding.load(Ordering::SeqCst) {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    notified.notify_one();
+                    return ResponseTemplate::new(400)
+                        .set_delay(Duration::from_millis(40))
+                        .set_body_json(json!({"errcode":"M_UNKNOWN", "error":"sync unavailable"}));
+                }
+                let body: serde_json::Value = request.body_json().unwrap();
+                // After one successful response per sync, leave long polls pending.
+                // The first real room sync establishes recovery without waiting
+                // for another long poll to finish.
+                let delay = if body.get("pos").is_some() {
+                    Duration::from_secs(60)
+                } else {
+                    Duration::from_millis(40)
+                };
+                ResponseTemplate::new(200).set_delay(delay).set_body_json(json!({
+                    "pos":"recovered", "lists":{"all_rooms":{"count":0,"ops":[]}},
+                    "rooms":{}, "extensions":{"e2ee":{"device_one_time_keys_count":{"signed_curve25519":50}}}
+                }))
+            }).mount(&server).await;
+        let client = Client::builder()
+            .homeserver_url(server.uri())
+            .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+            .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
+            .build()
+            .await
+            .unwrap();
+        client
+            .matrix_auth()
+            .restore_session(
+                serde_json::from_value::<MatrixSession>(json!({
+                    "user_id":"@test:example.org", "device_id":"TEST", "access_token":"fake"
+                }))
+                .unwrap(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        let sync = build_sync(client.clone()).await.unwrap();
+        let (control, mut selection) = watch::channel(Selection::default());
+        let (state, mut snapshots) = watch::channel(Model {
+            authentication: None,
+            ..Model::default()
+        });
+        let worker = tokio::spawn(async move {
+            let result = connected(&client, &sync, &mut selection, &state).await;
+            crate::sso::stop_with_deadline(sync.stop(), Duration::from_secs(5))
+                .await
+                .unwrap();
+            result.unwrap();
+        });
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            snapshots.wait_for(|s| s.status.starts_with("Offline")),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        let until = failures.load(Ordering::SeqCst) + 8;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while failures.load(Ordering::SeqCst) < until {
+                tokio::select! {
+                    _ = requests.notified() => {},
+                    result = snapshots.changed() => result.unwrap(),
+                }
+                let snapshot = snapshots.borrow_and_update();
+                assert!(
+                    snapshot.status.starts_with("Offline"),
+                    "{}",
+                    snapshot.status
+                );
+                assert!(snapshot.authentication.is_none());
+            }
+        })
+        .await
+        .unwrap();
+        healthy.store(true, Ordering::SeqCst);
+        tokio::time::timeout(
+            Duration::from_secs(6),
+            snapshots.wait_for(|s| s.status == "Connected"),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        control.send_modify(|s| s.shutdown = true);
+        tokio::time::timeout(Duration::from_secs(2), worker)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

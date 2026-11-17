@@ -25,6 +25,13 @@ The local Iced widget patch disables recurring editor caret blinking; its change
 are documented in [PATCH.md](../../vendor/iced_widget/PATCH.md).
 Wayland file drops use a [pinned Winit fork](winit-file-drops.md).
 
+Presence uses the stock SDK's per-user status endpoint on demand. Opening a DM
+or a People page checks a bounded set of users; explicit Refresh bypasses the
+60-second memory cache. No second sync stream or periodic presence timer runs.
+See [presence validation](../validation/connected-ui.md#user-presence) for limits
+and the one-time migration from older shared sync cursors. All Matrix SDK crates
+remain pinned to the unmodified 0.19.1 release.
+
 Formatted room and thread messages use a bounded native document renderer; see
 [message formatting](message-formatting.md) for selection and extension points.
 

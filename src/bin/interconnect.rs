@@ -61,6 +61,8 @@ mod pin_action;
 mod pinned;
 #[path = "interconnect/popover.rs"]
 mod popover;
+#[path = "interconnect/presence.rs"]
+mod presence;
 #[path = "interconnect/presentation.rs"]
 mod presentation;
 #[path = "interconnect/reaction_picker.rs"]
@@ -217,6 +219,10 @@ enum Message {
     TogglePins(u64),
     Topic(topic::Event),
     Members(members::Event),
+    RefreshPresence {
+        room: u64,
+        members: Option<u64>,
+    },
     Invite(invite::Event),
     Login(login::Event),
     Verification(verification::Event),
@@ -891,6 +897,7 @@ impl App {
             }
             Message::Topic(event) => action_task = self.topic_event(event),
             Message::Members(event) => action_task = self.members_event(event),
+            Message::RefreshPresence { room, members } => self.refresh_presence(room, members),
             Message::Invite(event) => action_task = self.invite_event(event),
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::Attachment(event) => action_task = self.attachment_event(event),
@@ -2532,6 +2539,9 @@ impl App {
         .spacing(4)
         .align_y(iced::Alignment::Center);
         if !thread {
+            if self.selection.members.is_none() && self.direct_presence_peer().is_some() {
+                header = header.push(self.presence_refresh_control());
+            }
             header = header
                 .push(self.room_search_button())
                 .push(self.member_badge());

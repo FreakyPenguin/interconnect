@@ -113,6 +113,7 @@ impl App {
         let header = row![
             shell::title("People", 18),
             iced::widget::space().width(Length::Fill),
+            self.presence_refresh_control(),
             super::tooltips::tooltip(
                 button(
                     container(super::icons::icon(super::icons::Kind::Close))
@@ -188,6 +189,9 @@ impl App {
                     ))
                     .size(12)
                     .color(shell::MUTED),
+                    text("Statuses are last checked snapshots; refresh for the latest.")
+                        .size(11)
+                        .color(shell::MUTED),
                 ]
                 .spacing(12),
             )
@@ -234,7 +238,19 @@ impl App {
                 .push(
                     container(
                         row![
-                            shell::avatar(&member.name, avatar),
+                            shell::presence_avatar(
+                                &member.name,
+                                avatar,
+                                if member.invited {
+                                    interconnect::connected::Presence::Unknown
+                                } else {
+                                    self.model
+                                        .presence
+                                        .get(&member.user_id)
+                                        .copied()
+                                        .unwrap_or_default()
+                                }
+                            ),
                             identity,
                             text(if member.invited {
                                 "Invited"
