@@ -1705,3 +1705,36 @@ fixtures remained ignored. The locked desktop build, formatting and workspace
 Clippy with warnings denied passed. A Linux Wayland demo startup ran for eight
 seconds and was terminated by the validation timeout; this checked launch only,
 without exercising account actions or native credential services.
+
+## Home navigation
+
+The house icon is the first space control, above All rooms and Direct messages.
+Home defaults to joined rooms outside every joined space plus all DMs, including
+DMs linked to a space. Space-linked ordinary rooms are excluded even when marked
+favorite. Nested/shared/cyclic spaces use the existing cached child links.
+Invitations remain available through the account-wide invitation shortcut.
+
+The account's Element setting `Spaces.allRoomsInHome` in
+`im.vector.web.settings` is read without modifying it. When true, Home includes
+every joined conversation; missing or invalid values use Element's false default.
+The existing account-data observer applies changes without polling. This follows
+[Element's Home filter](https://github.com/element-hq/element-web/blob/develop/apps/web/src/stores/spaces/SpaceStore.ts)
+and [setting default](https://github.com/element-hq/element-web/blob/develop/apps/web/src/settings/Settings.tsx).
+
+Home selection, collapsed sections, search, keyboard navigation and unread dots
+use the same filter. Switching to Home preserves the open room/thread, drafts
+and reading positions; selection persists across restart. Empty custom sections
+use Element's `home-space` scope. The demo's ordinary Home-named space is now
+labelled Personal to distinguish it from the house control.
+
+Automated coverage checks orphan/DM/favorite behavior, nested/shared/cyclic
+links, preference defaults and live SDK account-data changes, saved selection,
+rendered rail ordering and mouse routing, actual room-list entries, unread dots,
+and preserving the thread draft/position. Native connected comparison with
+Element and macOS appearance remain manual checks. No connected account was
+opened for implementation validation.
+
+Local Home validation: formatting, workspace Clippy with warnings denied,
+203 library and 343 desktop tests passed (two opt-in library fixtures ignored),
+and the locked desktop build passed. The Linux Wayland demo launched and ran
+until an eight-second validation timeout; no account actions were exercised.

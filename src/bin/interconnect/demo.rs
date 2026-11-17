@@ -202,7 +202,7 @@ pub fn spaces() -> Vec<SpaceEntry> {
     [
         ("studio-space", "Studio"),
         ("community-space", "Community"),
-        ("home-space", "Home"),
+        ("home-space", "Personal"),
     ]
     .into_iter()
     .enumerate()

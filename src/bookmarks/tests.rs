@@ -229,7 +229,10 @@ async fn paginated_index_follows_replacements_redactions_and_cancellation() {
             .len(),
         2
     );
-    let (rooms, _, _) = crate::navigation::snapshot(&fixture.client).await.unwrap();
+    let rooms = crate::navigation::snapshot(&fixture.client)
+        .await
+        .unwrap()
+        .rooms;
     assert_eq!(
         rooms.len(),
         1,

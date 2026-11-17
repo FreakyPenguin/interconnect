@@ -8,6 +8,7 @@ use std::collections::HashSet;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Scope {
+    Home,
     #[default]
     All,
     Direct,
@@ -71,7 +72,7 @@ impl SectionEntry {
         self.id.starts_with(CUSTOM_PREFIX)
             && match scope {
                 Scope::Space(id) => self.space_id.as_ref() == Some(id),
-                Scope::All | Scope::Direct => {
+                Scope::Home | Scope::All | Scope::Direct => {
                     self.space_id.as_deref().is_none_or(|id| id == "home-space")
                 }
             }
@@ -152,8 +153,18 @@ pub struct SpaceEntry {
     pub children: Vec<String>,
 }
 
-/// Descendant traversal tolerates cycles and shared children without duplicating rooms.
+/// Descendants for a selected space, or space-linked exclusions for Home.
+/// Home includes the complement plus every DM, matching Element's default.
+/// Traversal tolerates cycles and shared children without duplicating rooms.
 pub fn members(scope: &Scope, spaces: &[SpaceEntry]) -> Option<HashSet<String>> {
+    if *scope == Scope::Home {
+        return Some(
+            spaces
+                .iter()
+                .flat_map(|space| space.children.iter().cloned())
+                .collect(),
+        );
+    }
     let Scope::Space(root) = scope else {
         return None;
     };
@@ -171,15 +182,26 @@ pub fn members(scope: &Scope, spaces: &[SpaceEntry]) -> Option<HashSet<String>> 
 }
 pub fn includes(scope: &Scope, members: &Option<HashSet<String>>, room: &RoomEntry) -> bool {
     match scope {
+        Scope::Home => room.direct || members.as_ref().is_none_or(|ids| !ids.contains(&room.id)),
         Scope::All => true,
         Scope::Direct => room.direct,
         Scope::Space(_) => members.as_ref().is_some_and(|ids| ids.contains(&room.id)),
     }
 }
 
-pub async fn snapshot(
-    client: &Client,
-) -> anyhow::Result<(Vec<RoomEntry>, Vec<SpaceEntry>, Vec<SectionEntry>)> {
+pub struct Snapshot {
+    pub rooms: Vec<RoomEntry>,
+    pub spaces: Vec<SpaceEntry>,
+    pub sections: Vec<SectionEntry>,
+    pub all_rooms_in_home: bool,
+}
+
+/// Read Element's account preference without changing its settings.
+fn all_rooms_in_home(settings: &serde_json::Value) -> bool {
+    settings["Spaces.allRoomsInHome"].as_bool().unwrap_or(false)
+}
+
+pub async fn snapshot(client: &Client) -> anyhow::Result<Snapshot> {
     let settings = client
         .account()
         .account_data_raw(ELEMENT_SETTINGS.into())
@@ -277,7 +299,12 @@ pub async fn snapshot(
     }
     rooms.sort_by_cached_key(|r| (r.name.to_lowercase(), r.id.clone()));
     spaces.sort_by_cached_key(|s| (s.name.to_lowercase(), s.id.clone()));
-    Ok((rooms, spaces, sections))
+    Ok(Snapshot {
+        rooms,
+        spaces,
+        sections,
+        all_rooms_in_home: all_rooms_in_home(&settings),
+    })
 }
 
 /// Exclude self and third-party identifiers; never arbitrarily pick a group peer.
@@ -380,6 +407,67 @@ mod tests {
         ] {
             assert_eq!(sections_from_settings(&malformed).len(), 5);
         }
+    }
+
+    #[test]
+    fn home_includes_orphans_and_all_dms_but_excludes_space_rooms_even_if_favorite() {
+        let spaces = vec![
+            SpaceEntry {
+                id: "parent".into(),
+                children: vec!["child".into(), "room".into(), "dm".into()],
+                ..Default::default()
+            },
+            SpaceEntry {
+                id: "child".into(),
+                children: vec!["parent".into(), "nested".into()],
+                ..Default::default()
+            },
+            SpaceEntry {
+                id: "shared".into(),
+                children: vec!["room".into()],
+                ..Default::default()
+            },
+        ];
+        let linked = members(&Scope::Home, &spaces);
+        let mut room = RoomEntry {
+            id: "orphan".into(),
+            ..Default::default()
+        };
+        assert!(includes(&Scope::Home, &linked, &room));
+        room.id = "nested".into();
+        assert!(!includes(&Scope::Home, &linked, &room));
+        room.id = "room".into();
+        room.favorite = true;
+        assert!(!includes(&Scope::Home, &linked, &room));
+        room.id = "dm".into();
+        room.direct = true;
+        assert!(includes(&Scope::Home, &linked, &room));
+        assert!(includes(&Scope::All, &linked, &room));
+        room.direct = false;
+        assert!(includes(&Scope::Home, &members(&Scope::Home, &[]), &room));
+    }
+
+    #[test]
+    fn element_home_setting_defaults_to_false_and_home_uses_global_sections() {
+        for settings in [
+            serde_json::Value::Null,
+            serde_json::json!({}),
+            serde_json::json!({"Spaces.allRoomsInHome":false}),
+            serde_json::json!({"Spaces.allRoomsInHome":"true"}),
+        ] {
+            assert!(!all_rooms_in_home(&settings));
+        }
+        assert!(all_rooms_in_home(
+            &serde_json::json!({"Spaces.allRoomsInHome":true})
+        ));
+        let mut section = SectionEntry {
+            id: "element.io.section.home".into(),
+            name: "Custom".into(),
+            space_id: Some("home-space".into()),
+        };
+        assert!(section.show_empty(&Scope::Home));
+        section.space_id = Some("parent".into());
+        assert!(!section.show_empty(&Scope::Home));
     }
 
     #[test]

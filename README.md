@@ -24,8 +24,9 @@ primary development platform and experimental Apple Silicon macOS builds.
 
 - Password and browser SSO login, saved sessions, encrypted messaging, and device
   verification, plus desktop sign-out.
-- Spaces, custom room sections, favorites, unread indicators and ordering, direct
-  messages, and quick room switching. Space filters keep the open conversation.
+- Home for rooms outside spaces and all DMs, plus spaces, custom room sections,
+  favorites, unread indicators and ordering, and quick room switching.
+  Space filters keep the open conversation.
 - Resizable room and thread panes with history loading, send status, and retry.
   Encrypted text drafts survive restart; reading positions remain per-session.
 - In-room search and account-wide message search, with explicit scans of older

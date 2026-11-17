@@ -161,3 +161,14 @@ Settled UI has no global animation tick. Deadlines exist for optional presence
 polling, pending operations, typing expiry, and explicitly playing GIFs; stopped,
 hidden, or closed content releases its visual timers. Resource measurements and their limits live
 in [idle-resource validation](../validation/idle-resources.md).
+
+## Home scope
+
+Home is a synthetic navigation scope placed before All rooms. Its default
+filter complements the child-room IDs of joined spaces and always includes DMs,
+following Element Web's `showInHomeSpace`. A read-only import of Element's
+`Spaces.allRoomsInHome` account setting can expand it to all rooms. Navigation
+snapshots carry that flag alongside rooms, spaces and section definitions, so
+existing account-data notifications refresh it without extra SDK workers. The
+room list and unread indicator share the same scope filter. Home affects only
+the navigator and is persisted through the ordinary navigation preferences.

@@ -608,6 +608,7 @@ pub struct Model {
     pub rooms: Arc<Vec<RoomEntry>>,
     pub invitations: Arc<Vec<crate::room_membership::Invitation>>,
     pub spaces: Arc<Vec<SpaceEntry>>,
+    pub all_rooms_in_home: bool,
     pub sections: Arc<Vec<crate::navigation::SectionEntry>>,
     pub navigation_error: Option<String>,
     pub saved_navigation: Option<crate::navigation_preferences::Preferences>,
@@ -647,6 +648,7 @@ impl Default for Model {
             rooms: Arc::default(),
             invitations: Arc::default(),
             spaces: Arc::default(),
+            all_rooms_in_home: false,
             sections: crate::navigation::sections_from_settings(&serde_json::Value::Null).into(),
             navigation_error: None,
             saved_navigation: None,
@@ -1177,11 +1179,17 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
             }
         });
         match crate::navigation::snapshot(client).await {
-            Ok((rooms, spaces, sections)) => {
+            Ok(crate::navigation::Snapshot {
+                rooms,
+                spaces,
+                sections,
+                all_rooms_in_home,
+            }) => {
                 state.send_if_modified(|s| {
                     if *s.rooms == rooms
                         && *s.spaces == spaces
                         && *s.sections == sections
+                        && s.all_rooms_in_home == all_rooms_in_home
                         && s.navigation_error.is_none()
                     {
                         return false;
@@ -1189,6 +1197,7 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
                     s.rooms = Arc::new(rooms);
                     s.spaces = Arc::new(spaces);
                     s.sections = Arc::new(sections);
+                    s.all_rooms_in_home = all_rooms_in_home;
                     s.navigation_error = None;
                     true
                 });
@@ -2475,7 +2484,7 @@ mod tests {
             "!nested:example.org": room("Nested",true,vec![event("m.space.child","!room:example.org",json!({"via":["example.org"]}))]),
             "!other:example.org": room("Other",true,vec![event("m.space.child","!room:example.org",json!({"via":["example.org"]}))]),
             "!room:example.org": conversation
-        }},"account_data":{"events":[{"type":"m.direct","content":{"@peer:example.org":["!room:example.org"]}}]}});
+        }},"account_data":{"events":[{"type":"m.direct","content":{"@peer:example.org":["!room:example.org"]}},{"type":"im.vector.web.settings","content":{"Spaces.allRoomsInHome":true}}]}});
         let response = Arc::new(std::sync::Mutex::new(first));
         let body = response.clone();
         Mock::given(method("GET"))
@@ -2495,7 +2504,8 @@ mod tests {
         let first = tokio::time::timeout(
             Duration::from_secs(5),
             snapshots.wait_for(|s| {
-                s.spaces.len() == 3
+                s.all_rooms_in_home
+                    && s.spaces.len() == 3
                     && s.spaces.iter().any(|s| {
                         s.avatar_url.as_deref().map(|u| u.as_str())
                             == Some("mxc://example.org/space")
@@ -2626,7 +2636,7 @@ mod tests {
             .unwrap();
         assert_eq!(*pins.lock().unwrap(), vec!["$existing", "$pin-two"]);
         // Global and room account-data updates must work without a room-list lifecycle transition.
-        *response.lock().unwrap() = json!({"next_batch":"two","account_data":{"events":[{"type":"m.direct","content":{}}]},"rooms":{"join":{
+        *response.lock().unwrap() = json!({"next_batch":"two","account_data":{"events":[{"type":"m.direct","content":{}},{"type":"im.vector.web.settings","content":{"Spaces.allRoomsInHome":false}}]},"rooms":{"join":{
             "!room:example.org":{"state":{"events":[event("m.room.name","",json!({"name":"Renamed"})), event("m.room.topic","",json!({"topic":""})), event("m.room.pinned_events","",json!({"pinned":["$existing","$pin-one","$pin-two"]})), event("m.room.power_levels","",json!({"users":{"@test:example.org":50},"invite":100,"state_default":50,"events":{"m.room.topic":100,"m.room.pinned_events":100}}))]},"account_data":{"events":[{"type":"m.tag","content":{"tags":{}}},{"type":"m.marked_unread","content":{"unread":false}}]}},
             "!space:example.org":{"state":{"events":[event("m.room.avatar","",json!({}))]}},
             "!other:example.org":{"state":{"events":[event("m.room.avatar","",json!({"url":"mxc://example.org/other"}))]}},
@@ -2639,7 +2649,8 @@ mod tests {
         let updated = tokio::time::timeout(
             Duration::from_secs(5),
             snapshots.wait_for(|s| {
-                s.rooms.len() == 1
+                !s.all_rooms_in_home
+                    && s.rooms.len() == 1
                     && s.spaces
                         .iter()
                         .any(|s| s.id == "!space:example.org" && s.avatar_url.is_none())

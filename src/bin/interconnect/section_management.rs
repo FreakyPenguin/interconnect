@@ -35,7 +35,7 @@ impl App {
                 name: String::new(),
                 space_id: match &self.shell.space {
                     Scope::Space(id) => id.clone(),
-                    Scope::All | Scope::Direct => "home-space".into(),
+                    Scope::Home | Scope::All | Scope::Direct => "home-space".into(),
                 },
             },
             Action::RenameSection | Action::RemoveSection => {

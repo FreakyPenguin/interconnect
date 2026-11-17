@@ -11,6 +11,7 @@ pub(super) enum Kind {
     Search,
     People,
     Grid,
+    Home,
     Direct,
     Plus,
     RoomAdd,
@@ -113,6 +114,19 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
             };
             use Kind::*;
             match self.kind {
+                Home => {
+                    line(&[(3.0, 10.0), (12.0, 3.0), (21.0, 10.0)]);
+                    line(&[
+                        (5.0, 9.0),
+                        (5.0, 21.0),
+                        (10.0, 21.0),
+                        (10.0, 14.0),
+                        (14.0, 14.0),
+                        (14.0, 21.0),
+                        (19.0, 21.0),
+                        (19.0, 9.0),
+                    ]);
+                }
                 Eye => {
                     frame.stroke(
                         &Path::new(|p| {

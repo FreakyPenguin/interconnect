@@ -624,8 +624,15 @@ impl App {
         };
         format!("{:?}/{section}", self.shell.space)
     }
+    fn scope_members(&self, scope: &Scope) -> Option<HashSet<String>> {
+        if *scope == Scope::Home && self.model.all_rooms_in_home {
+            None
+        } else {
+            navigation::members(scope, &self.model.spaces)
+        }
+    }
     pub(super) fn visible_rooms(&self) -> Vec<String> {
-        let members = navigation::members(&self.shell.space, &self.model.spaces);
+        let members = self.scope_members(&self.shell.space);
         let mut rooms: Vec<_> = self
             .model
             .rooms
@@ -791,6 +798,7 @@ impl App {
         .spacing(10)
         .align_x(Alignment::Center);
         let mut entries = vec![
+            (Scope::Home, String::new(), "Home".to_owned(), None),
             (Scope::All, "All".to_owned(), "All rooms".to_owned(), None),
             (
                 Scope::Direct,
@@ -817,21 +825,19 @@ impl App {
         let mut rail = column![].spacing(10).align_x(Alignment::Center);
         for (scope, initial, name, image) in entries {
             let selected = self.shell.space == scope;
-            let members = navigation::members(&scope, &self.model.spaces);
+            let members = self.scope_members(&scope);
             let unread = self
                 .model
                 .rooms
                 .iter()
                 .any(|room| room.unread && navigation::includes(&scope, &members, room));
-            let content: Element<'_, Message> = if matches!(scope, Scope::All | Scope::Direct) {
-                sized(
-                    if scope == Scope::Direct {
-                        Kind::Direct
-                    } else {
-                        Kind::Grid
-                    },
-                    24.0,
-                )
+            let content: Element<'_, Message> = if let Some(kind) = match &scope {
+                Scope::Home => Some(Kind::Home),
+                Scope::All => Some(Kind::Grid),
+                Scope::Direct => Some(Kind::Direct),
+                Scope::Space(_) => None,
+            } {
+                sized(kind, 24.0)
             } else if let Some(handle) = image {
                 widget::image(handle.clone())
                     .width(32)
@@ -914,6 +920,7 @@ impl App {
     }
     fn room_navigation(&self) -> Element<'_, Message> {
         let name = match &self.shell.space {
+            Scope::Home => "Home",
             Scope::All => "All rooms",
             Scope::Direct => "Direct messages",
             Scope::Space(id) => self
@@ -1487,6 +1494,140 @@ mod navigation_tests {
     use iced::advanced::{layout, widget};
 
     #[test]
+    fn home_rail_is_first_clickable_and_keeps_the_open_thread_drafts_and_position() {
+        use iced::advanced::{Shell, mouse};
+        use interconnect::navigation::{RoomEntry, SpaceEntry};
+        struct Probe(Vec<(String, iced::Rectangle)>);
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                for scope in [Scope::Home, Scope::All, Scope::Direct] {
+                    let name = format!("space-rail-icon:{scope:?}");
+                    if id == Some(&widget::Id::from(name.clone())) {
+                        self.0.push((name, bounds));
+                    }
+                }
+            }
+        }
+        let mut app = crate::tests::demo_app();
+        let _ = app.update(Message::Thread("proposal".into()));
+        let selected = (app.selection.room.clone(), app.selection.thread.clone());
+        let key = app.draft_key(true).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Unsent reply");
+        app.scroll_positions.insert(key.clone(), 84.0);
+        app.model.rooms = vec![
+            RoomEntry {
+                id: "studio".into(),
+                name: "Studio".into(),
+                favorite: true,
+                ..Default::default()
+            },
+            RoomEntry {
+                id: "maya".into(),
+                name: "Maya".into(),
+                direct: true,
+                ..Default::default()
+            },
+            RoomEntry {
+                id: "outside".into(),
+                name: "Outside".into(),
+                ..Default::default()
+            },
+            RoomEntry {
+                id: "nested".into(),
+                name: "Nested".into(),
+                ..Default::default()
+            },
+        ]
+        .into();
+        app.model.spaces = vec![
+            SpaceEntry {
+                id: "parent".into(),
+                children: vec!["child".into(), "studio".into(), "maya".into()],
+                ..Default::default()
+            },
+            SpaceEntry {
+                id: "child".into(),
+                children: vec!["nested".into()],
+                ..Default::default()
+            },
+        ]
+        .into();
+        let renderer = crate::test_renderer(Font::DEFAULT, iced::Pixels(13.0));
+        let messages = {
+            let mut view = app.space_rail(1280.0);
+            let mut tree = widget::Tree::new(&view);
+            let size = iced::Size::new(64.0, 480.0);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            let mut probe = Probe(Vec::new());
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            assert_eq!(
+                probe
+                    .0
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "space-rail-icon:Home",
+                    "space-rail-icon:All",
+                    "space-rail-icon:Direct"
+                ]
+            );
+            assert!(probe.0.windows(2).all(|pair| pair[0].1.y < pair[1].1.y));
+            let point = probe.0[0].1.center();
+            let mut messages = Vec::new();
+            for event in [
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &iced::Event::Mouse(event),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Available(point),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                    &iced::Rectangle::with_size(size),
+                );
+            }
+            messages
+        };
+        assert!(matches!(messages.as_slice(), [Message::Space(Scope::Home)]));
+        for message in messages {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.visible_rooms(), ["maya", "outside"]);
+        let shown: Vec<_> = sections(&app)
+            .into_iter()
+            .flat_map(|(_, rooms)| rooms)
+            .collect();
+        assert!(shown.contains(&"maya".into()) && shown.contains(&"outside".into()));
+        assert!(!shown.contains(&"studio".into()) && !shown.contains(&"nested".into()));
+        assert_eq!(
+            (app.selection.room.clone(), app.selection.thread.clone()),
+            selected
+        );
+        assert_eq!(app.drafts[&key].content.text().trim_end(), "Unsent reply");
+        assert_eq!(app.scroll_positions[&key], 84.0);
+        app.model.all_rooms_in_home = true;
+        assert_eq!(app.visible_rooms().len(), 4);
+        app.model.all_rooms_in_home = false;
+        std::sync::Arc::make_mut(&mut app.model.spaces).clear();
+        assert_eq!(app.visible_rooms().len(), 4);
+    }
+
+    #[test]
     fn space_unread_dots_follow_room_snapshots_and_keep_space_buttons_clickable() {
         use iced::advanced::{Shell, mouse};
         use interconnect::navigation::SpaceEntry;
@@ -1513,7 +1654,7 @@ mod navigation_tests {
                 }
             }
             let mut probe = Probe {
-                scopes: [Scope::All, Scope::Direct]
+                scopes: [Scope::Home, Scope::All, Scope::Direct]
                     .into_iter()
                     .chain(
                         app.model
@@ -1636,6 +1777,7 @@ mod navigation_tests {
         assert_eq!(
             dots,
             [
+                Scope::Home,
                 Scope::All,
                 Scope::Direct,
                 parent.clone(),

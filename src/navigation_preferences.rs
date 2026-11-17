@@ -153,6 +153,21 @@ mod tests {
         unknown.save(directory.path()).unwrap();
         assert!(Preferences::load(directory.path()).is_err());
     }
+    #[test]
+    fn home_scope_round_trips_without_changing_existing_all_preferences() {
+        let directory = tempfile::tempdir().unwrap();
+        let prefs = Preferences {
+            scope: Scope::Home,
+            ..Default::default()
+        };
+        prefs.save(directory.path()).unwrap();
+        assert_eq!(Preferences::load(directory.path()).unwrap(), prefs);
+        let old: Preferences =
+            serde_json::from_str(r#"{"version":1,"scope":"All","room":null,"collapsed":[]}"#)
+                .unwrap();
+        assert_eq!(old.scope, Scope::All);
+    }
+
     #[tokio::test]
     async fn writer_flushes_latest_selection_on_shutdown() {
         let directory = tempfile::tempdir().unwrap();

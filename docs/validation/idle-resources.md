@@ -282,3 +282,9 @@ cleared drafts, retry, close/send ordering, demo isolation and failure choices.
 Fresh connected CPU and scheduler-wakeup measurements have not been taken for
 these changes. Include settled drafts, typing followed by idle, close during
 a pending send, and sign-out after editing in the next disposable-account run.
+
+Home navigation projects existing space/room/account-settings snapshots. Its
+house icon uses the shared cached outline geometry. It adds no SDK subscriptions,
+polling or animation timers. The existing rail widget test includes Home and
+checks a settled redraw remains `Wait`. Fresh connected CPU/wakeup measurements
+were not taken for this addition.
