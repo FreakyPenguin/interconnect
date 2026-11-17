@@ -54,7 +54,8 @@ jobs:
         run: bash scripts/bundle-macos.sh --release
 
       - name: Test session lifecycle without accessing Keychain
-        run: cargo test --locked --release --lib session::
+        run: |
+          cargo test --locked --release --lib session::
 
       - name: Verify app signature
         run: codesign --verify --strict --verbose=2 target/Interconnect.app
