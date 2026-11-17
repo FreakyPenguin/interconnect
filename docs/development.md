@@ -126,10 +126,11 @@ under `/usr/bin`, adds an application-menu entry, derives linked-library
 dependencies with `dpkg-shlibdeps`, and declares dynamically loaded graphics
 libraries and fonts explicitly. Portal and keyring services are recommended;
 native desktop integration still needs a running session and suitable providers.
-Version strings include the Cargo version, build timestamp, run number, commit,
-and a `+stable` build-suite suffix. Separate install jobs use the same artifact
-in clean containers for both suites, validate the desktop entry, and check
-linked libraries without launching the client or opening an account.
+For untagged builds, version strings include the Cargo version, build timestamp,
+run number, commit, and a `+stable` build-suite suffix. Separate install jobs use
+the same artifact in clean containers for both suites, validate the desktop
+entry, and check linked libraries without launching the client or opening an
+account.
 
 To download, open **Actions → Debian packages**, choose a successful run, and
 select **Interconnect-debian-stable-amd64-&lt;commit&gt;** under **Artifacts** for
@@ -147,6 +148,64 @@ sudo apt install ./interconnect_VERSION_amd64.deb
 
 These are downloadable packages, not an APT repository with automatic updates.
 Desktop behavior requires manual validation.
+
+### Tagged Linux releases
+
+Pushing a version tag to GitHub also runs the Debian workflow. The tag must match
+`Cargo.toml`'s package version, with an optional `v` prefix (for example `v0.1.0`
+or `0.1.0`). After the stable and testing installation checks pass, the workflow
+creates a GitHub Release with generated notes and these assets:
+
+- `interconnect_VERSION+stable_amd64.deb`
+- `interconnect-VERSION-linux-x86_64.tar.gz`
+- `SHA256SUMS` covering both downloads
+
+Prerelease tags such as `v0.2.0-rc.1` require the same prerelease version in
+`Cargo.toml` and create a GitHub prerelease. The Debian version uses `~rc.1` so
+APT orders it before the final release. Other tags fail packaging rather than
+publishing a version that disagrees with the application. Branch pushes, pull
+requests, scheduled runs, and manual dispatch do not publish releases.
+Only the publishing job receives `contents: write`; it uses the built-in
+`GITHUB_TOKEN` and requires no additional secret. Create the tag without an
+existing GitHub Release: `gh release create` fails if that release already exists.
+
+For example, after committing the desired version and release changes:
+
+```sh
+git tag -a v0.1.0 -m 'Interconnect 0.1.0'
+git push github v0.1.0
+```
+
+Download assets from the repository's **Releases** page; these downloads do not
+expire with the workflow artifacts. Install the `.deb` with APT as above, or
+extract the tarball and run `./interconnect-VERSION-linux-x86_64/interconnect`.
+The archive includes the binary and license notices. It uses the same Debian
+stable system-library baseline as the package and still needs the runtime
+graphics libraries, fonts, and desktop services described above; it does not
+bundle them. Verify downloads with `sha256sum --check SHA256SUMS`.
+
+To reproduce packaging locally on Linux amd64 after a locked release build:
+
+```sh
+cargo build --locked --release --bin interconnect
+bash scripts/package-linux-release.sh v0.1.0 target/release/interconnect
+```
+
+Outputs are under `target/linux-release/`, with the `.deb` also in
+`target/debian/`. The script packages the existing binary without launching it
+or accessing saved accounts. GitHub release publication and clean-container
+installation still require a CI run; local packaging checks alone do not
+establish desktop behavior.
+
+Local validation (2026-11-17): workflow syntax passes `actionlint`, shell syntax
+passes `bash -n`, and packaging the existing debug desktop binary produces
+matching stripped binaries in the `.deb` and tarball with valid checksums.
+Isolated packaging fixtures cover prefixed/unprefixed tags, prerelease and build
+metadata versions, Debian version ordering, archive permissions/notices, and
+rejection of mismatched tags or missing arguments/binaries. Mocked release CLI
+calls check stable/prerelease flags and asset arguments. Formatting, workspace
+Clippy with warnings denied, and all 324 desktop tests pass. No client was
+launched and no tag or release was published during these checks.
 
 ## App logo and desktop icons
 

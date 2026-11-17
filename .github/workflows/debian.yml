@@ -71,11 +71,17 @@ jobs:
         run: cargo build --locked --release --bin interconnect
 
       - name: Package client
+        env:
+          RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
-          version="${version}~dev$(date -u +%Y%m%d%H%M%S).${GITHUB_RUN_NUMBER}.g${GITHUB_SHA:0:12}"
           desktop-file-validate packaging/debian/interconnect.desktop
-          bash scripts/package-debian.sh stable "$version" target/release/interconnect
+          if [[ -n "$RELEASE_TAG" ]]; then
+            bash scripts/package-linux-release.sh "$RELEASE_TAG" target/release/interconnect
+          else
+            version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
+            version="${version}~dev$(date -u +%Y%m%d%H%M%S).${GITHUB_RUN_NUMBER}.g${GITHUB_SHA:0:12}"
+            bash scripts/package-debian.sh stable "$version" target/release/interconnect
+          fi
           dpkg-deb --info target/debian/*.deb
           dpkg-deb --contents target/debian/*.deb
 
@@ -85,6 +91,17 @@ jobs:
           name: Interconnect-debian-stable-amd64-${{ github.sha }}
           path: target/debian/*.deb
           # Raw uploads ignore `name`; install jobs need this stable artifact name.
+          archive: true
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload tagged release assets
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: Interconnect-linux-release-${{ github.sha }}
+          path: target/linux-release/*
           archive: true
           compression-level: 0
           if-no-files-found: error
@@ -127,3 +144,35 @@ jobs:
           if grep -q 'not found' /tmp/interconnect-libraries.txt; then
             exit 1
           fi
+
+  release:
+    name: Publish tagged Linux release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: [build, install]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download tagged release assets
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Interconnect-linux-release-${{ github.sha }}
+          path: downloads
+
+      - name: Verify checksums
+        working-directory: downloads
+        run: sha256sum --check SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          args=(--verify-tag --generate-notes --title "Interconnect $RELEASE_TAG")
+          version="${RELEASE_TAG#v}"
+          if [[ "${version%%+*}" == *-* ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" downloads/* "${args[@]}"
