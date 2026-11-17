@@ -5,6 +5,8 @@ mod attachments;
 mod bookmarks;
 #[path = "interconnect/composer.rs"]
 mod composer;
+#[path = "interconnect/composer_editor.rs"]
+mod composer_editor;
 #[path = "interconnect/composer_picker.rs"]
 mod composer_picker;
 #[path = "interconnect/context_menu.rs"]
@@ -108,6 +110,7 @@ struct DraftKey {
 }
 #[derive(Default)]
 struct Draft {
+    composer_height: Option<f32>,
     markdown: markdown_composer::State,
     content: text_editor::Content,
     attachment: Option<interconnect::attachment::Attachment>,
@@ -273,6 +276,11 @@ enum Message {
     Exit,
     Markdown(markdown_composer::Event),
     Edit(DraftKey, text_editor::Action),
+    ResizeComposer {
+        key: DraftKey,
+        generation: u64,
+        height: f32,
+    },
     Send(DraftKey),
     Sent(DraftKey, Option<String>, Result<(), String>),
     Retry(RetrySend),
@@ -636,6 +644,7 @@ impl App {
                             | invite::Event::Cancel
                     )
                     | Message::Edit(..)
+                    | Message::ResizeComposer { .. }
                     | Message::Markdown(
                         markdown_composer::Event::Mode(_) | markdown_composer::Event::Preview(_)
                     )
@@ -1105,6 +1114,31 @@ impl App {
                 self.composing = active;
                 if !active && let Some(key) = self.emoji_completion.editing.clone() {
                     self.refresh_emoji_completion(&key);
+                }
+            }
+            Message::ResizeComposer {
+                key,
+                generation,
+                height,
+            } if self.context_menu_allowed()
+                && self.context_menu.is_none()
+                && self.emoji_management.is_none()
+                && !self.bookmarks.open
+                && !self.global_search.open
+                && height.is_finite()
+                && self.draft_key(key.root.is_some()).as_ref() == Some(&key)
+                && (if key.root.is_some() {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                })
+                .as_ref()
+                .is_some_and(|(current, _)| *current == generation) =>
+            {
+                if let Some(draft) = self.drafts.get_mut(&key).filter(|draft| !draft.pending) {
+                    draft.composer_height = Some(
+                        height.clamp(composer_editor::MIN_HEIGHT, composer_editor::MAX_HEIGHT),
+                    );
                 }
             }
             Message::Edit(key, action) if !self.closing && !self.stopped => {
@@ -2280,6 +2314,9 @@ impl App {
     }
 
     fn pane(&self, thread: bool) -> Element<'_, Message> {
+        iced::widget::responsive(move |size| self.pane_sized(thread, size)).into()
+    }
+    fn pane_sized(&self, thread: bool, size: iced::Size) -> Element<'_, Message> {
         let selected = if thread {
             &self.selection.thread
         } else {
@@ -2773,11 +2810,11 @@ impl App {
                 })
                 .highlight_fonts_with::<emoji::Highlighter>(emoji::font(), |font| *font)
                 .cursor_blinking(false)
-                .height(56)
+                .height(Length::Fill)
                 .size(14)
                 .padding(iced::Padding {
                     top: 12.0,
-                    right: 12.0,
+                    right: 18.0,
                     bottom: 8.0,
                     left: 12.0,
                 })
@@ -2800,6 +2837,30 @@ impl App {
                             .or_else(|| composer_binding(press, composing, &send_key, shortcut))
                     });
             }
+            let preview = self.markdown_preview(&key);
+            let reserved = 94.0
+                + 180.0
+                + if preview.is_some() { 164.0 } else { 0.0 }
+                + if draft.attachment.is_some() {
+                    50.0
+                } else {
+                    0.0
+                }
+                + if draft.error.is_some() { 64.0 } else { 0.0 };
+            let max_height = (size.height - reserved)
+                .clamp(composer_editor::MIN_HEIGHT, composer_editor::MAX_HEIGHT);
+            let editor = composer_editor::view(
+                editor.into(),
+                &draft.content,
+                &key,
+                *generation,
+                draft.composer_height.unwrap_or(composer_editor::MIN_HEIGHT),
+                max_height,
+                self.context_menu_allowed()
+                    && self.context_menu.is_none()
+                    && self.emoji_management.is_none()
+                    && !draft.pending,
+            );
             let mut send = button(
                 container(icons::icon(if draft.pending {
                     icons::Kind::More
@@ -2883,7 +2944,7 @@ impl App {
                 .height(18)
                 .padding([0, 24]),
             );
-            if let Some(preview) = self.markdown_preview(&key) {
+            if let Some(preview) = preview {
                 writing = writing.push(
                     container(container(preview).padding([0, 24]))
                         .width(Length::Fill)

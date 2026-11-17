@@ -89,6 +89,19 @@ preview and long thread original in a minimum-size pane. Existing draft, shortcu
 IME, emoji, paste, attachment, and cancellation checks pass. Attachment-chip native
 rendering, macOS, wgpu, and connected-account acceptance remain manual checks.
 
+The composer resize/scrollbar extension was checked in the isolated demo at
+1280×900 and 640×480 with a long wrapped draft. Drag the centered top grip upward
+to enlarge the editor or downward to shrink it; the toolbar remains below the
+editor. Heights are remembered per room/thread draft for the current session and
+clamped to available pane space. Overflow shows a muted draggable scrollbar;
+wheel scrolling and caret movement continue through the native editor. Automated
+checks cover full-view grip routing, resize limits/deduplication/cancellation,
+per-draft sizing, stale/modal rejection, wrapped overflow, scrollbar endpoints,
+and preservation of text and selection. Offscreen paragraphs are lazily laid out,
+so scrollbar proportions refine as paragraphs are visited. No timer or background
+worker was added. Formatting, workspace Clippy, all 261 UI tests, and the desktop
+build pass. Native macOS/wgpu and connected-account checks remain manual.
+
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
 Checks included expanding/collapsing pins, message-action icons, and scrolling
