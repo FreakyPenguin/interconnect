@@ -87,6 +87,7 @@ impl Directory {
                 .or_else(|| room.cached_display_name().map(|name| name.to_string()))
                 .unwrap_or_else(|| user.to_string()),
             direct: true,
+            direct_user: Some(user.to_string()),
             member_count: room.joined_members_count(),
             ..Default::default()
         })

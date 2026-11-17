@@ -171,3 +171,18 @@ workers, redraw loops or timers. Regression coverage checks outside-click captur
 without a scheduled redraw; existing search/disabled-picker coverage checks idle
 caret behavior. Tiny-skia damage-artifact acceptance and fresh process CPU/wakeup
 measurements remain separate manual checks; no production resource claim is made.
+
+### User presence — 2026-11-17
+
+Presence adds one filtered classic SDK sync connection per authenticated account,
+with a 30-second long-poll timeout and no room/account-data events. SDK processing
+preserves any to-device traffic. There is no per-user polling, UI animation,
+periodic redraw, or separate status-aging timer. Failures use exponential backoff
+from 2 to 60 seconds; unexpectedly immediate responses have a one-second minimum
+turnaround to prevent spinning. These waits and the in-flight request cancel with
+the connection. Empty/unchanged presence batches do not publish UI snapshots;
+the projected cache is capped at 8192 users. Existing SDK response handling can
+still wake other subscribers. This adds network/SDK work relative to previous
+captures; production CPU, wakeups, large-account behavior, and battery impact
+have not been remeasured. Automated checks cover long-poll configuration,
+cancellation, reconnect recovery, and static widget idle redraw behavior.

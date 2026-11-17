@@ -451,6 +451,70 @@ pub fn avatar<'a, M: 'a>(
 ) -> Element<'a, M> {
     avatar_view(sender, false, image)
 }
+/// Fixed-size overlay: presence updates must not move messages or scroll anchors.
+pub fn presence_avatar<'a, M: 'a>(
+    sender: &'a str,
+    image: Option<&iced::widget::image::Handle>,
+    status: interconnect::connected::Presence,
+) -> Element<'a, M> {
+    if status == interconnect::connected::Presence::Unknown {
+        return avatar(sender, image);
+    }
+    widget::stack![
+        avatar(sender, image),
+        container(
+            container(presence_dot(status))
+                .padding(2)
+                .style(|_| container::Style {
+                    border: Border::default().rounded(12),
+                    ..surface(Color::WHITE)
+                })
+        )
+        .width(32)
+        .height(32)
+        .align_right(32)
+        .align_bottom(32),
+    ]
+    .into()
+}
+
+fn presence_dot<'a, M: 'a>(status: interconnect::connected::Presence) -> Element<'a, M> {
+    use interconnect::connected::Presence;
+    let color = match status {
+        Presence::Online => Color::from_rgb8(59, 139, 102),
+        Presence::Away => Color::from_rgb8(184, 137, 53),
+        Presence::Offline => MUTED,
+        Presence::Unknown => return widget::space().width(8).height(8).into(),
+    };
+    let mark = container(
+        // Away has a small horizontal cutout as well as a different color.
+        container(
+            widget::space()
+                .width(if status == Presence::Away { 4 } else { 0 })
+                .height(2),
+        )
+        .style(move |_| {
+            surface(if status == Presence::Away {
+                Color::WHITE
+            } else {
+                Color::TRANSPARENT
+            })
+        }),
+    )
+    .center_x(8)
+    .center_y(8)
+    .style(move |_| container::Style {
+        background: Some(color.into()),
+        border: Border {
+            color,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    });
+    super::tooltips::tooltip(mark, status.label(), widget::tooltip::Position::Top).into()
+}
+
 pub fn activity_avatar<'a, M: 'a>(
     sender: &'a str,
     image: Option<&iced::widget::image::Handle>,
@@ -998,12 +1062,19 @@ impl App {
                         .is_some_and(|(_, id)| id == &room.id);
                 let unread = room.unread_count;
                 let mut label = row![
-                    container(
-                        text(if room.direct { "·" } else { "#" })
-                            .color(MUTED)
-                            .size(16)
-                    )
-                    .center_x(16),
+                    if room.direct {
+                        container(presence_dot(
+                            room.direct_user
+                                .as_ref()
+                                .and_then(|user| self.model.presence.get(user))
+                                .copied()
+                                .unwrap_or_default(),
+                        ))
+                        .center_x(16)
+                        .into()
+                    } else {
+                        Element::from(container(text("#").color(MUTED).size(16)).center_x(16))
+                    },
                     super::tooltips::tooltip(
                         single_line::label(&room.name, 13).font(Font {
                             weight: if room.unread {
@@ -1136,6 +1207,179 @@ mod avatar_tests {
     use super::*;
     use iced::advanced::{layout, widget::Tree};
 
+    #[test]
+    fn presence_overlays_keep_avatar_bounds_and_do_not_schedule_idle_redraws() {
+        use iced::advanced::{Shell, mouse};
+        use interconnect::connected::Presence;
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let image = widget::image::Handle::from_rgba(64, 64, vec![160; 64 * 64 * 4]);
+        let mut tree = Tree::empty();
+        for status in [
+            Presence::Unknown,
+            Presence::Online,
+            Presence::Away,
+            Presence::Offline,
+            Presence::Unknown,
+        ] {
+            for handle in [None, Some(&image)] {
+                let mut view = presence_avatar::<Message>("Maya Chen", handle, status);
+                tree.diff(view.as_widget());
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(iced::Size::ZERO, iced::Size::new(100.0, 100.0)),
+                );
+                assert_eq!(node.size(), iced::Size::new(32.0, 32.0));
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &iced::Event::Window(iced::window::Event::RedrawRequested(
+                        iced::time::Instant::now(),
+                    )),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &iced::Rectangle::with_size(node.size()),
+                );
+                assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+                assert!(messages.is_empty());
+            }
+        }
+    }
+    #[test]
+    fn presence_updates_preserve_room_and_thread_reading_position_focus_and_draft() {
+        use iced::widget::text_editor::{Action, Edit};
+        use iced::{
+            Rectangle, Size,
+            advanced::{layout, widget},
+        };
+        #[derive(Default)]
+        struct Probe {
+            timeline: Option<(f32, f32)>,
+            focused: bool,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: Rectangle,
+                _: Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                self.timeline = Some((bounds.height, translation.y));
+            }
+            fn focusable(
+                &mut self,
+                _: Option<&widget::Id>,
+                _: Rectangle,
+                state: &mut dyn widget::operation::Focusable,
+            ) {
+                self.focused |= state.is_focused();
+            }
+        }
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = Size::new(360.0, 480.0);
+        for thread in [false, true] {
+            let mut app = crate::tests::demo_app();
+            let _ = app.update(Message::Room("busy".into()));
+            if thread {
+                let mut pane = app.model.room.clone().unwrap();
+                pane.generation = 100;
+                app.model.thread = Some(pane);
+                app.selection.thread = Some((100, "$other-root".into()));
+            }
+            let key = app.draft_key(thread).unwrap();
+            app.drafts.entry(key.clone()).or_default();
+            let _ = app.update(Message::Edit(key.clone(), Action::Edit(Edit::Insert('x'))));
+            let timeline_id = widget::Id::new(if thread {
+                "thread-timeline"
+            } else {
+                "room-timeline"
+            });
+            let editor_id = widget::Id::new(if thread {
+                "thread-composer"
+            } else {
+                "room-composer"
+            });
+            let mut tree = widget::Tree::empty();
+            let mut initial = None;
+            let selection = app.selection.clone();
+            let space = app.shell.space.clone();
+            for status in [
+                interconnect::connected::Presence::Unknown,
+                interconnect::connected::Presence::Online,
+                interconnect::connected::Presence::Away,
+                interconnect::connected::Presence::Offline,
+                interconnect::connected::Presence::Unknown,
+            ] {
+                let mut model = app.model.clone();
+                model.presence = model
+                    .room
+                    .as_ref()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .map(|row| (row.sender.clone(), status))
+                    .collect::<interconnect::connected::PresenceUsers>()
+                    .into();
+                let _ = app.update(Message::State(Box::new(model)));
+                let mut view = app.pane_sized(thread, size);
+                tree.diff(view.as_widget());
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                if initial.is_none() {
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        layout::Layout::new(&node),
+                        &renderer,
+                        &mut widget::operation::scrollable::scroll_to::<()>(
+                            timeline_id.clone(),
+                            iced::widget::operation::AbsoluteOffset {
+                                x: None,
+                                y: Some(120.0),
+                            },
+                        ),
+                    );
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        layout::Layout::new(&node),
+                        &renderer,
+                        &mut widget::operation::focusable::focus::<()>(editor_id.clone()),
+                    );
+                }
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                let (height, position) = probe.timeline.unwrap();
+                let (initial_height, initial_position) = *initial.get_or_insert((height, position));
+                assert!(
+                    initial_position > 0.0,
+                    "fixture must have scrollable history"
+                );
+                assert!((height - initial_height).abs() < 1.0);
+                assert!((position - initial_position).abs() < 1.0);
+                assert!(probe.focused, "thread={thread}, presence={status:?}");
+                drop(view);
+                assert_eq!(app.selection, selection);
+                assert_eq!(app.shell.space, space);
+            }
+            assert_eq!(app.drafts[&key].content.text(), "x");
+        }
+    }
     #[test]
     fn decoded_images_keep_the_same_layout_as_initials() {
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));

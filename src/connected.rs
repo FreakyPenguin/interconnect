@@ -27,6 +27,8 @@ mod typing;
 pub use typing::{Activity as TypingActivity, Typing};
 mod members;
 pub use members::{Member, Members};
+mod presence;
+pub use presence::{Status as Presence, Users as PresenceUsers};
 mod pinned;
 pub use pinned::Pinned;
 
@@ -594,6 +596,7 @@ pub struct Model {
     pub account_name: String,
     pub account_avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
     pub avatars: Arc<crate::media::Images>,
+    pub presence: Arc<PresenceUsers>,
     pub images: crate::media::Snapshot<crate::image_media::Key>,
     pub media_error: Option<String>,
     pub notification_error: Option<String>,
@@ -627,6 +630,7 @@ impl Default for Model {
             account_name: "Me".into(),
             account_avatar_url: None,
             avatars: Arc::default(),
+            presence: Arc::default(),
             images: Default::default(),
             media_error: None,
             notification_error: None,
@@ -853,6 +857,8 @@ async fn connected(
     tokio::pin!(profile);
     let emoji = crate::custom_emoji::run(client.clone(), selection.clone(), state.clone());
     tokio::pin!(emoji);
+    let presence = presence::run(client, state);
+    tokio::pin!(presence);
     let navigation = navigation_updates(client, state);
     tokio::pin!(navigation);
     let bookmarks_service = state.borrow().bookmarks_service.clone();
@@ -973,6 +979,7 @@ async fn connected(
                 changed = selection.changed() => { if changed.is_err() { break; } }
                 _ = &mut profile => {},
                 _ = &mut emoji => anyhow::bail!("Emoji update stream ended"),
+                _ = &mut presence => anyhow::bail!("Presence update stream ended"),
                 _ = &mut navigation => anyhow::bail!("Navigation update stream ended"),
                 _ = &mut bookmarks => anyhow::bail!("Bookmarks update stream ended"),
                 _ = &mut typing_view => typing_view = inactive(),
@@ -1011,6 +1018,7 @@ async fn connected(
     drop(thread_view);
     let ids: Vec<_> = subscribed_rooms.iter().map(|room| room.as_ref()).collect();
     sync.room_list_service().remove_room_subscriptions(&ids);
+    presence::clear(state);
     result
 }
 
@@ -2413,6 +2421,7 @@ mod tests {
                     && s.rooms[0].pinned_events == ["$cached-pin"]
                     && s.rooms[0].favorite
                     && s.rooms[0].direct
+                    && s.rooms[0].direct_user.as_deref() == Some("@peer:example.org")
                     && s.rooms[0].unread
             }),
         )

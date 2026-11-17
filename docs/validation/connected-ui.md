@@ -47,6 +47,7 @@ see [renderer selection](../development.md#renderer-selection).
 | --- | --- |
 | Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
 | Navigation | Space selection filters the room list without switching the open conversation. Room and child-space rows stay 26 px high with no gaps between rows, including long names and unread badges. Long room, section, and space labels use a grapheme-safe ellipsis; hovering a room name reveals its full name after a short delay. Unread room names are semibold. Expanded section counts and zero-count Saved messages badges are hidden; collapsed sections retain nonzero room counts. Sections collapse independently; search filters rooms. |
+| Presence | Message-group avatars (rooms and threads) show an 8 px status mark; DM navigator rows show the peer’s status. Maya is online (green), Alex away (amber with a dash), Jamie offline (gray); other demo senders have no status mark. Hover a mark for its text label. Group continuations and room activity do not add marks. Switch spaces without changing the open conversation; check 26 px DM rows and minimum-window clipping. |
 | Tooltips | Hover the account avatar, spaces, room-list toggle, header controls, composer actions, message timestamps/senders, and emoji choices. Hints use compact 11 px light text in a charcoal rounded surface with consistent padding, a subtle border/shadow, and a gap from the control. Check long topics and multiline read receipts wrap within the surface, and hints stay inside the window near its edges. Native rendering remains a manual check. |
 | Global message search | **Search messages** above Saved messages or Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a full-size panel. Enter or **Search** submits; typing cancels the previous request and clears its results. Results span all rooms regardless of the selected space and include room, sender, date, highlighted text, and **Go to message/reply**. Check pagination, duplicate suppression, no matches, server failure with local results, and switching to Saved messages or a room. Back/Escape restores the previous conversation, thread, drafts, and scroll; the panel sends no read receipts for hidden conversations. |
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
@@ -1264,3 +1265,45 @@ Repeat at 640×480. With an explicitly authorized test account, verify redaction
 in another client, revoked permissions, a server refusal, timeout/retry behavior,
 and deletion while an edited message is open. Demo and fixture checks require no
 saved account, network access, or real Matrix test messages.
+
+## User presence
+
+The pinned SDK's sliding-sync response has no incoming presence field. An
+account-scoped, filtered classic `/sync` long poll (30-second server timeout)
+provides presence alongside the existing sliding-sync services. Its filter
+excludes all rooms and account data. Responses go through SDK `sync_once`,
+including any to-device encryption/verification events, before advancing the
+classic token; discarding those events could acknowledge undelivered keys.
+The SDK's existing default sync presence applies; this change adds no manual
+status or local inactivity policy. Protocol reference: [Matrix presence](https://spec.matrix.org/v1.16/client-server-api/#presence).
+
+The UI projects server `online`, `unavailable`, and `offline` to Online, Away,
+and Offline. It does not infer status from message timestamps or typing.
+Unknown/missing/unsupported presence has no mark or status tooltip; DM rows
+keep their icon slot empty and message avatars have no badge or badge backing.
+Only an unambiguous Matrix peer from `m.direct` supplies a DM row's status;
+self IDs, third-party identifiers, and multiple targets cannot select an
+arbitrary peer. Presence projections use Matrix user IDs, independently of
+sender display names, and retain up to 8192 users. An outage hides cached status;
+a successful incremental response restores it with missed deltas. Ending or
+replacing the connection releases requests and the projection. Avatar bounds,
+timeline rows, drafts, and scroll anchors stay unchanged during status changes.
+
+Mock fixtures cover status mapping, malformed/duplicate events, bounded cache,
+filtered incremental sync with nonzero timeout, to-device event delivery,
+in-flight cancellation, and failure/recovery with an unchanged token. Widget
+coverage checks fixed avatar bounds with images/initials, no idle redraw timer,
+and room/thread reading position, editor focus, drafts, and selection through
+status changes. Isolated `--demo` tiny-skia screenshots were checked for
+online/away/offline avatar marks and online/away DM navigator rows. Capture
+harnesses and images stayed under `/tmp`; the connected client was left running.
+Real-account presence transitions, coexistence with ongoing
+encrypted traffic/verification on a live server, disabled-presence servers,
+macOS/wgpu rendering, and fresh idle resource measurements remain manual checks.
+
+With authorized test accounts, change the peer's status from another Matrix
+client and check the same indicator in a room group, thread, and DM row without
+navigating. Check a user with the same display name but a different Matrix ID,
+server disconnect/reconnect, and shutdown while the long poll is pending. Use
+dedicated test rooms for encrypted sends and verification; avoid the user's
+ordinary conversations. Demo fixtures require no network or saved session.

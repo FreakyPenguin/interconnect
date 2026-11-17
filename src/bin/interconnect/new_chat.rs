@@ -307,6 +307,7 @@ impl App {
                             id,
                             name: person.map_or_else(|| user.clone(), |p| p.name.clone()),
                             direct: true,
+                            direct_user: Some(user.clone()),
                             member_count: 1,
                             ..Default::default()
                         });

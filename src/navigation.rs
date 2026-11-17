@@ -30,6 +30,8 @@ pub struct RoomEntry {
     pub tags: Vec<String>,
     pub favorite: bool,
     pub direct: bool,
+    /// Single Matrix peer from m.direct; ambiguous targets have none.
+    pub direct_user: Option<String>,
     pub unread: bool,
     /// SDK client-side unread message count; not a claim about thread unread state.
     pub unread_count: u64,
@@ -219,6 +221,8 @@ pub async fn snapshot(
         } else {
             let unread_count = room.num_unread_messages();
             let levels = room.power_levels().await.ok();
+            let direct = room.is_direct().await?;
+            let direct_user = direct_peer(room.own_user_id(), room.direct_targets());
             rooms.push(RoomEntry {
                 id,
                 name,
@@ -260,7 +264,8 @@ pub async fn snapshot(
                     .map(ToString::to_string)
                     .collect(),
                 favorite: room.is_favourite(),
-                direct: room.is_direct().await?,
+                direct,
+                direct_user: direct.then_some(direct_user).flatten(),
                 unread: room.is_marked_unread()
                     || unread_count > 0
                     || room.num_unread_notifications() > 0,
@@ -273,9 +278,51 @@ pub async fn snapshot(
     Ok((rooms, spaces, sections))
 }
 
+/// Exclude self and third-party identifiers; never arbitrarily pick a group peer.
+fn direct_peer(
+    own: &matrix_sdk::ruma::UserId,
+    targets: impl IntoIterator<Item = matrix_sdk::ruma::OwnedDirectUserIdentifier>,
+) -> Option<String> {
+    let peers: Vec<_> = targets
+        .into_iter()
+        .filter(|id| id.as_user_id() != Some(own))
+        .collect();
+    if peers.len() == 1 {
+        peers[0].as_user_id().map(ToString::to_string)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dm_presence_peer_uses_unambiguous_matrix_ids_and_excludes_self() {
+        let own = matrix_sdk::ruma::user_id!("@me:example.org");
+        let targets = |ids: &[&str]| {
+            ids.iter()
+                .map(|id| matrix_sdk::ruma::OwnedDirectUserIdentifier::from(*id))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            direct_peer(own, targets(&["@peer:example.org"])).as_deref(),
+            Some("@peer:example.org")
+        );
+        assert_eq!(
+            direct_peer(own, targets(&["@me:example.org", "@peer:example.org"])).as_deref(),
+            Some("@peer:example.org")
+        );
+        for ids in [
+            vec![],
+            vec!["@me:example.org"],
+            vec!["@a:example.org", "@b:example.org"],
+            vec!["email@example.org"],
+        ] {
+            assert_eq!(direct_peer(own, targets(&ids)), None);
+        }
+    }
+
     #[test]
     fn element_sections_validate_definitions_and_preserve_order_and_identity() {
         let settings = serde_json::json!({

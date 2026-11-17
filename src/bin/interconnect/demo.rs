@@ -176,11 +176,28 @@ pub fn rooms() -> Vec<RoomEntry> {
             },
             favorite: r.section == "Favorites",
             direct: r.section == "Direct messages",
+            direct_user: match r.id {
+                "maya" => Some("@maya:example.org".into()),
+                "alex" => Some("@alex:example.org".into()),
+                _ => None,
+            },
             unread: r.unread > 0,
             unread_count: r.unread as u64,
         })
         .collect()
 }
+pub fn presence() -> interconnect::connected::PresenceUsers {
+    use interconnect::connected::Presence;
+    [
+        ("@maya:example.org", Presence::Online),
+        ("@alex:example.org", Presence::Away),
+        ("@jamie:example.org", Presence::Offline),
+    ]
+    .into_iter()
+    .map(|(user, status)| (user.into(), status))
+    .collect()
+}
+
 pub fn spaces() -> Vec<SpaceEntry> {
     [
         ("studio-space", "Studio"),

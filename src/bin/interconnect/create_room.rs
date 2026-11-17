@@ -49,7 +49,7 @@ pub enum Event {
     Listed(bool),
     Submit,
     OpenCreated,
-    Completed(u64, Option<String>, Result<Created, String>),
+    Completed(u64, Option<String>, Box<Result<Created, String>>),
 }
 fn message(event: Event) -> Message {
     Message::CreateRoom(event)
@@ -186,7 +186,11 @@ impl App {
                     created.link_error = None;
                     self.pending_ops += 1;
                     self.create_room_request = Some(request);
-                    return self.create_room_event(Event::Completed(request, account, Ok(created)));
+                    return self.create_room_event(Event::Completed(
+                        request,
+                        account,
+                        Box::new(Ok(created)),
+                    ));
                 }
                 let Some(service) = self.model.people_directory.clone() else {
                     state.error = Some("The account is not ready yet.".into());
@@ -205,7 +209,9 @@ impl App {
                             service.create_room(options).await
                         }
                     },
-                    move |result| message(Event::Completed(request, account.clone(), result)),
+                    move |result| {
+                        message(Event::Completed(request, account.clone(), Box::new(result)))
+                    },
                 );
             }
             Event::Completed(request, account, result) => {
@@ -225,7 +231,7 @@ impl App {
                     .create_room
                     .as_ref()
                     .is_some_and(|s| s.request == request && s.account == account);
-                match result {
+                match *result {
                     Ok(created) => {
                         if !self.model.rooms.iter().any(|r| r.id == created.room.id) {
                             std::sync::Arc::make_mut(&mut self.model.rooms)
@@ -638,7 +644,7 @@ mod tests {
         let _ = app.update(message(Event::Completed(
             request,
             None,
-            Ok(created("partial-room", Some("Space refused"))),
+            Box::new(Ok(created("partial-room", Some("Space refused")))),
         )));
         assert_eq!(app.selection.room, selection);
         assert!(
@@ -698,7 +704,7 @@ mod tests {
             let _ = app.update(message(Event::Completed(
                 request,
                 None,
-                Ok(created("late-room", None)),
+                Box::new(Ok(created("late-room", None))),
             )));
             assert_eq!(app.selection.room, selection);
             assert_eq!(app.pending_ops, 0);
@@ -708,7 +714,7 @@ mod tests {
             let _ = app.update(message(Event::Completed(
                 request,
                 None,
-                Err("Duplicate".into()),
+                Box::new(Err("Duplicate".into())),
             )));
             assert_eq!(app.pending_ops, 0);
         }
@@ -840,7 +846,7 @@ mod layout_tests {
         let _ = app.update(message(Event::Completed(
             request,
             app.account_id.clone(),
-            Ok(Created {
+            Box::new(Ok(Created {
                 room: interconnect::navigation::RoomEntry {
                     id: "!new:example.org".into(),
                     name: "Room".into(),
@@ -848,7 +854,7 @@ mod layout_tests {
                 },
                 space: Some("studio-space".into()),
                 link_error: None,
-            }),
+            })),
         )));
         let selection = app.selection.room.clone();
         let _ = app.update(Message::State(Box::new(stale)));

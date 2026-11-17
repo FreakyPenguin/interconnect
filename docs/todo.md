@@ -2,6 +2,7 @@
 
 ## Rooms
 - Member invite link?
+- page up and down in composer should scroll room
 
 ## Account and navigation
 
@@ -13,4 +14,3 @@
 
 - Dashboard
 - Standalone stickers and animated custom emoji
-- member online indications

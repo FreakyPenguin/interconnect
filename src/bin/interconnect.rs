@@ -379,6 +379,7 @@ impl App {
             app.model.bookmarks.complete = true;
             app.demo = Some(demo::Demo::default());
             app.model.rooms = demo::rooms().into();
+            app.model.presence = demo::presence().into();
             app.model.sections = demo::sections().into();
             app.model.spaces = demo::spaces().into();
             app.shell.space = Scope::Space("studio-space".into());
@@ -2842,12 +2843,17 @@ impl App {
             } else if grouped {
                 iced::widget::space().width(32).into()
             } else {
-                shell::avatar(
+                shell::presence_avatar(
                     &message.display_name,
                     message
                         .avatar_url
                         .as_ref()
                         .and_then(|uri| self.model.avatars.get(uri)),
+                    self.model
+                        .presence
+                        .get(&message.sender)
+                        .copied()
+                        .unwrap_or_default(),
                 )
             };
             let body: Element<'_, Message> =
@@ -3646,6 +3652,7 @@ mod tests {
         app.demo = Some(demo::Demo::default());
         app.model.bookmarks.complete = true;
         app.model.rooms = demo::rooms().into();
+        app.model.presence = demo::presence().into();
         app.model.sections = demo::sections().into();
         app.model.spaces = demo::spaces().into();
         app.model.images = demo::images();
