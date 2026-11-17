@@ -1,119 +1,63 @@
 # Desktop notifications
 
-`notify-rust` provides asynchronous Linux
-Tokio/zbus delivery to `org.freedesktop.Notifications` on the session bus. macOS
-selects the modern UserNotifications backend (`preview-macos-un`), with an app
-bundle and asynchronous permission handling.
+## Behavior
 
-## Behavior and limits
+Settings → Notifications controls alerts and previews, both on by default.
+Previews off uses “New Matrix message” without room, sender, or message text.
+**Send sample notification** explicitly sends fixed text, including in demo mode
+and with automatic alerts disabled. Delivery errors appear in Settings; OS
+acceptance does not guarantee a banner under Do Not Disturb or desktop policy.
 
-**Settings → Notifications** controls alerts and previews. Both default on and
-apply after Save/Reload. Turning previews off hides room names, sender IDs, and
-message text behind “New Matrix message”. **Send sample notification** explicitly
-sends fixed sample text, including in demo mode and when automatic alerts are
-disabled. OS acceptance does not guarantee a banner: Do Not Disturb and desktop
-policy still apply. Delivery failures appear in Settings and flag its button as
-needing attention; the next successful automatic delivery clears that error.
+Alerts follow SDK push rules independently of open timelines/selected spaces.
+Muted rooms, own messages, edits, reactions, redactions, and state events stay
+quiet. Sync-decrypted messages use text; undecryptable events use “Encrypted
+message” if push rules request an alert. Late decryption does not update alerts.
 
-Alerts use SDK push-rule notifications, independently of replaceable UI snapshots
-and open timelines. Muted rooms stay quiet; rooms outside the selected space can
-notify. Own messages, edits, redactions, reactions, and membership/state events
-are excluded. Messages decrypted by sync use their text. Undecryptable events use
-“Encrypted message” when their push actions request notification; late decryption
-does not update an existing desktop alert.
+A focused, uncovered room suppresses its ordinary messages; a thread reply is
+suppressed only when that thread is open too. Other threads can notify. Unfocused
+windows and covered panes do not suppress. Scrolling up does not change this
+pane-level policy. Alerts do not change selection, drafts, or receipts.
 
-A focused room pane suppresses its ordinary messages. Thread replies are
-suppressed only when the matching thread pane is also open. Other threads still
-notify. Unfocused windows, Settings, and image viewers do not suppress alerts.
-This is a pane-level policy: scrolling up within a focused conversation still
-suppresses its alerts. Notifications do not change drafts, scrolling, selection,
-spaces, or read receipts.
+Events before worker registration or outside a two-minute age/future window are
+discarded; offline catch-up and clock skew can therefore lose alerts. A bounded
+2048-event cache deduplicates IDs. Room-list sync requests 20 events per room,
+but larger server gaps can still miss messages. The 64-event delivery queue drops
+overflow; serial delivery has a 10-second deadline and macOS permission a separate
+60-second deadline. Settings/focus/age/shutdown are rechecked after permission.
 
-Events timestamped before worker registration, more than two minutes old, or
-more than two minutes in the future are discarded. This prevents startup/history
-and reconnect floods but drops offline catch-up and events from substantially
-skewed sender clocks. IDs are deduplicated in a bounded 2048-event cache,
-including events suppressed by focus/settings.
+There is no alert polling timer, click-to-room navigation, inline reply, or sound
+policy. The app must be running. Requests already handed to the OS cannot be recalled.
 
-Room-list sync requests up to 20 events per room instead of the SDK default one,
-reducing missed mentions behind newer messages in unselected rooms. This adds
-initial sync/cache work and cannot guarantee delivery across larger server
-timeline gaps. The 64-event queue drops overflow rather than blocking sync.
-Delivery is serial, with a ten-second service deadline and a separate sixty-second
-macOS permission deadline. Current settings, focus, age, and shutdown are checked
-again after permission completes. Requests already handed to the OS cannot be
-recalled by disabling notifications.
+## Linux
 
-There is no application polling timer, action waiter, sound policy, inline reply,
-or click-to-room navigation in this first implementation. Closing the app stops
-sync and delivery; this is not push while the application is quit.
-
-## Linux and development containers
-
-The [host-session D-Bus mount](../development.md#using-the-host-secret-service-from-the-container)
-used for Secret Service also carries notification requests. A host notification
-daemon is required. The Rust backend does not need `libnotify`.
-
-Check service reachability without displaying anything:
+Delivery uses `org.freedesktop.Notifications` on the session bus, without a
+libnotify dependency. Containers need the [host D-Bus mount](../development.md#using-the-host-secret-service-from-the-container)
+and a host notification daemon; forwarding the display alone is insufficient.
+Check reachability without displaying an alert:
 
 ```sh
 dbus-send --session --print-reply --dest=org.freedesktop.Notifications \
   /org/freedesktop/Notifications org.freedesktop.Notifications.GetServerInformation
 ```
 
-Run `cargo run --locked --bin interconnect -- --demo`, open Settings, and click
-**Send sample notification**. Check the host banner or notification center.
-A forwarded display alone does not forward notifications; the session bus must
-also be accessible. An absent daemon produces a Settings error; delivery runs
-asynchronously.
+Run demo, send the Settings sample, and inspect the banner/notification center.
+An absent daemon should produce an actionable Settings error without blocking UI.
 
 ## macOS
 
-On a Mac with Rust and Xcode command-line tools:
+Use the [app bundle](../development.md#macos-builds), then send the Settings sample
+and accept the UserNotifications permission prompt. Check Notification Center,
+denial/retry via **System Settings → Notifications**, and relaunch of the same
+bundle. Bare `cargo run` lacks the bundle identity and reports an error. Demo
+sample delivery needs neither a saved account nor Matrix access.
 
-```sh
-./scripts/bundle-macos.sh
-open target/Interconnect.app --args --demo
-```
+## Acceptance
 
-The script builds the GUI, copies its binary/Info.plist into an `.app`, and
-ad-hoc signs it for local development. It does not launch the application. With
-`CARGO_TARGET_DIR` set, substitute that directory for `target`. The stable bundle
-identifier is `io.github.interconnect.desktop`. Distribution signing/notarization
-remain release work.
+Use a dedicated account and second client to check focused/unfocused panes,
+closed/open threads, other spaces, muted rooms, preview opt-out, duplicates,
+history pagination, reconnect, encrypted messages, pending permission, and shutdown.
 
-The command above builds the debug profile. Use `./scripts/bundle-macos.sh --release`
-to validate the optimized profile packaged by macOS CI; the bundle path is the same.
-
-Send the sample in Settings, accept the permission prompt, and inspect
-Notification Center. Denial appears as an actionable error. Enable Interconnect
-in **System Settings → Notifications**, then retry and check again after
-relaunching the same bundle. A bare `cargo run` launch reports a missing bundle
-rather than invoking UserNotifications without a bundle identity. Iced
-stays on the main thread, pumping AppKit while Tokio handles notification work.
-
-Saved accounts use the native macOS Keychain backend; see
-[account-storage acceptance](connected-ui.md#native-macos-account-storage).
-Demo/sample delivery needs no account store, Matrix login, or network.
-
-## Validation evidence and remaining acceptance
-
-Recorded Linux automated checks cover notification policy, bounded deduplication,
-privacy settings, focus propagation, muted-room filtering without open timelines,
-and cancellation during pending permission. They do not establish native banner
-appearance or connected-account delivery.
-
-The D-Bus integration test delivers real freedesktop protocol calls to a mock
-service on a private `dbus-daemon`, checking app identity, escaped body markup,
-category, sample text, and desktop rejection errors. Only the
-child process receives the private bus address;
-the runner and host notification daemon remain untouched. This test requires
-`dbus-daemon`, included in the development container.
-
-Native Linux banner appearance, connected-account delivery, encrypted notification
-delivery with real keys, and macOS compilation/permission/banner behavior remain
-manual acceptance checks. Run macOS compilation and acceptance on a native host.
-
-Connected acceptance uses a dedicated test room and a second client. Scenarios
-include focused/unfocused panes, closed threads, other rooms/spaces, mute rules,
-preview opt-out, duplicate events, history pagination, reconnect, and shutdown.
+Automated tests cover policy, bounded queues/deduplication, and cancellation.
+A private D-Bus fixture checks protocol payloads, app identity, and rejection;
+it requires `dbus-daemon` and does not call the host daemon. Native Linux banners,
+macOS prompts/banners, and connected delivery require desktop acceptance.

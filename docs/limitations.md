@@ -1,32 +1,26 @@
 # Current limitations
 
-The client supports one account per process and requires native sliding sync.
-Saved accounts use Linux Secret Service or native macOS Keychain. Native macOS
-Keychain prompts and connected-account behavior still need acceptance on a Mac.
+Interconnect supports one account per process and requires native sliding sync.
+Saved accounts require Linux Secret Service or macOS Keychain.
 
-- Recovery/key-backup UI, mark-unread controls, ordinary reply
-  composition and notification click navigation
-  remain incomplete.
-- Message deletion supports synced message-like events with event IDs. Cancelling
-  unsent local echoes and redacting room-state/activity events remain unsupported.
-- Incoming receipt labels currently show room receipts only; the SDK does not
-  expose thread-specific readers through timeline items. Thread activity badges
-  remain local to this process. Receipt privacy preferences are not implemented.
-- Message editing supports own text messages and emotes with event IDs. Media
-  caption editing, notices, and arbitrary HTML round-tripping remain unsupported.
-- Formatted messages support common Matrix HTML. Inline-image authoring, code syntax
-  highlighting, full tables, formatted media captions, and visual rich-text editing
-  remain incomplete. Excerpts continue to use the plain fallback.
-- Custom emoji support includes personal/room pack management and uploads.
-  Standalone stickers, bulk pack import/export and animated emoji playback remain
-  unfinished. Received emoji keep
-  sender dimensions because the pinned SDK strips the emoticon HTML marker.
-- Keyboard shortcuts cover common workflows, but full button traversal and focus
-  restoration are unfinished.
-- Drafts and scroll positions are transient. Complete offline history, timeline
-  virtualization, and configurable storage retention are unfinished.
-- Multi-account switching, cross-platform account import, legacy sync, and calls
-  are not yet implemented.
+- Recovery/key-backup UI, ordinary reply composition, notification click navigation,
+  account switching, cross-platform account import, legacy sync, and calls are missing.
+- Deletion requires a synced message-like event with an event ID. Cancelling unsent
+  local echoes and redacting room-state/activity events are unsupported.
+- Editing covers your text messages and emotes; media captions, notices, and
+  arbitrary HTML round-tripping are unsupported.
+- Receipt labels show room readers, not thread-specific readers. Thread unread
+  badges are local to the process; receipt privacy preferences are missing.
+- Formatting omits full tables, syntax highlighting, visual rich-text editing,
+  inline-image authoring, and formatted media captions. Excerpts use plain text.
+- Custom emoji packs support management and uploads, but not standalone stickers,
+  bulk import/export, or animation. Received emoji retain sender dimensions because
+  the pinned SDK strips the emoticon marker.
+- [Keyboard shortcuts](keyboard.md) cover common workflows; complete button
+  traversal and focus restoration remain unfinished.
+- Text drafts persist encrypted. Attachments, unfinished message edits, and scroll
+  positions do not survive restart. Complete offline history, timeline virtualization,
+  and configurable storage retention remain unfinished.
 
-See [UI validation](validation/connected-ui.md) for automated coverage, desktop
-checks, and remaining live acceptance.
+See [UI validation](validation/connected-ui.md) for repeatable desktop checks and
+validation boundaries.

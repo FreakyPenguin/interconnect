@@ -72,8 +72,8 @@ Experimental downloads are available from successful GitHub Actions runs:
 [Apple Silicon macOS builds](docs/development.md#download-a-bleeding-edge-macos-build).
 These are bleeding-edge builds; the macOS app is signed ad hoc and not notarized.
 
-See the [documentation](docs/README.md) for setup, packaging, configuration, and
-[current limitations](docs/limitations.md).
+See the [documentation](docs/README.md) for setup, packaging, configuration,
+[keyboard shortcuts](docs/keyboard.md), and [current limitations](docs/limitations.md).
 
 ## License
 

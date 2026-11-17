@@ -1,110 +1,50 @@
-# Desktop device verification
+# Device verification
 
-## Scope
+## Use
 
-The account-avatar menu's **Verify device…** action opens a dialog for SAS verification with
-another device on the same Matrix account. Choose your existing trusted client
-from the device list and accept its request. Alternatively, initiate verification
-on that client, then select **Verification requested** and **Accept request** in
-Interconnect. Incoming support covers to-device SAS requests from your own
-account; other users' requests and QR verification are outside this flow.
+Open the account menu → **Verify device…**, choose another device on the same
+account, and accept on that client. For an incoming to-device SAS request, choose
+**Verification requested → Accept request**. Requests never auto-accept or steal
+focus. Other users' requests and QR verification are outside this flow.
 
-Compare all seven emojis, or all three numbers, with the other client. Select
-**They match** only when the complete comparison agrees. Otherwise choose
-**They don't match** or **Cancel verification**. Escape closes the dialog and
-cancels an active exchange. Confirmation is disabled after a local match while
-waiting for the other client; completion requires the SDK's done state on the
-exchange. Device IDs are shown to help identify the intended peer.
+Compare all seven emojis or all three numbers. Choose **They match** only when
+the full comparison agrees; otherwise choose mismatch or cancel. Completion
+requires the SDK's done state after both clients confirm. Escape closes the
+dialog and cancels an active exchange. The open conversation and drafts survive.
+Demo uses a local sample without accounts, trust changes, or Matrix requests.
 
-The dialog reports the SDK's own-device trust independently as **Unknown**,
-**Unverified**, or **Verified**. A completed SAS comparison does not by itself
-promise cross-signing trust or historical message-key availability. Key backup,
-recovery-secret entry, cross-signing setup/reset, and account recovery are not
-implemented. Automatic room-key requests/forwarding remain SDK-owned.
+Own-device trust is reported separately as Unknown, Unverified, or Verified.
+A successful comparison does not promise cross-signing trust or historical keys.
+Key backup, recovery-secret entry, and cross-signing setup/reset are missing;
+room-key requests/forwarding remain SDK-owned.
 
-## Lifecycle and resource behavior
+## Lifecycle
 
-One session owns one verification worker and a scoped SDK event handler. Trust
-and incoming requests arrive through SDK streams/events. Device discovery runs
-only on explicit opening/refresh; no periodic query or animation is added.
-Incoming requests are bounded and never accepted automatically. One active
-exchange is allowed at a time; additional requests are not presented while busy.
+One session owns an event-driven worker with at most one active exchange.
+Discovery happens only on open/refresh. Discovery/request creation have 30-second
+deadlines, an accepted/created exchange has three minutes, and best-effort cancel
+has five seconds. Dialog close, session replacement, and shutdown cancel work.
+An interrupted HTTP request may remain on the peer until its SDK timeout.
 
-A verification has a three-minute deadline after request creation/acceptance.
-Device discovery and outbound request creation have 30-second deadlines.
-Cancellation sends a best-effort SDK cancel with a five-second deadline. Closing
-the dialog cancels its active exchange; application close and session replacement
-cancel and join the worker before sync is stopped. The SDK handler is removed
-with the service. A request whose creation HTTP operation was interrupted may
-remain on the peer until its SDK timeout; it is never automatically confirmed.
+Session/flow revisions and displayed comparison values reject stale or duplicate
+confirmations. The SDK performs key generation, MAC/signature checks, and trust
+updates; the UI never marks a device trusted directly.
 
-Commands carry session/flow revisions, and match commands also carry the
-comparison's displayed numbers. Obsolete, premature, mismatched, duplicate, and
-post-cancellation confirmations are rejected. The SDK handles key generation,
-MAC exchange, signature validation, and device trust; the UI does not mark a
-device trusted directly.
+## Acceptance
 
-The modal captures pointer input and blocks background navigation/composition.
-It preserves the open conversation, drafts, and scroll positions. Escape closes
-and cancels the dialog, including during input-method composition. General
-keyboard button traversal/focus restoration remains pending in the UI.
-Conversation notification suppression is suspended while the dialog covers it.
-A review banner and an attention dot on the account avatar appear when a request
-arrives, without stealing focus or opening a modal automatically.
+Use a dedicated account with another trusted client online:
 
-Demo mode offers a local sample device and comparison through the same account menu.
-The sample never changes device trust, accesses saved accounts, or sends Matrix
-requests.
+1. Confirm account/local device identity, select the intended peer by device ID,
+   accept there, compare everything, confirm both sides, and wait for completion.
+2. Initiate from the other client; check review and explicit acceptance.
+3. Exercise mismatch, either side cancelling, timeout, close during request
+   creation/exchange, and a late queued confirmation.
+4. Check 640×480 layout, scrolling, missing emoji fonts/numeric fallback, Escape,
+   draft preservation, and [settled resource use](idle-resources.md).
+5. Open existing encrypted history. Report key availability separately from
+   verification and reported own-device trust.
 
-## Automated coverage
-
-The protocol fixture runs two independent matrix-sdk clients with real crypto
-stores in memory. Local mock homeservers serve their signed device keys and route
-verification events between them; no real account or homeserver is accessed.
-It covers outgoing requests, explicit incoming acceptance, equal seven-emoji and
-three-number comparisons, and completion with the peer devices locally verified.
-Each side sends exactly one MAC despite duplicate confirmation attempts.
-
-Negative checks cover stale revisions, wrong numbers, early/duplicate
-confirmation, mismatch, cancellation followed by a queued/late confirmation,
-immediate close after starting from an older UI snapshot, closed controls after
-shutdown, and idle services making no HTTP requests. Mismatch and cancellation
-send no MAC and do not verify the peer. GUI checks cover demo isolation, draft
-and scroll preservation, modal input blocking, notification visibility, and all
-phases at the minimum 640×480 window size. The dialog keeps its title and action
-footer fixed while account/device information and comparisons scroll between them.
-Comparison Match/Mismatch, incoming Accept, and Cancel/Close remain visible at
-minimum size; short phases use smaller desktop height caps. Layout checks assert
-action bounds and unchanged action positions when scrolling the body.
-
-Validation for this layout change: targeted verification UI tests, formatting,
-and workspace Clippy pass. An isolated Sway/tiny-skia demo check at 1280×900
-and 640×480 confirmed the device list and comparison layout, including visible
-comparison/cancel actions without scrolling. Connected acceptance and macOS/wgpu
-rendering remain untested for this extension.
-
-These checks exercise cryptographic SAS exchange and the SDK's local peer-device
-trust. They do not establish a live account's cross-signing status, historical-key
-recovery, server interoperability, native emoji rendering, or actual idle CPU and
-wakeups. The fixture uses no real accounts or devices.
-
-## Manual acceptance
-
-Two-client acceptance requires a test account with another trusted Matrix client online:
-
-1. Launch Interconnect with the test profile. Open **Verify device**, confirm
-   account/local device identity, and choose the intended peer by device ID.
-2. Accept on the other client. Compare the complete emojis/numbers, confirm on
-   both, and wait for completion. Record the reported own-device trust separately.
-3. Initiate a fresh request from the other client. Check the review banner and
-   explicit acceptance. Exercise mismatch, cancellation, peer cancellation,
-   timeout, and application close during a pending exchange.
-4. Open an existing encrypted test conversation and check whether historical
-   keys arrive from the trusted client. Report unavailable keys separately from
-   verification failure. No new test message is needed.
-5. Check minimum-window layout, emoji labels/numbers with missing emoji fonts,
-   Escape, and draft/scroll preservation. Compare settled idle
-   resources with [the existing procedure](idle-resources.md), including a closed
-   dialog and a pending request.
-
-Native desktop and two-client acceptance remain pending for this desktop flow.
+Automated fixtures exchange real SDK crypto messages between two in-memory
+clients through local mock servers, including cancellation and stale commands.
+They establish local SAS/MAC behavior, not live cross-signing, server
+interoperability, historical-key recovery, native fonts, or CPU/wakeups.

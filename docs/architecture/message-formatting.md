@@ -1,261 +1,135 @@
 # Message formatting
 
-Room messages and thread originals use the SDK's current message content,
-including edits, sanitization, and reply-fallback handling. `m.text`, `m.notice`,
-and `m.emote` messages with `org.matrix.custom.html` are converted to a native
-`message_document::Document`. Other formats and messages beyond parsing limits
-use the SDK's plain body. Plain messages are never interpreted as Markdown.
-Bare HTTP/HTTPS URLs and `www.` addresses become clickable in plain messages
-and HTML text runs. Plain whitespace and literal markup remain unchanged;
-`www.` destinations use HTTPS. Detection uses `linkify`, trims surrounding
-punctuation, and retains balanced URL parentheses. Code spans/blocks, existing
-anchors and embedded-object alternatives are not scanned. Spoiler links stay
-hidden and inactive until revealed. Plain messages with no recognized URLs or
-over 64 KiB retain the ordinary text renderer.
+## Received messages
 
-The document stores blocks and styled inline runs, independently of Iced.
-Paragraphs, headings, quotes, ordered/unordered lists, code, links, spoilers,
-and basic inline styles are supported. Unsupported structures degrade to text;
-table cells retain separators. Author CSS, scripts, and arbitrary attributes
-are not rendered. Link opening accepts HTTP, HTTPS, mailto and Matrix URLs,
-validated again at activation. Hovering shows the destination. Parsing never
-fetches links or images; visible inline images use the authenticated media pipeline.
+SDK-sanitized `m.text`, `m.notice`, and `m.emote` HTML becomes a native
+`message_document::Document`, including edits and reply-fallback handling.
+Paragraphs, headings, quotes, lists, code, links, spoilers, and inline styles are
+supported. Unsupported structures degrade to text; author CSS/scripts are inert.
+Plain messages remain literal, without Markdown interpretation.
 
-HTML input is capped at 64 KiB, traversal at 4096 nodes and 32 levels, and output
-at 64 KiB. Projection runs on a blocking worker, outside the UI thread. Unchanged
-formatted content reuses the previous pane's document; formatting-only edits
-invalidate it. There is no global document cache retaining departed messages.
-Plain URL detection also runs on the projection worker, reuses unchanged
-documents, and replaces them on edits. Source identity distinguishes literal
-text from HTML, even when their source strings match. No URL previews are fetched
-and no timer is introduced. Link clicks use the existing asynchronous system
-opener; dragging continues to select and copy text in rooms and threads.
-Dropping the projection cancels further rows after the current bounded message.
-Existing view cancellation and generation checks still govern publication.
+Bare HTTP/HTTPS and `www.` links are detected in plain text/HTML text runs, excluding
+code, existing anchors, hidden spoilers, and embedded-object alternatives.
+Activation validates HTTP, HTTPS, mailto, or Matrix destinations and uses the
+asynchronous system opener. Parsing fetches no links or URL previews.
 
-The formatted renderer uses the same Iced/Cosmic Text paragraphs for measuring,
-drawing, pointer hit-testing, decorations and selection geometry. A read-only
-editor stores logical selection positions; its layout is not used for formatted
-text. The timeline continues to coordinate selection across rows and preserve
-visible message anchors across layout changes. Canonical copy text comes from
-the displayed document, rather than the possibly different plain fallback.
-Hidden spoilers use placeholder text in both selection and the clipboard.
-Revealing changes canonical text and invalidates layout/old selection. Reveal
-state is local to the widget and resets when the document or view changes.
+Projection runs on blocking workers with 64 KiB HTML/output, 4096 nodes, and
+32-level traversal limits; oversized messages fall back to plain text. Unchanged
+content reuses its document; edits replace it. Cancellation stops further rows
+after the current bounded message, and generation checks guard publication.
+
+Measurement, drawing, hit-testing, selection, and decoration share Iced/Cosmic
+Text paragraphs. Copy uses the displayed document's canonical text. Hidden
+spoilers copy placeholders; reveal resets selection/layout and remains local to
+the widget. Room-list, pin, and notification excerpts use the plain SDK fallback.
 
 ## Inline images and local embedded assets
 
-`Inline::Image` carries a validated `ImageSource::Matrix` MXC URI or an
-application-only `ImageSource::Local` identity, alternative text, optional width
-and height, and baseline descent. Incoming HTML can only produce Matrix sources;
-HTTP, file, data and local URLs are inert. Local producers supply decoded RGBA
-handles through `inline_image::Assets`; rendering never reads files or decodes
-bytes on the UI thread. `ImageSource::Formula` holds an already decoded local
-formula asset with dimensions/descent and uses the same layout and drawing path.
+Incoming HTML images accept validated MXC sources only; HTTP, file, data, and
+application-local URLs cannot load images. Application producers supply decoded
+local/formula assets. Rendering does not read files or decode on the UI thread.
 
-Dimensions are logical pixels. Both declared dimensions take precedence over
-intrinsic pixels, so loading and failure do not change the reserved rectangle.
-With one dimension, intrinsic aspect ratio supplies the other; without decoded
-pixels a 24×24 ratio is used provisionally. Missing dimensions may relayout once
-pixels arrive. Oversized objects scale proportionally to the available line
-width, with a 2048-pixel cap per dimension. Zero/invalid dimensions are treated
-as absent. Local baseline descent scales with the rectangle; HTML images align
-their bottom to the text baseline.
+Declared width/height reserve the rectangle through loading/failure. A single
+dimension uses intrinsic aspect ratio when available; missing dimensions can
+relayout after decoding. Invalid/zero values count as absent. Objects scale to
+line width with a 2048 px dimension cap. HTML images align to the text baseline.
 
-Image paragraphs replace each image with U+FFFC for shaping, while preserving a
-map to its complete alternative text for logical selection and the clipboard.
-A narrow, opt-in [Cosmic Text extension](../../vendor/cosmic-text/PATCH.md) supplies
-exact glyph width/ascent/descent before native bidi resolution and line wrapping.
-The line box then contains all text and image ascents/descents. Text, pixels,
-selection, links and hit-testing share the resulting layout. This avoids
-positioning images over a separately measured text layout. Text-only paragraphs
-retain the ordinary Iced paragraph path.
+Images shape as U+FFFC with exact width/ascent/descent supplied by the
+[Cosmic Text patch](../../vendor/cosmic-text/PATCH.md), before bidi/wrapping.
+Selection treats them atomically and copies alternative text, never the shaping
+marker. Spoiler images demand media only after reveal. Scroll anchors survive
+intrinsic-size changes.
 
-Placeholders retain their rectangles and show clipped alternative text. Loaded
-pixels draw into the same rectangle; pointer selection treats the image as an atomic
-object and copying uses alternative text, never the shaping marker. Revealed spoiler
-images enter layout and media demand only after explicit reveal. Image state
-and intrinsic-size changes use the existing message-anchor scroll restoration.
-
-Widgets report changed visible image demand on ordinary redraw events without
-scheduling timers. Reports include conversation generation and document identity;
-edits, redactions, navigation and old reports cannot reload obsolete sources.
-At most 32 unique visible inline sources join the existing attachment demand.
-They share the four download/decode slots, SDK disk cache and 96 MiB attachment
-pixel cache. Inline files have a 2 MiB encoded decode limit, 4096-pixel source
-dimension limit and 1024×1024 target. GIFs show a static frame. The ordinary media
-worker supplies cancellation, failure tracking and reconnect retries. Closing
-or hiding an image releases its demand; this does not require evicting its pixels
-from the bounded LRU cache.
-
-## Further formatting work
-
-Code blocks preserve literal source whitespace and an optional language hint.
-Rendering already splits semantic runs into shaping spans (including emoji
-fonts). Syntax highlighting can add cached presentation ranges over the source,
-split spans at token boundaries, and supply styles while keeping canonical text
-and selection offsets unchanged. No highlighting engine is coupled to the model.
-
-Tables, syntax highlighting, visual rich-text editing, and
-formatted media captions remain follow-up work. Room-list, pin and notification excerpts
-continue to use the plain SDK fallback.
+Visible-demand reports carry conversation/document identity. At most 32 unique
+inline sources share four download/decode slots and the 96 MiB attachment pixel
+cache. Inline files are limited to 2 MiB encoded, 4096 px source dimensions, and
+1024×1024 decode targets. GIFs show a static frame. Hiding/closing releases demand;
+pixels may remain in the bounded LRU. No image polling timer is added.
 
 ## Mathematical messages
 
-Matrix's `span[data-mx-maths]` and `div[data-mx-maths]` carry LaTeX source without
-delimiters. Inline formulas participate in native text wrapping/baseline layout;
-display formulas occupy a centered block and use display-style operators.
-`Document::parse_with_formulas` typesets them with RaTeX 0.1.16 and bundled KaTeX
-fonts on the existing projection/composition blocking worker. Ordinary `parse`
-only projects the sender's fallback, without invoking the renderer. Incoming
-plain text is never scanned for dollar signs.
+Matrix `span[data-mx-maths]` and `div[data-mx-maths]` carry delimiter-free LaTeX.
+RaTeX with bundled KaTeX fonts renders inline/display assets on the existing
+blocking projection/composition worker. Plain incoming text is never scanned
+for dollar signs. Formulas copy their LaTeX source and need no network service,
+TeX installation, timer, or persistent cache.
 
-Successful formulas become document-owned decoded RGBA assets at twice their
-logical resolution, with transparent backgrounds and the message ink color.
-No media demand, external math service, TeX installation, timer or persistent
-formula cache is involved. Unchanged HTML reuses the previous document/assets;
-edits replace them under the existing cancellation and generation checks.
-Selection treats formulas as atomic objects and copies their LaTeX source;
-hidden spoilers retain the existing selection/copy protections.
-
-At most 16 formulas are attempted per document, each with at most 2048 source
-bytes. RaTeX bounds nesting/macro expansion and validates layout work before
-building drawing items. Rasterization is capped at 2048 pixels per dimension,
-256K pixels per formula and 512K pixels (2 MiB RGBA) per document. Oversized,
-malformed or unsupported formulas retain the sender's HTML fallback. Missing
-fallbacks show the attribute's LaTeX source. Sources/errors are never logged.
-This supports RaTeX's math subset, not arbitrary LaTeX documents or packages.
+Up to 16 formulas per document, each with 2048 source bytes, are attempted.
+Rasterization uses twice logical resolution, capped at 2048 px per dimension,
+256K pixels per formula, and 512K pixels per document. Invalid/oversized formulas
+retain sender fallback text, or the LaTeX attribute if no fallback exists.
+Sources/errors are not logged. Arbitrary LaTeX packages/documents are unsupported.
 
 ## Markdown composition
 
-Room and thread drafts default to Markdown. The composer mode button switches
-that draft to literal **Plain text** without rewriting its source or selection.
-The choice is kept in memory per conversation, like the draft itself. Attachment
-captions remain plain text.
+Room/thread drafts default to Markdown; Plain text changes mode without rewriting
+the source. Mode and explicit emoji choices persist with the
+[encrypted draft](drafts.md). Attachment captions remain plain.
 
-Composition uses CommonMark with strikethrough enabled: emphasis, strong text,
-headings, quotes, lists, inline/fenced code and links. Soft line breaks become
-explicit breaks for chat. Raw HTML is escaped as literal text; Markdown images
-produce their alternative text. Tables, task-list extensions, spoiler authoring,
-image authoring and code syntax highlighting remain follow-up work.
+CommonMark plus strikethrough supports headings, lists, quotes, code, and links.
+Soft line breaks become explicit chat breaks. Raw HTML is escaped and Markdown
+images become alternative text. `$…$` and `$$…$$` serialize to Matrix math HTML;
+code and Plain text stay literal. Element's alternative backslash delimiters are
+not composer syntax here, though their resulting Matrix HTML can be received.
 
-Markdown mode additionally accepts `$…$` for inline math and `$$…$$` for display
-math through pulldown-cmark's math extension. These are serialized as Matrix
-`data-mx-maths` markup with escaped attribute/text fallbacks, rather than
-pulldown-cmark's presentation classes. Code spans/blocks and Plain text mode
-remain literal. Element's alternative `\(…\)`/`\[…\]` composer delimiters are
-not authoring syntax here; receiving their resulting Matrix HTML is supported.
+Preview explicitly snapshots the draft and uses the same payload builder as Send;
+typing does not parse or schedule preview work. Edits invalidate the preview;
+account/request/source checks reject stale results. Conversion has two workers,
+64 KiB input/output, 2048 parser events, and 24 nesting levels. Errors retain the
+draft and permit switching to Plain text.
 
-The explicit **Preview** button snapshots the source and runs the same conversion
-as Send. It uses the existing document renderer in a bounded panel above the
-source editor. Editing hides/invalidates the preview; typing never starts a
-parser or preview timer. Closing/replacing a preview aborts its task, and request,
-account, format and source checks reject obsolete results. Navigating may retain
-a completed preview with its original draft, without navigating on completion.
-
-Conversion has a two-worker semaphore, 64 KiB input/output bounds, 2048 parser
-events and 24 nesting levels. Ordinary text takes a conservative literal fast
-path. Generated HTML is checked against the renderer's document limits, and
-only allowlisted link destinations are emitted. Formatting errors retain the
-source draft and permit switching to Plain text.
-
-The original Markdown source is the Matrix `body` fallback; generated HTML is
-`formatted_body` with `org.matrix.custom.html`. Preview and send share this
-payload builder. The SDK owns queue admission, local echoes, thread relations,
-encryption and retries. Drafts clear only on successful admission. Demo conversion
-uses the same worker and renderer, entirely in memory with no account/network
-access. Editing previously sent messages is outside this composition workflow.
+The original source is the Matrix `body`; generated HTML is `formatted_body` with
+`org.matrix.custom.html`. The SDK owns queue admission, encryption, relations,
+local echoes, and retries. No full tables, syntax highlighting, WYSIWYG editing,
+inline-image authoring, or formatted media captions are implemented.
 
 ## Custom emoji
 
-Existing image packs feed the composer picker, reaction picker and `:shortcode:`
-completion. Stable `m.room.image_pack` / `m.image_pack.rooms` events take priority
-per pack over `im.ponies.room_emotes` / `im.ponies.emote_rooms`; legacy personal
-`im.ponies.user_emotes` packs are also read. Discovery includes globally enabled
-packs in joined rooms, the current room, and up to eight canonical parents that
-are joined spaces. Empty global room references have no meaning. Sticker-only
-packs are excluded; legacy per-image usage overrides are respected.
+Pack discovery feeds composer/reaction pickers and shortcode completion:
 
-Discovery reads SDK state and owns a separate, narrow `emoji-packs` sliding-sync
-connection because SDK 0.19.1's RoomListService does not expose additional required
-state. It requests only both pack event types and canonical parents, with zero
-message history and no encryption extensions. The subscription follows the room
-and known global/parent sources; its future and event handler end with the
-connection. SDK long polling is used, with no application refresh timer. Errors
-retain cached packs and retry on subsequent room/account/navigation updates.
-At most 64 globally referenced rooms, 64 packs per source and 1024 emoji are
-projected. Unknown/inaccessible referenced rooms are skipped.
+| Purpose | Preferred type | Legacy type |
+| --- | --- | --- |
+| Room pack | `m.room.image_pack` | `im.ponies.room_emotes` |
+| Global references | `m.image_pack.rooms` | `im.ponies.emote_rooms` |
+| Personal pack | — | `im.ponies.user_emotes` |
 
-Choosing an emoji inserts a readable token such as `:wave:` and binds it to that
-image in the captured conversation draft. Duplicate choices receive distinct
-`:wave/2:` tokens. Completion shows pack names and never silently resolves a
-manually typed shortcode. Picker catalogs are frozen while open; changes to packs
-cannot redirect existing draft choices. Up to 256 choices are retained per draft;
-unused bindings are pruned on insertion and successful sends clear them.
+Stable packs take priority per pack; sticker-only packs are excluded. Sources
+include current room, up to eight joined canonical parent spaces, and at most
+64 globally referenced rooms; projection caps at 64 packs/source and 1024 emoji.
+A narrow `emoji-packs` sliding-sync connection requests pack/parent state with
+zero history and no encryption extensions. It ends with the session. Errors
+retain caches and retry on later events, without an application refresh timer.
 
-Preview and Send share the same bounded conversion. Explicit choices become
-escaped `<img data-mx-emoticon ... height="32">` HTML in both composer modes;
-Plain text otherwise remains literal. Code spans/blocks, raw HTML and Markdown
-image alternatives stay literal. Private parser markers prevent underscore-heavy
-shortcodes becoming Markdown; literal contexts restore the original tokens.
-The plain body preserves the source tokens. Attachment captions remain plain.
+Choosing an emoji binds a readable `:wave:` token to that image in the draft;
+collisions use `:wave/2:`. Manually typed tokens do not silently resolve. Up to
+256 choices persist per draft, unaffected by later catalog changes. Preview/Send
+emit escaped image HTML in either mode, preserving literal code/raw HTML/image
+alternatives. The plain body keeps tokens. Received emoji use the same inline
+pipeline; SDK sanitization removes the emoticon marker, so sender dimensions
+(normally height 32) remain. MXC reaction keys render as static images.
 
-Incoming MXC images already use the inline-image pipeline, including selection,
-copying and spoilers. Directly parsed `data-mx-emoticon` images reserve a 24-pixel
-height and retain the intrinsic aspect ratio. The pinned SDK's sanitizer removes
-this marker from received messages/local echoes, so those retain the sender's
-ordinary image dimensions (normally height 32); rendering still works. No SDK
-sanitizer bypass is introduced. MXC reaction keys render as static image chips;
-other keys keep their existing text/Unicode rendering.
-
-Picker pages, completion results, visible reaction rows and open previews add at
-most 80 unique custom image demands to the existing bounded media worker. They
-share its four download/decode slots and 96 MiB cache, with the existing inline
-image limits and static GIF frame. Closing the UI releases demand; cached pixels
-can remain in the bounded LRU. Packs are never bulk downloaded. Pack images are
-not encrypted, including when used in encrypted rooms; the picker states this.
-Personal and room pack management, uploads and global enable/disable are described
-below. Standalone stickers, bulk import/export and animated emoji playback remain
-follow-up work.
-
-Protocol: [Matrix image packs](https://spec.matrix.org/v1.19/client-server-api/#image-packs)
+Picker/completion/reaction/preview demand adds at most 80 unique images to the
+same four slots/96 MiB cache. Packs are not bulk downloaded. **Emoji media is
+unencrypted even in encrypted rooms.** Animation and standalone stickers are
+unsupported. Protocol references: [image packs](https://spec.matrix.org/v1.19/client-server-api/#image-packs)
 and [MSC2545](https://github.com/matrix-org/matrix-spec-proposals/blob/main/proposals/2545-emotes.md).
 
 ### Pack management
 
-`custom_emoji::management::Service` is a runtime-owned, account-scoped handle
-with serialized writes. Opening or reloading the manager performs bounded fresh
-account-data/state reads for known sources (up to 128 packs). It does not add a
-background subscription. The existing pack sync worker discovers pack state keys;
-an initial open before that sync completes may require Reload to list every pack.
-The legacy personal pack is a single `im.ponies.user_emotes` account-data event.
-New room packs use `m.room.image_pack` with a stable, randomly allocated state key;
-existing stable/legacy packs are edited in their existing event type. New global
-references use `m.image_pack.rooms`; existing legacy references retain their type.
+An account-scoped runtime-owned service serializes writes. Open/Reload performs
+bounded fresh reads (up to 128 known packs), without a new background subscription.
+Existing event types and unknown JSON/sticker fields are preserved; new room
+packs/global references use stable types. Invalid MXC, duplicate shortcodes, and
+content over 48 KiB are rejected. Permissions are rechecked before writes;
+server enforcement remains authoritative.
 
-Edits operate on retained JSON and preserve unknown pack, image and subscription
-fields. Duplicate shortcodes, invalid MXC URLs and oversized content (48 KiB)
-are rejected before writing. The same pure edit validator drives demo changes.
-Cached room permissions are rechecked immediately before writes; homeserver
-permission enforcement remains authoritative. Fresh pack reads detect intervening
-changes, including a stable pack superseding a legacy event. Matrix has no
-conditional state/account-data write here, so another client's change between
-the final GET and PUT remains a race. Global-reference edits read fresh data,
-modify only the selected room/state key and preserve other references.
+Fresh reads detect intervening edits, but Matrix offers no conditional write
+here: another client's update between GET and PUT can race. Local preparation
+runs on blocking workers; explicit Save alone uploads, without source paths or
+filenames. Metadata failure after upload can leave unused media. Deleting entries
+removes references, not media; existing messages/draft bindings keep their MXC URI.
 
-Local file reads and bounded static image decoding run on a blocking worker.
-Only explicit saving uploads bytes; no source paths/filenames are uploaded.
-Uploaded media uses the SDK's ordinary authenticated upload and is not encrypted.
-Metadata saves may fail after upload, leaving unused media. Pack deletions write
-empty content to suppress legacy fallback; global references to a deleted pack
-may remain inert. Existing messages and captured draft emoji keep their MXC URI.
-
-Read/file tasks are abortable and carry dialog request/account identity. Once
-submitted, writes finish against their captured account/pack; shutdown counts
-and waits for them (30-second load/global deadlines, 60-second save deadline).
-Late/duplicate callbacks cannot mutate a replacement dialog or decrement its
-operation count twice. The modal blocks conversation actions, suppresses read
-receipts/notification visibility and preserves unrelated pending completions.
-It disables cursor-blink timers and requests only the selected remote image;
-local upload previews use already decoded RGBA handles. Demo pack edits are
-stored only in memory and reproject into the shared emoji catalog.
+Read/file tasks are abortable and account/dialog scoped. Submitted writes finish
+against the captured target and participate in shutdown; load/global operations
+have 30-second deadlines and saves 60 seconds. Demo edits stay in memory and
+never upload. See [settings](../settings.md#emoji-packs) for file/shortcode limits.

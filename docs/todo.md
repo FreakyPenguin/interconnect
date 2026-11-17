@@ -1,17 +1,8 @@
-# Todo
+# Ideas
 
-## Rooms
-- Member invite link?
-- room settings
-- removing members
+Current gaps are listed in [limitations](limitations.md). Further work includes:
 
-
-## Account and navigation
-
-- Logout / account switching UI
-- add "home space for unspaced rooms
-
-## Other ideas
-
-- Dashboard
-- Standalone stickers and animated custom emoji
+- Room settings, member removal, and member invite links.
+- Account switching.
+- Dashboard.
+- Standalone stickers and animated custom emoji.
