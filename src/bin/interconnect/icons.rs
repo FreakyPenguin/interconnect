@@ -30,7 +30,6 @@ pub(super) enum Kind {
     Smile,
     AddReaction,
     Attach,
-    Edit,
     Eye,
 }
 
@@ -297,17 +296,6 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                         }),
                         stroke,
                     );
-                }
-                Edit => {
-                    line(&[
-                        (4.0, 16.0),
-                        (16.0, 4.0),
-                        (20.0, 8.0),
-                        (8.0, 20.0),
-                        (3.0, 21.0),
-                        (4.0, 16.0),
-                    ]);
-                    line(&[(13.0, 7.0), (17.0, 11.0)]);
                 }
             }
         });

@@ -1,7 +1,7 @@
 //! Room topic presentation and an asynchronous editor bound to a room generation.
 use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
 use iced::{
-    Element, Length, Task,
+    Element, Task,
     widget::{button, column, row, text, text_editor, tooltip},
 };
 
@@ -172,33 +172,45 @@ impl App {
             return content.into();
         }
         let room = self.model.rooms.iter().find(|room| room.id == room_id);
-        let topic = room
-            .map(|room| room.topic.as_str())
-            .filter(|topic| !topic.trim().is_empty())
-            .unwrap_or("No topic");
-        let label = super::tooltips::tooltip(
-            text(topic.replace(['\n', '\r'], " "))
-                .width(Length::Fill)
-                .size(12)
-                .color(shell::MUTED)
-                .wrapping(text::Wrapping::None),
-            topic,
-            tooltip::Position::Bottom,
-        );
-        let mut content = row![label].spacing(6).align_y(iced::Alignment::Center);
-        if room.is_some_and(|room| room.can_edit_topic) && !self.closing && !self.stopped {
-            content = content.push(super::tooltips::tooltip(
-                button(super::icons::icon(super::icons::Kind::Edit))
-                    .width(24)
-                    .height(24)
-                    .padding([0, 4])
-                    .style(shell::icon_button)
-                    .on_press(message(Event::Open(generation, room_id.to_owned()))),
-                "Edit room topic",
-                tooltip::Position::Bottom,
-            ));
+        let topic = room.map_or("", |room| room.topic.as_str());
+        let editable =
+            room.is_some_and(|room| room.can_edit_topic) && !self.closing && !self.stopped;
+        if topic.trim().is_empty() && !editable {
+            return iced::widget::container(iced::widget::space().height(0)).into();
         }
-        content.width(Length::Fill).into()
+        let label = if topic.trim().is_empty() {
+            "Add a topic…"
+        } else {
+            topic
+        };
+        if editable {
+            super::tooltips::tooltip(
+                button(super::single_line::label(label, 12).shrink())
+                    .padding(0)
+                    .style(|_, status| iced::widget::button::Style {
+                        text_color: if matches!(
+                            status,
+                            button::Status::Hovered | button::Status::Pressed
+                        ) {
+                            shell::ACCENT
+                        } else {
+                            shell::MUTED
+                        },
+                        ..Default::default()
+                    })
+                    .on_press(message(Event::Open(generation, room_id.to_owned()))),
+                format!("{label}\n\nClick to edit room topic"),
+                tooltip::Position::Bottom,
+            )
+            .into()
+        } else {
+            super::tooltips::tooltip(
+                super::single_line::label(label, 12).color(shell::MUTED),
+                topic,
+                tooltip::Position::Bottom,
+            )
+            .into()
+        }
     }
 }
 
@@ -212,7 +224,7 @@ mod tests {
         let _ = app.update(message(Event::Open(generation, room)));
     }
     #[test]
-    fn long_topic_keeps_the_edit_button_inside_a_narrow_header() {
+    fn long_topic_stays_single_line_and_remains_clickable_in_a_narrow_header() {
         use iced::advanced::{layout, widget};
         let mut app = demo_app();
         std::sync::Arc::make_mut(&mut app.model.rooms)
@@ -230,10 +242,28 @@ mod tests {
             &renderer,
             &layout::Limits::new(iced::Size::ZERO, size),
         );
-        let pencil = node.children().last().unwrap();
-        assert!(pencil.size().width > 10.0);
-        assert!(pencil.bounds().x + pencil.size().width <= 240.0);
-        assert!(node.size().height < 40.0);
+        assert!(node.size().width <= 240.0);
+        assert!(node.size().height <= 18.0);
+        let mut messages = Vec::new();
+        for event in [
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)),
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                iced::mouse::Button::Left,
+            )),
+        ] {
+            view.as_widget_mut().update(
+                &mut tree,
+                &event,
+                layout::Layout::new(&node),
+                iced::mouse::Cursor::Available(iced::Point::new(12.0, 7.0)),
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut iced::advanced::Shell::new(&mut messages),
+                &iced::Rectangle::with_size(size),
+            );
+        }
+        assert!(messages.iter().any(|event| matches!(event,
+            Message::Topic(Event::Open(current, id)) if current == generation && id == room)));
     }
     #[test]
     fn demo_topic_save_clear_cancel_and_read_only_room() {

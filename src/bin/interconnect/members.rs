@@ -97,8 +97,8 @@ impl App {
             .spacing(5)
             .align_y(iced::Alignment::Center),
         )
-        .padding([5, 8])
-        .style(shell::quiet_button);
+        .padding([5, 6])
+        .style(shell::icon_button);
         if !self.closing && !self.stopped {
             badge = badge.on_press(message(Event::Open));
         }

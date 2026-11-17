@@ -2359,19 +2359,11 @@ impl App {
             .map(|r| r.name.as_str())
             .unwrap_or("Conversation");
         let heading = if thread { "Thread" } else { name };
-        let subtitle = if thread {
-            text("A focused conversation")
-                .size(12)
-                .color(shell::MUTED)
-                .into()
-        } else {
-            self.topic_view(*generation, selected_id)
-        };
-        let mut header = row![
-            column![shell::title(heading, 18), subtitle]
-                .spacing(5)
-                .width(Length::Fill),
-        ]
+        let mut header = row![single_line::label(heading, 17).font(iced::Font {
+            weight: iced::font::Weight::Semibold,
+            ..iced::Font::with_name("Inter")
+        }),]
+        .spacing(4)
         .align_y(iced::Alignment::Center);
         if !thread {
             header = header
@@ -2399,10 +2391,14 @@ impl App {
                 iced::widget::tooltip::Position::Bottom,
             ));
         }
+        let mut heading = column![header].spacing(2);
+        if !thread {
+            heading = heading.push(self.topic_view(*generation, selected_id));
+        }
         let mut content = column![
             self.room_column(
-                container(header)
-                    .padding([18, 24])
+                container(heading)
+                    .padding([8, 24])
                     .id("conversation-header")
             ),
             iced::widget::rule::horizontal(1)

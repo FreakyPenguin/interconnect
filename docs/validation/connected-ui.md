@@ -55,6 +55,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Images | Studio → Images has ready and failed fixtures. Escape closes the original viewer, preserving drafts and scroll positions. Originals also open from threads. |
 | GIFs | Images open still. Play/Stop, once/duration settings, close, and focus loss control playback. Reopening stays still. |
 | Attachments | Pick, paste, and drop stage one file per draft. The hover outline identifies the target; multiple files produce an error. Overlays block underlying drop targets. |
+| Room header | The room name and search/People actions share a compact top row; the topic sits directly below. Room names and topics ellipsize at narrow widths. Click an editable topic to open its editor; empty editable topics offer Add a topic, while empty read-only topics leave no placeholder. Hover reveals the full topic and editing hint. Threads omit the generic subtitle. |
 | Account utilities | The account avatar opens Settings, Find room, and device verification. Routine connection/device status lives in this menu; the normal bottom bar is hidden. Incoming verification requests, connection problems, settings/notification failures, media errors, and stopped-session Exit remain visible when applicable. An account attention dot also marks issues and graphics restart notices. Demo identity stays visible in the space rail. |
 | Settings | The fixed header and footer keep Close, Cancel, and Save visible while the preferences body scrolls. Check 640×480 and ordinary desktop sizes: long descriptions, paths, and errors wrap within the card; controls use compact type and outlined fields. Save applies changes; Cancel/Close discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
 | Control icons | Navigation, header, message actions, pins, and composer use shared static outline icons. Check consistent size/stroke, hover/disabled colors, recognizable pin/unpin and bookmark states, and action tooltips. User-authored emoji and reaction glyphs remain emoji. |
@@ -150,6 +151,19 @@ alerts were exercised only as fixtures; real incoming requests, macOS/wgpu, and
 production resource measurements remain manual acceptance checks. Formatting,
 workspace Clippy, all 266 UI tests, and the desktop build pass. This pass adds
 no subscription or timer.
+
+The compact header pass reduces vertical padding and aligns room actions with
+the title row. The topic uses a cached single-line ellipsis label, with its full
+text in a tooltip. An editable topic is itself the edit control, changing color
+on hover; the detached pencil is removed. Empty editable rooms offer **Add a
+topic…**; empty read-only topics are hidden. Room names ellipsize instead of
+wrapping, and the thread header omits its generic subtitle. Visual checks used
+an isolated Sway/tiny-skia demo at 1280×900 and 640×480, including opening and
+canceling the inline topic editor and a long topic in the narrow layout.
+Automated topic checks cover narrow click routing, editing permissions,
+stale completion rejection, and draft/scroll preservation. Formatting, workspace
+Clippy, all 266 UI tests, and the desktop build pass. Native macOS/wgpu and
+connected topic edits remain untested for this pass.
 
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
