@@ -2692,6 +2692,8 @@ dependencies = [
  "ratex-types",
  "rfd",
  "secret-service",
+ "security-framework",
+ "security-framework-sys",
  "serde",
  "serde_json",
  "tempfile",

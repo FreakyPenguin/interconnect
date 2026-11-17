@@ -65,9 +65,12 @@ is limited to two concurrent jobs to fit the runner's memory.
 The workflow runs `scripts/bundle-macos.sh --release`, which builds the optimized
 client with `--locked`, validates its Info.plist, and creates an ad-hoc-signed
 `.app`; CI then verifies that signature and uploads a bleeding-edge download.
-It does not launch the app or perform distribution signing/notarization. Tests
-and Clippy remain in Linux CI.
-Intel builds and native account/desktop validation are separate follow-up work.
+It does not launch the app or perform distribution signing/notarization. It also
+runs the session library tests in the release profile, including native
+Keychain error classification and blocking-worker cancellation. These tests do
+not access Keychain; the native round-trip fixture is opt-in. The complete test
+suite and Clippy remain in Linux CI. Intel builds and native account/desktop
+validation are separate follow-up work.
 
 The bundle script defaults to a debug build for local development; pass
 `--release` to reproduce the CI build. Large unoptimized macOS binaries can exceed
@@ -262,7 +265,7 @@ backend uses UserNotifications with a bundled app; `./scripts/bundle-macos.sh`
 builds a local development bundle on a Mac. Use **Settings → Notifications →
 Send sample notification** in `--demo` for an account-independent check. See
 [notification validation](validation/notifications.md) for permissions, automated
-evidence, native acceptance checks, and macOS account-port limitations.
+evidence and native acceptance checks.
 
 ## Running on the host Wayland desktop
 
@@ -315,6 +318,28 @@ Use native-host runs with hardware rendering for representative battery and susp
 - [Rust development container image](https://github.com/devcontainers/images/tree/main/src/rust)
 - [Rust toolchain overrides](https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file)
 - [Iced platform dependencies](https://github.com/iced-rs/iced/blob/master/DEPENDENCIES.md)
+
+## Native macOS account storage
+
+Native macOS builds store the complete saved session and SDK encryption keys in
+Keychain through Security.framework. No D-Bus service or container keyring mount
+is needed on a Mac. The default profile is
+`~/Library/Application Support/interconnect/profiles/default`; it contains the
+encrypted SDK stores and local preferences. Launch the bundled app normally to
+sign in, or pass a fresh explicit profile directory for a dedicated test account.
+Demo mode continues to skip all account and Keychain access.
+
+The first credential access may ask to unlock the login keychain or allow
+Interconnect access. Approve access only for the intended app. Rebuilding or
+replacing an ad-hoc-signed bundle may require access again; native acceptance
+must check this. Denial/unavailability reports an error and retains existing
+state, with no plaintext fallback. Security.framework calls run off the UI and
+async runtime threads. An already-running native call can outlive caller
+cancellation while retaining the profile lock; a retry waits for it to finish.
+
+See [native account validation](validation/connected-ui.md#native-macos-account-storage)
+for the opt-in fixture and manual checks. Native execution remains unvalidated in
+the Linux development environment.
 
 ## Using the host Secret Service from the container
 

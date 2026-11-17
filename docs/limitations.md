@@ -1,8 +1,8 @@
 # Current limitations
 
 The client supports one account per process and requires native sliding sync.
-macOS builds and notifications exist, but saved accounts still depend on Linux
-Secret Service.
+Saved accounts use Linux Secret Service or native macOS Keychain. Native macOS
+Keychain prompts and connected-account behavior still need acceptance on a Mac.
 
 - Recovery/key-backup UI, mark-unread controls, ordinary reply
   composition and notification click navigation
@@ -25,7 +25,7 @@ Secret Service.
   restoration are unfinished.
 - Drafts and scroll positions are transient. Complete offline history, timeline
   virtualization, and configurable storage retention are unfinished.
-- Native macOS account support, multi-account switching, legacy sync, and calls
+- Multi-account switching, cross-platform account import, legacy sync, and calls
   are not yet implemented.
 
 See [UI validation](validation/connected-ui.md) for automated coverage, desktop

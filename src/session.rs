@@ -1,4 +1,4 @@
-//! One-account persistent-session feasibility harness, backed by Secret Service.
+//! Persistent accounts backed by the native operating-system credential store.
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
@@ -13,11 +13,13 @@ use matrix_sdk::{
     Client, authentication::matrix::MatrixSession, sliding_sync::VersionBuilder,
     utils::local_server::LocalServerBuilder,
 };
-use secret_service::{EncryptionType, SecretService};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+mod credentials;
 mod presence_cursor;
+
+use credentials::CredentialStore;
 
 // Keep the original keyring namespace so existing saved accounts remain readable.
 const APPLICATION: &str = "chatclient-milestone-0";
@@ -76,8 +78,7 @@ fn legacy_store_directory() -> String {
 
 impl SavedSession {
     fn decode(bytes: &[u8]) -> anyhow::Result<Self> {
-        let saved: Self =
-            serde_json::from_slice(bytes).context("invalid Secret Service session record")?;
+        let saved: Self = serde_json::from_slice(bytes).context("invalid saved session record")?;
         ensure!(saved.version == 1, "unsupported session record version");
         ensure!(
             !saved.store_key.is_empty(),
@@ -181,62 +182,21 @@ impl Profile {
         Ok(())
     }
 
-    fn attributes(&self) -> HashMap<&str, &str> {
-        HashMap::from([("application", APPLICATION), ("profile", self.id.as_str())])
+    async fn read(&self, service: &CredentialStore) -> anyhow::Result<Option<SavedSession>> {
+        service.read(self).await
     }
 
-    async fn read(&self, service: &SecretService<'_>) -> anyhow::Result<Option<SavedSession>> {
-        let found = service.search_items(self.attributes()).await?;
-        let mut items = found.unlocked;
-        items.extend(found.locked);
-        ensure!(
-            items.len() <= 1,
-            "multiple Secret Service records match this profile; refusing to choose"
-        );
-        let Some(item) = items.first() else {
-            return Ok(None);
-        };
-        item.unlock().await.context("unlock session keyring item")?;
-        let bytes = Zeroizing::new(item.get_secret().await?);
-        Ok(Some(SavedSession::decode(&bytes)?))
+    async fn save(&self, service: &CredentialStore, saved: &SavedSession) -> anyhow::Result<()> {
+        service.save(self, saved).await
     }
 
-    async fn save(&self, service: &SecretService<'_>, saved: &SavedSession) -> anyhow::Result<()> {
-        let collection = service
-            .get_default_collection()
-            .await
-            .context("Secret Service needs a default collection")?;
-        collection
-            .unlock()
-            .await
-            .context("unlock the host keyring")?;
-        let bytes = Zeroizing::new(serde_json::to_vec(saved)?);
-        collection
-            .create_item(
-                "interconnect milestone 0 session",
-                self.attributes(),
-                &bytes,
-                true,
-                "application/json",
-            )
-            .await?;
-        Ok(())
-    }
-
-    async fn delete_secret(&self, service: &SecretService<'_>) -> anyhow::Result<()> {
-        let found = service.search_items(self.attributes()).await?;
-        for item in found.unlocked.iter().chain(found.locked.iter()) {
-            item.unlock().await?;
-            item.delete().await?;
-        }
-        Ok(())
+    async fn delete_secret(&self, service: &CredentialStore) -> anyhow::Result<()> {
+        service.delete_secret(self).await
     }
 }
 
-async fn connect() -> anyhow::Result<SecretService<'static>> {
-    SecretService::connect(EncryptionType::Dh).await.context(
-        "Secret Service unavailable: expose the host session bus and unlock its keyring; no plaintext fallback is used"
-    )
+async fn connect() -> anyhow::Result<CredentialStore> {
+    CredentialStore::connect().await
 }
 
 async fn client(profile: &Profile, saved: &SavedSession) -> anyhow::Result<Client> {
@@ -325,7 +285,9 @@ pub async fn login(homeserver: &str, directory: &str) -> anyhow::Result<()> {
     profile.save(&service, &saved).await.context("could not save login; remove the named device in your other client before retrying with a new profile")?;
     saved.device_key = Some(device_key(&client).await?);
     profile.save(&service, &saved).await?;
-    println!("Session saved in Secret Service. Closing this process keeps the device logged in.");
+    println!(
+        "Session saved in the system credential store. Closing this process keeps the device logged in."
+    );
     verify_identity(&client, saved.session.as_ref().expect("session set")).await?;
     crate::sso::initial_sync(client).await
 }
@@ -443,7 +405,7 @@ impl std::fmt::Debug for LoginMethod {
 /// Failed attempts retain their encrypted stores; a retry always uses fresh keys.
 pub struct DesktopSession {
     profile: Profile,
-    service: Option<SecretService<'static>>,
+    service: Option<CredentialStore>,
     pub client: Option<Client>,
 }
 
@@ -707,8 +669,7 @@ mod tests {
         fs::rename(&old, &moved).unwrap();
         let profile = Profile::open(&moved, false).unwrap();
         assert_eq!(profile.directory, moved.canonicalize().unwrap());
-        assert_eq!(profile.attributes()["profile"], id);
-        assert_eq!(profile.attributes()["application"], APPLICATION);
+        assert_eq!(profile.id, id);
         assert_eq!(
             fs::read(moved.join("store/fixture")).unwrap(),
             b"test store"

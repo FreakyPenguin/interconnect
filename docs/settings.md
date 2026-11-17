@@ -18,9 +18,8 @@ The GUI and `spike session-*` commands default to
 `$XDG_DATA_HOME/interconnect/profiles/default`, falling back to
 `~/.local/share/interconnect/profiles/default` when XDG_DATA_HOME is unset, empty,
 or relative. On macOS the path is
-`~/Library/Application Support/interconnect/profiles/default`; native account
-support remains unvalidated. An explicit profile-directory argument overrides
-the default. Desktop startup creates missing profile directories with mode 0700
+`~/Library/Application Support/interconnect/profiles/default`. An explicit
+profile-directory argument overrides the default. Desktop startup creates missing profile directories with mode 0700
 and offers password or browser login; signed-in profiles restore their saved
 device. Missing credentials and signed-out sessions also open the login form.
 See [desktop login](validation/connected-ui.md#desktop-login) for
@@ -32,7 +31,9 @@ and session commands using the profile before moving it. The keyring identifies
 an existing account by its original canonical profile path. Preserve that path
 in a `keyring-profile` file inside the profile **before moving it**; the updated
 client uses that identity for keyring reads, saves, and logout. This file contains
-only a path, with no trailing newline; credentials remain in Secret Service.
+only a path, with no trailing newline; credentials remain in Secret Service on
+Linux or Keychain on macOS. Moving a profile between operating systems does not
+transfer its credential record; cross-platform account import is not implemented.
 The identity file remains part of the profile on subsequent moves. Profiles without it continue
 to use their current canonical path.
 

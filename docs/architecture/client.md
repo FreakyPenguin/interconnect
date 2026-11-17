@@ -11,10 +11,12 @@ The SDK owns sync,
 SQLite persistence, encryption, and automatic room-key requests/forwarding under
 its trust policy. Native sliding sync is required.
 
-Credential storage uses Secret Service 5.2 with Tokio and its Rust cryptography
-backend. Its AES/CBC/HKDF dependencies share the versions already used by the
-Matrix SDK; system OpenSSL and libdbus development packages are unnecessary for
-the selected dependency graph. Desktop D-Bus services remain runtime requirements.
+On Linux, credential storage uses Secret Service 5.2 with Tokio and its Rust
+cryptography backend. macOS uses Security.framework generic-password items through
+`security-framework` 3.7, with no Secret Service dependency. Secret Service
+AES/CBC/HKDF dependencies share the versions already used by the Matrix SDK;
+system OpenSSL and libdbus development packages are unnecessary for the selected
+dependency graph. Desktop D-Bus services remain Linux runtime requirements.
 
 wgpu is the default renderer, with tiny-skia fallback on initialization failure.
 Device loss does not switch an already running renderer. Graphics settings are
@@ -71,8 +73,22 @@ room. Cancellation interrupts pending work and shutdown joins owned workers.
 
 ## Persistent accounts
 
-Credentials and SDK store encryption keys live in Secret Service. The private
-profile contains the SDK stores, local device fingerprint, and navigation state.
+Credentials, SDK store encryption keys, retained keys, and the device fingerprint
+live together in the native credential store: Secret Service on Linux, Keychain
+on macOS. Both use the same versioned JSON record and original
+`chatclient-milestone-0` namespace. The canonical profile path (or `keyring-profile`
+identity override) selects the record; on macOS it is the generic-password account
+attribute and the namespace is the service attribute. The private profile contains
+the encrypted SDK stores and navigation state. There is no plaintext fallback.
+
+Keychain calls run on blocking workers, serialized per session. A worker retains
+both its serialization guard and a duplicate profile lock until the native call
+returns, including after cancellation or a runtime cleanup timeout. A cancelled
+caller cannot publish a late result; an in-flight native write may still finish.
+A retry waits for it before reading or writing. Only `errSecItemNotFound` means
+missing credentials; denied access, user cancellation, and locked/unavailable
+keychains remain errors. Saves create or update without deleting the old item
+first; local deletion is idempotent and follows successful server logout.
 Desktop restore checks local device identity and can present cached room data
 without a network identity request. CLI session commands retain a `whoami` check.
 Login, verification trust, and historical key availability are separate states.

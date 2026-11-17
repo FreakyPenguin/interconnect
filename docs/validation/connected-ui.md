@@ -455,7 +455,8 @@ cargo run --locked --bin interconnect -- /path/to/test-profile
 
 A missing or signed-out profile opens password/browser sign-in. A saved profile
 restores its device without creating another one. Linux requires an unlocked
-Secret Service and a display; see [development setup](../development.md) and
+Secret Service and a display; macOS uses Keychain. See
+[development setup](../development.md) and
 [profile storage](../settings.md#account-profiles). Browser SSO listens on localhost
 port 8765; forward the same port to the browser's host in a container. Sign-in
 has a three-minute deadline and closing cancels pending authentication.
@@ -467,6 +468,79 @@ a separate store and retains earlier stores/keys. If the server accepts login bu
 local setup fails, an abandoned device may remain visible in other clients.
 Restoration errors do not automatically replace the saved device. Verification
 and historical-key availability are separate from successful login.
+
+## Native macOS account storage
+
+The macOS backend uses Security.framework generic-password items, keyed by service
+`chatclient-milestone-0` and the canonical profile path (or its `keyring-profile`
+override). The item contains the versioned saved session, store passphrase,
+retained store keys, and device fingerprint. Linux retains its existing Secret
+Service attributes and item format. Neither backend writes credentials to a
+plaintext profile file. Account import between platforms is not implemented.
+
+OS-independent tests exercise cancellation while a native operation is blocked:
+the async runtime remains responsive, later operations wait in order, errors
+release the guard, and the profile stays locked after its owner is dropped.
+Existing fixtures cover offline same-device restoration, damaged/missing stores,
+retained keys, moved profile identities, and process-lifetime SDK locks. Native
+macOS unit tests distinguish missing items from denied/cancelled/locked Keychain
+errors without accessing the user's Keychain. macOS CI runs the session suite
+in the release profile; the actual Keychain round-trip test remains opt-in.
+
+On a Mac with an unlocked login keychain, run this fixture explicitly:
+
+```sh
+cargo test --locked --lib session::credentials::macos::tests::native_keychain_round_trip -- --ignored --exact
+```
+
+It creates a temporary profile and synthetic session item, checks full-record
+restoration, profile isolation, replacement, logout marking, deletion, and
+repeated deletion, then removes its item. It does not log into Matrix. Keychain
+may prompt for access to the test binary.
+
+Manual native acceptance uses a fresh profile and a dedicated account:
+
+- Build with `./scripts/bundle-macos.sh`, then launch
+  `open target/Interconnect.app --args /absolute/path/to/test-profile`. Verify the
+  initial form opens without a Keychain prompt; sign in using password and,
+  separately, browser SSO. Unlock/allow access as requested. Check Keychain Access
+  for one matching service/account item, without displaying or exporting secrets.
+- Quit and relaunch the same bundle/profile. Confirm the account, device ID and
+  fingerprint stay the same, including offline cached restoration. Verification
+  trust and historical decryption remain separate checks. Confirm the SDK store
+  and profile still have their expected private permissions.
+- Deny a prompt or make Keychain unavailable during restore/save. Expect an error
+  with existing stores/keys retained, and no automatic device replacement or
+  plaintext fallback. Retry after unlocking. Close or time out while a prompt is
+  pending: UI shutdown stays bounded, while a running native operation can finish
+  later holding its profile lock. A retry waits for that operation. Rebuilding or
+  replacing the ad-hoc-signed bundle may prompt for access again; verify this.
+- With the app closed, preserve its original identity in `keyring-profile`, move
+  the complete profile, and relaunch using its new absolute path. Confirm the
+  same Keychain item/device is restored. Do not move a profile with a client or
+  native credential operation still using it.
+- To test logout, quit the app and run
+  `cargo run --locked --bin spike -- session-logout /absolute/path/to/test-profile`.
+  Network/server failures must retain credentials. Success revokes the server
+  session before marking and deleting the local item; retry local cleanup if
+  deletion fails. The encrypted SDK store remains on disk.
+- Launch `--demo` and confirm it neither opens a profile nor accesses Keychain.
+
+2026-11-17 Linux validation passed: `cargo fmt --all -- --check`,
+`cargo clippy --locked --workspace --all-targets -- -D warnings`,
+`cargo test --locked --workspace` (183 library tests and 320 desktop tests passed;
+two existing library tests ignored), and `cargo build --locked --bin interconnect`.
+The locked dependency graph confirms Secret Service is absent on macOS and still
+selected on Linux; no dependency versions changed.
+
+Native Keychain execution, prompt behavior, signed-bundle upgrades, connected
+restore/logout, and macOS idle CPU/wakeups remain unvalidated locally. The Linux
+cross-build attempt stops in AWS-LC C compilation because an Apple toolchain/SDK
+is unavailable; it does not establish a complete macOS build. An isolated Apple
+Silicon target check of the actual Keychain/worker modules and their tests passed
+against the native framework bindings, using session-shape stubs to avoid the
+rest of the app; this is type checking, not native execution. No saved account
+was accessed, connected client restarted, or Matrix test message sent.
 
 ## Element custom sections
 

@@ -28,7 +28,6 @@ ratex-layout = "=0.1.16"
 ratex-types = "=0.1.16"
 ratex-render = { version = "=0.1.16", features = ["embed-fonts"] }
 
-secret-service = { version = "=5.2.0", features = ["rt-tokio-crypto-rust"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml_edit = { version = "0.25", features = ["serde"] }
@@ -41,9 +40,12 @@ arboard = { version = "=3.7.0", features = ["wayland-data-control"] }
 linkify = "0.10.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "=5.2.0", features = ["rt-tokio-crypto-rust"] }
 notify-rust = { version = "=4.19.0", default-features = false, features = ["z-with-tokio"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+security-framework = { version = "=3.7.0", default-features = false }
+security-framework-sys = { version = "=2.17.0", default-features = false }
 notify-rust = { version = "=4.19.0", default-features = false, features = ["preview-macos-un"] }
 
 [dev-dependencies]

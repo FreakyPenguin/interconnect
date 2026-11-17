@@ -92,10 +92,9 @@ relaunching the same bundle. A bare `cargo run` launch reports a missing bundle
 rather than invoking UserNotifications without a bundle identity. Iced
 stays on the main thread, pumping AppKit while Tokio handles notification work.
 
-This provides the native notification route, not a complete macOS account port:
-the existing saved-account backend still needs Linux Secret Service. A macOS
-Keychain backend is separate work. Demo/sample delivery needs no account store,
-Matrix login, or network.
+Saved accounts use the native macOS Keychain backend; see
+[account-storage acceptance](connected-ui.md#native-macos-account-storage).
+Demo/sample delivery needs no account store, Matrix login, or network.
 
 ## Validation evidence and remaining acceptance
 

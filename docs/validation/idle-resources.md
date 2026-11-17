@@ -59,6 +59,16 @@ The CPU-rendered view test checks that settled redraws request `Wait`.
 Production CPU, wakeups and large-history memory remain unmeasured; earlier
 measurements below predate this feature. See [bookmark design](../bookmarks.md).
 
+## Native macOS account storage — 2026-11-17
+
+Keychain runs only on explicit session read/save/delete operations, using blocking
+workers with no polling, background subscription, or refresh timer. Cancellation
+retains the serialization/profile guards until a native call finishes; it cannot
+abort an OS prompt already in progress. Automated worker fixtures check async
+responsiveness, operation ordering, and lock retention after cancellation. Native
+prompt/shutdown behavior and macOS CPU, wakeups, and battery impact have not been
+measured. See [account validation](connected-ui.md#native-macos-account-storage).
+
 ## Repeatable checks
 
 Run the normal suite and the longer SDK fixture separately:
