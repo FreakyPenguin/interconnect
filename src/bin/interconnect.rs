@@ -283,6 +283,7 @@ enum Message {
     Exit,
     Markdown(markdown_composer::Event),
     Edit(DraftKey, text_editor::Action),
+    DeleteWord(DraftKey, text_editor::Motion),
     ResizeComposer {
         key: DraftKey,
         generation: u64,
@@ -651,6 +652,7 @@ impl App {
                             | invite::Event::Cancel
                     )
                     | Message::Edit(..)
+                    | Message::DeleteWord(..)
                     | Message::ResizeComposer { .. }
                     | Message::ResizePanel(..)
                     | Message::Markdown(
@@ -689,6 +691,7 @@ impl App {
             && matches!(
                 message,
                 Message::Edit(..)
+                    | Message::DeleteWord(..)
                     | Message::Send(_)
                     | Message::LoadOlder { .. }
                     | Message::TimelineMeasured { .. }
@@ -724,6 +727,7 @@ impl App {
                 | Message::Reaction(_)
                 | Message::Markdown(_)
                 | Message::Edit(..)
+                | Message::DeleteWord(..)
                 | Message::Composing(_)
                 | Message::Members(_)
                 | Message::Invite(_)
@@ -1169,6 +1173,7 @@ impl App {
                     );
                 }
             }
+            Message::DeleteWord(key, motion) => return self.delete_word(key, motion),
             Message::Edit(key, action) if !self.closing && !self.stopped => {
                 if (self.draft_key(false).as_ref() == Some(&key)
                     || self.draft_key(true).as_ref() == Some(&key))
@@ -3144,7 +3149,7 @@ fn composer_binding(
     {
         return (!composing).then(|| text_editor::Binding::Custom(Message::Send(key.clone())));
     }
-    text_editor::Binding::from_key_press(press)
+    composer::editing_binding(press, composing, key)
 }
 
 fn current_pane(snapshot: &Option<Pane>, generation: u64) -> Option<&Pane> {

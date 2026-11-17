@@ -1,12 +1,81 @@
 //! Shared composer surface. Focus follows the real editor without app messages or timers.
-use super::{Message, shell};
+use super::{App, DraftKey, Message, shell};
 use iced::{
     Border, Color, Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector,
     advanced::{
         Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
         widget::{self, Tree},
     },
+    widget::text_editor,
 };
+
+pub(super) fn editing_binding(
+    press: text_editor::KeyPress,
+    composing: bool,
+    key: &DraftKey,
+) -> Option<text_editor::Binding<Message>> {
+    use iced::keyboard::{Key, Modifiers, key::Named};
+    use text_editor::{Binding, Motion, Status};
+
+    let word_modifier = if cfg!(target_os = "macos") {
+        Modifiers::ALT
+    } else {
+        Modifiers::CTRL
+    };
+    if (press.modifiers - Modifiers::SHIFT) == word_modifier {
+        let motion = match press.key {
+            Key::Named(Named::ArrowLeft | Named::Backspace) => Some(Motion::WordLeft),
+            Key::Named(Named::ArrowRight | Named::Delete) => Some(Motion::WordRight),
+            _ => None,
+        };
+        if let Some(motion) = motion {
+            if composing || !matches!(press.status, Status::Focused { .. }) {
+                return None;
+            }
+            return Some(match press.key {
+                Key::Named(Named::Backspace | Named::Delete) => {
+                    Binding::Custom(Message::DeleteWord(key.clone(), motion))
+                }
+                _ if press.modifiers.shift() => Binding::Select(motion),
+                _ => Binding::Move(motion),
+            });
+        }
+    }
+    text_editor::Binding::from_key_press(press)
+}
+
+impl App {
+    pub(super) fn delete_word(
+        &mut self,
+        key: DraftKey,
+        motion: text_editor::Motion,
+    ) -> iced::Task<Message> {
+        use text_editor::{Action, Edit};
+
+        if self.composing
+            || self.closing
+            || self.stopped
+            || (self.draft_key(false).as_ref() != Some(&key)
+                && self.draft_key(true).as_ref() != Some(&key))
+            || self.drafts.get(&key).is_none_or(|draft| draft.pending)
+        {
+            return iced::Task::none();
+        }
+        let selection = if self.drafts[&key].content.cursor().selection.is_none() {
+            self.update(Message::Edit(key.clone(), Action::Select(motion)))
+        } else {
+            iced::Task::none()
+        };
+        // At a document boundary the motion can leave no selection. Deleting
+        // only a real range also keeps word deletion safe in RTL paragraphs.
+        let deletion = if self.drafts[&key].content.cursor().selection.is_some() {
+            self.update(Message::Edit(key, Action::Edit(Edit::Delete)))
+        } else {
+            iced::Task::none()
+        };
+        iced::Task::batch([selection, deletion])
+    }
+}
 
 pub(super) fn frame<'a>(
     content: Element<'a, Message>,
@@ -196,7 +265,373 @@ impl Widget<Message, Theme, Renderer> for Frame<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::keyboard::{Key, Modifiers, key::Named};
     use iced::widget::{column, text, text_editor};
+
+    fn word_modifier() -> Modifiers {
+        if cfg!(target_os = "macos") {
+            Modifiers::ALT
+        } else {
+            Modifiers::CTRL
+        }
+    }
+
+    fn press(app: &mut App, thread: bool, key: Named, modifiers: Modifiers) {
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = Size::new(640.0, 480.0);
+        let mut view = app.pane(thread);
+        let mut tree = Tree::new(&view);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        view.as_widget_mut().operate(
+            &mut tree,
+            Layout::new(&node),
+            &renderer,
+            &mut widget::operation::focusable::focus(
+                if thread {
+                    "thread-composer"
+                } else {
+                    "room-composer"
+                }
+                .into(),
+            ),
+        );
+        let event = Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: Key::Named(key),
+            modified_key: Key::Named(key),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers,
+            // Some platforms report control text; motions must still work.
+            text: Some("\0".into()),
+            repeat: false,
+        });
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        view.as_widget_mut().update(
+            &mut tree,
+            &event,
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut shell,
+            &Rectangle::with_size(size),
+        );
+        assert!(shell.is_event_captured());
+        assert!(!matches!(
+            shell.redraw_request(),
+            iced::window::RedrawRequest::At(_)
+        ));
+        drop(view);
+        for message in messages {
+            assert!(!matches!(message, Message::Send(_)));
+            let _ = app.update(message);
+        }
+    }
+
+    #[test]
+    fn word_shortcuts_edit_only_the_focused_room_or_thread_draft() {
+        use text_editor::{Cursor, Position};
+
+        for thread in [false, true] {
+            let mut app = crate::tests::demo_app();
+            let _ = app.update(Message::Thread("review".into()));
+            let key = app.draft_key(thread).unwrap();
+            let other = app.draft_key(!thread).unwrap();
+            app.drafts.get_mut(&other).unwrap().content =
+                text_editor::Content::with_text("other draft");
+            let selection = app.selection.clone();
+            let scroll = app.scroll_positions.clone();
+            // Text, caret (line/byte), selection anchor, key, Shift,
+            // expected text, expected caret, expected selected text.
+            for (text, caret, anchor, named, shift, expected, end, selected) in [
+                (
+                    "one two three",
+                    (0, 7),
+                    None,
+                    Named::Backspace,
+                    false,
+                    "one  three",
+                    (0, 4),
+                    None,
+                ),
+                (
+                    "one two three",
+                    (0, 4),
+                    None,
+                    Named::Delete,
+                    false,
+                    "one  three",
+                    (0, 4),
+                    None,
+                ),
+                (
+                    "one two three",
+                    (0, 7),
+                    None,
+                    Named::ArrowLeft,
+                    false,
+                    "one two three",
+                    (0, 4),
+                    None,
+                ),
+                (
+                    "one two three",
+                    (0, 4),
+                    None,
+                    Named::ArrowRight,
+                    false,
+                    "one two three",
+                    (0, 7),
+                    None,
+                ),
+                (
+                    "one two three",
+                    (0, 7),
+                    None,
+                    Named::ArrowLeft,
+                    true,
+                    "one two three",
+                    (0, 4),
+                    Some("two"),
+                ),
+                (
+                    "one two three",
+                    (0, 4),
+                    None,
+                    Named::ArrowRight,
+                    true,
+                    "one two three",
+                    (0, 7),
+                    Some("two"),
+                ),
+                (
+                    "one two",
+                    (0, 0),
+                    None,
+                    Named::Backspace,
+                    false,
+                    "one two",
+                    (0, 0),
+                    None,
+                ),
+                (
+                    "one two",
+                    (0, 7),
+                    None,
+                    Named::Delete,
+                    false,
+                    "one two",
+                    (0, 7),
+                    None,
+                ),
+                ("", (0, 0), None, Named::Backspace, false, "", (0, 0), None),
+                ("", (0, 0), None, Named::Delete, false, "", (0, 0), None),
+                (
+                    "one two",
+                    (0, 6),
+                    Some((0, 5)),
+                    Named::Backspace,
+                    false,
+                    "one to",
+                    (0, 5),
+                    None,
+                ),
+                (
+                    "one two",
+                    (0, 5),
+                    Some((0, 6)),
+                    Named::Delete,
+                    false,
+                    "one to",
+                    (0, 5),
+                    None,
+                ),
+                (
+                    "café naïve",
+                    (0, 12),
+                    None,
+                    Named::Backspace,
+                    false,
+                    "café ",
+                    (0, 6),
+                    None,
+                ),
+                (
+                    "e\u{301}lan 🙂 tail",
+                    (0, 6),
+                    None,
+                    Named::Backspace,
+                    false,
+                    " 🙂 tail",
+                    (0, 0),
+                    None,
+                ),
+                (
+                    "one,  two!",
+                    (0, 6),
+                    None,
+                    Named::Backspace,
+                    false,
+                    "two!",
+                    (0, 0),
+                    None,
+                ),
+                (
+                    "one\ntwo",
+                    (1, 0),
+                    None,
+                    Named::Backspace,
+                    false,
+                    "onetwo",
+                    (0, 3),
+                    None,
+                ),
+                (
+                    "one\ntwo",
+                    (0, 3),
+                    None,
+                    Named::Delete,
+                    false,
+                    "onetwo",
+                    (0, 3),
+                    None,
+                ),
+                (
+                    "שלום",
+                    (0, 8),
+                    None,
+                    Named::Backspace,
+                    false,
+                    "שלום",
+                    (0, 8),
+                    None,
+                ),
+                (
+                    "שלום",
+                    (0, 0),
+                    None,
+                    Named::Delete,
+                    false,
+                    "שלום",
+                    (0, 0),
+                    None,
+                ),
+            ] {
+                let content = &mut app.drafts.get_mut(&key).unwrap().content;
+                *content = text_editor::Content::with_text(text);
+                content.move_to(Cursor {
+                    position: Position {
+                        line: caret.0,
+                        column: caret.1,
+                    },
+                    selection: anchor.map(|(line, column)| Position { line, column }),
+                });
+                press(
+                    &mut app,
+                    thread,
+                    named,
+                    word_modifier()
+                        | if shift {
+                            Modifiers::SHIFT
+                        } else {
+                            Modifiers::empty()
+                        },
+                );
+                let content = &app.drafts[&key].content;
+                assert_eq!(content.text(), expected, "{thread} {named:?} {text:?}");
+                assert_eq!(
+                    content.cursor().position,
+                    Position {
+                        line: end.0,
+                        column: end.1
+                    },
+                    "{named:?} {text:?}"
+                );
+                assert_eq!(
+                    content.selection().as_deref(),
+                    selected,
+                    "{named:?} {text:?}"
+                );
+                assert_eq!(app.drafts[&other].content.text(), "other draft");
+                assert_eq!(app.selection, selection);
+                assert_eq!(app.scroll_positions, scroll);
+                assert_eq!(app.pending_ops, 0);
+            }
+        }
+    }
+
+    #[test]
+    fn word_shortcuts_require_focus_and_yield_during_ime_composition() {
+        for named in [
+            Named::ArrowLeft,
+            Named::ArrowRight,
+            Named::Backspace,
+            Named::Delete,
+        ] {
+            for status in [
+                text_editor::Status::Active,
+                text_editor::Status::Disabled,
+                text_editor::Status::Focused { is_hovered: false },
+            ] {
+                let key = DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                };
+                let press = text_editor::KeyPress {
+                    key: Key::Named(named),
+                    modified_key: Key::Named(named),
+                    physical_key: iced::keyboard::key::Physical::Unidentified(
+                        iced::keyboard::key::NativeCode::Unidentified,
+                    ),
+                    modifiers: word_modifier(),
+                    text: None,
+                    status,
+                };
+                assert!(editing_binding(press.clone(), true, &key).is_none());
+                assert_eq!(
+                    editing_binding(press, false, &key).is_some(),
+                    matches!(status, text_editor::Status::Focused { .. })
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn word_deletion_rejects_blocked_or_stale_drafts() {
+        for blocked in ["closing", "stopped", "ime", "pending", "settings", "stale"] {
+            let mut app = crate::tests::demo_app();
+            let key = app.draft_key(false).unwrap();
+            let content = &mut app.drafts.get_mut(&key).unwrap().content;
+            *content = text_editor::Content::with_text("one two");
+            content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+            let before = content.cursor();
+            match blocked {
+                "closing" => app.closing = true,
+                "stopped" => app.stopped = true,
+                "ime" => app.composing = true,
+                "pending" => app.drafts.get_mut(&key).unwrap().pending = true,
+                "settings" => {
+                    let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+                }
+                "stale" => {
+                    let _ = app.update(Message::Room("home".into()));
+                }
+                _ => unreachable!(),
+            }
+            let _ = app.update(Message::DeleteWord(
+                key.clone(),
+                text_editor::Motion::WordLeft,
+            ));
+            let content = &app.drafts[&key].content;
+            assert_eq!(content.text(), "one two", "{blocked}");
+            assert_eq!(content.cursor(), before, "{blocked}");
+        }
+    }
 
     #[test]
     fn surface_tracks_editor_focus_and_settles_without_timers() {

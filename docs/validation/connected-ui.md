@@ -274,6 +274,16 @@ With Enter-to-send enabled, Shift+Enter inserts a newline. IME composition
 suppresses sending and navigation shortcuts. Full button keyboard traversal and
 focus restoration remain unfinished.
 
+Composer word editing (2026-11-17): Ctrl+Left/Right moves by word,
+Ctrl+Shift+Left/Right extends the selection, and Ctrl+Backspace/Delete removes
+text to the previous/next word boundary. macOS uses Option for these actions.
+An existing selection is deleted as-is. Check both room and thread composers,
+including punctuation, accented/combining text, empty drafts, and crossing line
+breaks; deletion at a document edge should leave the draft unchanged. Word
+shortcuts yield during IME composition. Headless focused-widget regressions cover
+these actions, draft/scroll isolation, and RTL document edges. Native keyboard
+delivery and macOS acceptance remain manual checks; no connected client was used.
+
 In-room search has automated coverage for matching, navigation, stale snapshots,
 draft preservation, room changes, and modal shortcut blocking. Native rendering,
 keyboard focus, and connected-history acceptance require the manual checks above.
