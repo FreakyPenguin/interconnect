@@ -2706,6 +2706,7 @@ dependencies = [
  "unicode-segmentation",
  "url",
  "wiremock",
+ "zbus 5.19.0",
  "zbus 6.3.0",
  "zeroize",
 ]

@@ -351,8 +351,8 @@ Use native-host runs with hardware rendering for representative battery and susp
 ## Native macOS account storage
 
 Native macOS builds store the complete saved session and SDK encryption keys in
-Keychain through Security.framework. No D-Bus service or container keyring mount
-is needed on a Mac. The default profile is
+Keychain through Security.framework under the service name `Interconnect`.
+No D-Bus service or container keyring mount is needed on a Mac. The default profile is
 `~/Library/Application Support/interconnect/profiles/default`; it contains the
 encrypted SDK stores and local preferences. Launch the bundled app normally to
 sign in, or pass a fresh explicit profile directory for a dedicated test account.
@@ -411,6 +411,9 @@ isolation is required. No host keyring files need to be mounted.
 
 The application uses Secret Service over D-Bus with an encrypted service session.
 It does not fall back to plain-text credentials if the service is unavailable.
+Entries use application `interconnect` and label `Interconnect session`. Existing
+`chatclient-milestone-0` entries migrate in place on the next successful read or
+save, preserving the secret and profile identity. No manual keyring edit is needed.
 This mount is opt-in so headless/remote builds still work. See
 [login validation](validation/connected-ui.md#desktop-login).
 

@@ -55,6 +55,8 @@ wiremock = "0.6"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 zbus = { version = "6.3", default-features = false, features = ["tokio", "service"] }
+# Secret Service uses zbus 5; isolated migration fixtures supply its connection.
+zbus-secret-service = { package = "zbus", version = "=5.19.0", default-features = false, features = ["tokio"] }
 
 [profile.dev]
 debug = 0

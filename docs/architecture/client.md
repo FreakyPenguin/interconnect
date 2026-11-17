@@ -75,11 +75,19 @@ room. Cancellation interrupts pending work and shutdown joins owned workers.
 
 Credentials, SDK store encryption keys, retained keys, and the device fingerprint
 live together in the native credential store: Secret Service on Linux, Keychain
-on macOS. Both use the same versioned JSON record and original
-`chatclient-milestone-0` namespace. The canonical profile path (or `keyring-profile`
-identity override) selects the record; on macOS it is the generic-password account
-attribute and the namespace is the service attribute. The private profile contains
-the encrypted SDK stores and navigation state. There is no plaintext fallback.
+on macOS. Both use the same versioned JSON record. macOS uses the `Interconnect`
+service name; Linux uses the `interconnect` application attribute with the display
+label `Interconnect session`. Linux searches both this namespace and the legacy
+`chatclient-milestone-0` namespace, rejecting multiple matching items. A validated
+legacy record is renamed in place on read; saves migrate and update an existing
+item in its original collection. Migration preserves the secret, profile identity,
+and additional attributes. Metadata errors stop the operation without deleting
+the record; a later attempt can retry. Logout removes entries under both names.
+The canonical profile path (or `keyring-profile` identity override) selects the
+record. On macOS it is the generic-password account attribute, and the namespace
+is the service attribute.
+The private profile contains the encrypted SDK stores and navigation state.
+There is no plaintext fallback.
 
 Keychain calls run on blocking workers, serialized per session. A worker retains
 both its serialization guard and a duplicate profile lock until the native call

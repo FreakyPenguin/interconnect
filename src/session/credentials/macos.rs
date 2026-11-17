@@ -7,9 +7,11 @@ use security_framework_sys::base::errSecItemNotFound;
 use zeroize::Zeroizing;
 
 use super::{
-    super::{APPLICATION, Profile, SavedSession},
+    super::{Profile, SavedSession},
     blocking::BlockingStore,
 };
+
+const SERVICE: &str = "Interconnect";
 
 #[derive(Default)]
 pub(in crate::session) struct CredentialStore(BlockingStore);
@@ -27,7 +29,7 @@ impl CredentialStore {
         let id = profile.id.clone();
         self.0.run(profile, move || {
             let bytes = optional_item(generic_password(PasswordOptions::new_generic_password(
-                APPLICATION, &id,
+                SERVICE, &id,
             )))
             .context("read macOS Keychain session; unlock the login keychain and allow Interconnect access; no plaintext fallback is used")?;
             bytes.map(|bytes| SavedSession::decode(&Zeroizing::new(bytes))).transpose()
@@ -43,7 +45,7 @@ impl CredentialStore {
         let bytes = Zeroizing::new(serde_json::to_vec(saved)?);
         self.0.run(profile, move || {
             // Create or atomically update the value; never delete before saving.
-            set_generic_password(APPLICATION, &id, &bytes)
+            set_generic_password(SERVICE, &id, &bytes)
                 .context("save macOS Keychain session; unlock the login keychain and allow Interconnect access; no plaintext fallback is used")
         }).await
     }
@@ -51,7 +53,7 @@ impl CredentialStore {
     pub(in crate::session) async fn delete_secret(&self, profile: &Profile) -> anyhow::Result<()> {
         let id = profile.id.clone();
         self.0.run(profile, move || {
-            optional_item(delete_generic_password(APPLICATION, &id))
+            optional_item(delete_generic_password(SERVICE, &id))
                 .context("delete macOS Keychain session; unlock the login keychain and allow Interconnect access")?;
             Ok(())
         }).await

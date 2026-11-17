@@ -512,11 +512,14 @@ and historical-key availability are separate from successful login.
 ## Native macOS account storage
 
 The macOS backend uses Security.framework generic-password items, keyed by service
-`chatclient-milestone-0` and the canonical profile path (or its `keyring-profile`
+`Interconnect` and the canonical profile path (or its `keyring-profile`
 override). The item contains the versioned saved session, store passphrase,
-retained store keys, and device fingerprint. Linux retains its existing Secret
-Service attributes and item format. Neither backend writes credentials to a
-plaintext profile file. Account import between platforms is not implemented.
+retained store keys, and device fingerprint. Linux uses application `interconnect`
+and label `Interconnect session`, migrating legacy entries as described below.
+No migration from the old macOS service
+name is provided; existing macOS users are not expected. Neither backend writes
+credentials to a plaintext profile file. Account import between platforms is not
+implemented.
 
 OS-independent tests exercise cancellation while a native operation is blocked:
 the async runtime remains responsive, later operations wait in order, errors
@@ -544,7 +547,8 @@ Manual native acceptance uses a fresh profile and a dedicated account:
   `open target/Interconnect.app --args /absolute/path/to/test-profile`. Verify the
   initial form opens without a Keychain prompt; sign in using password and,
   separately, browser SSO. Unlock/allow access as requested. Check Keychain Access
-  for one matching service/account item, without displaying or exporting secrets.
+  for one item with service `Interconnect` and the expected profile account,
+  without displaying or exporting secrets.
 - Quit and relaunch the same bundle/profile. Confirm the account, device ID and
   fingerprint stay the same, including offline cached restoration. Verification
   trust and historical decryption remain separate checks. Confirm the SDK store
@@ -581,6 +585,49 @@ Silicon target check of the actual Keychain/worker modules and their tests passe
 against the native framework bindings, using session-shape stubs to avoid the
 rest of the app; this is type checking, not native execution. No saved account
 was accessed, connected client restarted, or Matrix test message sent.
+
+## Linux credential naming migration
+
+Linux searches both application attributes `chatclient-milestone-0` and
+`interconnect` for the profile identity. Reads validate the saved record before
+renaming the existing item to application `interconnect` and label
+`Interconnect session`. The secret bytes, profile attribute, extra provider
+attributes, and original collection stay intact. Saves update an existing item
+in place or create a new item under the new name. Read/save refuse multiple
+matches across either namespace; logout deletes matches under both names.
+
+The label changes before the application attribute, so an interrupted migration
+leaves an entry discoverable under either name. A metadata error reports a
+failure with the saved record retained, allowing a later retry. Searches run
+legacy first and deduplicate by object path to handle a cancelled attribute write
+finishing between lookups. Older clients cannot find an already-migrated entry.
+
+Run the isolated regression suite without accessing the user's keyring:
+
+```sh
+cargo test --locked --lib session::credentials::linux::tests
+```
+
+The fixture starts a private D-Bus daemon and synthetic Secret Service, connects
+directly to its address, and uses only fixture credentials. It covers record and
+profile preservation, locked entries, new saves, save-before-read migration,
+metadata/read/unlock/write failures and retries, invalid records, duplicate-name
+rejection, logout cleanup, and a rename completing between searches. Only this
+private fixture uses unencrypted D-Bus sessions; production still requires DH.
+
+2026-11-17 validation passed: `cargo fmt --all -- --check`, workspace Clippy with
+warnings denied, and `cargo test --locked --workspace` (188 library and 324
+desktop tests passed, including all six migration tests; two existing library
+tests ignored). The test fixture adds a direct dev-dependency on the already
+locked zbus 5 version used by Secret Service; no dependency versions changed.
+No saved account was accessed or connected client restarted.
+
+Native Secret Service UI/prompt acceptance remains separate: with a dedicated
+test profile and account, save a session using the old build, close it, then
+restore with the new build. Check that the same item is relabelled in its original
+collection with application `interconnect`, and confirm the same account/device
+restores on another launch. Denied metadata writes should preserve the entry and
+allow retry after access is restored. Do not display or export secrets.
 
 ## Element custom sections
 

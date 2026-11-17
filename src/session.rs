@@ -21,9 +21,6 @@ mod presence_cursor;
 
 use credentials::CredentialStore;
 
-// Keep the original keyring namespace so existing saved accounts remain readable.
-const APPLICATION: &str = "chatclient-milestone-0";
-
 /// Resolve the default account directory without accessing the filesystem.
 pub fn default_profile_directory() -> anyhow::Result<String> {
     default_profile_path_from(
