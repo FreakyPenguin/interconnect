@@ -1,8 +1,8 @@
 //! Explicit media downloads; no background work or polling when idle.
-use super::{App, Message, current_pane, shell};
+use super::{App, Message, current_pane, icons, shell, single_line};
 use iced::{
-    Element, Task,
-    widget::{button, column, row, text},
+    Element, Length, Task,
+    widget::{button, column, container, row, text},
 };
 use interconnect::{connected::MessageRow, download::Attachment};
 use std::{path::PathBuf, sync::Arc};
@@ -225,6 +225,92 @@ impl App {
         }
         Task::none()
     }
+    /// Captions are message content; use only explicit filename metadata as a title.
+    pub(super) fn attachment_name(message: &MessageRow) -> &str {
+        message
+            .download
+            .as_ref()
+            .map_or("Image", |file| file.filename.as_str())
+    }
+
+    pub(super) fn attachment_card<'a>(
+        &'a self,
+        message: &'a MessageRow,
+        thread: bool,
+        generation: u64,
+        preview: bool,
+    ) -> Element<'a, Message> {
+        let filename = Self::attachment_name(message);
+        let kind = if message.image.is_some() {
+            "Image"
+        } else {
+            "File"
+        };
+        let extension = std::path::Path::new(filename)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .filter(|extension| {
+                extension.len() <= 12 && extension.chars().all(char::is_alphanumeric)
+            });
+        let detail = extension.map_or_else(
+            || kind.to_owned(),
+            |ext| format!("{kind} · {}", ext.to_uppercase()),
+        );
+        let heading = row![
+            container(icons::icon(if message.image.is_some() {
+                icons::Kind::Eye
+            } else {
+                icons::Kind::Attach
+            }))
+            .padding(6)
+            .style(|_| shell::surface(shell::SIDEBAR)),
+            column![
+                super::tooltips::tooltip(
+                    single_line::label(filename, 13),
+                    filename.to_owned(),
+                    iced::widget::tooltip::Position::Top
+                ),
+                text(detail).size(11).color(shell::MUTED)
+            ]
+            .spacing(3)
+            .width(Length::Fill)
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
+        let mut card = column![].spacing(8);
+        if message.image.is_some() {
+            if preview {
+                card = card.push(self.image_preview(message, thread, generation));
+            } else {
+                let mut view = button(text("View image").size(12)).style(shell::quiet_button);
+                if !self.closing && !self.stopped {
+                    view = view.on_press(Message::Image(super::images::Event::Open {
+                        thread,
+                        generation,
+                        row: message.key.clone(),
+                    }));
+                }
+                card = card.push(view);
+            }
+        }
+        card = card
+            .push(heading)
+            .push(self.download_actions(message, thread, generation));
+        container(card)
+            .padding(10)
+            .width(Length::Fill)
+            .max_width(344)
+            .style(|_| container::Style {
+                border: iced::Border {
+                    color: shell::LINE,
+                    width: 1.0,
+                    radius: 10.0.into(),
+                },
+                ..shell::surface(iced::Color::WHITE)
+            })
+            .into()
+    }
+
     pub(super) fn download_actions(
         &self,
         message: &MessageRow,
@@ -241,13 +327,20 @@ impl App {
             row: message.key.clone(),
             attachment,
         };
-        let mut open = button(text("Open").size(12)).style(shell::quiet_button);
+        let mut open = button(text("Open externally").size(12)).style(shell::quiet_button);
         let mut save = button(text("Save as…").size(12)).style(shell::quiet_button);
         if self.downloads.pending.is_none() && self.download_valid(&target) {
             open = open.on_press(Message::Download(Event::Start(target.clone(), false)));
             save = save.on_press(Message::Download(Event::Start(target.clone(), true)));
         }
-        let mut content = column![row![open, save].spacing(6)].spacing(4);
+        let mut content = column![
+            row![
+                container(open).id(format!("attachment-open:{}", message.key)),
+                container(save).id(format!("attachment-save:{}", message.key))
+            ]
+            .spacing(6)
+        ]
+        .spacing(4);
         if self
             .downloads
             .pending
@@ -352,6 +445,76 @@ mod tests {
             attachment: App::download_attachment_for(message).unwrap(),
         };
         (app, target)
+    }
+
+    #[test]
+    fn long_filename_card_keeps_both_actions_inside_narrow_bounds_and_routes_save() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+        struct Bounds(Vec<iced::Rectangle>);
+        impl widget::Operation for Bounds {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if ["attachment-open:sample-file", "attachment-save:sample-file"]
+                    .iter()
+                    .any(|name| id == Some(&widget::Id::from(*name)))
+                {
+                    self.0.push(bounds);
+                }
+            }
+        }
+        let (mut app, target) = fixture();
+        let mut message = app
+            .image_message(false, target.generation, "sample-file")
+            .unwrap()
+            .clone();
+        message.download.as_mut().unwrap().filename =
+            format!("{}📎.txt", "a very long filename ".repeat(40));
+        let rows = Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows);
+        *rows.iter_mut().find(|row| row.key == message.key).unwrap() = message.clone();
+        let mut view = app.attachment_card(&message, false, target.generation, true);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut tree = widget::Tree::new(&view);
+        let size = iced::Size::new(220.0, 500.0);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        assert!(node.size().width <= size.width);
+        assert!(node.size().height < 140.0, "filename must stay on one line");
+        let mut bounds = Bounds(Vec::new());
+        view.as_widget_mut().operate(
+            &mut tree,
+            layout::Layout::new(&node),
+            &renderer,
+            &mut bounds,
+        );
+        assert_eq!(bounds.0.len(), 2);
+        for bounds in &bounds.0 {
+            assert!(bounds.x >= 0.0 && bounds.x + bounds.width <= size.width);
+        }
+        let mut messages = Vec::new();
+        for event in [
+            mouse::Event::ButtonPressed(mouse::Button::Left),
+            mouse::Event::ButtonReleased(mouse::Button::Left),
+        ] {
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Mouse(event),
+                layout::Layout::new(&node),
+                mouse::Cursor::Available(bounds.0[1].center()),
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+                &iced::Rectangle::with_size(size),
+            );
+        }
+        assert!(
+            matches!(messages.as_slice(), [Message::Download(Event::Start(selected, true))] if selected.row == target.row && selected.attachment == message.download.clone().unwrap())
+        );
     }
 
     #[tokio::test]

@@ -131,7 +131,7 @@ impl App {
                         generation,
                         row,
                         original: image.original.clone(),
-                        label: message.body.clone(),
+                        label: Self::attachment_name(message).to_owned(),
                         frame: 0,
                         playback: None,
                     });
@@ -202,7 +202,7 @@ impl App {
                         .as_ref()
                         .is_some_and(|image| image.original == view.original)
                 })
-                .map(|row| row.body.clone())
+                .map(|row| Self::attachment_name(row).to_owned())
         });
         if let Some(label) = label {
             self.image_view.as_mut().expect("validated viewer").label = label;
@@ -273,7 +273,7 @@ impl App {
             let width = (size.width - 48.0).clamp(1.0, 1000.0);
             let animation = self.model.images.animations.get(&view.original);
             let height =
-                (size.height - if animation.is_some() { 264.0 } else { 212.0 }).clamp(1.0, 800.0);
+                (size.height - if animation.is_some() { 238.0 } else { 190.0 }).clamp(1.0, 800.0);
             let content: Element<'_, Message> =
                 if let Some(handle) = self.model.images.ready.get(&view.original) {
                     let handle = animation
@@ -319,30 +319,45 @@ impl App {
                         .into()
                 };
             let header = row![
-                container(text(&view.label).size(13))
-                    .width(Length::Fill)
-                    .height(36)
-                    .clip(true),
+                container(super::tooltips::tooltip(
+                    super::single_line::label(&view.label, 14),
+                    view.label.clone(),
+                    iced::widget::tooltip::Position::Bottom,
+                ))
+                .width(Length::Fill),
                 container(
-                    button("Close")
-                        .on_press(Message::Image(Event::Close))
-                        .style(shell::quiet_button)
+                    button(
+                        row![
+                            super::icons::icon(super::icons::Kind::Close),
+                            text("Close").size(13)
+                        ]
+                        .spacing(5)
+                        .align_y(iced::Alignment::Center)
+                    )
+                    .on_press(Message::Image(Event::Close))
+                    .style(shell::quiet_button)
                 )
                 .id("image-viewer-close")
             ]
-            .spacing(12);
-            let mut body = column![header, content].spacing(12);
+            .spacing(12)
+            .align_y(iced::Alignment::Center);
+            let mut toolbar = column![].spacing(8);
             if let Some(message) = self.image_message(view.thread, view.generation, &view.row) {
-                body = body.push(self.download_actions(message, view.thread, view.generation));
+                toolbar =
+                    toolbar.push(self.download_actions(message, view.thread, view.generation));
             }
             if let Some(animation) = animation {
-                body = body.push(match animation {
+                toolbar = toolbar.push(match animation {
                     Ok(_) => {
                         let playing = view.playback.is_some();
                         row![
-                            button(if playing { "Stop" } else { "Play GIF" }).on_press(
-                                Message::Image(if playing { Event::Stop } else { Event::Play })
-                            ),
+                            button(if playing { "Stop GIF" } else { "Play GIF" })
+                                .style(shell::quiet_button)
+                                .on_press(Message::Image(if playing {
+                                    Event::Stop
+                                } else {
+                                    Event::Play
+                                })),
                             text(match self.settings.current.media.gif_playback {
                                 GifPlayback::Once =>
                                     "One loop · click image to play or stop".to_owned(),
@@ -361,7 +376,14 @@ impl App {
                     Err(error) => Element::from(text(*error).size(12).color(shell::MUTED)),
                 });
             }
-            let card = container(body)
+            let toolbar = container(toolbar)
+                .padding([8, 10])
+                .width(Length::Fill)
+                .style(|_| container::Style {
+                    border: iced::Border::default().rounded(8),
+                    ..shell::surface(shell::SIDEBAR)
+                });
+            let card = container(column![header, content, toolbar].spacing(12))
                 .padding(16)
                 .width(width)
                 .style(|_| container::Style {
@@ -700,6 +722,49 @@ mod tests {
                     .all(|size| *size == sizes[0] && size.height == 180.0)
             );
         }
+    }
+
+    #[test]
+    fn viewer_titles_use_filename_metadata_and_long_names_keep_close_visible() {
+        use iced::advanced::widget;
+        struct CloseBounds(Option<iced::Rectangle>);
+        impl widget::Operation for CloseBounds {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::from("image-viewer-close")) {
+                    self.0 = Some(bounds);
+                }
+            }
+        }
+        let mut app = sample();
+        let generation = app.selection.room.as_ref().unwrap().0;
+        open(&mut app, generation);
+        assert_eq!(app.image_view.as_ref().unwrap().label, "sample.png");
+        Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows)[0].download = None;
+        app.validate_image_view();
+        assert_eq!(app.image_view.as_ref().unwrap().label, "Image");
+        app.image_view.as_mut().unwrap().label = "long filename 📎 ".repeat(200);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let mut view = app.image_viewer();
+        let mut tree = Tree::new(&view);
+        let size = iced::Size::new(640.0, 480.0);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        let mut bounds = CloseBounds(None);
+        view.as_widget_mut().operate(
+            &mut tree,
+            layout::Layout::new(&node),
+            &renderer,
+            &mut bounds,
+        );
+        let close = bounds.0.unwrap();
+        assert!(close.x >= 0.0 && close.x + close.width <= size.width);
+        assert!(close.y >= 0.0 && close.y + close.height <= size.height);
+        assert!(close.width >= 50.0);
+        assert_eq!(app.image_subscription().units(), 0);
     }
 
     #[test]

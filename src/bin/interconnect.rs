@@ -2282,29 +2282,17 @@ impl App {
         } else {
             original
         };
-        let original =
-            if let Some(message) = self.thread_original().filter(|row| row.image.is_some()) {
-                let generation = self.selection.thread.as_ref().expect("thread original").0;
-                let mut open = button(text("Open image").size(12)).style(shell::quiet_button);
-                if !self.closing && !self.stopped {
-                    open = open.on_press(Message::Image(images::Event::Open {
-                        thread: true,
-                        generation,
-                        row: message.key.clone(),
-                    }));
-                }
-                column![original, open].spacing(6).into()
-            } else {
-                original
-            };
         let original = if let Some(message) = self
             .thread_original()
             .filter(|row| row.download.is_some() || row.image.is_some())
         {
             let generation = self.selection.thread.as_ref().expect("thread original").0;
-            column![original, self.download_actions(message, true, generation)]
-                .spacing(6)
-                .into()
+            column![
+                original,
+                self.attachment_card(message, true, generation, false)
+            ]
+            .spacing(6)
+            .into()
         } else {
             original
         };
@@ -2586,7 +2574,13 @@ impl App {
                 messages = messages.push(container(message_row).id(timeline::row_id(index)));
                 continue;
             }
-            let body = if activity {
+            let attachment_only = message
+                .download
+                .as_ref()
+                .is_some_and(|file| message.body == file.filename);
+            let body = if attachment_only {
+                Element::from(iced::widget::Space::new().height(0))
+            } else if activity {
                 selectable::activity_view(
                     message.event_id.as_deref().unwrap_or(&message.body),
                     &message.body,
@@ -2614,11 +2608,8 @@ impl App {
             } else {
                 column![presentation::heading(message), body].spacing(4)
             };
-            if message.image.is_some() {
-                entry = entry.push(self.image_preview(message, thread, *generation));
-            }
             if message.download.is_some() || message.image.is_some() {
-                entry = entry.push(self.download_actions(message, thread, *generation));
+                entry = entry.push(self.attachment_card(message, thread, *generation, true));
             }
             if let Some(badges) = self.reaction_chips(message, thread, *generation) {
                 entry = entry.push(badges);

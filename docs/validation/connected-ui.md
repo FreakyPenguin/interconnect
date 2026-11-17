@@ -585,7 +585,7 @@ labels do not access saved accounts or send network requests.
 | Operation | Behavior and comparison points |
 | --- | --- |
 | Text and attachments | Room/thread sends use SDK encryption and local echoes. Queue admission clears the draft before delivery completes. Retry retains the original transaction. Captions, thumbnails, and thread relations can be compared in a second client. |
-| Received attachments | Open launches the system handler; Save as uses a native dialog. Images, files, audio, and video download originals, including SDK decryption, in room/thread messages and thread originals. Image previews also retain their in-app viewer. |
+| Received attachments | Open externally launches the system handler; Save as uses a native dialog. Images, files, audio, and video download originals, including SDK decryption, in room/thread messages and thread originals. Image previews also retain their in-app viewer. |
 | Reactions | Chips toggle reactions; the emoji picker adds a selection. Pending/error state belongs to its captured message, with stale results rejected after navigation. |
 | Clipboard | Native file lists and images stage attachments; plain-text paths remain text. Multiple files leave the previous draft intact with an error. Host-selected paths need matching container access. |
 | File drops | Only the visible conversation under the pointer stages the file. Sidebar, disabled panes, and overlays are excluded. Wayland delivery and macOS coordinates have separate native coverage; see [the Winit patch](../architecture/winit-file-drops.md). |
@@ -814,6 +814,24 @@ plain/encrypted download bytes against a mock authenticated media endpoint,
 filename sanitization, save cancellation, stale navigation, cancellation tokens,
 atomic destination replacement, and write failures. These fixtures do not launch
 external applications or exercise native save dialogs.
+
+Presentation refinement (November 17, 2026): received attachments use a bordered
+card containing filename/type metadata, a thumbnail for image messages, and
+**Open externally** / **Save as…** controls with preparation/result feedback.
+Captions remain selectable message content; filename-only bodies appear in the
+card. Filenames ellipsize to one line, with the complete filename on hover.
+Thread originals use a compact **View image** control inside the same card.
+The image viewer uses the attachment filename (or **Image** without filename
+metadata), a persistent Close header, and one grouped action/playback toolbar.
+GIF playback still starts only after an explicit click and has no idle timer.
+
+Automated presentation coverage checks a long Unicode filename at a 220 px card
+width, Save as control routing, a long viewer title and reachable Close at
+640×480, plus existing playback, stale-download, cancellation and scroll tests.
+All 278 UI tests, formatting, and workspace Clippy pass. Attachment cards and
+the in-app GIF viewer were visually checked in the isolated Sway/tiny-skia demo
+at 1280×900 and 640×480. External application launching, native save dialogs,
+connected acceptance, and macOS/wgpu remain separate manual checks.
 
 Native acceptance remains required:
 
