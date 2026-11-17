@@ -605,6 +605,7 @@ pub struct Model {
     pub diagnostics: Arc<crate::diagnostics::Diagnostics>,
     pub status: String,
     pub rooms: Arc<Vec<RoomEntry>>,
+    pub invitations: Arc<Vec<crate::room_membership::Invitation>>,
     pub spaces: Arc<Vec<SpaceEntry>>,
     pub sections: Arc<Vec<crate::navigation::SectionEntry>>,
     pub navigation_error: Option<String>,
@@ -642,6 +643,7 @@ impl Default for Model {
             diagnostics: Arc::default(),
             status: "Restoring saved session…".into(),
             rooms: Arc::default(),
+            invitations: Arc::default(),
             spaces: Arc::default(),
             sections: crate::navigation::sections_from_settings(&serde_json::Value::Null).into(),
             navigation_error: None,
@@ -1161,6 +1163,15 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
     let mut rooms = client.subscribe_to_all_room_updates();
     let mut metadata = client.room_info_notable_update_receiver();
     loop {
+        let invitations = crate::room_membership::invitations(client).await;
+        state.send_if_modified(|s| {
+            if *s.invitations == invitations {
+                false
+            } else {
+                s.invitations = Arc::new(invitations);
+                true
+            }
+        });
         match crate::navigation::snapshot(client).await {
             Ok((rooms, spaces, sections)) => {
                 state.send_if_modified(|s| {

@@ -47,6 +47,8 @@ mod login;
 mod markdown_composer;
 #[path = "interconnect/members.rs"]
 mod members;
+#[path = "interconnect/membership.rs"]
+mod membership;
 #[path = "interconnect/message_delete.rs"]
 mod message_delete;
 #[path = "interconnect/message_edit.rs"]
@@ -191,6 +193,7 @@ struct App {
     emoji_completion: emoji_completion::State,
     topic_editor: Option<topic::State>,
     members: members::State,
+    membership: membership::State,
     invite: Option<invite::State>,
     inviting: HashSet<String>,
     pinning: HashSet<reaction_picker::Target>,
@@ -224,6 +227,7 @@ enum Message {
     TogglePins(u64),
     Topic(topic::Event),
     Members(members::Event),
+    Membership(membership::Event),
     RefreshPresence {
         room: u64,
         members: Option<u64>,
@@ -378,6 +382,7 @@ impl App {
             emoji_completion: emoji_completion::State::default(),
             topic_editor: None,
             members: members::State::default(),
+            membership: membership::State::default(),
             invite: None,
             inviting: HashSet::new(),
             pinning: HashSet::new(),
@@ -400,6 +405,13 @@ impl App {
             app.model.presence = demo::presence().into();
             app.model.sections = demo::sections().into();
             app.model.spaces = demo::spaces().into();
+            app.model.invitations = vec![interconnect::room_membership::Invitation {
+                id: "!invitation:example.org".into(),
+                name: "Weekend plans".into(),
+                inviter: Some("@maya:example.org".into()),
+                space: false,
+            }]
+            .into();
             app.shell.space = Scope::Space("studio-space".into());
             app.model.status = "Design preview · local sample data".into();
             app.model.images = demo::images();
@@ -431,6 +443,37 @@ impl App {
             }
         }
 
+        if let Message::Membership(event) = message {
+            let task = self.membership_event(event);
+            self.publish_notification_context();
+            if self.closing && self.pending_ops == 0 {
+                return task.chain(self.update(Message::Close));
+            }
+            return task;
+        }
+        if self.membership.open {
+            if matches!(message, Message::Escape) {
+                return self.update(Message::Membership(membership::Event::Close));
+            }
+            // Pending writes finish normally; other inputs are covered by the dialog.
+            if matches!(
+                message,
+                Message::ContextMenu(_)
+                    | Message::QuickRoom(_)
+                    | Message::NewChat(
+                        new_chat::Event::Open
+                            | new_chat::Event::OpenUser(_)
+                            | new_chat::Event::Submit
+                    )
+                    | Message::CreateRoom(create_room::Event::Open | create_room::Event::Submit)
+                    | Message::Settings(settings::Event::Open)
+                    | Message::Verification(verification::Event::Open)
+                    | Message::Send(_)
+                    | Message::Edit(..)
+            ) {
+                return Task::none();
+            }
+        }
         if let Some(state) = &self.message_delete {
             if matches!(message, Message::Escape) {
                 return self.update(state.dismiss());
@@ -693,7 +736,8 @@ impl App {
         {
             return self.update(dismiss);
         }
-        if self.emoji_management.is_some()
+        if self.membership.open
+            || self.emoji_management.is_some()
             || self.create_room.is_some()
             || self.new_chat.is_some()
             || self.room_picker.is_some()
@@ -1470,7 +1514,10 @@ impl App {
                     self.retry_errors.insert(id, error);
                 }
             }
-            Message::Login(_) | Message::Verification(_) | Message::SignOut(_) => unreachable!(),
+            Message::Login(_)
+            | Message::Verification(_)
+            | Message::SignOut(_)
+            | Message::Membership(_) => unreachable!(),
             Message::Control(sender) => {
                 sender.send_replace(self.selection.clone());
                 self.control = Some(sender);
@@ -1500,6 +1547,11 @@ impl App {
                     self.pending_created_room = None;
                     self.bookmarks.reset();
                     self.global_search.reset();
+                }
+                if state.authentication.is_some() || state.account_id != self.account_id {
+                    self.membership.reset();
+                } else {
+                    self.membership.reconcile(&mut state);
                 }
                 if let Some(room) = &self.pending_created_room {
                     if state.rooms.iter().any(|r| r.id == room.id) {
@@ -2107,6 +2159,14 @@ impl App {
                     }) => Some(Message::SignOut(sign_out::Event::Cancel)),
                     _ => None,
                 })
+            } else if self.membership.open {
+                iced::event::listen_with(|event, _, _| match event {
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        ..
+                    }) => Some(Message::Membership(membership::Event::Close)),
+                    _ => None,
+                })
             } else if self.message_delete.is_some() {
                 self.delete_subscription()
             } else if self.create_room.is_some() && !self.composing {
@@ -2193,6 +2253,9 @@ impl App {
         }
         if self.sign_out_open {
             return self.sign_out_view();
+        }
+        if self.membership.open {
+            return self.membership_view();
         }
         let mut layers = iced::widget::stack![self.shell_view()];
         if self.create_room.is_some() {

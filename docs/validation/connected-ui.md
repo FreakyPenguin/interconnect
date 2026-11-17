@@ -1626,3 +1626,22 @@ revoked and reopening shows sign-in. When offline, confirm an error is visible
 and Cancel reconnects the existing session. If server revocation succeeds but
 local cleanup fails, only retry/close is available; the revoked session is never
 resumed. No connected client was launched for implementation validation.
+
+## Incoming room invitations
+
+**Invitations…** in the account menu opens an account-wide list. A room-list
+shortcut with a count appears when invitations are pending, regardless of the
+selected space. The list shows cached room names, room IDs, inviters and space
+invitations. Accept opens an ordinary room; accepting a space changes only the
+room-list filter. Decline keeps the current conversation. Close/Escape preserves
+all drafts and reading positions. Submitted writes finish against the captured
+account even if the dialog closes; late results never switch a dismissed view.
+Errors stay visible in the open dialog. Reopening the list permits another try.
+
+The demo includes a local invitation. Headless UI tests cover accept/decline,
+space filtering, cancellation, stale results/account changes, preserving drafts,
+minimum-window layout and settled redraw behavior. Isolated SDK HTTP fixtures
+cover stripped-state snapshots without network reads, membership changes, stale
+invitations and retryable server failures. Connected acceptance remains manual:
+invite a disposable account from another client, verify live list updates, then
+accept/decline separate invitations and check the other client's membership view.

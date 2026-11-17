@@ -92,6 +92,17 @@ impl Directory {
             ..Default::default()
         })
     }
+    pub async fn respond_to_invitation(
+        self,
+        room: String,
+        accept: bool,
+    ) -> Result<Option<crate::room_membership::Joined>, String> {
+        let result = crate::room_membership::respond(&self.0, &room, accept).await;
+        // Also refresh after an ambiguous timeout: sync may confirm the write.
+        let _ = self.1.send(());
+        result
+    }
+
     pub async fn create_room(
         self,
         options: crate::room_creation::Options,

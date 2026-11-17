@@ -63,7 +63,7 @@ pub fn trigger<'a>(base: impl Into<Element<'a, Message>>, target: Target) -> Ele
 }
 impl App {
     pub(super) fn context_menu_allowed(&self) -> bool {
-        if self.sign_out_open {
+        if self.sign_out_open || self.membership.open {
             return false;
         }
         !self.closing
@@ -121,6 +121,10 @@ impl App {
                         Action::Dispatch(Message::Settings(super::settings::Event::Open)),
                     ),
                     ("Find room…", Action::Dispatch(Message::SearchFocus)),
+                    (
+                        "Invitations…",
+                        Action::Dispatch(Message::Membership(super::membership::Event::Open)),
+                    ),
                 ];
                 if self.demo.is_some() || self.model.verification.control.is_some() {
                     actions.push((

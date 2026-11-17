@@ -107,6 +107,7 @@ impl App {
         self.refresh_presence_demand();
         self.selection.notifications = self.settings.current.notifications.clone();
         self.selection.conversation_visible = !self.sign_out_open
+            && !self.membership.open
             && self.message_delete.is_none()
             && !self.bookmarks.open
             && !self.global_search.open

@@ -982,6 +982,18 @@ impl App {
             widget::rule::horizontal(1),
         ]
         .spacing(0);
+        if !self.model.invitations.is_empty() {
+            rooms = rooms.push(
+                button(text(format!("Invitations · {}", self.model.invitations.len())).size(13))
+                    .width(Length::Fill)
+                    .padding([5, 10])
+                    .style(quiet_button)
+                    .on_press_maybe(
+                        self.context_menu_allowed()
+                            .then_some(Message::Membership(super::membership::Event::Open)),
+                    ),
+            );
+        }
         let sections = &*self.model.sections;
         let visible = self.visible_rooms();
         if let Some(error) = &self.model.preferences_error {
