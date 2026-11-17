@@ -3,7 +3,7 @@ FROM mcr.microsoft.com/devcontainers/rust:1-bookworm
 # Native build dependencies, Wayland/X11 support, and Mesa software rendering.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential cmake ninja-build pkg-config clang libclang-dev \
-    libssl-dev libsqlite3-dev libdbus-1-dev \
+    libsqlite3-dev \
     libwayland-dev libxkbcommon-dev libxkbcommon-x11-dev \
     libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
     libegl1-mesa-dev libgl1-mesa-dev libvulkan1 mesa-vulkan-drivers \

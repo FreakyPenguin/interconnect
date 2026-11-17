@@ -11,6 +11,11 @@ The SDK owns sync,
 SQLite persistence, encryption, and automatic room-key requests/forwarding under
 its trust policy. Native sliding sync is required.
 
+Credential storage uses Secret Service 5.2 with Tokio and its Rust cryptography
+backend. Its AES/CBC/HKDF dependencies share the versions already used by the
+Matrix SDK; system OpenSSL and libdbus development packages are unnecessary for
+the selected dependency graph. Desktop D-Bus services remain runtime requirements.
+
 wgpu is the default renderer, with tiny-skia fallback on initialization failure.
 Device loss does not switch an already running renderer. Graphics settings are
 read before Iced/Tokio initialization; a Unix re-exec applies environment values

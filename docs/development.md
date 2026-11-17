@@ -4,7 +4,7 @@ Open the repository in VS Code with the Dev Containers extension and choose **De
 
 The image uses Debian Bookworm and installs the latest stable Rust available when its Rust installation layer is built, together with rustfmt, Clippy, and rust-src. The repository's `rust-toolchain.toml` selects stable both inside and outside the container. To refresh an existing container, run `rustup update stable`; alternatively rebuild without the Docker cache. This intentionally tracks stable rather than pinning an exact compiler version. Pin a version when reproducible release builds are introduced.
 
-Included native dependencies cover Wayland, X11 fallback, font availability, Vulkan/EGL with Mesa software rendering, OpenSSL, SQLite, D-Bus, and C/C++ builds. Selected Cargo dependencies and features are documented in [the client architecture](architecture/client.md).
+Included native dependencies cover Wayland, X11 fallback, font availability, Vulkan/EGL with Mesa software rendering, SQLite, D-Bus tools, and C/C++ builds. TLS uses Rustls/AWS-LC and Secret Service uses its Rust cryptography backend; neither needs system OpenSSL or libdbus development packages. A desktop session bus and its services are still needed for desktop integration. Selected Cargo dependencies and features are documented in [the client architecture](architecture/client.md).
 
 The container installs `fonts-noto-color-emoji` for Unicode emoji fallback
 alongside DejaVu. Rebuild the container to apply this addition. Confirm the font
@@ -21,6 +21,18 @@ cargo fmt --all -- --check
 cargo clippy --locked --workspace --all-targets -- -D warnings
 cargo test --locked --workspace
 ```
+
+Dependency cleanup (2026-11-17): Secret Service 5.2 consolidates seven obsolete
+crypto packages, reducing the lockfile from 756 to 749 packages. Formatting,
+workspace Clippy with warnings denied, the locked desktop build, and workspace
+tests pass (180 library and 320 desktop tests; two library tests remain opt-in).
+The locked graph has no OpenSSL/libdbus crates, and `ldd` on the Linux binary
+shows neither library. Container and CI package lists omit `libssl-dev` and
+`libdbus-1-dev`. A clean-container build without those development packages has
+not been run locally because Docker/Podman are unavailable; the existing
+container already has them installed. Live keyring compatibility and native
+macOS builds remain untested for this upgrade; no saved account or connected
+client was accessed.
 
 Development/test builds optimize `iced_tiny_skia` and `tiny-skia` at level 2.
 Raster conversion, compositing, and scaling execute on the UI thread; leaving
