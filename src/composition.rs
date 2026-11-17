@@ -12,7 +12,7 @@ static CONVERSIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2
 const TOO_COMPLEX: &str =
     "Message is too large or complex to format. Shorten it or choose Plain text.";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Format {
     #[default]
     Markdown,

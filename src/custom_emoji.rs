@@ -12,7 +12,7 @@ const ROOM_TYPES: [&str; 2] = ["m.room.image_pack", "im.ponies.room_emotes"];
 const GLOBAL_TYPES: [&str; 2] = ["m.image_pack.rooms", "im.ponies.emote_rooms"];
 pub mod management;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Emoji {
     pub id: String,
     pub shortcode: String,
@@ -33,7 +33,7 @@ pub struct Snapshot {
     pub entries: Vec<Emoji>,
 }
 /// Explicit composer choices remain bound to their original image in that draft.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Selection {
     pub token: String,
     pub emoji: Emoji,

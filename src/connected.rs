@@ -591,6 +591,7 @@ pub enum SignOut {
 #[derive(Clone, Debug)]
 pub struct Model {
     pub sign_out: SignOut,
+    pub saved_drafts: Option<Result<crate::drafts::Loaded, String>>,
     pub sign_out_request: u64,
     pub custom_emoji: Arc<crate::custom_emoji::Snapshot>,
     pub emoji_management: Option<crate::custom_emoji::management::Service>,
@@ -629,6 +630,7 @@ impl Default for Model {
     fn default() -> Self {
         Self {
             sign_out: SignOut::Idle,
+            saved_drafts: None,
             sign_out_request: 0,
             custom_emoji: Arc::default(),
             emoji_management: None,
@@ -727,8 +729,10 @@ pub async fn run(
                 }
             }
         }
+        let drafts = desktop.drafts().await;
         let client = desktop.client.as_ref().expect("authenticated");
         state.send_modify(|s| {
+            s.saved_drafts = Some(drafts.clone());
             s.authentication = None;
             s.emoji_management = Some(crate::custom_emoji::management::Service::new(
                 client.clone(),

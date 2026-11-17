@@ -7,6 +7,7 @@ pub mod connected;
 pub mod custom_emoji;
 pub mod diagnostics;
 pub mod download;
+pub mod drafts;
 mod event_text;
 pub mod formula;
 pub mod image_media;

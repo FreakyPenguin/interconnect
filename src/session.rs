@@ -309,6 +309,7 @@ async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Resu
             logout,
             "session was logged out; rerun session-logout to finish local cleanup"
         );
+        crate::drafts::remove(profile.directory.clone()).await?;
         profile.delete_secret(&service).await?;
         println!("Local credential cleanup completed; SDK store retained.");
         return Ok(());
@@ -331,6 +332,7 @@ async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Resu
             .save(&service, &saved)
             .await
             .context("server logout succeeded but local tombstone write failed")?;
+        crate::drafts::remove(profile.directory.clone()).await?;
         profile
             .delete_secret(&service)
             .await
@@ -401,6 +403,7 @@ pub struct DesktopSession {
     service: Option<CredentialStore>,
     pub client: Option<Client>,
     revoked: bool,
+    drafts: Option<Result<crate::drafts::Loaded, String>>,
 }
 
 impl DesktopSession {
@@ -414,11 +417,24 @@ impl DesktopSession {
                 service: None,
                 client: None,
                 revoked: false,
+                drafts: None,
             });
         }
         let service = connect().await?;
-        let saved = profile.read(&service).await?;
-        let client = match saved.filter(|s| !s.logged_out && s.session.is_some()) {
+        let mut saved = profile.read(&service).await?;
+        if saved.as_ref().is_some_and(|s| s.logged_out) {
+            // Finish a sign-out interrupted after server revocation before
+            // allowing another account to replace the credential record.
+            crate::drafts::remove(profile.directory.clone())
+                .await
+                .context("Could not finish saved draft cleanup after sign-out")?;
+            profile
+                .delete_secret(&service)
+                .await
+                .context("Could not finish credential cleanup after sign-out")?;
+            saved = None;
+        }
+        let client = match saved.filter(|s| s.session.is_some()) {
             Some(saved) => Some(restore_client(&profile, &saved).await?),
             None => None,
         };
@@ -427,7 +443,44 @@ impl DesktopSession {
             service: Some(service),
             client,
             revoked: false,
+            drafts: None,
         })
+    }
+
+    pub async fn drafts(&mut self) -> Result<crate::drafts::Loaded, String> {
+        if let Some(loaded) = &self.drafts {
+            return loaded.clone();
+        }
+        let result = async {
+            let service = self
+                .service
+                .as_ref()
+                .ok_or("Credential store is unavailable")?;
+            let saved = self
+                .profile
+                .read(service)
+                .await
+                .map_err(|_| "Could not read the draft encryption key")?
+                .ok_or("Saved session is unavailable")?;
+            let account = self
+                .client
+                .as_ref()
+                .and_then(Client::user_id)
+                .ok_or("Account is unavailable")?
+                .to_string();
+            let mut keys = saved.retained_store_keys;
+            keys.insert(saved.store_directory.clone(), saved.store_key);
+            crate::drafts::Store::open(
+                self.profile.directory.clone(),
+                account,
+                saved.store_directory,
+                keys,
+            )
+            .await
+        }
+        .await;
+        self.drafts = Some(result.clone());
+        result
     }
 
     /// Sync and view workers must be stopped before calling this method.
@@ -453,6 +506,10 @@ impl DesktopSession {
         saved.session = None;
         self.profile.save(service, &saved).await
             .context("Signed out on the server; could not mark local credentials revoked. Retry sign-out before closing")?;
+        crate::drafts::remove(self.profile.directory.clone())
+            .await
+            .context("Signed out on the server; saved draft cleanup failed. Retry sign-out")?;
+        self.drafts = None;
         self.profile
             .delete_secret(service)
             .await
@@ -505,6 +562,7 @@ impl DesktopSession {
             .context("Could not save login; remove the Interconnect device in another client before retrying")?;
         self.client = Some(client);
         self.revoked = false;
+        self.drafts = None;
         Ok(())
     }
 }

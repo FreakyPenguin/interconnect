@@ -2681,6 +2681,7 @@ dependencies = [
  "matrix-sdk",
  "matrix-sdk-common",
  "matrix-sdk-crypto",
+ "matrix-sdk-store-encryption",
  "matrix-sdk-ui",
  "mime_guess",
  "notify-rust",

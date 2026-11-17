@@ -514,6 +514,7 @@ async fn desktop_sign_out_retains_failed_requests_and_retries_only_local_cleanup
         service: Some(fixture.store),
         client: Some(client),
         revoked: false,
+        drafts: None,
     };
     let failure =
         Mock::given(method("POST"))
@@ -524,7 +525,10 @@ async fn desktop_sign_out_retains_failed_requests_and_retries_only_local_cleanup
             .expect(1)
             .mount_as_scoped(&server)
             .await;
+    let draft_path = desktop.profile.directory.join("drafts.json");
+    std::fs::write(&draft_path, b"synthetic saved draft envelope").unwrap();
     assert!(desktop.sign_out().await.is_err());
+    assert!(draft_path.exists());
     assert!(desktop.client.is_some());
     assert!(!desktop.revoked);
     assert_eq!(fixture.records.lock().unwrap()[0].secret, original);
@@ -541,6 +545,7 @@ async fn desktop_sign_out_retains_failed_requests_and_retries_only_local_cleanup
     assert!(desktop.revoked);
     fixture.records.lock().unwrap()[0].reject = "";
     desktop.sign_out().await.unwrap();
+    assert!(!draft_path.exists());
     let records = fixture.records.lock().unwrap();
     assert!(records[0].deleted);
     let cleaned = SavedSession::decode(&records[0].secret).unwrap();
