@@ -6,29 +6,30 @@
 
 Interconnect is a native desktop [Matrix](https://matrix.org/) client written in
 Rust with [Iced](https://iced.rs/) and the
-[Matrix Rust SDK](https://github.com/matrix-org/matrix-rust-sdk). Spaces, custom
-room sections, and side-by-side threads keep conversations organized in a minimal
-interface. Message search, saved messages, and keyboard shortcuts help you find
-your way around busy accounts. Event-driven updates aim to keep idle CPU use and
-wakeups low.
+[Matrix Rust SDK](https://github.com/matrix-org/matrix-rust-sdk). Home, spaces,
+custom room sections, and side-by-side threads keep conversations organized in a
+minimal interface. Encrypted local text drafts survive restarts; message search,
+saved messages, and keyboard shortcuts help you find your way around busy accounts.
+Event-driven updates aim to keep idle CPU use and wakeups low.
 
 This project is fully AI-coded for the developer's own use, and shared in case
 it's useful to anyone else. It's a working prototype, with Linux/Wayland as the
 primary development platform and experimental Apple Silicon macOS builds.
 
-![Interconnect showing space navigation, unread rooms, custom sections, presence marks, and a conversation with a side-by-side thread](docs/images/demo.png)
+![Interconnect showing the Home house icon above All, an invitation shortcut, unread rooms, custom sections, and a conversation with a side-by-side thread](docs/images/demo.png)
 
-*Room and thread conversations in demo mode, using only local sample data.*
+*Home and space navigation, invitations, and a side-by-side thread. All names and messages are local demo data.*
 
 ## Current features
 
-- Password and browser SSO login, saved sessions, encrypted messaging, and device
-  verification, plus desktop sign-out.
-- Home for rooms outside spaces and all DMs, plus spaces, custom room sections,
-  favorites, unread indicators and ordering, and quick room switching.
-  Space filters keep the open conversation.
+- Password and browser SSO sign-in, saved sessions, end-to-end encrypted messaging,
+  device verification, and in-app sign-out.
+- Home for rooms outside spaces and all DMs, following Element's account preference,
+  plus spaces, custom room sections, favorites, unread indicators and ordering,
+  and quick room switching. Space filters preserve the open conversation.
 - Resizable room and thread panes with history loading, send status, and retry.
-  Encrypted text drafts survive restart; reading positions remain per-session.
+- Encrypted local room and thread text drafts, including composition mode and custom
+  emoji selections, restored after restart. Reading positions remain per-session.
 - In-room search and account-wide message search, with explicit scans of older
   encrypted history using available keys.
 - Saved messages with room and thread previews and navigation to the original.
@@ -38,8 +39,9 @@ primary development platform and experimental Apple Silicon macOS builds.
   inline images with explicit dimensions.
 - Matrix-compatible inline and display LaTeX math, rendered locally with RaTeX.
 - Markdown composition, on-demand previews, and a per-conversation plain-text mode.
-- People search, room creation, incoming invitations with accept/decline,
-  join by room address or Matrix link, confirmed leave, room topics, and pins.
+- Start direct chats, create rooms, accept or decline invitations, join by room ID,
+  alias or Matrix link, and leave rooms with confirmation.
+- People search, member lists, editable room topics, and pinned messages.
 - Reactions, Unicode and Matrix custom emoji pickers/completion, and personal and
   room emoji pack management with image uploads.
 - Image viewing and click-to-play GIFs.
@@ -50,9 +52,9 @@ primary development platform and experimental Apple Silicon macOS builds.
 - Desktop notifications, keyboard shortcuts, and configurable navigation,
   composition, media, and graphics settings.
 
-![Account-wide demo search showing highlighted matches from multiple rooms and threads with controls to open the original messages](docs/images/search.png)
+![Account-wide demo search with the updated Home and space rail, an invitation shortcut, and highlighted results from multiple rooms and threads](docs/images/search.png)
 
-*Search across conversations, with highlighted results and links back to messages.*
+*Account-wide search finds room messages and thread replies across spaces, with highlighted matches and navigation to the original.*
 
 ## Try it
 

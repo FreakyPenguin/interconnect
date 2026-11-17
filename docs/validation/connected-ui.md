@@ -1738,3 +1738,15 @@ Local Home validation: formatting, workspace Clippy with warnings denied,
 203 library and 343 desktop tests passed (two opt-in library fixtures ignored),
 and the locked desktop build passed. The Linux Wayland demo launched and ran
 until an eight-second validation timeout; no account actions were exercised.
+
+## README screenshot refresh
+
+The README conversation/thread and account-wide search screenshots were refreshed
+from the current demo at 1400×900 in an isolated headless Sway desktop using
+tiny-skia. The captures show the new Home house icon, invitation shortcut,
+updated space rail, and current thread/search layouts. They contain only demo
+fixtures. The locked desktop build passed; both captures were visually reviewed,
+PNG structure/checksums and README local links were checked. Temporary compositor
+configuration and logs stayed outside the repository. No saved account or
+connected client was accessed. These captures do not validate native macOS or
+connected-account behavior.
