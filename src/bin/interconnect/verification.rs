@@ -222,47 +222,52 @@ impl App {
         let mut buttons = row![].spacing(8).align_y(iced::Alignment::Center);
         if !snapshot.phase.active() && self.demo.is_none() && snapshot.control.is_some() {
             buttons = buttons.push(
-                button("Refresh devices")
+                button(text("Refresh devices").size(13))
                     .on_press(action(Action::Refresh))
                     .style(shell::quiet_button),
             );
         }
         buttons = buttons
             .push(
-                button(if snapshot.phase.active() {
-                    "Cancel verification"
-                } else {
-                    "Close"
-                })
+                button(
+                    text(if snapshot.phase.active() {
+                        "Cancel verification"
+                    } else {
+                        "Close"
+                    })
+                    .size(13),
+                )
                 .on_press(message(Event::Close))
-                .padding(10)
+                .padding([7, 10])
                 .style(shell::quiet_button),
             )
             .push(iced::widget::space().width(Length::Fill));
         if let Phase::Compare { comparison, .. } = &snapshot.phase {
             buttons = buttons
                 .push(
-                    button("They don't match")
+                    button(text("They don't match").size(13))
                         .on_press(action(Action::Mismatch))
-                        .padding(10)
+                        .padding([7, 10])
                         .style(shell::quiet_button),
                 )
                 .push(
-                    button("They match")
+                    button(text("They match").size(13))
+                        .style(shell::primary_button)
                         .on_press_maybe(
                             (self.verification.confirming
                                 != Some((snapshot.revision, comparison.decimals)))
                             .then(|| action(Action::Confirm(comparison.decimals))),
                         )
-                        .padding(10),
+                        .padding([7, 10]),
                 );
         } else if let Some(incoming) = &snapshot.incoming
             && !snapshot.phase.active()
         {
             buttons = buttons.push(
-                button("Accept request")
+                button(text("Accept request").size(13))
+                    .style(shell::primary_button)
                     .on_press(action(Action::Accept(incoming.flow.clone())))
-                    .padding(10),
+                    .padding([7, 10]),
             );
         }
         let header = container(shell::title("Verify this device", 20))

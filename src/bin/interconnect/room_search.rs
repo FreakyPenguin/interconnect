@@ -184,7 +184,9 @@ impl App {
         container(
             row![
                 text_input("Find in loaded room messages…", &self.room_search.query)
+                    .style(shell::search_style)
                     .id("in-room-search")
+                    .padding([7, 10])
                     .cursor_blinking(false)
                     .size(13)
                     .on_input(|query| message(Event::Edit(query)))

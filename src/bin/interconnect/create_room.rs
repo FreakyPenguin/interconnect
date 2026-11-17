@@ -323,13 +323,15 @@ impl App {
         let mut name = text_input("Room name", &options.name)
             .id(NAME)
             .cursor_blinking(false)
-            .padding(9)
-            .size(14);
+            .padding([7, 10])
+            .size(13)
+            .style(shell::search_style);
         let mut topic = text_input("What is this room for? (optional)", &options.topic)
             .id(TOPIC)
             .cursor_blinking(false)
-            .padding(9)
-            .size(14);
+            .padding([7, 10])
+            .size(13)
+            .style(shell::search_style);
         if editable {
             name = name.on_input(|v| message(Event::Name(v)));
             topic = topic.on_input(|v| message(Event::Topic(v)));
@@ -340,6 +342,8 @@ impl App {
                 message(Event::Space(s.id))
             })
             .text_size(13)
+            .padding([7, 10])
+            .style(shell::select_style)
             .width(Length::Fill)
             .into()
         } else {
@@ -368,10 +372,14 @@ impl App {
         });
         let mut encrypted = checkbox(options.encrypted)
             .label("Encrypt messages")
-            .text_size(13);
+            .text_size(13)
+            .size(16)
+            .spacing(9);
         let mut listed = checkbox(options.listed)
             .label("List in the homeserver's public room directory")
-            .text_size(13);
+            .text_size(13)
+            .size(16)
+            .spacing(9);
         if editable {
             encrypted = encrypted.on_toggle(|v| message(Event::Encrypted(v)));
             if options.visibility == Visibility::Public {
@@ -417,23 +425,30 @@ impl App {
                 .push(shell::title("Room created · space link incomplete", 14))
                 .push(text(error).size(12).color(shell::MUTED));
         }
-        let close = button(if busy { "Dismiss" } else { "Cancel" })
+        let close = button(text(if busy { "Dismiss" } else { "Cancel" }).size(13))
+            .padding([7, 14])
             .style(shell::quiet_button)
             .on_press(message(Event::Close));
-        let mut submit = button(if busy {
-            "Creating room…"
-        } else if state.created.is_some() {
-            "Retry adding to space"
-        } else {
-            "Create room"
-        });
+        let mut submit = button(
+            text(if busy {
+                "Creating room…"
+            } else if state.created.is_some() {
+                "Retry adding to space"
+            } else {
+                "Create room"
+            })
+            .size(13),
+        )
+        .padding([7, 14])
+        .style(shell::primary_button);
         if !busy && !options.name.trim().is_empty() {
             submit = submit.on_press(message(Event::Submit));
         }
         let mut actions = row![iced::widget::space().width(Length::Fill), close].spacing(8);
         if state.created.is_some() && !busy {
             actions = actions.push(
-                button("Open room")
+                button(text("Open room").size(13))
+                    .padding([7, 14])
                     .style(shell::quiet_button)
                     .on_press(message(Event::OpenCreated)),
             );
@@ -479,6 +494,8 @@ fn select<'a, T: Clone + Eq + std::fmt::Display + 'a>(
     if enabled {
         pick_list(values.to_vec(), Some(selected), on_select)
             .text_size(13)
+            .padding([7, 10])
+            .style(shell::select_style)
             .width(Length::Fill)
             .into()
     } else {

@@ -7,7 +7,9 @@ use super::{
 };
 use iced::{
     Alignment, Background, Border, Color, Element, Font, Length, Theme, font,
-    widget::{self, button, column, container, row, scrollable, text, text_editor, text_input},
+    widget::{
+        self, button, column, container, pick_list, row, scrollable, text, text_editor, text_input,
+    },
 };
 use interconnect::navigation::{self, Scope};
 use std::collections::HashSet;
@@ -336,6 +338,29 @@ pub fn message_actions<'a>(
         dismiss,
     )
 }
+pub(super) fn select_style(theme: &iced::Theme, status: pick_list::Status) -> pick_list::Style {
+    let mut style = pick_list::default(theme, status);
+    style.background = iced::Color::WHITE.into();
+    style.text_color = INK;
+    style.handle_color = MUTED;
+    style.border = iced::Border {
+        color: if matches!(status, pick_list::Status::Active) {
+            LINE
+        } else {
+            ACCENT
+        },
+        width: 1.0,
+        radius: 6.0.into(),
+    };
+    style
+}
+
+pub(super) fn primary_button(theme: &iced::Theme, status: button::Status) -> button::Style {
+    let mut style = button::primary(theme, status);
+    style.border = iced::Border::default().rounded(6);
+    style
+}
+
 pub(super) fn search_style(theme: &Theme, status: text_input::Status) -> text_input::Style {
     let mut style = text_input::default(theme, status);
     style.border = Border {

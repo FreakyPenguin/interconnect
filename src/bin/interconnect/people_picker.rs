@@ -144,7 +144,9 @@ impl State {
         let mut input = text_input("Name or @name:server", &self.query)
             .id(SEARCH_ID)
             .cursor_blinking(false)
-            .size(13);
+            .size(13)
+            .padding([7, 10])
+            .style(shell::search_style);
         if enabled {
             input = input.on_input(Event::Edit).on_submit(Event::Submit);
         }

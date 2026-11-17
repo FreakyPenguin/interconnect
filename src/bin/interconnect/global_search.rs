@@ -496,10 +496,12 @@ impl App {
             .cursor_blinking(false)
             .on_input(|query| message(Event::Edit(query)))
             .on_submit(message(Event::Submit))
-            .size(14)
-            .padding(10);
+            .size(13)
+            .padding([7, 10])
+            .style(shell::search_style);
         let search = button(text("Search").size(13))
-            .style(shell::quiet_button)
+            .padding([7, 14])
+            .style(shell::primary_button)
             .on_press_maybe(
                 (!state.query.trim().is_empty() && !self.closing && !self.stopped)
                     .then_some(message(Event::Submit)),

@@ -552,8 +552,12 @@ impl App {
     fn emoji_management_card(&self, size: iced::Size) -> Element<'_, Message> {
         let state = self.emoji_management.as_ref().expect("open emoji manager");
         let available = !state.loading && !state.pending && state.task.is_none();
-        let mut close = button("Close").style(shell::quiet_button);
-        let mut reload = button("Reload").style(shell::quiet_button);
+        let mut close = button(text("Close").size(13))
+            .padding([7, 10])
+            .style(shell::quiet_button);
+        let mut reload = button(text("Reload").size(13))
+            .padding([7, 10])
+            .style(shell::quiet_button);
         if !state.pending {
             close = close.on_press(message(Event::Close));
             reload = reload.on_press(message(Event::Reload));
@@ -608,6 +612,9 @@ impl App {
                     message(Event::Select(choice.index))
                 })
                 .width(Length::Fill)
+                .text_size(13)
+                .padding([7, 10])
+                .style(shell::select_style)
                 .into()
             } else {
                 container(text(state.name.clone()).size(14)).into()
@@ -619,9 +626,12 @@ impl App {
             let mut name = text_input("Pack name", &state.name)
                 .id("emoji-pack-name")
                 .size(13)
-                .padding(8)
+                .padding([7, 10])
+                .style(shell::search_style)
                 .cursor_blinking(false);
-            let mut rename = button(text("Rename pack").size(12));
+            let mut rename = button(text("Rename pack").size(13))
+                .padding([7, 10])
+                .style(shell::primary_button);
             let mut delete = button(
                 text(if matches!(pack.source, Source::Personal) {
                     "Clear personal pack"
@@ -688,15 +698,18 @@ impl App {
             content = content.push(new);
             let mut shortcode = text_input("Shortcode", &state.shortcode)
                 .size(13)
-                .padding(8)
+                .padding([7, 10])
+                .style(shell::search_style)
                 .cursor_blinking(false);
             let mut description = text_input("Description / alternative text", &state.description)
                 .size(13)
-                .padding(8)
+                .padding([7, 10])
+                .style(shell::search_style)
                 .cursor_blinking(false);
             let mut uri = text_input("mxc:// image URL", &state.uri)
                 .size(13)
-                .padding(8)
+                .padding([7, 10])
+                .style(shell::search_style)
                 .cursor_blinking(false);
             let mut file = button(
                 text(if state.task.is_some() {
@@ -713,8 +726,10 @@ impl App {
                 } else {
                     "Add to pack"
                 })
-                .size(12),
-            );
+                .size(13),
+            )
+            .padding([7, 10])
+            .style(shell::primary_button);
             let mut remove = button(text("Remove emoji").size(12)).style(shell::quiet_button);
             if writable {
                 shortcode = shortcode.on_input(|v| message(Event::Shortcode(v)));
@@ -770,9 +785,12 @@ impl App {
         if state.listing.can_create {
             let mut name = text_input("New room pack name", &state.create_name)
                 .size(13)
-                .padding(8)
+                .padding([7, 10])
+                .style(shell::search_style)
                 .cursor_blinking(false);
-            let mut create = button(text("Create room pack").size(12));
+            let mut create = button(text("Create room pack").size(13))
+                .padding([7, 10])
+                .style(shell::primary_button);
             if available {
                 name = name.on_input(|v| message(Event::CreateName(v)));
                 create = create.on_press(message(Event::Create));
@@ -787,7 +805,9 @@ impl App {
             } else {
                 "Remove this emoji from the pack?"
             };
-            let mut confirm = button(text("Remove").size(12));
+            let mut confirm = button(text("Remove").size(13))
+                .padding([7, 10])
+                .style(shell::primary_button);
             let mut cancel = button(text("Keep").size(12)).style(shell::quiet_button);
             if available {
                 confirm = confirm.on_press(message(Event::Confirm));

@@ -407,7 +407,7 @@ impl App {
         )
         .text_size(13)
         .padding([7, 10])
-        .style(select_style);
+        .style(shell::select_style);
         let mut gpu = checkbox(draft.graphics.gpu_enabled)
             .label("Use GPU rendering")
             .size(16)
@@ -442,7 +442,7 @@ impl App {
             .size(13),
         )
         .padding([7, 18])
-        .style(primary_button);
+        .style(shell::primary_button);
         if available {
             defaults = defaults.on_press(message(Event::Defaults));
             if self.settings.path.is_some() {
@@ -462,7 +462,7 @@ impl App {
         )
         .text_size(13)
         .padding([7, 10])
-        .style(select_style);
+        .style(shell::select_style);
         let mut gif_controls = row![text("Play").size(13), playback]
             .spacing(12)
             .align_y(iced::Alignment::Center);
@@ -630,29 +630,6 @@ impl App {
 
 fn caption<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
     text(label).size(12).color(shell::MUTED).width(Length::Fill)
-}
-
-fn select_style(theme: &iced::Theme, status: pick_list::Status) -> pick_list::Style {
-    let mut style = pick_list::default(theme, status);
-    style.background = iced::Color::WHITE.into();
-    style.text_color = shell::INK;
-    style.handle_color = shell::MUTED;
-    style.border = iced::Border {
-        color: if matches!(status, pick_list::Status::Active) {
-            shell::LINE
-        } else {
-            shell::ACCENT
-        },
-        width: 1.0,
-        radius: 6.0.into(),
-    };
-    style
-}
-
-fn primary_button(theme: &iced::Theme, status: button::Status) -> button::Style {
-    let mut style = button::primary(theme, status);
-    style.border = iced::Border::default().rounded(6);
-    style
 }
 
 #[cfg(test)]

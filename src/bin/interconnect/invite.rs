@@ -247,9 +247,10 @@ impl App {
             } else {
                 "Send invitation"
             })
-            .size(12),
+            .size(13),
         )
-        .style(shell::quiet_button);
+        .padding([7, 10])
+        .style(shell::primary_button);
         if !busy
             && self.pending_ops < MAX_PENDING_OPERATIONS
             && (self.demo.is_some()
@@ -266,7 +267,8 @@ impl App {
             input,
             row![
                 send,
-                button(text("Close").size(12))
+                button(text("Close").size(13))
+                    .padding([7, 10])
                     .style(shell::quiet_button)
                     .on_press(message(Event::Cancel))
             ]

@@ -165,6 +165,17 @@ stale completion rejection, and draft/scroll preservation. Formatting, workspace
 Clippy, all 266 UI tests, and the desktop build pass. Native macOS/wgpu and
 connected topic edits remain untested for this pass.
 
+Shared form controls now use the same rounded, outlined input/select treatment
+and rounded primary actions as Settings. Room creation, people/invite search,
+global/in-room search, emoji search/management, and verification use compact
+13 px control text and consistent field padding. Settings reuses the shared
+select/primary styles. This is presentation only: request, disabled-state,
+permission, IME, and cancellation handling are retained. Formatting, workspace
+Clippy, and the full UI test suite pass. The room-creation form was visually
+checked in the isolated Sway/tiny-skia demo at 1280×900 and 640×480. Other native
+forms, macOS/wgpu, and connected acceptance remain untested for this extension;
+no connected account was used.
+
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
 Checks included expanding/collapsing pins, message-action icons, and scrolling

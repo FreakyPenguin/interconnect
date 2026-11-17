@@ -366,8 +366,9 @@ pub fn view<'a, Message: Clone + 'static>(
     let search_event = on_event.clone();
     let mut search = text_input("Search emoji", &state.query)
         .id(SEARCH_ID)
-        .size(14)
-        .padding(8)
+        .size(13)
+        .padding([7, 10])
+        .style(shell::search_style)
         .cursor_blinking(false);
     if enabled {
         search = search.on_input(move |query| search_event(Event::Search(query)));
@@ -382,7 +383,9 @@ pub fn view<'a, Message: Clone + 'static>(
             Some(state.category.clone()),
             move |category| category_event(Event::Category(category)),
         )
-        .text_size(12)
+        .text_size(13)
+        .padding([7, 10])
+        .style(shell::select_style)
         .into()
     } else {
         container(text(state.category.to_string()).size(12))
