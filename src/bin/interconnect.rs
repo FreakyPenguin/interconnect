@@ -19,6 +19,8 @@ mod create_room;
 mod demo;
 #[path = "interconnect/downloads.rs"]
 mod downloads;
+#[path = "interconnect/draft_persistence.rs"]
+mod draft_persistence;
 #[path = "interconnect/emoji.rs"]
 mod emoji;
 #[path = "interconnect/emoji_completion.rs"]
@@ -160,6 +162,7 @@ struct App {
     closing: bool,
     stopped: bool,
     drafts: HashMap<DraftKey, Draft>,
+    draft_persistence: draft_persistence::State,
     retrying: HashSet<String>,
     retry_errors: HashMap<String, String>,
     pending_ops: usize,
@@ -235,6 +238,7 @@ enum Message {
     Invite(invite::Event),
     Login(login::Event),
     SignOut(sign_out::Event),
+    DraftPersistence(draft_persistence::Event),
     Verification(verification::Event),
     Settings(settings::Event),
     Image(images::Event),
@@ -344,6 +348,7 @@ impl App {
             closing: false,
             stopped: false,
             drafts: HashMap::new(),
+            draft_persistence: draft_persistence::State::default(),
             retrying: HashSet::new(),
             retry_errors: HashMap::new(),
             pending_ops: 0,
@@ -422,6 +427,51 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        let changing = draft_persistence::may_change(&message);
+        if matches!(message, Message::Close | Message::Exit)
+            && self.sign_out_open
+            && matches!(
+                self.model.sign_out,
+                interconnect::connected::SignOut::Idle
+                    | interconnect::connected::SignOut::Failed { revoked: false, .. }
+            )
+        {
+            let _ = self.sign_out_event(sign_out::Event::Cancel);
+        }
+        let was_waiting = self.draft_persistence.close_requested;
+        let task = if let Message::DraftPersistence(event) = message {
+            self.draft_persistence_event(event)
+        } else {
+            let defer_close = matches!(message, Message::Close | Message::Exit)
+                && !self.sign_out_open
+                && self.defer_close_for_drafts();
+            let covered_input = self.draft_persistence.close_requested
+                && matches!(
+                    message,
+                    Message::Send(_)
+                        | Message::Edit(..)
+                        | Message::DeleteWord(..)
+                        | Message::Room(_)
+                        | Message::Thread(_)
+                        | Message::Space(_)
+                        | Message::ContextMenu(_)
+                );
+            if defer_close || covered_input {
+                Task::none()
+            } else {
+                self.update_inner(message)
+            }
+        };
+        if was_waiting != self.draft_persistence.close_requested {
+            self.publish_notification_context();
+        }
+        if changing {
+            self.capture_persistent_drafts();
+        }
+        let save = self.schedule_draft_save();
+        Task::batch([task, save])
+    }
+    fn update_inner(&mut self, message: Message) -> Task<Message> {
         if let Message::SignOut(event) = message {
             return self.sign_out_event(event);
         }
@@ -1610,6 +1660,7 @@ impl App {
                     self.emoji_management = None;
                 }
                 self.model = *state;
+                self.restore_persistent_drafts();
                 if bookmarks_changed && self.bookmarks.open {
                     action_task = self.load_bookmark_previews();
                 }
@@ -2152,7 +2203,9 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.sign_out_open {
+            if self.draft_persistence.close_requested {
+                Subscription::none()
+            } else if self.sign_out_open {
                 iced::event::listen_with(|event, _, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
@@ -2247,6 +2300,9 @@ impl App {
         ])
     }
     fn view(&self) -> Element<'_, Message> {
+        if self.draft_persistence.close_requested {
+            return self.draft_close_view();
+        }
         if self.demo.is_none()
             && let Some(authentication) = &self.model.authentication
         {

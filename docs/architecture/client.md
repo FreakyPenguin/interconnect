@@ -86,7 +86,9 @@ the record; a later attempt can retry. Logout removes entries under both names.
 The canonical profile path (or `keyring-profile` identity override) selects the
 record. On macOS it is the generic-password account attribute, and the namespace
 is the service attribute.
-The private profile contains the encrypted SDK stores and navigation state.
+The private profile contains the encrypted SDK stores, encrypted text drafts,
+and navigation state. See [draft storage](drafts.md) for the draft envelope,
+account isolation, serialized writer and close behavior.
 There is no plaintext fallback.
 
 Keychain calls run on blocking workers, serialized per session. A worker retains
@@ -126,7 +128,9 @@ Shutdown waits for outstanding admission/retry operations.
 Room and thread scrolling are independent. Open panes follow new messages only
 while already at the bottom; otherwise a visible message anchor holds position
 across arrivals and pagination. Closed-pane positions retain pixel distances
-from the bottom in memory. Neither drafts nor scroll positions survive exit.
+from the bottom in memory. Text drafts, composition mode and custom emoji selections survive exit in the
+[encrypted draft store](drafts.md). Scroll positions and staged attachments
+remain in memory.
 
 People search is abortable and generation-scoped. Explicit room/direct-chat
 creation continues against its captured account after dismissal and participates

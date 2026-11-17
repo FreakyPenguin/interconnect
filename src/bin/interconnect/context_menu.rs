@@ -63,7 +63,7 @@ pub fn trigger<'a>(base: impl Into<Element<'a, Message>>, target: Target) -> Ele
 }
 impl App {
     pub(super) fn context_menu_allowed(&self) -> bool {
-        if self.sign_out_open || self.membership.open {
+        if self.sign_out_open || self.membership.open || self.draft_persistence.close_requested {
             return false;
         }
         !self.closing

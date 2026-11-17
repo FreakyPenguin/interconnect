@@ -1667,3 +1667,41 @@ stale leave actions and server failure. UI tests cover validation, cancellation,
 confirmation and preserving unrelated drafts/conversations. Native connected
 join/leave remains a manual disposable-account check. Public-room browsing,
 knocking and OS-level Matrix link registration are outside this change.
+
+## Draft recovery across restarts
+
+Connected room and thread text drafts now survive normal quit/restart, including
+plain/Markdown mode and explicit custom emoji bindings. Attachment captions are
+text drafts; attachment paths/bytes, reading positions and unfinished edits of
+sent messages are not restored. An unfinished edit preserves its original
+unsent conversation draft. Demo mode remains memory-only.
+
+Saves coalesce for 400 ms after changes and run serially off the UI thread.
+Successful queue admission clears the saved draft; failed admission retains it.
+Normal close waits for pending message writes, then flushes the newest snapshot.
+A save failure keeps the app open with **Retry save**, **Keep open**, and an
+explicit **Close without saving** choice. The account attention indicator and
+bottom banner also expose draft storage failures. Sign-out saves pending text
+before revocation so a failed remote sign-out preserves it; confirmed local
+cleanup removes the encrypted draft file before deleting its keys.
+
+Isolated tests cover encrypted file round trips, same-account reauthentication,
+account isolation, invalid keys/permissions/files without overwriting them,
+private atomic writes and sign-out removal. UI tests cover room/thread source,
+mode and emoji recovery, debouncing, late completions, send success/failure,
+close/send races, save failures/discard and demo isolation. Formatting, workspace
+Clippy with warnings denied and workspace tests pass. Native macOS and connected
+restart acceptance remain manual: use a disposable account/profile, draft in
+several rooms and threads, quit normally, reopen and verify each draft; then send
+one, restart again and confirm it stays cleared. Test offline quits and disk
+write failure separately. No saved account was opened during implementation.
+
+Abrupt termination can lose changes within the debounce interval. See
+[the storage design](../architecture/drafts.md) and
+[idle-resource validation](idle-resources.md#text-draft-persistence).
+
+Final local checks: 200 library and 342 desktop tests passed; two opt-in library
+fixtures remained ignored. The locked desktop build, formatting and workspace
+Clippy with warnings denied passed. A Linux Wayland demo startup ran for eight
+seconds and was terminated by the validation timeout; this checked launch only,
+without exercising account actions or native credential services.

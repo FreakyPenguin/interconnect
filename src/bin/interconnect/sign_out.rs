@@ -18,15 +18,17 @@ impl App {
         match event {
             Event::Open if self.context_menu_allowed() && self.pending_ops == 0 => {
                 self.context_menu = None;
+                let save = self.save_drafts();
                 self.sign_out_open = true;
                 self.stop_typing();
                 self.publish_notification_context();
-                return iced::widget::operation::focus("sign-out-dialog");
+                return Task::batch([iced::widget::operation::focus("sign-out-dialog"), save]);
             }
             Event::Confirm
                 if self.sign_out_open
                     && self.pending_ops == 0
                     && !self.closing
+                    && !self.draft_persistence.blocks_sign_out()
                     && !matches!(self.model.sign_out, SignOut::Running) =>
             {
                 if self.demo.is_some() {
@@ -85,6 +87,17 @@ impl App {
         if self.demo.is_some() {
             content = content.push(text("Demo only · no account is signed out.").size(12));
         }
+        if let Some(error) = &self.draft_persistence.error {
+            content = content.push(text(error).size(12)).push(
+                button(text("Retry draft save").size(12)).on_press_maybe(
+                    self.draft_persistence
+                        .can_retry()
+                        .then_some(Message::DraftPersistence(
+                            super::draft_persistence::Event::Retry,
+                        )),
+                ),
+            );
+        }
         if let SignOut::Failed { error, .. } = &self.model.sign_out {
             content = content.push(text(error).size(13));
         }
@@ -103,8 +116,11 @@ impl App {
         )
         .style(button::danger)
         .on_press_maybe(
-            (!busy && self.pending_ops == 0 && !self.closing)
-                .then_some(Message::SignOut(Event::Confirm)),
+            (!busy
+                && self.pending_ops == 0
+                && !self.closing
+                && !self.draft_persistence.blocks_sign_out())
+            .then_some(Message::SignOut(Event::Confirm)),
         );
         content = content
             .push(row![cancel, iced::widget::space().width(Length::Fill), confirm].spacing(12));

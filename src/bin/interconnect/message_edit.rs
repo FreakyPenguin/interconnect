@@ -11,7 +11,7 @@ use interconnect::composition::{self, Prepared};
 pub struct State {
     event: String,
     request: u64,
-    saved: Box<Draft>,
+    pub(super) saved: Box<Draft>,
 }
 #[derive(Clone, Debug)]
 pub enum Event {

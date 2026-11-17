@@ -15,7 +15,8 @@ impl App {
         }
     }
     pub(super) fn utilities_need_attention(&self) -> bool {
-        self.model.verification.incoming.is_some()
+        self.draft_persistence.error.is_some()
+            || self.model.verification.incoming.is_some()
             || self.settings.error.is_some()
             || self.model.notification_error.is_some()
             || self.model.media_error.is_some()
@@ -69,6 +70,23 @@ impl App {
                     .on_press(Message::Verification(verification::Event::Open)),
             );
         }
+        if let Some(error) = &self.draft_persistence.error {
+            items = items.push(
+                row![
+                    super::tooltips::tooltip(
+                        text("Drafts need attention").size(11).color(shell::MUTED),
+                        error,
+                        iced::widget::tooltip::Position::Top
+                    ),
+                    button(text("Retry draft save").size(11))
+                        .style(shell::quiet_button)
+                        .on_press_maybe(self.draft_persistence.can_retry().then_some(
+                            Message::DraftPersistence(super::draft_persistence::Event::Retry)
+                        ))
+                ]
+                .spacing(8),
+            );
+        }
         let settings_error =
             self.settings.error.is_some() || self.model.notification_error.is_some();
         if settings_error {
@@ -85,7 +103,8 @@ impl App {
                 iced::widget::tooltip::Position::Top,
             ));
         }
-        if !connection
+        if self.draft_persistence.error.is_none()
+            && !connection
             && !self.stopped
             && !verification
             && !settings_error

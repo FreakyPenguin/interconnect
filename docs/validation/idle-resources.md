@@ -266,3 +266,19 @@ additional model update. Automated regressions cover viewport changes, cache
 reuse, thread cancellation, hidden
 panes, demo isolation, and unchanged drafts/scroll positions; production CPU and
 wakeups for this addition have not been measured.
+
+## Text draft persistence
+
+Draft persistence adds one cancellable 400 ms debounce only after a source/mode
+change. Edits replace that deadline; a settled draft has no timer, periodic
+save, filesystem watcher or redraw subscription. Saves run on blocking workers,
+are serialized, and participate in pending-operation shutdown accounting. Demo
+mode never schedules a draft save or timer. Invitation/join/leave controls add
+no timers or background requests beyond the existing event-driven navigation
+worker; invitation metadata is read from cached stripped state.
+
+Tests cover coalescing, obsolete deadlines, edits during an in-flight save,
+cleared drafts, retry, close/send ordering, demo isolation and failure choices.
+Fresh connected CPU and scheduler-wakeup measurements have not been taken for
+these changes. Include settled drafts, typing followed by idle, close during
+a pending send, and sign-out after editing in the next disposable-account run.

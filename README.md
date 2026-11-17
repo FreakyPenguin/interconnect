@@ -23,11 +23,11 @@ primary development platform and experimental Apple Silicon macOS builds.
 ## Current features
 
 - Password and browser SSO login, saved sessions, encrypted messaging, and device
-  verification.
+  verification, plus desktop sign-out.
 - Spaces, custom room sections, favorites, unread indicators and ordering, direct
   messages, and quick room switching. Space filters keep the open conversation.
-- Resizable room and thread panes with history loading, separate per-session
-  drafts and reading positions, send status, and retry.
+- Resizable room and thread panes with history loading, send status, and retry.
+  Encrypted text drafts survive restart; reading positions remain per-session.
 - In-room search and account-wide message search, with explicit scans of older
   encrypted history using available keys.
 - Saved messages with room and thread previews and navigation to the original.
@@ -37,7 +37,8 @@ primary development platform and experimental Apple Silicon macOS builds.
   inline images with explicit dimensions.
 - Matrix-compatible inline and display LaTeX math, rendered locally with RaTeX.
 - Markdown composition, on-demand previews, and a per-conversation plain-text mode.
-- People search, room creation, invitations, room topics, and pinned messages.
+- People search, room creation, incoming invitations with accept/decline,
+  join by room address or Matrix link, confirmed leave, room topics, and pins.
 - Reactions, Unicode and Matrix custom emoji pickers/completion, and personal and
   room emoji pack management with image uploads.
 - Image viewing and click-to-play GIFs.
