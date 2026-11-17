@@ -1,7 +1,6 @@
 # Todo
 
 ## Rooms
-- message editing
 - message delete
 - Member invite link?
 

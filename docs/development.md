@@ -145,6 +145,9 @@ selection API; reaction and composer adapters decide what a selection does.
 `context_menu.rs` adapts the shared popup host to right-click actions for room
 entries, messages, and thread summaries. Actions are resolved again on selection
 to reject stale conversations and permission changes; the menu adds no timers.
+`message_edit.rs` temporarily replaces each conversation’s composer, retaining its
+draft until Save/Cancel. The runtime-owned connected composer admits SDK replacement
+events asynchronously and rechecks the target’s ownership/content.
 `people_picker.rs` provides reusable directory search for invitations and new
 chats. Hosts namespace asynchronous results by account and form/view generation.
 See [architecture](architecture/client.md) for ownership and lifecycle rules.

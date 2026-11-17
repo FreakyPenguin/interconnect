@@ -5,11 +5,13 @@ macOS builds and notifications exist, but saved accounts still depend on Linux
 Secret Service.
 
 - Recovery/key-backup UI, mark-unread controls, ordinary reply
-  composition, editing/redaction actions, and notification click navigation
+  composition, redaction actions, and notification click navigation
   remain incomplete.
 - Incoming receipt labels currently show room receipts only; the SDK does not
   expose thread-specific readers through timeline items. Thread activity badges
   remain local to this process. Receipt privacy preferences are not implemented.
+- Message editing supports own text messages and emotes with event IDs. Media
+  caption editing, notices, and arbitrary HTML round-tripping remain unsupported.
 - Formatted messages support common Matrix HTML. Inline-image authoring, code syntax
   highlighting, full tables, formatted media captions, and visual rich-text editing
   remain incomplete. Excerpts continue to use the plain fallback.

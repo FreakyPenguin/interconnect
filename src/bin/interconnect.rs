@@ -45,6 +45,8 @@ mod login;
 mod markdown_composer;
 #[path = "interconnect/members.rs"]
 mod members;
+#[path = "interconnect/message_edit.rs"]
+mod message_edit;
 #[path = "interconnect/new_chat.rs"]
 mod new_chat;
 #[path = "interconnect/panel_resize.rs"]
@@ -116,6 +118,7 @@ struct DraftKey {
 }
 #[derive(Default)]
 struct Draft {
+    editing: Option<message_edit::State>,
     composer_height: Option<f32>,
     markdown: markdown_composer::State,
     content: text_editor::Content,
@@ -283,6 +286,7 @@ enum Message {
     Close,
     Exit,
     Markdown(markdown_composer::Event),
+    Editing(message_edit::Event),
     Edit(DraftKey, text_editor::Action),
     DeleteWord(DraftKey, text_editor::Motion),
     ResizeComposer {
@@ -661,6 +665,11 @@ impl App {
                             | invite::Event::Cancel
                     )
                     | Message::Edit(..)
+                    | Message::Editing(
+                        message_edit::Event::Start(_)
+                            | message_edit::Event::Latest(_)
+                            | message_edit::Event::Cancel(_)
+                    )
                     | Message::DeleteWord(..)
                     | Message::ResizeComposer { .. }
                     | Message::ResizePanel(..)
@@ -700,6 +709,11 @@ impl App {
             && matches!(
                 message,
                 Message::Edit(..)
+                    | Message::Editing(
+                        message_edit::Event::Start(_)
+                            | message_edit::Event::Latest(_)
+                            | message_edit::Event::Cancel(_)
+                    )
                     | Message::DeleteWord(..)
                     | Message::Send(_)
                     | Message::LoadOlder { .. }
@@ -735,6 +749,7 @@ impl App {
                 | Message::EmojiCompletion(_)
                 | Message::Reaction(_)
                 | Message::Markdown(_)
+                | Message::Editing(_)
                 | Message::Edit(..)
                 | Message::DeleteWord(..)
                 | Message::Composing(_)
@@ -1151,6 +1166,7 @@ impl App {
             }
 
             Message::Markdown(event) => action_task = self.markdown_event(event),
+            Message::Editing(event) => action_task = self.message_edit_event(event),
             Message::Composing(active) => {
                 self.composing = active;
                 if !active && let Some(key) = self.emoji_completion.editing.clone() {
@@ -1212,6 +1228,13 @@ impl App {
                         && self.draft_key(true).as_ref() != Some(&key))
                 {
                     return Task::none();
+                }
+                if self
+                    .drafts
+                    .get(&key)
+                    .is_some_and(|draft| draft.editing.is_some())
+                {
+                    return self.save_message_edit(key);
                 }
                 if self.demo.is_some() {
                     if let Some(draft) = self.drafts.get_mut(&key) {
@@ -2293,6 +2316,13 @@ impl App {
             .color(shell::MUTED)
             .into()
         };
+        let original = if self.thread_original().is_some_and(|message| message.edited) {
+            column![original, text("edited").size(11).color(shell::MUTED)]
+                .spacing(4)
+                .into()
+        } else {
+            original
+        };
         // The SDK's thread cache routes root reactions to the room timeline.
         let original = if let Some(badges) = self
             .thread_original_in_room()
@@ -2328,6 +2358,7 @@ impl App {
                     ),
                     None,
                     self.reaction_action(message, true, generation),
+                    self.message_edit_action(message, true, generation),
                     self.pin_action(message, true, generation),
                     self.bookmark_action(message, true, generation),
                     self.reaction_popup(
@@ -2630,6 +2661,9 @@ impl App {
             } else {
                 column![presentation::heading(message), body].spacing(4)
             };
+            if message.edited {
+                entry = entry.push(text("edited").size(11).color(shell::MUTED));
+            }
             if message.download.is_some() || message.image.is_some() {
                 entry = entry.push(self.attachment_card(message, thread, *generation, true));
             }
@@ -2763,6 +2797,7 @@ impl App {
                     ),
                     reply,
                     self.reaction_action(message, thread, *generation),
+                    self.message_edit_action(message, thread, *generation),
                     self.pin_action(message, thread, *generation),
                     self.bookmark_action(message, thread, *generation),
                     self.reaction_popup(thread, *generation, id),
@@ -2927,6 +2962,7 @@ impl App {
                             .or_else(|| {
                                 self.attachment_paste_binding(&send_key, *generation, &press)
                             })
+                            .or_else(|| self.message_edit_binding(&send_key, &press))
                             .or_else(|| composer_binding(press, composing, &send_key, shortcut))
                     });
             }
@@ -2954,17 +2990,22 @@ impl App {
                     && self.emoji_management.is_none()
                     && !draft.pending,
             );
-            let mut send = button(
+            let send_label: Element<'_, Message> = if draft.editing.is_some() {
+                container(text(if draft.pending { "Saving…" } else { "Save" }).size(12))
+                    .center_y(32)
+                    .padding([0, 8])
+                    .into()
+            } else {
                 container(icons::icon(if draft.pending {
                     icons::Kind::More
                 } else {
                     icons::Kind::ArrowUp
                 }))
                 .center_x(32)
-                .center_y(32),
-            )
-            .padding(0)
-            .style(shell::send_button);
+                .center_y(32)
+                .into()
+            };
+            let mut send = button(send_label).padding(0).style(shell::send_button);
             if !self.closing
                 && !self.stopped
                 && !self.composing
@@ -2978,7 +3019,13 @@ impl App {
             }
             let send = tooltips::tooltip(
                 send,
-                if draft.pending {
+                if draft.editing.is_some() {
+                    if draft.pending {
+                        "Saving edit…"
+                    } else {
+                        "Save edit"
+                    }
+                } else if draft.pending {
                     "Queueing message…"
                 } else if thread {
                     match shortcut {
@@ -3061,7 +3108,11 @@ impl App {
             } else {
                 container(iced::widget::space().height(0)).into()
             };
+            let edit_banner = self
+                .message_edit_banner(&key)
+                .unwrap_or_else(|| container(iced::widget::space().height(0)).into());
             let composer = column![
+                edit_banner,
                 chip,
                 editor,
                 error,

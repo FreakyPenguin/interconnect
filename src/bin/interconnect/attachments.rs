@@ -73,7 +73,7 @@ impl App {
             && self
                 .drafts
                 .get(&target.key)
-                .is_some_and(|draft| !draft.pending)
+                .is_some_and(|draft| !draft.pending && draft.editing.is_none())
     }
 
     pub(super) fn attachment_event(&mut self, event: Event) -> Task<Message> {

@@ -212,12 +212,14 @@ pub fn message_actions<'a>(
     body: impl Into<Element<'a, Message>>,
     reply: Option<Message>,
     reaction: Option<Message>,
+    edit: Option<Message>,
     pin: Option<Message>,
     bookmark: Option<Message>,
     popup: Option<(Element<'a, Message>, Message)>,
 ) -> Element<'a, Message> {
     if reply.is_none()
         && reaction.is_none()
+        && edit.is_none()
         && pin.is_none()
         && bookmark.is_none()
         && popup.is_none()
@@ -252,6 +254,19 @@ pub fn message_actions<'a>(
             )
             .id("reply-in-thread"),
             "Reply in thread",
+            widget::tooltip::Position::Top,
+        ));
+    }
+    if let Some(edit) = edit {
+        controls = controls.push(super::tooltips::tooltip(
+            container(
+                button(container(icon(Kind::Edit)).center_x(28).center_y(20))
+                    .padding(0)
+                    .style(icon_button)
+                    .on_press(edit),
+            )
+            .id("edit-message"),
+            "Edit message",
             widget::tooltip::Position::Top,
         ));
     }

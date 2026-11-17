@@ -14,6 +14,10 @@ use matrix_sdk_ui::{
 };
 use tokio::sync::{mpsc, watch};
 
+mod editing;
+#[cfg(test)]
+mod editing_tests;
+pub use editing::EditSource;
 mod receipts;
 pub use receipts::ReadTarget;
 mod typing;
@@ -77,6 +81,9 @@ pub struct MessageRow {
     pub download: Option<crate::download::Attachment>,
     pub reactions: Vec<Reaction>,
     pub can_react: bool,
+    /// Editable source excludes presentation prefixes and reply fallbacks.
+    pub edit_source: Option<EditSource>,
+    pub edited: bool,
     pub read_by: Vec<String>,
     pub timestamp_ms: Option<i64>,
     pub thread_replies: u32,
@@ -1392,6 +1399,17 @@ async fn timeline_rows_cached(
                     download: crate::download::Attachment::from_content(content),
                     reactions: reactions(content, &own_user),
                     can_react: event.event_id().is_some() && can_react(content),
+                    edit_source: if event.event_id().is_some() && event.is_editable() {
+                        match content {
+                            TimelineItemContent::MsgLike(content) => match &content.kind {
+                                matrix_sdk_ui::timeline::MsgLikeKind::Message(message)
+                                    if matches!(message.msgtype(), matrix_sdk::ruma::events::room::message::MessageType::Text(_) | matrix_sdk::ruma::events::room::message::MessageType::Emote(_)) => Some(EditSource::from_message(message.msgtype())),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    } else { None },
+                    edited: matches!(content, TimelineItemContent::MsgLike(content) if matches!(&content.kind, matrix_sdk_ui::timeline::MsgLikeKind::Message(message) if message.is_edited())),
                     read_by: {
                         let mut users: Vec<_> = event
                             .read_receipts()

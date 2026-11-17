@@ -361,6 +361,8 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         download: None,
         reactions: Vec::new(),
         can_react: true,
+        edit_source: None,
+        edited: false,
         read_by: Vec::new(),
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         thread_replies: if id == "review" { 2 } else { 0 },
@@ -559,6 +561,18 @@ impl Demo {
             {
                 row.read_by = vec!["@alex:demo.invalid".into(), "@maya:demo.invalid".into()];
             }
+            for row in &mut rows {
+                if !row.is_own
+                    && row.sender == "Jamie Davis"
+                    && row.kind == RowKind::Message
+                    && row.image.is_none()
+                    && row.download.is_none()
+                {
+                    row.is_own = true;
+                    row.edit_source =
+                        Some(interconnect::connected::EditSource::plain(row.body.clone()));
+                }
+            }
             let start = chrono::Local::now().timestamp_millis() - rows.len() as i64 * 60_000;
             // Thread fixtures reuse the original room events and timestamps.
             if key.root.is_none() {
@@ -599,10 +613,25 @@ impl Demo {
             format!("{}\n{}", attachment.filename, body)
         };
         self.send(key, label);
+        for target in [
+            key.clone(),
+            DraftKey {
+                room: key.room.clone(),
+                root: None,
+            },
+        ] {
+            if let Some(row) = self
+                .conversations
+                .get_mut(&target)
+                .and_then(|rows| rows.last_mut())
+            {
+                row.edit_source = None;
+            }
+        }
         // Demo sends stay entirely in memory; never upload or read file contents.
     }
     pub fn send_prepared(&mut self, key: &DraftKey, prepared: interconnect::composition::Prepared) {
-        self.send(key, prepared.source);
+        self.send(key, prepared.source.clone());
         for key in [
             key.clone(),
             DraftKey {
@@ -615,10 +644,37 @@ impl Demo {
                 .get_mut(&key)
                 .and_then(|rows| rows.last_mut())
             {
+                row.edit_source = Some(interconnect::connected::EditSource::from_prepared(
+                    &prepared,
+                ));
                 row.formatted = prepared.document.clone().or_else(|| {
                     interconnect::message_document::Document::plain_links(&row.body)
                         .map(std::sync::Arc::new)
                 });
+            }
+        }
+    }
+    pub fn edit_message(
+        &mut self,
+        room: &str,
+        event: &str,
+        prepared: &interconnect::composition::Prepared,
+    ) {
+        for (key, rows) in &mut self.conversations {
+            if key.room == room {
+                for row in rows
+                    .iter_mut()
+                    .filter(|row| row.event_id.as_deref() == Some(event))
+                {
+                    row.body = prepared.source.clone();
+                    row.edit_source =
+                        Some(interconnect::connected::EditSource::from_prepared(prepared));
+                    row.formatted = prepared.document.clone().or_else(|| {
+                        interconnect::message_document::Document::plain_links(&row.body)
+                            .map(std::sync::Arc::new)
+                    });
+                    row.edited = true;
+                }
             }
         }
     }
@@ -644,6 +700,7 @@ impl Demo {
             &body,
         );
         outgoing.is_own = true;
+        outgoing.edit_source = Some(interconnect::connected::EditSource::plain(body.clone()));
         outgoing.thread_root = key.root.clone();
         if key.root.is_some() {
             self.conversations

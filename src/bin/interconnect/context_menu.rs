@@ -207,6 +207,14 @@ impl App {
                     return Vec::new();
                 };
                 let mut actions = vec![("Copy text", Action::Copy(row.body.clone()))];
+                if self.can_edit_message(target) {
+                    actions.push((
+                        "Edit message",
+                        Action::Dispatch(Message::Editing(super::message_edit::Event::Start(
+                            target.clone(),
+                        ))),
+                    ));
+                }
                 if !target.thread {
                     actions.push((
                         "Reply in thread",
@@ -844,5 +852,41 @@ mod tests {
         assert!(app.context_menu.is_none());
         open(&mut app, &original);
         assert!(app.context_menu.is_none());
+    }
+    #[test]
+    fn edit_menu_only_offers_own_messages_and_rechecks_the_source_on_selection() {
+        let mut app = demo_app();
+        let own = target(&app, false, "proposal");
+        let other = target(&app, false, "review");
+        assert!(
+            app.context_actions(&own)
+                .iter()
+                .any(|(label, _)| *label == "Edit message")
+        );
+        assert!(
+            !app.context_actions(&other)
+                .iter()
+                .any(|(label, _)| *label == "Edit message")
+        );
+        open(&mut app, &own);
+        let rows = std::sync::Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows);
+        let source = rows
+            .iter_mut()
+            .find(|row| row.key == "proposal")
+            .unwrap()
+            .edit_source
+            .take();
+        choose(&mut app, &own, "Edit message");
+        let key = app.draft_key(false).unwrap();
+        assert!(app.drafts[&key].editing.is_none());
+        let rows = std::sync::Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows);
+        rows.iter_mut()
+            .find(|row| row.key == "proposal")
+            .unwrap()
+            .edit_source = source;
+        open(&mut app, &own);
+        choose(&mut app, &own, "Edit message");
+        assert!(app.context_menu.is_none());
+        assert!(app.drafts[&key].editing.is_some());
     }
 }

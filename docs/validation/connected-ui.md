@@ -53,6 +53,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens and focuses the room composer once its pane loads, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
 | Room creation | Ctrl+Shift+N or the **Create room** icon opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
+| Message editing | Use the pencil button in a message’s hover action popover, right-click and choose **Edit message**, or press Up in an empty focused composer to edit the latest own message in that conversation. Save uses the configured send shortcut; Cancel or Escape restores the previous draft. Check room messages, thread originals/replies, and navigation away and back. |
 | Composer | Text and toolbar occupy separate rows within one focus-highlighted surface, aligned with the reading column. Attachment/emoji controls sit together on the left; the format pill and eye icon control literal/Markdown mode and preview. Send is blue when enabled and muted when unavailable. Attachments use an inline chip with filename ellipsis; errors stay inside the surface. Check multiline editing/scrolling, focus, toolbar hit targets, staged captions, preview toggling, and keyboard shortcuts in room and thread panes at 640×480. |
 | Drafts and scrolling | Room/thread drafts and reading positions survive navigation and dialogs. Jump-to-newest resumes following incoming messages. |
 | Context menus | Right-click a room entry for **Open room**, **Move to section…**, and **Copy room ID**. The section picker includes empty custom sections, Favorites, Low priority, and Default; the current section is checked. Messages in rooms, thread originals, and replies offer **Copy text**, reactions, and permission-gated pin/unpin; room messages also offer **Reply in thread**. Thread summaries offer **Open thread** and **Copy thread ID**. Menus stay inside the window, dismiss on Escape/outside click/focus loss, and preserve drafts and reading positions. An outside click dismisses without activating the item underneath. |
@@ -1104,3 +1105,60 @@ regressions, and `cargo build --locked --bin interconnect` all passed. Two
 existing environment-dependent library tests remain ignored. Desktop/manual,
 connected-account interoperability and production resource measurements were
 not performed; the user's connected client was not restarted or used for tests.
+
+## Message editing — 2026-11-17
+
+Room messages, thread originals, and thread replies offer a pencil **Edit message**
+button in their hover action popover and an **Edit message** context-menu action
+for own text messages and emotes that have an event ID. Up in an empty focused
+composer selects the latest eligible own message; room Up skips thread replies.
+Thread Up selects own replies; thread originals remain editable through their
+hover action popover or context menu. Nonempty drafts, whitespace-only drafts, selection shortcuts, and
+IME composition retain normal editor behavior. Attachments, notices, redactions,
+and unsent messages without an event ID have no editing action.
+
+Editing uses the existing composer with an **Editing message** banner,
+**Save**, and **Cancel**. The configured send shortcut saves; Escape while the
+editor has focus cancels. An earlier draft, staged attachment, authoring mode,
+cursor, and composer height return after cancellation or queue admission.
+Each conversation keeps its own edit across room/thread navigation, while space
+filtering leaves the conversation open. Once saving starts, the captured edit
+finishes against its original account/room; Cancel is disabled until admission
+completes. Formatting/admission failures retain the edit and show an error.
+Delivery after admission uses the SDK's existing send queue.
+
+Plain messages start in Plain text mode. Formatted messages start from their
+plain fallback in Markdown mode; Markdown authored by this client, emote type,
+existing mentions, and custom emoji shortcode/image bindings are retained.
+Arbitrary HTML formatting from other clients cannot be round-tripped through
+this source editor. Review its preview before saving such a message. Edited
+rows show a quiet **edited** label without changing event identity or timestamp.
+Editing adds no polling subscription or animation timer.
+
+Automated coverage includes offline replacement payloads (`m.replace` and
+`m.new_content`), emote type, mentions, thread identity, incoming edit projection,
+redaction rejection, plain/Markdown authoring, custom emoji after SDK sanitizing,
+draft/attachment/cursor restoration, navigation, errors, and stale account/edit
+completions. Layout tests cover Save/Cancel placement at 640×480 and 1240×820 and
+settled redraws returning `Wait`. On 2026-11-17, formatting, workspace Clippy with
+warnings denied, workspace tests (161 library tests passed, two ignored), the
+final desktop suite (290 passed), and the locked desktop build passed. A Wayland
+software-renderer demo capture confirmed the edit banner and controls at the
+compositor-provided 636×1162 viewport; requested window sizes were overridden.
+The capture harness and images stayed outside the final repository changes.
+Live-account editing, encrypted interoperability, native macOS, and manual
+pointer/keyboard acceptance remain untested. No connected client was restarted
+and no real Matrix test events were sent.
+
+For manual acceptance in `--demo`, edit a Jamie Davis message in Design studio
+using the hover popover’s pencil button and the context menu, first with a
+nonempty draft and staged attachment. Cancel and verify the draft
+returns. Save a multiline Markdown change, open its thread, and confirm the same
+body appears in the original without an extra reply. Send a local thread reply,
+then edit it with Up and with the context menu. Navigate to another room and
+back during editing; switch spaces; verify each composer and reading position.
+Repeat at 640×480 and check Save/Cancel and preview placement. Connected
+acceptance with an authorized test account should confirm encrypted edits in
+another client, offline queue delivery, server refusal/retry, and simultaneous
+edits/redactions from another device. No real Matrix events are needed for demo
+or automated fixture checks.
