@@ -526,36 +526,56 @@ impl App {
                         .to_string()
                 })
                 .unwrap_or_default();
+            let open = super::tooltips::tooltip(
+                container(
+                    button(
+                        container(super::icons::icon(super::icons::Kind::ChevronRight))
+                            .center_x(28)
+                            .center_y(28),
+                    )
+                    .padding(0)
+                    .style(shell::icon_button)
+                    .on_press(message(Event::Conversation(
+                        state.epoch,
+                        hit.room.clone(),
+                        hit.event.clone(),
+                    ))),
+                )
+                .id("search-result-open"),
+                if hit.thread_root.is_some() {
+                    "Go to reply"
+                } else {
+                    "Go to message"
+                },
+                iced::widget::tooltip::Position::Bottom,
+            );
             entries = entries.push(
                 container(
                     column![
                         row![
-                            shell::title(name, 14).width(Length::Fill),
+                            super::single_line::label(name, 14).font(iced::Font {
+                                weight: iced::font::Weight::Semibold,
+                                ..iced::Font::with_name("Inter")
+                            }),
+                            open
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
+                        row![
+                            text(&hit.sender)
+                                .size(12)
+                                .color(shell::MUTED)
+                                .width(Length::Fill),
                             text(date).size(11).color(shell::MUTED)
                         ]
                         .spacing(8),
-                        text(&hit.sender).size(12).color(shell::MUTED),
                         selectable::search_view(&hit.event, &hit.body, &state.submitted),
-                        button(
-                            text(if hit.thread_root.is_some() {
-                                "Go to reply"
-                            } else {
-                                "Go to message"
-                            })
-                            .size(12)
-                        )
-                        .style(shell::quiet_button)
-                        .on_press(message(Event::Conversation(
-                            state.epoch,
-                            hit.room.clone(),
-                            hit.event.clone()
-                        ))),
                     ]
                     .spacing(6),
                 )
                 .padding(14)
                 .width(Length::Fill)
-                .style(container::rounded_box),
+                .style(shell::result_row),
             );
         }
         if let Some(error) = &state.error {
@@ -629,27 +649,42 @@ impl App {
                     .on_press(message(Event::More)),
             );
         }
-        container(
-            column![
-                heading,
-                text(coverage).size(12).color(shell::MUTED),
-                row![input, search]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
-                text(format!("{} results", state.hits.len()))
-                    .size(12)
-                    .color(shell::MUTED),
-                history_controls,
-                rule::horizontal(1),
-                scrollable(entries)
-                    .id("global-search-results")
-                    .direction(shell::scrollbar())
-                    .style(shell::scroll_style)
-                    .height(Length::Fill)
-            ]
-            .spacing(14),
-        )
-        .padding(24)
+        let controls = column![
+            heading,
+            text(coverage).size(12).color(shell::MUTED),
+            row![input, search]
+                .spacing(8)
+                .align_y(iced::Alignment::Center),
+            text(format!("{} results", state.hits.len()))
+                .size(12)
+                .color(shell::MUTED),
+            history_controls,
+        ]
+        .spacing(12);
+        column![
+            self.room_column(
+                container(controls)
+                    .padding([16, 24])
+                    .width(Length::Fill)
+                    .id("global-search-header")
+            ),
+            rule::horizontal(1),
+            scrollable(
+                self.room_column(
+                    container(entries)
+                        .padding([16, 24])
+                        .width(Length::Fill)
+                        .id("global-search-column")
+                )
+            )
+            .id("global-search-results")
+            .width(Length::Fill)
+            .direction(shell::scrollbar())
+            .style(shell::scroll_style)
+            .height(Length::Fill),
+        ]
+        .spacing(0)
+        .width(Length::Fill)
         .height(Length::Fill)
         .into()
     }
@@ -840,6 +875,112 @@ mod tests {
                 );
                 if milliseconds > 0 {
                     assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn secondary_pages_share_the_reading_column_and_keep_full_width_scrollbars() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+        #[derive(Default)]
+        struct Probe {
+            columns: Vec<iced::Rectangle>,
+            viewport: Option<iced::Rectangle>,
+            open: Option<iced::Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if [
+                    "global-search-header",
+                    "global-search-column",
+                    "saved-header",
+                    "saved-column",
+                ]
+                .iter()
+                .any(|name| id == Some(&widget::Id::new(name)))
+                {
+                    self.columns.push(bounds);
+                }
+                if id == Some(&widget::Id::new("search-result-open")) {
+                    self.open = Some(bounds);
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _: iced::Rectangle,
+                _: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("global-search-results"))
+                    || id == Some(&widget::Id::new("saved-messages"))
+                {
+                    self.viewport = Some(bounds);
+                }
+            }
+        }
+        let mut app = demo_app();
+        app.global_search.query = "hello".into();
+        app.global_search.submitted = "hello".into();
+        app.global_search.hits = vec![sample("studio", "one", "hello wrapped text")];
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        for (width, limited) in [(310.0_f32, true), (1200.0, true), (1200.0, false)] {
+            app.settings.current.appearance.limit_room_width = limited;
+            let expected = if limited {
+                width.min(crate::presentation::MESSAGE_WIDTH)
+            } else {
+                width
+            };
+            let size = iced::Size::new(width, 700.0);
+            for saved in [false, true] {
+                let mut view = if saved {
+                    app.bookmarks_view()
+                } else {
+                    app.global_search_view()
+                };
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                assert_eq!(probe.columns.len(), 2);
+                for bounds in probe.columns {
+                    assert!((bounds.width - expected).abs() < 0.1);
+                    assert!((bounds.center_x() - width / 2.0).abs() < 0.1);
+                }
+                assert_eq!(probe.viewport.unwrap().width, width);
+                if !saved {
+                    let point = probe.open.unwrap().center();
+                    let mut messages = Vec::new();
+                    for event in [
+                        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                        iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                    ] {
+                        view.as_widget_mut().update(
+                            &mut tree,
+                            &event,
+                            layout::Layout::new(&node),
+                            mouse::Cursor::Available(point),
+                            &renderer,
+                            &mut iced::advanced::clipboard::Null,
+                            &mut Shell::new(&mut messages),
+                            &iced::Rectangle::with_size(size),
+                        );
+                    }
+                    assert!(messages.iter().any(|m| matches!(m, Message::GlobalSearch(Event::Conversation(_, room, event)) if room == "studio" && event == "one")));
                 }
             }
         }

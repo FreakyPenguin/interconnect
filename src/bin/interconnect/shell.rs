@@ -338,6 +338,17 @@ pub fn message_actions<'a>(
         dismiss,
     )
 }
+pub(super) fn result_row(_: &Theme) -> container::Style {
+    container::Style {
+        border: Border {
+            color: LINE,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
 pub(super) fn select_style(theme: &iced::Theme, status: pick_list::Status) -> pick_list::Style {
     let mut style = pick_list::default(theme, status);
     style.background = iced::Color::WHITE.into();

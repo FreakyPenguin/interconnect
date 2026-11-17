@@ -191,6 +191,20 @@ Clippy pass. Browse, Add Emoji, and removal confirmation were visually checked
 in the isolated Sway/tiny-skia demo at 1280×900 and 640×480. Connected acceptance
 and macOS/wgpu rendering remain untested for this extension.
 
+Search and Saved messages now use the same centered reading column as room
+content, respecting **Appearance → Limit room content width**. Their scrollbars
+remain at the panel edge in either width mode. Results use light outlined rows
+instead of filled gray blocks, with room, sender, and date separated from message
+text. Search navigation uses a compact, tooltip-labelled open control; bookmark
+navigation/removal and result text selection/highlighting retain their actions.
+Automated layout coverage checks both pages at narrow and wide widths, restriction
+on/off, viewport width, and real search-result click routing. Existing async,
+stale-update, pagination, bookmark, draft/scroll, and idle tests remain in place.
+Formatting, workspace Clippy, and all 271 UI tests pass. Search results and empty
+Saved messages were checked in the isolated Sway/tiny-skia demo at 1280×900 and
+640×480. Connected acceptance and macOS/wgpu rendering remain untested for this
+extension.
+
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
 Checks included expanding/collapsing pins, message-action icons, and scrolling

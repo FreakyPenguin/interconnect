@@ -410,7 +410,11 @@ impl App {
                     ),
             );
             let mut content: iced::widget::Column<'_, Message> =
-                column![shell::title(name, 14)].spacing(6);
+                column![super::single_line::label(name, 14).font(iced::Font {
+                    weight: iced::font::Weight::Semibold,
+                    ..iced::Font::with_name("Inter")
+                })]
+                .spacing(6);
             if let Some(preview) = preview {
                 if !preview.sender.is_empty() {
                     content = content.push(text(&preview.sender).size(12).color(shell::MUTED));
@@ -433,7 +437,7 @@ impl App {
                 container(content.push(actions))
                     .padding(16)
                     .width(Length::Fill)
-                    .style(|_| shell::surface(iced::Color::from_rgb8(246, 247, 249))),
+                    .style(shell::result_row),
             );
         }
         if self.bookmarks.start() > 0 {
@@ -451,27 +455,43 @@ impl App {
             );
         }
         column![
-            container(
-                row![
-                    shell::title("Saved messages", 20),
-                    iced::widget::space().width(Length::Fill),
-                    button("Refresh")
-                        .style(shell::quiet_button)
-                        .on_press(message(Event::Refresh)),
-                    button("Back")
-                        .style(shell::quiet_button)
-                        .on_press(message(Event::Close))
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center)
-            )
-            .padding([18, 24]),
+            self.room_column(
+                container(
+                    row![
+                        super::single_line::label("Saved messages", 20).font(iced::Font {
+                            weight: iced::font::Weight::Semibold,
+                            ..iced::Font::with_name("Inter")
+                        }),
+                        button(text("Refresh").size(13))
+                            .padding([7, 10])
+                            .style(shell::quiet_button)
+                            .on_press(message(Event::Refresh)),
+                        button(text("Back").size(13))
+                            .padding([7, 10])
+                            .style(shell::quiet_button)
+                            .on_press(message(Event::Close))
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center)
+                )
+                .padding([14, 24])
+                .width(Length::Fill)
+                .id("saved-header")
+            ),
             rule::horizontal(1),
-            scrollable(container(entries).padding(24).width(Length::Fill))
-                .id("saved-messages")
-                .direction(shell::scrollbar())
-                .style(shell::scroll_style)
-                .height(Length::Fill),
+            scrollable(
+                self.room_column(
+                    container(entries)
+                        .padding([16, 24])
+                        .width(Length::Fill)
+                        .id("saved-column")
+                )
+            )
+            .id("saved-messages")
+            .width(Length::Fill)
+            .direction(shell::scrollbar())
+            .style(shell::scroll_style)
+            .height(Length::Fill),
         ]
         .height(Length::Fill)
         .into()
