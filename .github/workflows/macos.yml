@@ -50,8 +50,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-downloads-
 
-      - name: Build desktop app bundle
-        run: bash scripts/bundle-macos.sh
+      - name: Build release desktop app bundle
+        run: bash scripts/bundle-macos.sh --release
 
       - name: Verify app signature
         run: codesign --verify --strict --verbose=2 target/Interconnect.app

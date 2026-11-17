@@ -82,6 +82,9 @@ ad-hoc signs it for local development. It does not launch the application. With
 identifier is `io.github.interconnect.desktop`. Distribution signing/notarization
 remain release work.
 
+The command above builds the debug profile. Use `./scripts/bundle-macos.sh --release`
+to validate the optimized profile packaged by macOS CI; the bundle path is the same.
+
 Send the sample in Settings, accept the permission prompt, and inspect
 Notification Center. Denial appears as an actionable error. Enable Interconnect
 in **System Settings → Notifications**, then retry and check again after

@@ -50,12 +50,30 @@ daily at 04:43 UTC on the default branch. It follows stable Rust and uses the
 runner's Xcode command-line tools. Cargo downloads are cached, and compilation
 is limited to two concurrent jobs to fit the runner's memory.
 
-The workflow runs `scripts/bundle-macos.sh`, which builds the debug client with
-`--locked`, validates its Info.plist, and creates an ad-hoc-signed `.app`; CI then
-verifies that signature and uploads a bleeding-edge download. It does not launch
-the app or perform distribution signing/notarization. Tests and Clippy remain
-in Linux CI.
+The workflow runs `scripts/bundle-macos.sh --release`, which builds the optimized
+client with `--locked`, validates its Info.plist, and creates an ad-hoc-signed
+`.app`; CI then verifies that signature and uploads a bleeding-edge download.
+It does not launch the app or perform distribution signing/notarization. Tests
+and Clippy remain in Linux CI.
 Intel builds and native account/desktop validation are separate follow-up work.
+
+The bundle script defaults to a debug build for local development; pass
+`--release` to reproduce the CI build. Large unoptimized macOS binaries can exceed
+the linker's 16 MiB DWARF offset limit for compact unwind tables, producing
+`__eh_frame section too large`. This is a successful-link warning about unwind
+performance, also tracked in [rust-lang/rust#159105](https://github.com/rust-lang/rust/issues/159105).
+Optimizing the downloadable build is intended to reduce its unwind data; whether
+it removes this warning needs confirmation in a native macOS CI run. Unwinding
+and linker diagnostics remain enabled.
+
+The separate future-incompatibility notice for `block 0.1.6` comes from the
+macOS GPU dependency chain (`iced` → `wgpu` → `wgpu-hal`/`metal` → `block`),
+as checked with `cargo tree --locked --target aarch64-apple-darwin -i block@0.1.6`.
+It remains unresolved in the locked dependencies. The bundle build includes
+`--future-incompat-report` so its actual compiler diagnostics appear in CI logs;
+release optimization does not fix dependency compatibility. Recheck this chain
+when updating Iced/wgpu, and verify that a dependency update or targeted upstream
+fix removes the reported lint before considering it resolved.
 
 ### Download a bleeding-edge macOS build
 
@@ -67,7 +85,7 @@ newest successful default-branch run. Pull-request runs contain that PR's code.
 
 Extract `Interconnect-macos-arm64.tar.gz` to get `Interconnect.app`, then move it
 to Applications if desired. The archive preserves executable permissions.
-These are experimental debug builds for Apple Silicon only, signed ad hoc and
+These are experimental optimized builds for Apple Silicon only, signed ad hoc and
 not notarized; macOS Gatekeeper may block opening them. They are not distribution
 releases, and native account/desktop behavior still needs validation. To try the
 UI without an account, run:
