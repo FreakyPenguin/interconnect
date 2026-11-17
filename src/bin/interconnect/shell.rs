@@ -320,11 +320,6 @@ pub fn message_actions<'a>(
             width: 1.0,
             radius: 6.0.into(),
         },
-        shadow: iced::Shadow {
-            color: Color::BLACK.scale_alpha(0.08),
-            offset: iced::Vector::new(0.0, 1.0),
-            blur_radius: 4.0,
-        },
         ..surface(Color::WHITE)
     });
     // Hover only paints the panel; the message keeps its full layout width.

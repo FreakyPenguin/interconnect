@@ -12,6 +12,7 @@ pub const SEARCH_ID: &str = "emoji-picker-search";
 /// A shared surface for picker hosts, including any host-specific status text.
 pub fn panel<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(content)
+        .id("emoji-picker-panel")
         .padding(12)
         .width(320)
         .height(400)
@@ -129,17 +130,13 @@ impl Catalog {
     }
 }
 
+// Use borders for popup separation: tiny-skia shadows can repaint outside damage.
 pub fn surface(_: &iced::Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         border: iced::Border {
             color: iced::Color::from_rgb8(228, 232, 237),
             width: 1.0,
             radius: 10.0.into(),
-        },
-        shadow: iced::Shadow {
-            color: iced::Color::BLACK.scale_alpha(0.15),
-            offset: iced::Vector::new(0.0, 3.0),
-            blur_radius: 12.0,
         },
         ..shell::surface(iced::Color::WHITE)
     }

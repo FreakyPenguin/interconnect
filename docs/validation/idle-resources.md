@@ -158,3 +158,11 @@ shutdown operations. Only the selected remote emoji enters media demand; local
 file previews are decoded off the UI thread. New text fields disable cursor
 blinking. Automated minimum-window redraw checks introduce no scheduled timer;
 production CPU, native file-dialog cancellation and macOS remain unmeasured.
+
+### Popup presentation — 2026-11-17
+
+Composer picker alignment and border-only popup surfaces add no subscriptions,
+workers, redraw loops or timers. Regression coverage checks outside-click capture
+without a scheduled redraw; existing search/disabled-picker coverage checks idle
+caret behavior. Tiny-skia damage-artifact acceptance and fresh process CPU/wakeup
+measurements remain separate manual checks; no production resource claim is made.

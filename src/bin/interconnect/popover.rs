@@ -11,7 +11,23 @@ pub fn view<'a, Message: Clone + 'a>(
     content: Option<Element<'a, Message>>,
     dismiss: Message,
 ) -> Element<'a, Message> {
-    make_view(base, anchor_id, content, dismiss, true)
+    make_view(base, anchor_id, content, dismiss, true, AnchorEdge::End)
+}
+
+/// Align a modal popup to the start of its anchor, keeping viewport clamping.
+pub fn start_aligned<'a, Message: Clone + 'a>(
+    base: impl Into<Element<'a, Message>>,
+    anchor_id: Option<widget::Id>,
+    content: Option<Element<'a, Message>>,
+    dismiss: Message,
+) -> Element<'a, Message> {
+    make_view(base, anchor_id, content, dismiss, true, AnchorEdge::Start)
+}
+
+#[derive(Clone, Copy)]
+enum AnchorEdge {
+    Start,
+    End,
 }
 
 /// A context trigger captures only right presses inside the visible widget.
@@ -26,6 +42,7 @@ pub fn context_trigger<'a, Message: Clone + 'a>(
         content: None,
         dismiss,
         modal: true,
+        edge: AnchorEdge::End,
         position: None,
         on_context: Some(Box::new(open)),
     })
@@ -44,6 +61,7 @@ pub fn at_position<'a, Message: Clone + 'a>(
         content,
         dismiss,
         modal: true,
+        edge: AnchorEdge::End,
         position,
         on_context: None,
     })
@@ -55,7 +73,7 @@ pub fn suggestions<'a, Message: Clone + 'a>(
     content: Option<Element<'a, Message>>,
     dismiss: Message,
 ) -> Element<'a, Message> {
-    make_view(base, None, content, dismiss, false)
+    make_view(base, None, content, dismiss, false, AnchorEdge::Start)
 }
 fn make_view<'a, Message: Clone + 'a>(
     base: impl Into<Element<'a, Message>>,
@@ -63,6 +81,7 @@ fn make_view<'a, Message: Clone + 'a>(
     content: Option<Element<'a, Message>>,
     dismiss: Message,
     modal: bool,
+    edge: AnchorEdge,
 ) -> Element<'a, Message> {
     Element::new(Popover {
         base: base.into(),
@@ -70,6 +89,7 @@ fn make_view<'a, Message: Clone + 'a>(
         content,
         dismiss,
         modal,
+        edge,
         position: None,
         on_context: None,
     })
@@ -80,6 +100,7 @@ struct Popover<'a, Message> {
     content: Option<Element<'a, Message>>,
     dismiss: Message,
     modal: bool,
+    edge: AnchorEdge,
     position: Option<iced::Point>,
     on_context: Option<Box<dyn Fn(iced::Point) -> Message + 'a>>,
 }
@@ -251,6 +272,7 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
                 anchor: bounds + translation,
                 dismiss: self.dismiss.clone(),
                 modal: self.modal,
+                edge: self.edge,
                 position: self.position,
             })))
         } else {
@@ -270,6 +292,7 @@ struct Popup<'a, 'b, Message> {
     anchor: Rectangle,
     dismiss: Message,
     modal: bool,
+    edge: AnchorEdge,
     position: Option<iced::Point>,
 }
 impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_, Message> {
@@ -287,7 +310,7 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
         let size = node.size();
         let x = (if let Some(position) = self.position {
             position.x
-        } else if self.modal {
+        } else if matches!(self.edge, AnchorEdge::End) {
             self.anchor.x + self.anchor.width - size.width
         } else {
             self.anchor.x
@@ -642,6 +665,62 @@ mod tests {
             node.children()[0].bounds(),
             Rectangle::new(iced::Point::new(48.0, 154.0), Size::new(80.0, 40.0))
         );
+    }
+
+    #[test]
+    fn composer_start_alignment_preserves_default_end_alignment_and_window_clamping() {
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = Size::new(1280.0, 900.0);
+        for (start, anchor_x, expected_x) in [
+            (true, 350.0, 350.0),
+            (false, 350.0, 58.0),
+            (true, 1170.0, 952.0),
+        ] {
+            let content = Some(container(space()).width(320).height(400).into());
+            let anchor = container(space()).width(28).height(28);
+            let mut popup = if start {
+                start_aligned(anchor, None, content, true)
+            } else {
+                view(anchor, None, content, true)
+            };
+            let mut tree = Tree::new(&popup);
+            let node = popup.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, size),
+            );
+            let mut overlay = popup
+                .as_widget_mut()
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &Rectangle::with_size(size),
+                    Vector::new(anchor_x, 850.0),
+                )
+                .unwrap();
+            let overlay = overlay.as_overlay_mut();
+            let node = overlay.layout(&renderer, size);
+            let bounds = node.children()[0].bounds();
+            assert_eq!(bounds.x, expected_x);
+            assert_eq!(bounds.y, 446.0, "composer popup opens above its toolbar");
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            overlay.update(
+                &Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Layout::new(&node),
+                mouse::Cursor::Available(iced::Point::new(1.0, 1.0)),
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+            );
+            assert!(shell.is_event_captured());
+            assert!(!matches!(
+                shell.redraw_request(),
+                iced::window::RedrawRequest::At(_)
+            ));
+            assert_eq!(messages, vec![true]);
+        }
     }
 
     #[test]

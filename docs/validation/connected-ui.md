@@ -65,6 +65,19 @@ tiny-skia at 1280×900: account name, header search, message timestamp near the
 right edge, and room-list toggle. macOS, wgpu, long topics, and multiline read
 receipts remain manual acceptance checks.
 
+Popup placement and surfaces (2026-11-17): the composer emoji picker starts at
+its toolbar button and clamps to the window; reaction pickers retain their end
+alignment and context menus retain their captured cursor position. Picker,
+context-menu, tooltip and message-action surfaces use opaque backgrounds and
+borders without shadows, following the Settings workaround for tiny-skia damage
+artifacts. Automated coverage checks start/end alignment, translated anchors,
+viewport clamping, outside-click capture and absence of scheduled redraws;
+existing picker tests cover selection, disabled controls, stale targets and drafts.
+All 274 UI tests, formatting, and workspace Clippy pass. Composer placement and
+opaque surfaces were checked in the isolated Sway/tiny-skia demo at 1280×900 and
+640×480. Reaction-picker/menu scrolling, macOS/wgpu, connected acceptance, and
+fresh resource measurements remain separate manual checks.
+
 The sidebar pass was visually checked in an isolated headless Sway/tiny-skia demo
 at 1280×900 and 640×480: fixed-height room rows, long-name ellipsis and hover
 tooltips, unread emphasis, hidden empty badges, collapsed section counts, and

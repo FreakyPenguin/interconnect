@@ -568,11 +568,6 @@ impl App {
                             width: 1.0,
                             radius: 8.0.into(),
                         },
-                        shadow: iced::Shadow {
-                            color: iced::Color::BLACK.scale_alpha(0.12),
-                            offset: iced::Vector::new(0.0, 3.0),
-                            blur_radius: 12.0,
-                        },
                         ..shell::surface(iced::Color::WHITE)
                     })
                     .into(),

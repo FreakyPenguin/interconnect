@@ -218,7 +218,7 @@ impl App {
                     })
                 },
             );
-            return popover::view(
+            return popover::start_aligned(
                 composer,
                 Some(iced::advanced::widget::Id::new("composer-emoji")),
                 Some(emoji_picker::panel(picker)),
@@ -464,6 +464,7 @@ mod tests {
             send: Option<iced::Rectangle>,
             choice: Option<iced::Rectangle>,
             editor: Option<iced::Rectangle>,
+            panel: Option<iced::Rectangle>,
         }
         impl widget::Operation for Probe {
             fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
@@ -473,6 +474,7 @@ mod tests {
                 for (name, target) in [
                     ("composer-emoji", &mut self.open),
                     ("composer-send", &mut self.send),
+                    ("emoji-picker-panel", &mut self.panel),
                     ("emoji-choice:🚀", &mut self.choice),
                 ] {
                     if id == Some(&widget::Id::new(name)) {
@@ -498,7 +500,7 @@ mod tests {
             }
         }
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-        for thread in [false, true] {
+        for (thread, width) in [(false, 300.0), (true, 300.0), (false, 720.0), (true, 720.0)] {
             let mut app = crate::tests::demo_app();
             let _ = app.update(Message::Thread("review".into()));
             app.settings.current.composer.send_shortcut =
@@ -508,7 +510,7 @@ mod tests {
                 text_editor::Content::with_text("draft");
             let messages_before = app.model.room.as_ref().unwrap().rows.len();
             let mut tree = Tree::empty();
-            let size = iced::Size::new(300.0, 480.0);
+            let size = iced::Size::new(width, 480.0);
             let mut view = app.pane(thread);
             tree.diff(view.as_widget());
             let node =
@@ -585,6 +587,14 @@ mod tests {
             );
             let mut probe = Probe::default();
             overlay.operate(Layout::new(&node), &renderer, &mut probe);
+            let panel = probe.panel.expect("picker panel visible");
+            assert_eq!(
+                panel.x,
+                button
+                    .x
+                    .clamp(8.0, (size.width - panel.width - 8.0).max(8.0)),
+                "composer picker starts at its emoji button when there is room"
+            );
             let choice = probe.choice.expect("picker immediately visible");
             assert!(choice.y >= 0.0 && choice.y + choice.height <= size.height);
             let events = if thread {
