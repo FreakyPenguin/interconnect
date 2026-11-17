@@ -1,5 +1,9 @@
 # Interconnect
 
+<a href="docs/logo.svg">
+  <img src="docs/logo.svg" alt="Interconnect processor speech-bubble logo" width="160" height="160">
+</a>
+
 Interconnect is a native desktop [Matrix](https://matrix.org/) client written in
 Rust with [Iced](https://iced.rs/) and the
 [Matrix Rust SDK](https://github.com/matrix-org/matrix-rust-sdk). It aims to be

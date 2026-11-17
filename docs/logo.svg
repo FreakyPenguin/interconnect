@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"
+     viewBox="0 0 1254 1254" stroke="none"
+     role="img" aria-labelledby="title description">
+  <title id="title">Interconnect</title>
+  <desc id="description">A yellow-green processor shaped like a speech bubble,
+    with cyan input pins, an orange indicator, and two connected message routes
+    cut into its center, on a charcoal background.</desc>
+
+  <rect width="1254" height="1254" fill="#50514f"/>
+
+  <!-- Input pins. -->
+  <g fill="#55badd">
+    <rect x="189" y="444" width="121" height="133" rx="23"/>
+    <rect x="189" y="692" width="121" height="133" rx="23"/>
+  </g>
+
+  <!-- Processor package and reply tail, with the message routes cut out. -->
+  <g fill="#c1be3f">
+    <rect x="459" y="187" width="147" height="124" rx="22"/>
+    <rect x="736" y="187" width="147" height="124" rx="22"/>
+    <path fill-rule="evenodd" d="
+      M 357 289
+      H 969 Q 978 289 985 296
+      L 1032 343 Q 1039 350 1039 361
+      V 888 Q 1039 900 1031 908
+      L 986 953 Q 978 961 967 961
+      H 957 Q 947 961 947 971
+      V 1097 Q 947 1118 929 1106
+      L 774 965 Q 770 961 765 961
+      H 359 Q 348 961 340 953
+      L 295 908 Q 287 900 287 889
+      V 360 Q 287 350 294 343
+      L 340 297 Q 348 289 357 289 Z
+
+      M 400 410
+      H 742 Q 751 410 758 417
+      L 807 474 Q 823 490 807 506
+      L 758 563 Q 751 570 742 570
+      H 679 V 679
+      H 919 Q 951 679 951 711
+      V 818 Q 951 850 919 850
+      H 542 Q 531 850 523 842
+      L 467 786 Q 451 770 467 754
+      L 531 687 Q 539 679 550 679
+      H 607 V 570
+      H 400 Q 370 570 370 540
+      V 440 Q 370 410 400 410 Z
+    "/>
+  </g>
+
+  <rect x="856" y="370" width="114" height="59" fill="#fa9452"/>
+</svg>
