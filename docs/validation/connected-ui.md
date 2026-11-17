@@ -17,6 +17,17 @@ For UI-only changes, use `cargo test --locked --bin interconnect` as the targete
 suite. Mock homeserver fixtures cover protocol and lifecycle behavior without
 accessing real accounts. They complement desktop and connected acceptance.
 
+Timeline-label regression coverage checks a single rendered thread entry and actual
+mouse routing to the expected thread in preview, missing-preview, search, and
+event-focus views. Layout checks compare empty/loading/error status bounds
+(including a missing snapshot and failed initial history), exercise the
+initial-history retry action, and verify retained rows after an error; existing
+history checks cover loading with rows and scroll preservation. Formatting,
+workspace Clippy, and all 276 UI tests pass. Room/thread metadata and empty,
+loading, and error layouts were checked in the isolated Sway/tiny-skia demo at
+1280×900 and 640×480. Connected acceptance and macOS/wgpu remain untested; no
+connected accounts were used.
+
 ## Demo checks
 
 ```sh
@@ -49,7 +60,8 @@ see [renderer selection](../development.md#renderer-selection).
 | Panel resizing | Drag the divider to the right of the room list or to the left of a split thread/People panel. The cursor changes to horizontal resize and the divider highlights on hover. Room-list, thread, and People widths are remembered independently for the current session. Viewport-dependent limits preserve usable conversation space. Narrow windows keep the existing replacement view for thread/People, without a side divider. |
 | Threads | The reply arrow or Alt+T opens a thread. Its original appears once above replies; long originals and replies scroll independently. |
 | Pinned messages | Studio → Design starts with a compact **2 pinned messages** disclosure. Expand/collapse it to show bounded, scrollable previews and permission-gated unpin buttons. Previews use the conversation rich-text renderer: check emphasis, lists, quotes, code, clickable links, and concealed spoilers. Space filters and thread navigation keep the disclosure; a newly opened room starts collapsed. Check long pins, unavailable/loading pins, and live additions/removals without losing the timeline reading position or drafts. |
-| Thread activity | Studio → Thread activity has interleaved replies. **New sample reply** updates the latest summary and new count for its thread. |
+| Thread activity | Studio → Thread activity has interleaved replies. Each loaded preview provides one reply count and opens its latest reply; its root omits the duplicate count link. Roots without loaded previews, and raw search/event-focus views, retain the root reply link. Preview headings show the latest sender; hover preserves root context and timestamp. **New sample reply** updates the latest summary and new count for its thread. |
+| Conversation states | Empty, opening, and initial-error messages occupy the same centered reading column above the composer. Failed initial history includes its retry action. Empty rooms omit **Beginning of conversation**. Loading or errors after messages arrive retain those rows and history controls. |
 | Event layout | Message-group timestamps sit beside sender names; same-sender continuations reveal their time in the avatar gutter on hover. Sender names truncate safely on narrow panes, with identity/date tooltips retained. Message content is capped at 840 px including padding on wide windows; the scrollbar stays at the pane edge. Check group spacing, text selection/copy, formatting, reactions, search, and scroll anchors after resizing. Studio → Room activity contains compact activity rows and long topics. |
 | Emoji | Studio → Emoji preview contains flags, skin tones, joined sequences, and text-presentation variants. Pickers insert glyphs; `:se` opens inline completion. |
 | Images | Studio → Images has ready and failed fixtures. Escape closes the original viewer, preserving drafts and scroll positions. Originals also open from threads. |

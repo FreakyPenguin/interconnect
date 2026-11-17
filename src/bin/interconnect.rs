@@ -2171,10 +2171,14 @@ impl App {
             &latest.display_name
         };
         let mut heading = row![
-            emoji::preview(format!("{author} replied to {topic}"))
-                .size(12)
-                .color(shell::MUTED)
-                .width(Length::Fill),
+            emoji::preview(if original.is_some() {
+                format!("{author} replied")
+            } else {
+                format!("{author} replied to {topic}")
+            })
+            .size(12)
+            .color(shell::MUTED)
+            .width(Length::Fill),
             text(format!(
                 "{replies} {}",
                 if replies == 1 { "reply" } else { "replies" }
@@ -2217,7 +2221,7 @@ impl App {
         }
         tooltips::tooltip(
             open,
-            presentation::time_detail(latest),
+            format!("Thread: {topic}\n{}", presentation::time_detail(latest)),
             iced::widget::tooltip::Position::Top,
         )
         .into()
@@ -2445,22 +2449,25 @@ impl App {
                 self.thread_original_view(),
             )])));
         }
-        let Some(pane) = current_pane(snapshot, *generation) else {
-            return content
-                .push(shell::empty_state(
-                    "Opening conversation…",
-                    "Messages will appear here shortly.",
-                ))
-                .into();
+        let pane = current_pane(snapshot, *generation);
+        let pane_rows = pane.map_or(&[][..], |pane| pane.rows.as_slice());
+        let pane_error = pane.and_then(|pane| pane.error.as_deref());
+        let history = pane.map_or(&History::Loading, |pane| &pane.history);
+        let history_revision = pane.map_or(0, |pane| pane.history_revision);
+        let retry_history = || {
+            let mut retry = button(text("Retry loading history").size(12))
+                .padding([4, 0])
+                .style(shell::quiet_button);
+            if pane.is_some_and(|pane| pane.load_older.is_some()) && !self.closing && !self.stopped
+            {
+                retry = retry.on_press(Message::LoadOlder {
+                    thread,
+                    generation: *generation,
+                    revision: history_revision,
+                });
+            }
+            container(retry).id("history-retry")
         };
-        if let Some(error) = &pane.error {
-            return content
-                .push(shell::empty_state(
-                    "Could not open this conversation",
-                    error,
-                ))
-                .into();
-        }
         let mut history_controls = column![].spacing(6);
         if let Some((current, _)) = &self.model.receipt_errors[usize::from(thread)]
             && current == generation
@@ -2471,8 +2478,13 @@ impl App {
                     .color(shell::MUTED),
             );
         }
-        match &pane.history {
-            History::Loading => {
+        if let Some(error) = pane_error
+            && !pane_rows.is_empty()
+        {
+            history_controls = history_controls.push(text(error).size(12).color(shell::MUTED));
+        }
+        match history {
+            History::Loading if !pane_rows.is_empty() => {
                 history_controls = history_controls.push(
                     text(if thread {
                         "Loading replies…"
@@ -2483,7 +2495,7 @@ impl App {
                     .color(shell::MUTED),
                 )
             }
-            History::Failed(error) => {
+            History::Failed(error) if !pane_rows.is_empty() => {
                 history_controls = history_controls.push(
                     text(format!(
                         "Could not load history: {error}. Live messages remain active."
@@ -2491,19 +2503,9 @@ impl App {
                     .size(12)
                     .color(shell::MUTED),
                 );
-                let mut retry = button(text("Retry loading history").size(12))
-                    .padding([4, 0])
-                    .style(shell::quiet_button);
-                if pane.load_older.is_some() && !self.closing && !self.stopped {
-                    retry = retry.on_press(Message::LoadOlder {
-                        thread,
-                        generation: *generation,
-                        revision: pane.history_revision,
-                    });
-                }
-                history_controls = history_controls.push(retry);
+                history_controls = history_controls.push(retry_history());
             }
-            History::End if !thread => {
+            History::End if !thread && !pane_rows.is_empty() => {
                 history_controls = history_controls.push(
                     container(
                         text("Beginning of conversation")
@@ -2511,10 +2513,11 @@ impl App {
                             .color(shell::MUTED),
                     )
                     .padding([12, 0])
-                    .center_x(Length::Fill),
+                    .center_x(Length::Fill)
+                    .id("history-beginning"),
                 )
             }
-            History::Ready | History::End => {}
+            History::Loading | History::Failed(_) | History::Ready | History::End => {}
         }
         let event_focus = self.selection.event_focus[usize::from(thread)]
             .as_ref()
@@ -2523,10 +2526,17 @@ impl App {
         let search_focus = (!thread).then(|| self.room_search_target()).flatten();
         let event_focus = search_focus.clone().or(event_focus);
         let rows = if !thread && (event_focus.is_some() || self.room_search_active()) {
-            pane.rows.iter().map(thread_activity::Row::Event).collect()
+            pane_rows.iter().map(thread_activity::Row::Event).collect()
         } else {
-            thread_activity::project(&pane.rows, thread.then_some(selected_id.as_str()))
+            thread_activity::project(pane_rows, thread.then_some(selected_id.as_str()))
         };
+        let preview_roots: std::collections::HashSet<_> = rows
+            .iter()
+            .filter_map(|row| match row {
+                thread_activity::Row::Thread { root, .. } => Some(*root),
+                _ => None,
+            })
+            .collect();
         let mut messages = column![history_controls].spacing(0).padding([16, 24]);
         for (index, projected) in rows.iter().copied().enumerate() {
             let message = projected.message();
@@ -2571,7 +2581,8 @@ impl App {
                         root: root.into(),
                     },
                 );
-                message_row = message_row.push(summary);
+                message_row =
+                    message_row.push(container(summary).id(format!("thread-entry:{root}")));
                 messages = messages.push(container(message_row).id(timeline::row_id(index)));
                 continue;
             }
@@ -2651,6 +2662,7 @@ impl App {
             if !thread
                 && message.thread_replies > 0
                 && let Some(id) = &message.event_id
+                && !preview_roots.contains(id.as_str())
             {
                 let mut label = if message.thread_replies == 1 {
                     "1 reply  ›".into()
@@ -2671,7 +2683,7 @@ impl App {
                 if !self.closing && !self.stopped {
                     replies = replies.on_press(Message::Thread(id.clone()));
                 }
-                entry = entry.push(replies);
+                entry = entry.push(container(replies).id(format!("thread-entry:{id}")));
             }
             let avatar: Element<'_, Message> = if activity {
                 container(shell::activity_avatar(
@@ -2760,16 +2772,6 @@ impl App {
             }
             messages = messages.push(message_row);
         }
-        if rows.is_empty() && matches!(pane.history, History::Ready | History::End) {
-            messages = messages.push(if thread {
-                shell::empty_state("No replies yet", "Reply below to start the thread.")
-            } else {
-                shell::empty_state(
-                    "The start of something",
-                    "Send the first message in this conversation.",
-                )
-            });
-        }
         let view_generation = *generation;
         let timeline = scrollable(self.room_column(messages))
             .width(Length::Fill)
@@ -2797,15 +2799,53 @@ impl App {
             timeline.into(),
             (
                 thread,
-                pane.history_revision,
-                !matches!(pane.history, History::Loading),
+                history_revision,
+                !matches!(history, History::Loading),
             ),
             self.selection.conversation_visible
                 && self.pending_scroll[usize::from(thread)].is_none()
-                && !matches!(pane.history, History::Loading),
+                && !matches!(history, History::Loading),
             focus.clone(),
         );
         let mut message_area = iced::widget::stack![observed];
+        if rows.is_empty() {
+            let status = if let Some(error) = pane_error {
+                Some(shell::empty_state(
+                    "Could not open this conversation",
+                    error,
+                ))
+            } else if matches!(history, History::Loading) {
+                Some(shell::empty_state(
+                    if thread {
+                        "Loading replies…"
+                    } else {
+                        "Opening conversation…"
+                    },
+                    "Messages will appear here shortly.",
+                ))
+            } else if let History::Failed(error) = history {
+                Some(shell::empty_state_with_action(
+                    "Could not load messages",
+                    error,
+                    Some(retry_history().into()),
+                ))
+            } else if matches!(history, History::Ready | History::End) {
+                Some(if thread {
+                    shell::empty_state("No replies yet", "Reply below to start the thread.")
+                } else {
+                    shell::empty_state(
+                        "The start of something",
+                        "Send the first message in this conversation.",
+                    )
+                })
+            } else {
+                None
+            };
+            if let Some(status) = status {
+                message_area = message_area
+                    .push(self.room_column(container(status).id("conversation-status")));
+            }
+        }
         // Keep the timeline in the same widget slot as this overlay appears and
         // disappears. The one-pixel tolerance accounts for layout rounding.
         if self.pending_scroll[usize::from(thread)].is_none()
@@ -2917,7 +2957,7 @@ impl App {
                 && !self.composing
                 && !draft.pending
                 && self.pending_ops < MAX_PENDING_OPERATIONS
-                && (pane.composer.is_some() || self.demo.is_some())
+                && pane.is_some_and(|pane| pane.composer.is_some() || self.demo.is_some())
                 && !self.attachment_picking(&key)
                 && (!draft.content.text().trim().is_empty() || draft.attachment.is_some())
             {
@@ -4363,6 +4403,194 @@ mod tests {
         });
         assert_eq!(app.saved_scroll(false), 0.0);
         assert_eq!(app.saved_scroll(true), 80.0);
+    }
+
+    #[derive(Default)]
+    struct TimelineEntries {
+        threads: Vec<iced::Rectangle>,
+        status: Option<iced::Rectangle>,
+        beginning: bool,
+        retry: Option<iced::Rectangle>,
+        rows: usize,
+    }
+    impl iced::advanced::widget::Operation for TimelineEntries {
+        fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation)) {
+            f(self);
+        }
+        fn container(&mut self, id: Option<&iced::advanced::widget::Id>, bounds: iced::Rectangle) {
+            use iced::advanced::widget::Id;
+            if id == Some(&Id::new("thread-entry:thread-plan")) {
+                self.threads.push(bounds);
+            }
+            if id == Some(&Id::new("conversation-status")) {
+                self.status = Some(bounds);
+            }
+            if id == Some(&Id::new("history-retry")) {
+                self.retry = Some(bounds);
+            }
+            if id == Some(&Id::new("history-beginning")) {
+                self.beginning = true;
+            }
+            if id == Some(&timeline::row_id(0)) {
+                self.rows += 1;
+            }
+        }
+    }
+
+    #[test]
+    fn thread_preview_is_the_single_counted_entry_and_opens_its_thread() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+        for mode in 0..4 {
+            let mut app = demo_app();
+            let _ = app.update(Message::Room("threads".into()));
+            match mode {
+                1 => {
+                    // Root metadata still provides entry when replies are not loaded.
+                    std::sync::Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows)
+                        .retain(|row| row.thread_root.as_deref() != Some("thread-plan"));
+                }
+                2 => {
+                    let generation = app.selection.room.as_ref().unwrap().0;
+                    app.selection.event_focus[0] = Some((generation, "thread-plan".into()));
+                }
+                3 => {
+                    let _ = app.update(Message::RoomSearch(room_search::Event::Open));
+                    let _ = app.update(Message::RoomSearch(room_search::Event::Edit("the".into())));
+                }
+                _ => {}
+            }
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let size = iced::Size::new(900.0, 1600.0);
+            let mut pane = app.pane_sized(false, size);
+            let mut tree = widget::Tree::new(pane.as_widget());
+            let node =
+                pane.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            let mut probe = TimelineEntries::default();
+            pane.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            assert_eq!(probe.threads.len(), 1, "one counted entry in mode {mode}");
+            let cursor = mouse::Cursor::Available(probe.threads[0].center());
+            let mut messages = Vec::new();
+            for event in [
+                mouse::Event::ButtonPressed(mouse::Button::Left),
+                mouse::Event::ButtonReleased(mouse::Button::Left),
+            ] {
+                pane.as_widget_mut().update(
+                    &mut tree,
+                    &iced::Event::Mouse(event),
+                    layout::Layout::new(&node),
+                    cursor,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                    &iced::Rectangle::with_size(size),
+                );
+            }
+            drop(pane);
+            let message = messages
+                .into_iter()
+                .find(|message| {
+                    matches!(
+                        message, Message::OpenThreadLatest(root) | Message::Thread(root)
+                            if root == "thread-plan"
+                    )
+                })
+                .expect("the visible entry opens the expected thread");
+            assert_eq!(matches!(message, Message::OpenThreadLatest(_)), mode == 0);
+            let _ = app.update(message);
+            assert_eq!(app.selection.thread.as_ref().unwrap().1, "thread-plan");
+        }
+    }
+
+    #[test]
+    fn empty_loading_and_error_share_the_reading_column_without_beginning_label() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("busy".into()));
+        app.model.room.as_mut().unwrap().rows = Default::default();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let size = iced::Size::new(1200.0, 900.0);
+        let mut tree = widget::Tree::empty();
+        let mut expected = None;
+        let snapshot = app.model.room.clone();
+        for mode in 0..5 {
+            app.model.room = snapshot.clone();
+            let model = app.model.room.as_mut().unwrap();
+            model.history = match mode {
+                1 => History::Loading,
+                4 => History::Failed("fixture history error".into()),
+                _ => History::End,
+            };
+            model.error = (mode == 2).then(|| "fixture error".into());
+            model.history_revision = 42;
+            let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+            model.load_older = Some(sender);
+            if mode == 3 {
+                app.model.room = None;
+            }
+            let mut pane = app.pane_sized(false, size);
+            tree.diff(pane.as_widget());
+            let node =
+                pane.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            let mut probe = TimelineEntries::default();
+            pane.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            assert!(
+                !probe.beginning,
+                "empty rooms do not need a second status label"
+            );
+            let bounds = probe.status.unwrap();
+            assert_eq!(bounds.width, presentation::MESSAGE_WIDTH);
+            assert!((bounds.center_x() - size.width / 2.0).abs() < 1.0);
+            assert_eq!(*expected.get_or_insert(bounds), bounds);
+            assert_eq!(probe.retry.is_some(), mode == 4);
+            if let Some(retry) = probe.retry {
+                let mut messages = Vec::new();
+                for event in [
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ] {
+                    pane.as_widget_mut().update(
+                        &mut tree,
+                        &iced::Event::Mouse(event),
+                        layout::Layout::new(&node),
+                        mouse::Cursor::Available(retry.center()),
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &iced::Rectangle::with_size(size),
+                    );
+                }
+                assert!(messages.iter().any(|message| matches!(
+                    message,
+                    Message::LoadOlder { thread: false, generation, revision: 42 }
+                        if *generation == app.selection.room.as_ref().unwrap().0
+                )));
+            }
+        }
+        // An error after rows arrive must not replace the live timeline.
+        let _ = app.update(Message::Room("busy".into()));
+        app.model.room.as_mut().unwrap().error = Some("fixture error".into());
+        let mut pane = app.pane_sized(false, size);
+        tree.diff(pane.as_widget());
+        let node =
+            pane.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        let mut probe = TimelineEntries::default();
+        pane.as_widget_mut()
+            .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut probe);
+        assert_eq!(probe.rows, 1);
+        assert!(probe.status.is_none());
     }
 
     #[test]

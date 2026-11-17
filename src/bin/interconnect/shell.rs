@@ -447,15 +447,25 @@ fn avatar_view<'a, M: 'a>(
         .into()
 }
 pub fn empty_state<'a>(heading: &'a str, detail: &'a str) -> Element<'a, Message> {
-    container(
-        column![title(heading, 20), text(detail).size(13).color(MUTED)]
-            .spacing(10)
-            .max_width(420),
-    )
-    .padding(28)
-    .center_x(Length::Fill)
-    .center_y(Length::Fill)
-    .into()
+    empty_state_with_action(heading, detail, None)
+}
+
+pub fn empty_state_with_action<'a>(
+    heading: &'a str,
+    detail: &'a str,
+    action: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let mut content = column![title(heading, 20), text(detail).size(13).color(MUTED)]
+        .spacing(10)
+        .max_width(420);
+    if let Some(action) = action {
+        content = content.push(action);
+    }
+    container(content)
+        .padding(28)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into()
 }
 
 impl App {
