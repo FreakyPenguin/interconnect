@@ -82,17 +82,22 @@ require login/read access and expire. The package includes a desktop entry and
 derived system-library dependencies; desktop portals and keyring providers need
 a running desktop session. Installation checks do not launch an account.
 
-### Tagged Linux releases
+### Tagged releases
 
 A pushed version tag, optionally prefixed with `v`, must match `Cargo.toml`.
-After installation checks pass, the workflow creates a GitHub Release containing
-an amd64 `.deb`, `interconnect-VERSION-linux-x86_64.tar.gz`, and `SHA256SUMS`.
+Tag pushes also call the macOS build workflow. After the macOS build/signature/session
+checks and Debian installation checks pass, the workflow creates a GitHub Release
+containing an amd64 `.deb`, `interconnect-VERSION-linux-x86_64.tar.gz`,
+`Interconnect-macos-arm64.tar.gz`, and `SHA256SUMS` covering all three downloads.
 Prerelease versions create prereleases and use Debian `~` ordering. Other runs
 do not publish. The release must not already exist when the publishing job runs.
 
 Download from **Releases** and verify with `sha256sum --check SHA256SUMS`.
-The tarball uses Debian stable's library baseline and does not bundle graphics
-libraries, fonts, or desktop services.
+The Linux tarball uses Debian stable's library baseline and does not bundle graphics
+libraries, fonts, or desktop services. Extract the macOS archive to get
+`Interconnect.app`; it is Apple Silicon only, ad-hoc signed, and not notarized.
+The separate Linux CI workflow is not a publication dependency; confirm its checks
+pass for the release commit before tagging.
 
 To package an existing local release build:
 

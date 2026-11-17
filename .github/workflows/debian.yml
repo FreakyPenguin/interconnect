@@ -15,6 +15,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  macos:
+    name: Build macOS release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    uses: ./.github/workflows/macos.yml
+
   build:
     name: Build Debian stable (amd64)
     runs-on: ubuntu-24.04
@@ -146,23 +151,32 @@ jobs:
           fi
 
   release:
-    name: Publish tagged Linux release
+    name: Publish tagged release
     if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: [build, install]
+    needs: [build, install, macos]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     steps:
-      - name: Download tagged release assets
+      - name: Download Linux release assets
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
           name: Interconnect-linux-release-${{ github.sha }}
           path: downloads
 
-      - name: Verify checksums
+      - name: Download macOS release bundle
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: Interconnect-macos-arm64-${{ github.sha }}
+          path: downloads
+
+      - name: Include macOS bundle in checksums and verify assets
         working-directory: downloads
-        run: sha256sum --check SHA256SUMS
+        run: |
+          test -s Interconnect-macos-arm64.tar.gz
+          sha256sum Interconnect-macos-arm64.tar.gz >> SHA256SUMS
+          sha256sum --check SHA256SUMS
 
       - name: Create GitHub release
         env:
