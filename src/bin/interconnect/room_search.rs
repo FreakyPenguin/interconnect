@@ -140,14 +140,17 @@ impl App {
 
     pub(super) fn room_search_button(&self) -> Element<'_, Message> {
         super::tooltips::tooltip(
-            button(
-                container(super::icons::icon(super::icons::Kind::Search))
-                    .center_x(28)
-                    .center_y(28),
+            container(
+                button(
+                    container(super::icons::icon(super::icons::Kind::Search))
+                        .center_x(28)
+                        .center_y(28),
+                )
+                .padding(0)
+                .style(shell::icon_button)
+                .on_press(message(Event::Open)),
             )
-            .padding(0)
-            .style(shell::icon_button)
-            .on_press(message(Event::Open)),
+            .id("room-search-button"),
             "Find in room (Ctrl+F / ⌘F)",
             tooltip::Position::Bottom,
         )

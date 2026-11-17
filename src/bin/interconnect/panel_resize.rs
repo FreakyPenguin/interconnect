@@ -34,7 +34,7 @@ impl App {
             return;
         }
         match target {
-            Target::Navigation if self.shell.navigation => {
+            Target::Navigation if self.navigation_visible(self.window_width.unwrap_or(1280.0)) => {
                 self.shell.navigation_width = width.clamp(NAV_MIN, NAV_MAX);
             }
             Target::Thread(generation)

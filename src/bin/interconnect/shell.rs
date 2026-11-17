@@ -20,6 +20,7 @@ pub const ACCENT: Color = Color::from_rgb8(66, 99, 157);
 pub(super) const SIDEBAR: Color = Color::from_rgb8(246, 247, 249);
 const RAIL: Color = Color::from_rgb8(237, 240, 244);
 pub(super) const LINE: Color = Color::from_rgb8(228, 232, 237);
+pub(super) const COMPACT_WIDTH: f32 = 800.0;
 const SELECTED: Color = Color::from_rgb8(226, 234, 247);
 
 pub struct State {
@@ -27,6 +28,7 @@ pub struct State {
     pub collapsed: HashSet<String>,
     pub query: String,
     pub navigation: bool,
+    pub narrow_navigation: bool,
     pub navigation_width: f32,
     pub thread_width: f32,
     pub people_width: f32,
@@ -38,6 +40,7 @@ impl Default for State {
             collapsed: HashSet::new(),
             query: String::new(),
             navigation: true,
+            narrow_navigation: false,
             navigation_width: 242.0,
             thread_width: 360.0,
             people_width: 360.0,
@@ -461,6 +464,13 @@ pub fn empty_state<'a>(heading: &'a str, detail: &'a str) -> Element<'a, Message
 }
 
 impl App {
+    pub(super) fn navigation_visible(&self, width: f32) -> bool {
+        if width < COMPACT_WIDTH {
+            self.shell.narrow_navigation
+        } else {
+            self.shell.navigation
+        }
+    }
     pub(super) fn navigation_width(&self, width: f32) -> f32 {
         self.shell.navigation_width.clamp(
             NAV_MIN,
@@ -468,7 +478,7 @@ impl App {
         )
     }
     pub(super) fn side_panel_replaces_room(&self, width: f32) -> bool {
-        let navigation = if self.shell.navigation {
+        let navigation = if self.navigation_visible(width) {
             self.navigation_width(width) + HANDLE
         } else {
             0.0
@@ -523,29 +533,49 @@ impl App {
 
     pub(super) fn shell_view(&self) -> Element<'_, Message> {
         widget::responsive(move |size| {
-            let mut body = row![self.space_rail()].height(Length::Fill);
+            let navigation_visible = self.navigation_visible(size.width);
             let navigation_width = self.navigation_width(size.width);
             let split = !self.global_search.open
                 && !self.bookmarks.open
                 && (self.selection.thread.is_some() || self.selection.members.is_some())
                 && !self.side_panel_replaces_room(size.width);
             let enabled = self.panel_resize_enabled();
-            if self.shell.navigation {
-                let reserved = if split {
-                    ROOM_MIN + HANDLE + SIDE_MIN
+            let reserved = if split {
+                ROOM_MIN + HANDLE + SIDE_MIN
+            } else {
+                320.0
+            };
+            let max = (size.width - 64.0 - HANDLE - reserved).clamp(NAV_MIN, NAV_MAX);
+            // Retain both slots and their trees while collapsed. The conversation
+            // keeps its identity and the hidden room filter cannot receive input.
+            // Row::push discards zero-width children; from_vec preserves these
+            // mounted slots while the suspended wrappers keep them inert.
+            let mut body = widget::Row::from_vec(vec![
+                self.space_rail(size.width),
+                container(super::suspended::view(
+                    self.room_navigation(),
+                    !navigation_visible,
+                ))
+                .width(if navigation_visible {
+                    navigation_width
                 } else {
-                    320.0
-                };
-                let max = (size.width - 64.0 - HANDLE - reserved).clamp(NAV_MIN, NAV_MAX);
-                body = body
-                    .push(container(self.room_navigation()).width(navigation_width))
-                    .push(panel_resize::divider(
+                    0.0
+                })
+                .into(),
+                container(super::suspended::view(
+                    panel_resize::divider(
                         Target::Navigation,
                         navigation_width,
                         max,
-                        enabled,
-                    ));
-            }
+                        enabled && navigation_visible,
+                    ),
+                    !navigation_visible,
+                ))
+                .width(if navigation_visible { HANDLE } else { 0.0 })
+                .into(),
+            ])
+            .width(Length::Fill)
+            .height(Length::Fill);
             if self.global_search.open {
                 body = body.push(container(self.global_search_view()).width(Length::Fill));
             } else if self.bookmarks.open {
@@ -563,7 +593,7 @@ impl App {
                             self.shell.thread_width,
                         )
                     };
-                    let navigation = if self.shell.navigation {
+                    let navigation = if navigation_visible {
                         navigation_width + HANDLE
                     } else {
                         0.0
@@ -585,7 +615,7 @@ impl App {
         })
         .into()
     }
-    fn space_rail(&self) -> Element<'_, Message> {
+    fn space_rail(&self, width: f32) -> Element<'_, Message> {
         let account_name = self.account_label();
         let account_image = self
             .model
@@ -705,7 +735,11 @@ impl App {
                 .padding(0)
                 .style(quiet_button)
                 .on_press(Message::ToggleNavigation),
-            "Toggle room list",
+            if self.navigation_visible(width) {
+                "Hide room list"
+            } else {
+                "Show room list"
+            },
             widget::tooltip::Position::Right,
         ));
         container(spaces)
@@ -1081,6 +1115,180 @@ mod avatar_tests {
 mod navigation_tests {
     use super::*;
     use iced::advanced::{layout, widget};
+
+    #[test]
+    fn narrow_navigation_is_temporary_and_does_not_change_wide_preferences() {
+        let mut app = crate::tests::demo_app();
+        app.shell.navigation_width = 310.0;
+        let original = app.selection.room.clone();
+        let _ = app.update(Message::WindowResized(640.0));
+        assert!(!app.navigation_visible(640.0));
+        assert!(app.shell.navigation);
+        assert!(app.settings.current.navigation.show_room_list);
+        let _ = app.update(Message::ToggleNavigation);
+        assert!(app.navigation_visible(640.0));
+        let _ = app.update(Message::Space(Scope::All));
+        assert!(app.navigation_visible(640.0));
+        assert_eq!(app.selection.room, original);
+        let _ = app.update(Message::Room("general".into()));
+        assert!(!app.navigation_visible(640.0));
+        let _ = app.update(Message::SearchFocus);
+        assert!(app.navigation_visible(640.0));
+        let _ = app.update(Message::WindowResized(1280.0));
+        assert!(app.navigation_visible(1280.0));
+        assert_eq!(app.shell.navigation_width, 310.0);
+        let _ = app.update(Message::ToggleNavigation);
+        assert!(!app.navigation_visible(1280.0));
+        let _ = app.update(Message::WindowResized(640.0));
+        let _ = app.update(Message::SearchFocus);
+        assert!(app.navigation_visible(640.0));
+        assert!(!app.shell.navigation);
+        let _ = app.update(Message::WindowResized(1280.0));
+        assert!(!app.navigation_visible(1280.0));
+        let _ = app.update(Message::WindowResized(640.0));
+        assert!(!app.navigation_visible(640.0));
+    }
+
+    #[test]
+    fn automatic_collapse_retains_live_timeline_scroll_editor_focus_and_draft() {
+        #[derive(Default)]
+        struct Probe {
+            timeline: Option<(iced::Rectangle, f32)>,
+            editor_focused: bool,
+            navigation: bool,
+            header: Option<iced::Rectangle>,
+            members: Option<iced::Rectangle>,
+            search: Option<iced::Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("navigation-divider")) {
+                    self.navigation = true;
+                } else if id == Some(&widget::Id::new("conversation-header")) {
+                    self.header = Some(bounds);
+                } else if id == Some(&widget::Id::new("room-members")) {
+                    self.members = Some(bounds);
+                } else if id == Some(&widget::Id::new("room-search-button")) {
+                    self.search = Some(bounds);
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("room-timeline")) {
+                    self.timeline = Some((
+                        bounds,
+                        (content.height - bounds.height).max(0.0) - translation.y,
+                    ));
+                }
+            }
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                _: iced::Rectangle,
+                state: &mut dyn widget::operation::Focusable,
+            ) {
+                if id == Some(&widget::Id::new("room-composer")) {
+                    self.editor_focused = state.is_focused();
+                }
+            }
+        }
+        let mut app = crate::tests::demo_app();
+        let _ = app.update(Message::Room("busy".into()));
+        let room = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&room).unwrap().content =
+            text_editor::Content::with_text("Unsent draft");
+        let selection = app.selection.room.clone();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = widget::Tree::empty();
+        for (step, width) in [1280.0, 640.0, 1280.0, 640.0, 640.0, 641.0, 640.0, 1280.0]
+            .into_iter()
+            .enumerate()
+        {
+            let _ = app.update(Message::WindowResized(width));
+            if step == 4 {
+                let _ = app.update(Message::ToggleNavigation);
+            }
+            let size = iced::Size::new(width, 720.0);
+            let mut view = app.view();
+            tree.diff(view.as_widget());
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            if step == 0 {
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut widget::operation::scrollable::scroll_to::<()>(
+                        widget::Id::new("room-timeline"),
+                        iced::widget::operation::AbsoluteOffset {
+                            x: None,
+                            y: Some(120.0),
+                        },
+                    ),
+                );
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut widget::operation::focusable::focus::<()>(widget::Id::new(
+                        "room-composer",
+                    )),
+                );
+            }
+            let mut probe = Probe::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            let (bounds, offset) = probe.timeline.unwrap();
+            let header = probe.header.unwrap();
+            let members = probe.members.unwrap();
+            let search = probe.search.unwrap();
+            assert!(
+                members.width > 20.0 && members.height > 20.0,
+                "People collapsed at transition {step}: {members:?}"
+            );
+            assert!(
+                search.width > 20.0 && search.height > 20.0,
+                "Search collapsed at transition {step}: {search:?}"
+            );
+            assert!(search.x >= header.x && search.x + search.width <= header.x + header.width);
+            assert!(
+                members.x >= header.x && members.x + members.width <= header.x + header.width,
+                "header actions must fit after transition {step}: {header:?} {members:?}"
+            );
+            assert!(probe.editor_focused, "focus lost at step {step}");
+            assert!(offset > 1.0, "scroll reset at step {step}: {offset}");
+            if step == 0 || step == 7 {
+                assert!((offset - 120.0).abs() < 1.0);
+            }
+            assert_eq!(
+                probe.navigation,
+                width >= COMPACT_WIDTH || (4..=6).contains(&step)
+            );
+            let left = if probe.navigation {
+                64.0 + app.navigation_width(width) + HANDLE
+            } else {
+                64.0
+            };
+            assert!((bounds.x - left).abs() < 0.1);
+            assert!((bounds.width - (width - left)).abs() < 0.1);
+        }
+        assert_eq!(app.selection.room, selection);
+        assert_eq!(app.drafts[&room].content.text().trim_end(), "Unsent draft");
+    }
 
     #[test]
     fn room_rows_keep_their_height_and_bounds_with_long_names_and_unread_badges() {

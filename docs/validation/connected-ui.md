@@ -205,6 +205,21 @@ Saved messages were checked in the isolated Sway/tiny-skia demo at 1280×900 and
 640×480. Connected acceptance and macOS/wgpu rendering remain untested for this
 extension.
 
+The room list now collapses automatically below 800 px window width, leaving
+only the 64 px space rail beside the conversation. **Show room list** or **Find
+room** temporarily reveals it in a narrow window; choosing a room collapses it
+again. Filtering by space does not switch the conversation or dismiss the list.
+Returning to a wide window restores normal visibility and the preferred drag
+width. Automatic collapse does not edit startup settings or the normal visibility
+preference. Hidden navigation and its divider retain stable widget slots but do
+not draw or receive input/operations/overlays; the side-panel replacement decision
+uses effective displayed navigation width. Automated coverage checks temporary
+visibility, search reveal, room/space behavior, and retained live timeline scroll,
+editor focus, header action bounds, and unsent drafts through responsive and
+manual transitions. All 273 UI tests, formatting, and workspace Clippy pass.
+Native rendering and connected acceptance for this extension are recorded
+separately.
+
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
 Checks included expanding/collapsing pins, message-action icons, and scrolling

@@ -866,7 +866,12 @@ impl App {
                     self.stop_image_playback();
                 }
             }
-            Message::WindowResized(width) => self.window_width = Some(width),
+            Message::WindowResized(width) => {
+                self.window_width = Some(width);
+                if width >= shell::COMPACT_WIDTH {
+                    self.shell.narrow_navigation = false;
+                }
+            }
             Message::ResizePanel(target, width) => self.resize_panel(target, width),
             Message::TimelineVisible {
                 thread,
@@ -1086,13 +1091,27 @@ impl App {
             }
             Message::SearchFocus => {
                 self.settings.navigation_touched = true;
-                self.shell.navigation = true;
+                if self
+                    .window_width
+                    .is_some_and(|width| width < shell::COMPACT_WIDTH)
+                {
+                    self.shell.narrow_navigation = true;
+                } else {
+                    self.shell.navigation = true;
+                }
                 return iced::widget::operation::focus("room-search")
                     .chain(iced::widget::operation::select_all("room-search"));
             }
             Message::ToggleNavigation => {
                 self.settings.navigation_touched = true;
-                self.shell.navigation = !self.shell.navigation;
+                if self
+                    .window_width
+                    .is_some_and(|width| width < shell::COMPACT_WIDTH)
+                {
+                    self.shell.narrow_navigation = !self.shell.narrow_navigation;
+                } else {
+                    self.shell.navigation = !self.shell.navigation;
+                }
             }
             Message::Focus(backwards) => {
                 return if backwards {
@@ -1761,6 +1780,7 @@ impl App {
         }
     }
     fn select_room(&mut self, id: String) {
+        self.shell.narrow_navigation = false;
         self.bookmarks.close();
         self.global_search.close();
         self.room_search = room_search::State::default();
