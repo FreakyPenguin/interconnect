@@ -128,6 +128,17 @@ preview and long thread original in a minimum-size pane. Existing draft, shortcu
 IME, emoji, paste, attachment, and cancellation checks pass. Attachment-chip native
 rendering, macOS, wgpu, and connected-account acceptance remain manual checks.
 
+Composer gap (2026-11-17): room and thread timelines now have 8 px of bottom
+padding, followed by 4 px above the composer. The typing-status slot collapses
+when empty, reducing the ordinary gap from 44 px to 12 px; active typing uses
+an additional 18 px line. A stable outer container retains the editor widget
+when that line changes height. Headless coverage checks both panes through
+empty/active/empty typing updates, including timeline height, reading position,
+editor focus, and draft preservation. All 299 UI tests, formatting, and workspace
+Clippy pass. Desktop appearance remains unverified for this change; use `--demo`
+to check spacing with typing, previews, and attachments at ordinary and minimum
+window sizes.
+
 The composer resize/scrollbar extension was checked in the isolated demo at
 1280×900 and 640×480 with a long wrapped draft. Drag the centered top grip upward
 to enlarge the editor or downward to shrink it; the toolbar remains below the

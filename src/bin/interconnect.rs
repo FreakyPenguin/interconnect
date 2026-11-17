@@ -2658,7 +2658,12 @@ impl App {
                 _ => None,
             })
             .collect();
-        let mut messages = column![history_controls].spacing(0).padding([16, 24]);
+        let mut messages = column![history_controls].spacing(0).padding(iced::Padding {
+            top: 16.0,
+            right: 24.0,
+            bottom: 8.0,
+            left: 24.0,
+        });
         for (index, projected) in rows.iter().copied().enumerate() {
             let message = projected.message();
             let previous_row = index.checked_sub(1).map(|i| rows[i]);
@@ -3158,14 +3163,15 @@ impl App {
             } else {
                 writing = writing.push(container(iced::widget::space().height(0)));
             }
-            // Reserve one static line so typing updates never resize the timeline.
+            // Keep a stable widget slot, but reserve space only for active typing.
             let label = self.typing_label();
+            let typing_height = if label.is_empty() { 0 } else { 18 };
             let label = if thread && !label.is_empty() {
                 format!("In this room: {label}")
             } else {
                 label
             };
-            writing = writing.push(
+            writing = writing.push(container(
                 container(
                     text(label)
                         .size(12)
@@ -3175,9 +3181,9 @@ impl App {
                 )
                 .width(Length::Fill)
                 .clip(true)
-                .height(18)
+                .height(typing_height)
                 .padding([0, 24]),
-            );
+            ));
             if let Some(preview) = preview {
                 writing = writing
                     .push(container(container(preview).padding([0, 24])).width(Length::Fill));
@@ -3227,8 +3233,14 @@ impl App {
             );
             writing = writing.push(
                 container(
-                    container(self.composer_emoji_host(composer, &key, *generation))
-                        .padding([10, 24]),
+                    container(self.composer_emoji_host(composer, &key, *generation)).padding(
+                        iced::Padding {
+                            top: 4.0,
+                            right: 24.0,
+                            bottom: 10.0,
+                            left: 24.0,
+                        },
+                    ),
                 )
                 .width(Length::Fill),
             );

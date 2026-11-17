@@ -150,4 +150,117 @@ mod tests {
         app.model.typing.as_mut().unwrap().generation += 1;
         assert!(app.typing_label().is_empty());
     }
+
+    #[test]
+    fn typing_status_collapses_when_empty_and_preserves_reading_position_and_focus() {
+        use iced::{
+            Rectangle, Size,
+            advanced::{layout, widget},
+        };
+        #[derive(Default)]
+        struct Probe {
+            timeline: Option<(f32, f32)>,
+            focused: bool,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: Rectangle,
+                _: Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                self.timeline = Some((bounds.height, translation.y));
+            }
+            fn focusable(
+                &mut self,
+                _: Option<&widget::Id>,
+                _: Rectangle,
+                state: &mut dyn widget::operation::Focusable,
+            ) {
+                self.focused |= state.is_focused();
+            }
+        }
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = Size::new(360.0, 480.0);
+        for thread in [false, true] {
+            let mut app = crate::tests::demo_app();
+            let _ = app.update(Message::Room("busy".into()));
+            if thread {
+                let mut pane = app.model.room.clone().unwrap();
+                pane.generation = 100;
+                app.model.thread = Some(pane);
+                app.selection.thread = Some((100, "$other-root".into()));
+            }
+            let key = app.draft_key(thread).unwrap();
+            app.drafts.entry(key.clone()).or_default();
+            let _ = app.update(Message::Edit(key.clone(), Action::Edit(Edit::Insert('x'))));
+            let timeline_id = widget::Id::new(if thread {
+                "thread-timeline"
+            } else {
+                "room-timeline"
+            });
+            let editor_id = widget::Id::new(if thread {
+                "thread-composer"
+            } else {
+                "room-composer"
+            });
+            let mut tree = widget::Tree::empty();
+            let mut initial = None;
+            for active in [false, true, false] {
+                app.model.typing = Some(interconnect::connected::Typing {
+                    generation: app.selection.room.as_ref().unwrap().0,
+                    names: if active { vec!["Alex".into()] } else { vec![] },
+                });
+                let mut view = app.pane_sized(thread, size);
+                tree.diff(view.as_widget());
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                if initial.is_none() {
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        layout::Layout::new(&node),
+                        &renderer,
+                        &mut widget::operation::scrollable::scroll_to::<()>(
+                            timeline_id.clone(),
+                            iced::widget::operation::AbsoluteOffset {
+                                x: None,
+                                y: Some(120.0),
+                            },
+                        ),
+                    );
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        layout::Layout::new(&node),
+                        &renderer,
+                        &mut widget::operation::focusable::focus::<()>(editor_id.clone()),
+                    );
+                }
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                let (height, position) = probe.timeline.unwrap();
+                let (initial_height, initial_position) = *initial.get_or_insert((height, position));
+                assert!(
+                    initial_position > 0.0,
+                    "fixture must have scrollable history"
+                );
+                assert!((height - initial_height + if active { 18.0 } else { 0.0 }).abs() < 1.0);
+                assert!((position - initial_position).abs() < 1.0);
+                assert!(probe.focused, "thread={thread}, typing={active}");
+            }
+            assert_eq!(app.drafts[&key].content.text(), "x");
+        }
+    }
 }
