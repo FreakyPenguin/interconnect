@@ -153,12 +153,14 @@ impl Default for Graphics {
 pub struct Navigation {
     pub show_room_list: bool,
     pub show_unread_section: bool,
+    pub unread_first: bool,
 }
 impl Default for Navigation {
     fn default() -> Self {
         Self {
             show_room_list: true,
             show_unread_section: true,
+            unread_first: true,
         }
     }
 }
@@ -268,6 +270,10 @@ impl Store {
             settings.navigation.show_unread_section.into(),
         );
         replace(
+            &mut document["navigation"]["unread_first"],
+            settings.navigation.unread_first.into(),
+        );
+        replace(
             &mut document["composer"]["send_shortcut"],
             settings.composer.send_shortcut.config_value().into(),
         );
@@ -371,6 +377,10 @@ mod tests {
         assert_eq!(polling.presence.poll_interval_seconds, 60);
         assert!(settings.navigation.show_room_list);
         assert!(settings.navigation.show_unread_section);
+        assert!(settings.navigation.unread_first);
+        let settings = decode("[navigation]\nunread_first = false").unwrap();
+        assert!(!settings.navigation.unread_first);
+        assert!(settings.navigation.show_unread_section);
         let settings = decode("[navigation]\nshow_unread_section = false").unwrap();
         assert!(!settings.navigation.show_unread_section);
         assert_eq!(settings.graphics, Graphics::default());
@@ -381,6 +391,7 @@ mod tests {
             "[composer]\nsend_shortcut = 'return'",
             "[navigation]\nshow_room_list = 1",
             "[navigation]\nshow_unread_section = 1",
+            "[navigation]\nunread_first = 1",
             "[navigation",
             "composer = false",
             "[appearance]\nlimit_room_width = 1",
@@ -412,6 +423,7 @@ mod tests {
         settings.composer.send_shortcut = SendShortcut::Enter;
         settings.navigation.show_room_list = false;
         settings.navigation.show_unread_section = false;
+        settings.navigation.unread_first = false;
         settings.appearance.limit_room_width = false;
         settings.graphics.gpu_enabled = false;
         settings.graphics.low_power = false;

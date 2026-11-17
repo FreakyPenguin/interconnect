@@ -46,6 +46,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Area | Controls and expected behavior |
 | --- | --- |
 | Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
+| Unread first | **Settings → Navigation → Show unread rooms first in each section** defaults on; Save applies changes. Unread rooms and DMs move before read entries inside their usual sections, with each group alphabetical. Check Favorites, DMs, custom sections, Low priority, filters, and keyboard room navigation. The separate Unread section can stay enabled or be hidden independently. Cancel leaves the order unchanged; disabling and saving restores the usual order. Keep a draft and reading position while changing the setting. |
 | Navigation | Space selection filters the room list without switching the open conversation. Room and child-space rows stay 26 px high with no gaps between rows, including long names and unread badges. Long room, section, and space labels use a grapheme-safe ellipsis; hovering a room name reveals its full name after a short delay. Unread room names are semibold. Expanded section counts and zero-count Saved messages badges are hidden; collapsed sections retain nonzero room counts. Sections collapse independently; search filters rooms. |
 | Unread section | Unread stays above Favorites and includes all unread rooms in the selected space/filter, including DMs, favorites, and custom sections. Rooms remain in their usual groups. Collapse it independently; search temporarily expands it. It hides when empty. **Settings → Navigation → Show unread section** defaults on; Save/Reload applies immediately, Cancel discards changes. Marking a room read removes its shortcut while preserving its usual row, open conversation, drafts, and timeline position. |
 | Space unread dots | A small blue dot at the bottom right of a rail icon means its scope contains unread rooms or DMs, including manually marked unread rooms and nested spaces. All rooms covers every room; Direct messages covers DMs. The dot clears when the last unread room is read or removed. Indicators ignore room search, collapsed sections, and the Show unread section setting. In the demo, All rooms and Studio start with a dot for Release notes. Hover adds **Unread messages** to the space hint; clicking the dot still selects the space without switching the open conversation. |
@@ -77,6 +78,17 @@ see [renderer selection](../development.md#renderer-selection).
 | Account utilities | The account avatar opens Settings, Find room, and device verification. Routine connection/device status lives in this menu; the normal bottom bar is hidden. Incoming verification requests, connection problems, settings/notification failures, media errors, and stopped-session Exit remain visible when applicable. An account attention dot also marks issues and graphics restart notices. Demo identity stays visible in the space rail. |
 | Settings | The fixed header and footer keep Close, Cancel, and Save visible while the preferences body scrolls. Check 640×480 and ordinary desktop sizes: long descriptions, paths, and errors wrap within the card; controls use compact type and outlined fields. Save applies changes; Cancel/Close discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
 | Control icons | Navigation, header, message actions, pins, and composer use shared static outline icons. Check consistent size/stroke, hover/disabled colors, recognizable pin/unpin and bookmark states, and action tooltips. User-authored emoji and reaction glyphs remain emoji. |
+
+Unread-first ordering defaults on, including for older config files that omit
+the key; an explicit `unread_first = false` stays respected.
+Rendered-widget coverage (2026-11-17) checks Favorites,
+DMs, custom sections, Rooms, Low priority, case-insensitive alphabetical groups,
+manual unread flags with zero counts, updated read state, filtering, and keyboard
+navigation order. Save/Cancel/Defaults preserve the open conversation, draft,
+and saved scroll position; settings tests cover older files and persistence.
+Formatting, workspace Clippy with warnings denied, the locked desktop build,
+and all workspace tests pass (180 library and 320 desktop; two library tests
+remain opt-in). Native desktop and connected-account acceptance remain manual.
 
 Space unread dots (2026-11-17): rendered-widget coverage checks room/DM updates,
 zero-count manual unread flags, nested/shared/cyclic space membership, empty and

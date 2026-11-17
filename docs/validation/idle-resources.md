@@ -15,6 +15,11 @@ updates. It adds no SDK work, worker, subscription, polling, or timer. Unread
 shortcuts reuse ordinary room navigation and read handling. Production CPU and
 wakeup measurements were not repeated for this change (2026-11-17).
 
+Optional unread-first ordering sorts the existing filtered room entries during
+navigation/view updates. It adds no workers, SDK requests, subscriptions, polling,
+or timers. Production CPU and wakeups were not measured for this option
+(2026-11-17).
+
 Space-rail unread dots derive from the same room snapshot and descendant-space
 membership during view updates. They add no workers, SDK subscriptions, polling,
 or animation timers. Rendered-widget coverage checks that settled rail redraws

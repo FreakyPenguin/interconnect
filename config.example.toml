@@ -18,6 +18,8 @@ poll_interval_seconds = 60
 show_room_list = true
 # Show unread rooms at the top, in addition to their usual sections.
 show_unread_section = true
+# Put unread rooms and DMs first within each section, then sort alphabetically.
+unread_first = true
 
 [appearance]
 # Center room content in an 840 px column. Disable to use the full pane width.

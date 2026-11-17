@@ -113,6 +113,7 @@ poll_interval_seconds = 60
 [navigation]
 show_room_list = true
 show_unread_section = true
+unread_first = true
 
 [appearance]
 limit_room_width = true
@@ -137,6 +138,7 @@ gif_seconds = 5
 | `presence.poll_interval_seconds` | `60` | Whole seconds between completed presence batches, from 15 to 3600. Periodic refresh bypasses the cache and never overlaps another batch. Manual Refresh remains available. |
 | `navigation.show_room_list` | `true` | Initial room-list visibility on the next launch. Windows below 800 px automatically collapse the list; the rail button or Find room temporarily reveals it. Wide-window visibility and preferred size are retained. |
 | `navigation.show_unread_section` | `true` | **Navigation → Show unread section** adds a fixed Unread section above Favorites, including unread DMs and tagged rooms. Rooms also remain in their usual sections. Follows the selected space and room filter; hidden when empty. Applies on Save/Reload without restarting. |
+| `navigation.unread_first` | `true` | **Navigation → Show unread rooms first in each section** puts unread rooms and DMs before read ones within Favorites, Direct messages, Rooms, and tagged sections. Each group sorts alphabetically; manually marked unread rooms count too. Independent of the separate Unread section. Applies to the list and keyboard navigation on Save/Reload without restarting. |
 | `appearance.limit_room_width` | `true` | **Appearance → Limit room content width** centers headers, pins, messages, and composers in an 840 px column. Disable to use the full pane width. Applies on Save/Reload without restarting. |
 | `composer.send_shortcut` | `"ctrl_enter"` | Enter inserts a newline; Ctrl+Enter sends in room and thread composers. Set `"enter"` to send with Enter and use Shift+Enter for a newline. Ctrl+Enter still sends. IME composition suppresses sending. |
 | `graphics.gpu_enabled` | `true` | **Use GPU rendering**. On the next launch, try wgpu with software fallback. Set to `false` to force the CPU renderer, including when `ICED_BACKEND` requests wgpu. |

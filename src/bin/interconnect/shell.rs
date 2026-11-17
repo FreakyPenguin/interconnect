@@ -650,6 +650,7 @@ impl App {
                     .iter()
                     .position(|section| section.id == section_id)
                     .unwrap_or(usize::MAX),
+                self.settings.current.navigation.unread_first && !r.unread,
                 r.name.to_lowercase(),
                 r.id.clone(),
             )
@@ -1028,7 +1029,7 @@ impl App {
             if unread_section && !self.settings.current.navigation.show_unread_section {
                 continue;
             }
-            let entries: Vec<_> = self
+            let mut entries: Vec<_> = self
                 .model
                 .rooms
                 .iter()
@@ -1041,6 +1042,9 @@ impl App {
                         }
                 })
                 .collect();
+            if self.settings.current.navigation.unread_first {
+                entries.sort_by_cached_key(|r| (!r.unread, r.name.to_lowercase(), r.id.clone()));
+            }
             if entries.is_empty()
                 && (!self.shell.query.is_empty() || !section.show_empty(&self.shell.space))
             {
@@ -1652,69 +1656,203 @@ mod navigation_tests {
         assert!(inspect(&app, None).0.is_empty());
     }
 
+    fn sections(app: &App) -> Vec<(String, Vec<String>)> {
+        struct Probe {
+            headers: Vec<(String, widget::Id)>,
+            rooms: Vec<(String, widget::Id)>,
+            sections: Vec<(String, Vec<String>)>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, _: iced::Rectangle) {
+                if let Some((section, _)) =
+                    self.headers.iter().find(|(_, header)| Some(header) == id)
+                {
+                    self.sections.push((section.clone(), Vec::new()));
+                }
+                if let Some((room, _)) = self.rooms.iter().find(|(_, row)| Some(row) == id) {
+                    self.sections.last_mut().unwrap().1.push(room.clone());
+                }
+            }
+        }
+        let mut probe = Probe {
+            headers: app
+                .model
+                .sections
+                .iter()
+                .map(|section| {
+                    (
+                        section.id.clone(),
+                        widget::Id::from(format!("navigation-section:{}", section.id)),
+                    )
+                })
+                .collect(),
+            rooms: app
+                .model
+                .rooms
+                .iter()
+                .map(|room| {
+                    (
+                        room.id.clone(),
+                        widget::Id::from(format!("navigation-room:{}", room.id)),
+                    )
+                })
+                .collect(),
+            sections: Vec::new(),
+        };
+        let mut view = app.room_navigation();
+        let mut tree = widget::Tree::new(&view);
+        let renderer = crate::test_renderer(Font::DEFAULT, iced::Pixels(13.0));
+        let size = iced::Size::new(242.0, 900.0);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        view.as_widget_mut()
+            .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut probe);
+        probe.sections
+    }
+
+    #[test]
+    fn unread_first_orders_each_section_and_keyboard_navigation_only_after_save() {
+        use super::super::settings::Event;
+        use interconnect::navigation::RoomEntry;
+
+        let mut app = crate::tests::demo_app();
+        let selection = app.selection.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Unsent");
+        app.scroll_positions.insert(key.clone(), 51.0);
+        let section_ids = [
+            "m.favourite",
+            "Direct messages",
+            "element.io.section.demo-design",
+            "Rooms",
+            "m.lowpriority",
+        ];
+        let mut rooms = Vec::new();
+        for (index, section) in section_ids.iter().enumerate() {
+            for (name, unread) in [
+                ("Alpha", false),
+                ("bravo", true),
+                ("Charlie", false),
+                ("Delta", true),
+            ] {
+                rooms.push(RoomEntry {
+                    id: format!("{index}-{name}"),
+                    name: name.into(),
+                    favorite: *section == "m.favourite",
+                    direct: *section == "Direct messages",
+                    tags: if matches!(*section, "element.io.section.demo-design" | "m.lowpriority")
+                    {
+                        vec![(*section).into()]
+                    } else {
+                        Vec::new()
+                    },
+                    unread,
+                    // Manual unread flags count without any unread messages.
+                    unread_count: 0,
+                    ..Default::default()
+                });
+            }
+        }
+        app.model.rooms = rooms.into();
+        app.shell.space = Scope::All;
+        app.settings.current.navigation.show_unread_section = false;
+        app.settings.current.navigation.unread_first = false;
+        let original = sections(&app);
+        for (index, (_, ids)) in original.iter().enumerate() {
+            assert_eq!(
+                ids,
+                &[
+                    format!("{index}-Alpha"),
+                    format!("{index}-bravo"),
+                    format!("{index}-Charlie"),
+                    format!("{index}-Delta"),
+                ]
+            );
+        }
+
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::UnreadFirst(true)));
+        assert_eq!(sections(&app), original);
+        let _ = app.update(Message::Settings(Event::Cancel));
+        assert_eq!(sections(&app), original);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::UnreadFirst(true)));
+        let _ = app.update(Message::Settings(Event::Save));
+        let sorted = sections(&app);
+        assert_eq!(sorted.len(), section_ids.len());
+        for (index, (section, ids)) in sorted.iter().enumerate() {
+            assert_eq!(section, section_ids[index]);
+            assert_eq!(
+                ids,
+                &[
+                    format!("{index}-bravo"),
+                    format!("{index}-Delta"),
+                    format!("{index}-Alpha"),
+                    format!("{index}-Charlie"),
+                ]
+            );
+        }
+        assert_eq!(
+            app.visible_rooms(),
+            sorted
+                .iter()
+                .flat_map(|(_, ids)| ids.clone())
+                .collect::<Vec<_>>()
+        );
+
+        app.shell.space = Scope::Direct;
+        assert_eq!(
+            sections(&app),
+            vec![sorted[1].clone(), (section_ids[2].into(), Vec::new())]
+        );
+        assert_eq!(app.visible_rooms(), sorted[1].1);
+        app.shell.query = "aLpHa".into();
+        assert_eq!(app.visible_rooms(), ["1-Alpha"]);
+        assert_eq!(sections(&app)[0].1, ["1-Alpha"]);
+        app.shell.query.clear();
+        app.shell.space = Scope::All;
+
+        // The separate Unread section keeps its alphabetical shortcuts;
+        // each room still appears once in keyboard navigation.
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::ShowUnreadSection(true)));
+        let _ = app.update(Message::Settings(Event::Save));
+        let with_unread = sections(&app);
+        assert_eq!(with_unread[0].0, "Unread");
+        assert_eq!(&with_unread[1..], &sorted);
+        let visible = app.visible_rooms();
+        assert_eq!(visible.len(), app.model.rooms.len());
+        assert_eq!(&visible[..10], with_unread[0].1);
+
+        for room in std::sync::Arc::make_mut(&mut app.model.rooms) {
+            room.unread = room.name == "Alpha";
+        }
+        for (index, (_, ids)) in sections(&app)[1..].iter().enumerate() {
+            assert_eq!(ids[0], format!("{index}-Alpha"));
+        }
+        assert_eq!(app.selection, selection);
+        assert_eq!(app.drafts[&key].content.text().trim_end(), "Unsent");
+        assert_eq!(app.scroll_positions[&key], 51.0);
+
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::Defaults));
+        let _ = app.update(Message::Settings(Event::ShowUnreadSection(false)));
+        let _ = app.update(Message::Settings(Event::Save));
+        assert!(app.settings.current.navigation.unread_first);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::UnreadFirst(false)));
+        let _ = app.update(Message::Settings(Event::Save));
+        assert!(!app.settings.current.navigation.unread_first);
+        assert_eq!(sections(&app), original);
+    }
+
     #[test]
     fn unread_shortcuts_follow_filters_collapse_read_state_and_settings() {
-        fn sections(app: &App) -> Vec<(String, Vec<String>)> {
-            struct Probe {
-                headers: Vec<(String, widget::Id)>,
-                rooms: Vec<(String, widget::Id)>,
-                sections: Vec<(String, Vec<String>)>,
-            }
-            impl widget::Operation for Probe {
-                fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
-                    f(self);
-                }
-                fn container(&mut self, id: Option<&widget::Id>, _: iced::Rectangle) {
-                    if let Some((section, _)) =
-                        self.headers.iter().find(|(_, header)| Some(header) == id)
-                    {
-                        self.sections.push((section.clone(), Vec::new()));
-                    }
-                    if let Some((room, _)) = self.rooms.iter().find(|(_, row)| Some(row) == id) {
-                        self.sections.last_mut().unwrap().1.push(room.clone());
-                    }
-                }
-            }
-            let mut probe = Probe {
-                headers: app
-                    .model
-                    .sections
-                    .iter()
-                    .map(|section| {
-                        (
-                            section.id.clone(),
-                            widget::Id::from(format!("navigation-section:{}", section.id)),
-                        )
-                    })
-                    .collect(),
-                rooms: app
-                    .model
-                    .rooms
-                    .iter()
-                    .map(|room| {
-                        (
-                            room.id.clone(),
-                            widget::Id::from(format!("navigation-room:{}", room.id)),
-                        )
-                    })
-                    .collect(),
-                sections: Vec::new(),
-            };
-            let mut view = app.room_navigation();
-            let mut tree = widget::Tree::new(&view);
-            let renderer = crate::test_renderer(Font::DEFAULT, iced::Pixels(13.0));
-            let size = iced::Size::new(242.0, 900.0);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            view.as_widget_mut().operate(
-                &mut tree,
-                layout::Layout::new(&node),
-                &renderer,
-                &mut probe,
-            );
-            probe.sections
-        }
         fn entries<'a>(sections: &'a [(String, Vec<String>)], id: &str) -> Vec<&'a str> {
             sections
                 .iter()
