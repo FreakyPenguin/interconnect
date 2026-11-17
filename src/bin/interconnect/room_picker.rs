@@ -95,6 +95,55 @@ pub fn is_shortcut(key: &Key, modifiers: Modifiers) -> bool {
         && !modifiers.shift()
 }
 impl App {
+    pub(super) fn validate_room_focus(&mut self) {
+        if self.pending_room_focus.is_some_and(|generation| {
+            self.selection
+                .room
+                .as_ref()
+                .is_none_or(|(current, _)| *current != generation)
+                || !self.window_focused
+                || self.closing
+                || self.stopped
+                || self.room_picker.is_some()
+                || self.create_room.is_some()
+                || self.new_chat.is_some()
+                || self.settings.draft.is_some()
+                || self.verification.open
+                || self.image_view.is_some()
+                || self.reaction_picker.is_some()
+                || self.composer_picker.is_some()
+                || self.emoji_management.is_some()
+                || self.invite.is_some()
+                || self.topic_editor.is_some()
+                || self.room_search.open
+                || self.bookmarks.open
+                || self.global_search.open
+                || self.selection.members.is_some()
+                || (self.demo.is_none() && self.model.authentication.is_some())
+        }) {
+            self.pending_room_focus = None;
+        }
+    }
+
+    fn take_room_focus(&mut self) -> Option<impl iced::advanced::widget::Operation + use<>> {
+        self.validate_room_focus();
+        let generation = self.pending_room_focus?;
+        let pane = super::current_pane(&self.model.room, generation)?;
+        self.pending_room_focus = None;
+        if pane.error.is_some() {
+            return None;
+        }
+        Some(iced::advanced::widget::operation::focusable::focus(
+            "room-composer".into(),
+        ))
+    }
+
+    pub(super) fn restore_room_focus(&mut self) -> Task<Message> {
+        self.take_room_focus()
+            .map_or_else(Task::none, iced::advanced::widget::operate)
+            .discard()
+    }
+
     pub(super) fn quick_room_event(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::Open => {
@@ -185,11 +234,16 @@ impl App {
                         .as_ref()
                         .is_some_and(|(_, current)| current == &id)
                     {
+                        self.pending_room_focus = self
+                            .selection
+                            .room
+                            .as_ref()
+                            .map(|(generation, _)| *generation);
                         Task::none()
                     } else {
                         self.update(Message::Room(id))
                     };
-                    return task.chain(iced::widget::operation::focus("room-composer"));
+                    return task;
                 }
             }
             Event::Ignore => {}
@@ -284,6 +338,177 @@ mod tests {
     use super::super::{DraftKey, tests::demo_app};
     use super::*;
     use iced::widget::text_editor::{Action, Edit};
+
+    fn loading_room(via_picker: bool) -> (App, super::super::Pane) {
+        let mut app = demo_app();
+        let _ = app.update(Message::WindowFocused(true));
+        let mut pane = app.model.room.clone().unwrap();
+        app.demo = None;
+        app.model.authentication = None;
+        let task = if via_picker {
+            let _ = app.update(message(Event::Open));
+            let _ = app.update(message(Event::Edit("home".into())));
+            app.update(message(Event::Submit))
+        } else {
+            app.update(Message::Room("home".into()))
+        };
+        pane.generation = app.selection.room.as_ref().unwrap().0;
+        assert_eq!(task.units(), 0, "the composer is still absent");
+        assert_eq!(app.pending_room_focus, Some(pane.generation));
+        (app, pane)
+    }
+
+    #[test]
+    fn connected_pane_arrival_focuses_the_composer_once() {
+        for via_picker in [false, true] {
+            let (mut app, pane) = loading_room(via_picker);
+            app.pending_scroll = [None, None];
+            let mut snapshot = app.model.clone();
+            snapshot.room = Some(pane);
+            assert_eq!(
+                app.update(Message::State(Box::new(snapshot.clone())))
+                    .units(),
+                1
+            );
+            assert!(app.pending_room_focus.is_none());
+            assert_eq!(app.update(Message::State(Box::new(snapshot))).units(), 0);
+        }
+    }
+
+    #[test]
+    fn ready_rooms_focus_after_enter_or_click_including_the_current_room() {
+        for room in ["studio", "home"] {
+            for source in ["submit", "picker click", "sidebar"] {
+                let mut app = demo_app();
+                let _ = app.update(Message::WindowFocused(true));
+                let task = if source == "sidebar" {
+                    app.update(Message::Room(room.into()))
+                } else {
+                    let _ = app.update(message(Event::Open));
+                    let _ = app.update(message(Event::Edit(room.into())));
+                    app.update(message(if source == "picker click" {
+                        Event::Choose(room.into())
+                    } else {
+                        Event::Submit
+                    }))
+                };
+                assert!(task.units() > 0, "{room} {source}");
+                assert_eq!(app.selection.room.as_ref().unwrap().1, room);
+                assert!(app.room_picker.is_none());
+                assert!(app.pending_room_focus.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn room_open_focus_operation_routes_typing_to_the_loaded_composer() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+
+        let (mut app, pane) = loading_room(false);
+        assert!(app.take_room_focus().is_none());
+        app.model.room = Some(pane);
+        let mut focus = app.take_room_focus().expect("matching pane is ready");
+        let key = app.draft_key(false).unwrap();
+        let original = DraftKey {
+            room: "studio".into(),
+            root: None,
+        };
+        app.drafts.get_mut(&original).unwrap().content =
+            iced::widget::text_editor::Content::with_text("other draft");
+        app.scroll_positions.insert(original.clone(), 135.0);
+        app.scroll_positions.insert(key.clone(), 0.0);
+        let scroll = app.scroll_positions.clone();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = iced::Size::new(1280.0, 720.0);
+        let mut view = app.view();
+        let mut tree = widget::Tree::new(&view);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        view.as_widget_mut()
+            .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut focus);
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        view.as_widget_mut().update(
+            &mut tree,
+            &iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Character("x".into()),
+                modified_key: Key::Character("x".into()),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: Modifiers::empty(),
+                text: Some("x".into()),
+                repeat: false,
+            }),
+            layout::Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut shell,
+            &iced::Rectangle::with_size(size),
+        );
+        assert!(shell.is_event_captured());
+        assert!(messages.iter().any(|message| {
+            matches!(message, Message::Edit(target, Action::Edit(Edit::Insert('x'))) if target == &key)
+        }));
+        drop(view);
+        for message in messages {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.drafts[&key].content.text(), "x");
+        assert_eq!(app.drafts[&original].content.text(), "other draft");
+        assert_eq!(app.scroll_positions, scroll);
+        assert!(app.take_room_focus().is_none());
+    }
+
+    #[test]
+    fn delayed_focus_is_canceled_by_navigation_dialogs_and_focus_changes() {
+        for interrupt in [
+            "room",
+            "thread",
+            "settings",
+            "picker",
+            "filter",
+            "unfocused",
+            "error",
+        ] {
+            let (mut app, mut pane) = loading_room(true);
+            match interrupt {
+                "room" => {
+                    let _ = app.update(Message::Room("studio".into()));
+                }
+                "thread" => {
+                    let _ = app.update(Message::Thread("root".into()));
+                }
+                "settings" => {
+                    let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+                }
+                "picker" => {
+                    let _ = app.update(message(Event::Open));
+                }
+                "filter" => {
+                    let _ = app.update(Message::SearchFocus);
+                }
+                "unfocused" => {
+                    let _ = app.update(Message::WindowFocused(false));
+                }
+                "error" => pane.error = Some("could not load".into()),
+                _ => unreachable!(),
+            }
+            let mut snapshot = app.model.clone();
+            snapshot.room = Some(pane);
+            let _ = app.update(Message::State(Box::new(snapshot)));
+            let pending = if interrupt == "room" {
+                Some(app.selection.room.as_ref().unwrap().0)
+            } else {
+                None
+            };
+            assert_eq!(app.pending_room_focus, pending, "{interrupt}");
+            assert!(app.take_room_focus().is_none(), "{interrupt}");
+        }
+    }
 
     #[test]
     fn fuzzy_search_ranks_and_handles_unicode_and_room_ids() {

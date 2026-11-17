@@ -50,7 +50,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Tooltips | Hover the account avatar, spaces, room-list toggle, header controls, composer actions, message timestamps/senders, and emoji choices. Hints use compact 11 px light text in a charcoal rounded surface with consistent padding, a subtle border/shadow, and a gap from the control. Check long topics and multiline read receipts wrap within the surface, and hints stay inside the window near its edges. Native rendering remains a manual check. |
 | Global message search | **Search messages** above Saved messages or Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a full-size panel. Enter or **Search** submits; typing cancels the previous request and clears its results. Results span all rooms regardless of the selected space and include room, sender, date, highlighted text, and **Go to message/reply**. Check pagination, duplicate suppression, no matches, server failure with local results, and switching to Saved messages or a room. Back/Escape restores the previous conversation, thread, drafts, and scroll; the panel sends no read receipts for hidden conversations. |
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
-| Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
+| Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens and focuses the room composer once its pane loads, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
 | Room creation | Ctrl+Shift+N or the **Create room** icon opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
 | Composer | Text and toolbar occupy separate rows within one focus-highlighted surface, aligned with the reading column. Attachment/emoji controls sit together on the left; the format pill and eye icon control literal/Markdown mode and preview. Send is blue when enabled and muted when unavailable. Attachments use an inline chip with filename ellipsis; errors stay inside the surface. Check multiline editing/scrolling, focus, toolbar hit targets, staged captions, preview toggling, and keyboard shortcuts in room and thread panes at 640×480. |
@@ -266,6 +266,17 @@ and removed. In connected acceptance, pin another message in the open room and
 verify both the count and expanded list update after sync; repeat with Saved
 messages open/closed and pin changes from another client. This regression has not
 been validated against a saved account.
+
+Room composer focus (2026-11-17): opening a room from the sidebar, its context
+menu, or Ctrl+P focuses the composer. Focus waits for the selected room's
+SDK pane instead of running while only the opening placeholder is mounted.
+Headless regressions cover delayed pane arrival, a single focus request, typing
+into the resulting composer, and cancellation after navigation, dialogs, window
+focus loss, or a failed pane. In connected acceptance, use Ctrl+P and Enter/click
+to open an unloaded room, then type without clicking the composer. Repeat by
+clicking a sidebar room or choosing **Open room** from its context menu, and while
+quickly switching elsewhere or opening Settings during loading. Native desktop
+acceptance has not been repeated for this change.
 
 Ctrl+, opens Settings, Ctrl+K focuses the sidebar room filter, Alt+Up/Down selects adjacent
 filtered rooms, and Escape clears search or closes a thread. macOS uses Command

@@ -183,6 +183,7 @@ struct App {
     pin_error: Option<(reaction_picker::Target, String)>,
     room_search: room_search::State,
     room_picker: Option<room_picker::State>,
+    pending_room_focus: Option<u64>,
     new_chat: Option<new_chat::State>,
     create_room: Option<create_room::State>,
     create_room_request: Option<u64>,
@@ -354,6 +355,7 @@ impl App {
             pin_error: None,
             room_search: room_search::State::default(),
             room_picker: None,
+            pending_room_focus: None,
             new_chat: None,
             create_room: None,
             create_room_request: None,
@@ -378,6 +380,13 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if matches!(
+            message,
+            Message::SearchFocus | Message::Search(_) | Message::Focus(_) | Message::RoomSearch(_)
+        ) {
+            self.pending_room_focus = None;
+        }
+        self.validate_room_focus();
         if let Message::EmojiManagement(event) = message {
             let task = self.emoji_management_event(event);
             self.refresh_media_demand();
@@ -485,7 +494,7 @@ impl App {
         if let Message::QuickRoom(event) = message {
             let task = self.quick_room_event(event);
             self.publish_notification_context();
-            return task;
+            return Task::batch([task, self.restore_room_focus()]);
         }
         if self.create_room.is_some() && matches!(message, Message::Escape) {
             return self.update(Message::CreateRoom(create_room::Event::Close));
@@ -1450,6 +1459,8 @@ impl App {
             Message::Exit => return self.update(Message::Close),
             Message::Room(id) if !self.closing && !self.stopped => {
                 self.select_room(id);
+                // The composer may appear later with the matching SDK pane.
+                self.pending_room_focus = Some(self.generation);
             }
             Message::Thread(id)
                 if !self.closing && !self.stopped && self.selection.room.is_some() =>
@@ -1576,7 +1587,11 @@ impl App {
                 }
             });
         }
-        let scroll = Task::batch([action_task, self.restore_scroll()]);
+        let scroll = Task::batch([
+            action_task,
+            self.restore_scroll(),
+            self.restore_room_focus(),
+        ]);
         if opening_image && self.image_view.is_some() {
             Task::batch([scroll, iced::widget::operation::focus("image-viewer")])
         } else if closing_image {
@@ -1785,6 +1800,7 @@ impl App {
         }
     }
     fn select_room(&mut self, id: String) {
+        self.pending_room_focus = None;
         self.shell.narrow_navigation = false;
         self.bookmarks.close();
         self.global_search.close();
@@ -1801,6 +1817,7 @@ impl App {
             .or_default();
     }
     fn select_thread(&mut self, id: String) {
+        self.pending_room_focus = None;
         self.bookmarks.close();
         self.global_search.close();
         self.visible_rows[1].clear();
