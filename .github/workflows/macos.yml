@@ -57,8 +57,12 @@ jobs:
         run: |
           cargo test --locked --release --lib session::
 
-      - name: Verify app signature
-        run: codesign --verify --strict --verbose=2 target/Interconnect.app
+      - name: Verify app signature and icon
+        run: |
+          codesign --verify --strict --verbose=2 target/Interconnect.app
+          iconutil --convert iconset \
+            --output "$RUNNER_TEMP/Interconnect.iconset" \
+            target/Interconnect.app/Contents/Resources/interconnect.icns
 
       - name: Package bleeding-edge app
         # Archive the bundle before uploading to preserve executable permissions.

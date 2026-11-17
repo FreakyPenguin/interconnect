@@ -3,6 +3,8 @@
 mod attachments;
 #[path = "interconnect/bookmarks.rs"]
 mod bookmarks;
+#[path = "interconnect/branding.rs"]
+mod branding;
 #[path = "interconnect/composer.rs"]
 mod composer;
 #[path = "interconnect/composer_editor.rs"]
@@ -3497,11 +3499,7 @@ fn main() -> anyhow::Result<()> {
         .default_font(iced::Font::with_name("Inter"))
         .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())
         .font(include_bytes!("../../assets/fonts/Inter-SemiBold.otf").as_slice())
-        .window(iced::window::Settings {
-            size: iced::Size::new(1240.0, 820.0),
-            min_size: Some(iced::Size::new(640.0, 480.0)),
-            ..Default::default()
-        })
+        .window(branding::window_settings())
         .executor::<UiExecutor>()
         .subscription(App::subscription)
         .exit_on_close_request(false)

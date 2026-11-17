@@ -28,6 +28,46 @@ loading, and error layouts were checked in the isolated Sway/tiny-skia demo at
 1280×900 and 640×480. Connected acceptance and macOS/wgpu remain untested; no
 connected accounts were used.
 
+## App logo and desktop icons
+
+The app embeds the processor speech-bubble logo from `docs/logo.svg` through
+the generated `assets/icons/interconnect-256.png`. Profile opening, sign-in,
+browser sign-in, and profile errors show the same static logo. One cached image
+handle is reused across views, with no new subscription or animation timer.
+The Linux window icon and `interconnect` application ID are configured before
+opening the window. The Debian package installs the matching desktop entry,
+scalable SVG, and PNG sizes from 16 to 1024 pixels. The macOS bundle declares and
+includes `interconnect.icns`, with standard and Retina representations. There is
+no system-tray/menu-bar item.
+
+Validation on 2026-11-17: formatting, workspace Clippy with warnings denied,
+all 324 desktop tests, and the locked desktop build passed. The login layout
+regression covers every authentication state at 640×480 and checks that a
+settled redraw returns `Wait`. Temporary offline software-widget renders and
+account-free `--demo` captures exercised the profile-opening and sign-in views;
+the desktop compositor constrained the native captures to 617×374, where the
+sign-in form remained scrollable. Capture hooks and screenshots stayed outside
+the final changes. PNG regeneration was byte-for-byte repeatable with the local
+ImageMagick version; ICNS structure, all eleven embedded PNG/Retina entries,
+and the bundle icon metadata were checked. Shell syntax and desktop-entry
+validation passed. A local Debian package was built and extracted; its desktop
+entry, SVG, and all eight PNG sizes matched the source assets. Package
+installation was not tested. No connected client was restarted or used for
+testing.
+
+For Linux acceptance, install the Debian package on a test desktop, inspect its
+application-menu icon, then run `interconnect --demo`. Check the taskbar/app
+switcher icon and grouping against the installed launcher. Wayland resolves the
+icon through that installed desktop entry; a bare development checkout may
+show a generic icon. On macOS, build with `scripts/bundle-macos.sh`, then run
+`open target/Interconnect.app --args --demo` and check Finder, the Dock, and the
+app switcher. macOS CI now extracts the bundled icon with `iconutil` after
+checking the app signature. Native macOS appearance and installed Linux
+launcher/taskbar behavior remain manual checks; this Linux session cannot
+establish those results. The existing notifications desktop-entry hint also
+allows notification services to associate the installed app icon, subject to
+the service's behavior.
+
 ## Demo checks
 
 ```sh

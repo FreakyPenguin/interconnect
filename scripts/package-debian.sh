@@ -22,6 +22,12 @@ package_root="$work_dir/debian/interconnect"
 install -Dm755 "$binary" "$package_root/usr/bin/interconnect"
 install -Dm644 "$project_root/packaging/debian/interconnect.desktop" \
     "$package_root/usr/share/applications/interconnect.desktop"
+install -Dm644 "$project_root/docs/logo.svg" \
+    "$package_root/usr/share/icons/hicolor/scalable/apps/interconnect.svg"
+for size in 16 32 48 64 128 256 512 1024; do
+    install -Dm644 "$project_root/assets/icons/interconnect-$size.png" \
+        "$package_root/usr/share/icons/hicolor/${size}x${size}/apps/interconnect.png"
+done
 for notice in OFL.txt FONT_NOTICE.txt; do
     install -Dm644 "$project_root/assets/licenses/katex/$notice" \
         "$package_root/usr/share/doc/interconnect/katex/$notice"

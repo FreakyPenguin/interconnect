@@ -1,5 +1,5 @@
 //! Event-driven password and browser sign-in. SDK work stays in the connection owner.
-use super::{App, Message, shell};
+use super::{App, Message, branding, shell};
 use iced::{
     Element, Length, Task,
     widget::{button, column, container, row, scrollable, text, text_input},
@@ -160,6 +160,7 @@ impl App {
 
     pub fn login_view(&self, authentication: &Authentication) -> Element<'_, Message> {
         let mut content = column![
+            branding::logo_image(80.0),
             shell::title("Interconnect", 30),
             text("A space for your conversations.")
                 .size(15)
@@ -347,8 +348,8 @@ mod tests {
     }
 
     #[test]
-    fn all_login_states_fit_the_minimum_window() {
-        use iced::advanced::{layout, widget};
+    fn all_login_states_fit_the_minimum_window_and_settle_without_redraws() {
+        use iced::advanced::{Shell, layout, mouse, widget};
         let (mut app, _) = form();
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         for authentication in [
@@ -371,6 +372,22 @@ mod tests {
                 assert!(bounds.x + bounds.width <= size.width);
                 assert!(bounds.y + bounds.height <= size.height);
             }
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Window(iced::window::Event::RedrawRequested(
+                    iced::time::Instant::now(),
+                )),
+                layout::Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+                &iced::Rectangle::with_size(size),
+            );
+            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+            assert!(messages.is_empty());
         }
     }
 

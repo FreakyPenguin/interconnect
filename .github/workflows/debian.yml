@@ -120,6 +120,8 @@ jobs:
           apt-get install -y --no-install-recommends ./downloads/*.deb desktop-file-utils
           test -x /usr/bin/interconnect
           desktop-file-validate /usr/share/applications/interconnect.desktop
+          test -s /usr/share/icons/hicolor/scalable/apps/interconnect.svg
+          test -s /usr/share/icons/hicolor/256x256/apps/interconnect.png
           ldd /usr/bin/interconnect > /tmp/interconnect-libraries.txt
           cat /tmp/interconnect-libraries.txt
           if grep -q 'not found' /tmp/interconnect-libraries.txt; then

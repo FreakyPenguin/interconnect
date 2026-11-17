@@ -148,6 +148,35 @@ sudo apt install ./interconnect_VERSION_amd64.deb
 These are downloadable packages, not an APT repository with automatic updates.
 Desktop behavior requires manual validation.
 
+## App logo and desktop icons
+
+[docs/logo.svg](logo.svg) is the editable source for the app logo. Regenerate the
+checked-in PNG sizes and macOS ICNS after changing it:
+
+```sh
+# Requires Python 3 and ImageMagick (magick or convert).
+python3 scripts/generate-icons.py
+```
+
+Normal builds and packaging use the assets in `assets/icons` and do not require
+ImageMagick. The startup/profile-opening and sign-in views share one cached,
+embedded logo with the window icon; the logo adds no animation or timer.
+
+The Debian package installs `interconnect.desktop` and scalable/PNG icons under
+the `hicolor` icon theme. The Linux window application ID and X11 class are
+`interconnect`, matching the desktop entry and icon name so taskbars can group
+the window with its launcher. Wayland uses the installed desktop entry for the
+icon; an uninstalled `cargo run` may still show a generic taskbar icon. The
+existing notification desktop-entry hint uses this same identity where honored
+by the notification service.
+
+On macOS, `scripts/bundle-macos.sh` installs `interconnect.icns` into the bundle
+and declares it in `Info.plist` for Finder, the Dock, and the app switcher.
+Launch the `.app` to use that identity; a bare `cargo run` does not have a bundle
+icon. There is no separate system-tray/menu-bar item, and window-close behavior
+is unchanged. Native icon appearance still requires platform validation; see
+[the UI validation guide](validation/connected-ui.md#app-logo-and-desktop-icons).
+
 ## Running the client
 
 Run `cargo run --locked --bin interconnect -- --demo` for a memory-only workspace

@@ -23,6 +23,7 @@ bundle_path="$build_root/Interconnect.app"
 mkdir -p "$bundle_path/Contents/MacOS" "$bundle_path/Contents/Resources"
 cp "$build_root/$binary_profile/interconnect" "$bundle_path/Contents/MacOS/interconnect"
 cp packaging/macos/Info.plist "$bundle_path/Contents/Info.plist"
+cp assets/icons/interconnect.icns "$bundle_path/Contents/Resources/interconnect.icns"
 mkdir -p "$bundle_path/Contents/Resources/licenses/katex"
 cp assets/licenses/katex/OFL.txt assets/licenses/katex/FONT_NOTICE.txt \
     "$bundle_path/Contents/Resources/licenses/katex/"
