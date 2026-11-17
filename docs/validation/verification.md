@@ -71,7 +71,17 @@ immediate close after starting from an older UI snapshot, closed controls after
 shutdown, and idle services making no HTTP requests. Mismatch and cancellation
 send no MAC and do not verify the peer. GUI checks cover demo isolation, draft
 and scroll preservation, modal input blocking, notification visibility, and all
-phases at the minimum 640×480 window size.
+phases at the minimum 640×480 window size. The dialog keeps its title and action
+footer fixed while account/device information and comparisons scroll between them.
+Comparison Match/Mismatch, incoming Accept, and Cancel/Close remain visible at
+minimum size; short phases use smaller desktop height caps. Layout checks assert
+action bounds and unchanged action positions when scrolling the body.
+
+Validation for this layout change: targeted verification UI tests, formatting,
+and workspace Clippy pass. An isolated Sway/tiny-skia demo check at 1280×900
+and 640×480 confirmed the device list and comparison layout, including visible
+comparison/cancel actions without scrolling. Connected acceptance and macOS/wgpu
+rendering remain untested for this extension.
 
 These checks exercise cryptographic SAS exchange and the SDK's local peer-device
 trust. They do not establish a live account's cross-signing status, historical-key

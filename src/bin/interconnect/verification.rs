@@ -155,7 +155,6 @@ impl App {
         let snapshot = self.verification_snapshot();
         let action = |action| message(Event::Action(snapshot.revision, action));
         let mut content = column![
-            shell::title("Verify this device", 24),
             text(snapshot.user.clone()).size(13),
             text(format!(
                 "This device: {} · Trust: {}",
@@ -174,19 +173,10 @@ impl App {
             );
         }
         if let Some(incoming) = &snapshot.incoming {
-            content = content
-                .push(text(format!(
-                    "Your device {} is requesting verification.",
-                    incoming.device
-                )))
-                .push(
-                    button("Accept request")
-                        .on_press_maybe(
-                            (!snapshot.phase.active())
-                                .then(|| action(Action::Accept(incoming.flow.clone()))),
-                        )
-                        .padding(10),
-                );
+            content = content.push(text(format!(
+                "Your device {} is requesting verification.",
+                incoming.device
+            )));
         }
         match &snapshot.phase {
             Phase::Idle | Phase::Loading => content = content.push(text("Loading your devices…")),
@@ -218,12 +208,7 @@ impl App {
                     content = content.push(emojis);
                 }
                 let (a, b, c) = comparison.decimals;
-                content = content.push(container(text(format!("{a}    {b}    {c}")).size(26)).center_x(Length::Fill).padding(12))
-                    .push(row![
-                        button("They don't match").on_press(action(Action::Mismatch)).padding(10),
-                        button("They match").on_press_maybe((self.verification.confirming != Some((snapshot.revision, comparison.decimals)))
-                            .then(|| action(Action::Confirm(comparison.decimals)))).padding(10),
-                    ].spacing(12));
+                content = content.push(container(text(format!("{a}    {b}    {c}")).size(26)).center_x(Length::Fill).padding(12));
             }
             Phase::Confirmed { device } => content = content.push(text(format!("Confirmed here. Waiting for {device} to confirm…"))),
             Phase::Complete => content = content.push(shell::title(if self.demo.is_some() { "Demo comparison complete" } else { "Comparison complete on both devices" }, 19))
@@ -234,7 +219,7 @@ impl App {
         if let Some(error) = &self.verification.error {
             content = content.push(text(error).size(12));
         }
-        let mut buttons = row![].spacing(12);
+        let mut buttons = row![].spacing(8).align_y(iced::Alignment::Center);
         if !snapshot.phase.active() && self.demo.is_none() && snapshot.control.is_some() {
             buttons = buttons.push(
                 button("Refresh devices")
@@ -243,7 +228,6 @@ impl App {
             );
         }
         buttons = buttons
-            .push(iced::widget::space().width(Length::Fill))
             .push(
                 button(if snapshot.phase.active() {
                     "Cancel verification"
@@ -251,17 +235,83 @@ impl App {
                     "Close"
                 })
                 .on_press(message(Event::Close))
-                .padding(10),
+                .padding(10)
+                .style(shell::quiet_button),
+            )
+            .push(iced::widget::space().width(Length::Fill));
+        if let Phase::Compare { comparison, .. } = &snapshot.phase {
+            buttons = buttons
+                .push(
+                    button("They don't match")
+                        .on_press(action(Action::Mismatch))
+                        .padding(10)
+                        .style(shell::quiet_button),
+                )
+                .push(
+                    button("They match")
+                        .on_press_maybe(
+                            (self.verification.confirming
+                                != Some((snapshot.revision, comparison.decimals)))
+                            .then(|| action(Action::Confirm(comparison.decimals))),
+                        )
+                        .padding(10),
+                );
+        } else if let Some(incoming) = &snapshot.incoming
+            && !snapshot.phase.active()
+        {
+            buttons = buttons.push(
+                button("Accept request")
+                    .on_press(action(Action::Accept(incoming.flow.clone())))
+                    .padding(10),
             );
-        content = content.push(buttons);
-        let card = container(scrollable(content).style(shell::scroll_style))
-            .padding(24)
-            .max_width(580)
-            .max_height((size.height - 32.0).max(1.0))
-            .style(|_| container::Style {
-                border: iced::Border::default().rounded(12),
-                ..shell::surface(iced::Color::WHITE)
-            });
+        }
+        let header = container(shell::title("Verify this device", 20))
+            .padding([18, 24])
+            .width(Length::Fill)
+            .id("verification-header");
+        let body = scrollable(container(content).padding(24).width(Length::Fill))
+            .id("verification-body")
+            .direction(shell::scrollbar())
+            .style(shell::scroll_style)
+            .height(Length::Fill);
+        let footer = container(buttons)
+            .padding([14, 24])
+            .width(Length::Fill)
+            .id("verification-actions");
+        // Keep short phases compact while allowing a bounded, scrolling device
+        // list or comparison. The footer always gets its space before the body.
+        let preferred_height = match &snapshot.phase {
+            Phase::Compare { .. } => 620.0,
+            Phase::Devices(devices) => (350.0 + devices.len() as f32 * 72.0).min(620.0),
+            Phase::Waiting { .. } | Phase::Complete => 400.0,
+            Phase::Idle | Phase::Loading => 320.0,
+            Phase::Confirmed { .. } | Phase::Cancelled | Phase::Failed(_) => 360.0,
+        } + if snapshot.incoming.is_some() {
+            48.0
+        } else {
+            0.0
+        };
+        let card = container(
+            column![
+                header,
+                iced::widget::rule::horizontal(1),
+                body,
+                iced::widget::rule::horizontal(1),
+                footer
+            ]
+            .spacing(0),
+        )
+        .width((size.width - 32.0).clamp(1.0, 580.0))
+        .height((size.height - 32.0).clamp(1.0, preferred_height))
+        .clip(true)
+        .style(|_| container::Style {
+            border: iced::Border {
+                color: shell::LINE,
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..shell::surface(iced::Color::WHITE)
+        });
         opaque(
             mouse_area(
                 container(card)
@@ -355,6 +405,50 @@ mod tests {
             Action::Start("OTHER-DEMO".into()),
         )));
         let comparison = app.verification.demo.phase.clone();
+        #[derive(Default)]
+        struct Bounds {
+            header: Option<iced::Rectangle>,
+            body: Option<(iced::Rectangle, iced::Rectangle)>,
+            footer: Option<iced::Rectangle>,
+            actions: Vec<(String, iced::Rectangle)>,
+        }
+        impl widget::Operation for Bounds {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("verification-header")) {
+                    self.header = Some(bounds);
+                }
+                if id == Some(&widget::Id::new("verification-actions")) {
+                    self.footer = Some(bounds);
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                _: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("verification-body")) {
+                    self.body = Some((bounds, content));
+                }
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, value: &str) {
+                if matches!(
+                    value,
+                    "Close"
+                        | "Cancel verification"
+                        | "They match"
+                        | "They don't match"
+                        | "Accept request"
+                ) {
+                    self.actions.push((value.into(), bounds));
+                }
+            }
+        }
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         for phase in [
             Phase::Loading,
@@ -370,6 +464,11 @@ mod tests {
             Phase::Cancelled,
             Phase::Failed("Verification timed out. Try again.".into()),
         ] {
+            app.verification.demo.incoming =
+                matches!(phase, Phase::Devices(_)).then(|| interconnect::verification::Incoming {
+                    flow: "sample-flow".into(),
+                    device: "OTHER-DEMO".into(),
+                });
             app.verification.demo.phase = phase;
             let mut view = app.view();
             let mut tree = widget::Tree::new(&view);
@@ -378,6 +477,70 @@ mod tests {
                 view.as_widget_mut()
                     .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
             assert_eq!(node.size(), size);
+            let mut bounds = Bounds::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut bounds,
+            );
+            let header = bounds.header.unwrap();
+            let (body, body_content) = bounds.body.unwrap();
+            let footer = bounds.footer.unwrap();
+            assert!(header.y >= 16.0 && header.y + header.height <= body.y);
+            assert!(body.y + body.height <= footer.y);
+            assert!(footer.y + footer.height <= size.height - 16.0);
+            assert!(!bounds.actions.is_empty());
+            for (_, action) in &bounds.actions {
+                assert!(action.x >= footer.x && action.x + action.width <= footer.x + footer.width);
+                assert!(
+                    action.y >= footer.y && action.y + action.height <= footer.y + footer.height
+                );
+            }
+            if app.verification.demo.incoming.is_some() {
+                assert!(
+                    bounds
+                        .actions
+                        .iter()
+                        .any(|(name, _)| name == "Accept request")
+                );
+            }
+            if matches!(app.verification.demo.phase, Phase::Compare { .. }) {
+                assert!(
+                    body_content.height > body.height,
+                    "comparison body must scroll in a short window"
+                );
+                assert!(bounds.actions.iter().any(|(name, _)| name == "They match"));
+                assert!(
+                    bounds
+                        .actions
+                        .iter()
+                        .any(|(name, _)| name == "They don't match")
+                );
+            }
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut widget::operation::scrollable::scroll_to::<()>(
+                    widget::Id::new("verification-body"),
+                    iced::widget::operation::AbsoluteOffset {
+                        x: None,
+                        y: Some(1000.0),
+                    },
+                ),
+            );
+            let mut scrolled = Bounds::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut scrolled,
+            );
+            assert_eq!(
+                scrolled.actions, bounds.actions,
+                "scrolling must leave actions fixed"
+            );
             let event = iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
             let mut messages = Vec::new();
             let mut shell = Shell::new(&mut messages);
