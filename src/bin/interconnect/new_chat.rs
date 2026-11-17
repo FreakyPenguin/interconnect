@@ -1,11 +1,28 @@
 //! Quick-open people picker; only choosing a person creates a server-side room.
-use super::{App, MAX_PENDING_OPERATIONS, Message, people_picker, shell};
+use super::{App, MAX_PENDING_OPERATIONS, Message, people_picker, reaction_picker, shell};
 use iced::{
     Element, Length, Task,
     keyboard::{Key, Modifiers, key::Named},
     widget::{column, container, mouse_area, opaque, text},
 };
-use interconnect::{navigation::RoomEntry, people::parse_user_id};
+use interconnect::{
+    connected::MessageRow,
+    navigation::RoomEntry,
+    people::{Person, parse_user_id},
+};
+
+#[derive(Clone, Debug)]
+pub struct Target {
+    account: Option<String>,
+    room: (u64, String),
+    source: Source,
+}
+#[derive(Clone, Debug)]
+enum Source {
+    Message(reaction_picker::Target),
+    Member(u64, String),
+    Pinned(String),
+}
 
 pub struct State {
     request: u64,
@@ -17,6 +34,7 @@ pub struct State {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open,
+    OpenUser(Target),
     Picker(u64, people_picker::Event),
     Move(bool),
     Submit,
@@ -52,8 +70,119 @@ pub fn shortcut(
     }
 }
 impl App {
+    fn direct_target(&self, source: Source, user: &str, is_own: bool) -> Option<Message> {
+        if is_own
+            || self.account_id.as_deref() == Some(user)
+            || parse_user_id(user).is_err()
+            || self.closing
+            || self.stopped
+            || self.composing
+            || self.direct_request.is_some()
+            || self.create_room_request.is_some()
+            || self.pending_ops >= MAX_PENDING_OPERATIONS
+        {
+            return None;
+        }
+        Some(message(Event::OpenUser(Target {
+            account: self.account_id.clone(),
+            room: self.selection.room.clone()?,
+            source,
+        })))
+    }
+
+    pub(super) fn sender_chat_action(
+        &self,
+        row: &MessageRow,
+        thread: bool,
+        generation: u64,
+    ) -> Option<Message> {
+        self.direct_target(
+            Source::Message(reaction_picker::Target {
+                room: self.selection.room.as_ref()?.1.clone(),
+                thread,
+                generation,
+                event: row.event_id.clone()?,
+            }),
+            &row.sender,
+            row.is_own,
+        )
+    }
+
+    pub(super) fn pinned_chat_action(&self, row: &MessageRow) -> Option<Message> {
+        self.direct_target(Source::Pinned(row.key.clone()), &row.sender, row.is_own)
+    }
+
+    pub(super) fn member_chat_action(
+        &self,
+        member: &interconnect::connected::Member,
+        generation: u64,
+    ) -> Option<Message> {
+        self.direct_target(
+            Source::Member(generation, member.user_id.clone()),
+            &member.user_id,
+            self.demo.is_some() && member.user_id == "@you:example.org",
+        )
+    }
+
+    fn direct_person(&self, target: &Target) -> Option<Person> {
+        if self.account_id != target.account || self.selection.room.as_ref() != Some(&target.room) {
+            return None;
+        }
+        let row = match &target.source {
+            Source::Message(target) => self.message_row(target)?,
+            Source::Pinned(key) => self
+                .model
+                .pinned
+                .as_ref()
+                .filter(|pins| pins.generation == target.room.0)?
+                .rows
+                .iter()
+                .find(|row| &row.key == key)?,
+            Source::Member(generation, user) => {
+                let member = self
+                    .model
+                    .members
+                    .as_ref()
+                    .filter(|members| {
+                        members.generation == *generation
+                            && self.selection.members == Some(*generation)
+                    })?
+                    .rows
+                    .iter()
+                    .find(|member| &member.user_id == user)?;
+                self.member_chat_action(member, *generation)?;
+                return Some(Person {
+                    user_id: member.user_id.clone(),
+                    name: member.name.clone(),
+                    avatar_url: member.avatar_url.clone(),
+                });
+            }
+        };
+        self.direct_target(target.source.clone(), &row.sender, row.is_own)?;
+        Some(Person {
+            user_id: row.sender.clone(),
+            name: row.display_name.clone(),
+            avatar_url: row.avatar_url.clone(),
+        })
+    }
+
     pub(super) fn new_chat_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::OpenUser(target) => {
+                if self.new_chat.is_some() || self.message_delete.is_some() {
+                    return Task::none();
+                }
+                let Some(person) = self.direct_person(&target) else {
+                    return Task::none();
+                };
+                let _ = self.new_chat_event(Event::Open);
+                let Some(state) = &mut self.new_chat else {
+                    return Task::none();
+                };
+                state.picker.query = person.user_id.clone();
+                state.picker.selected = Some(person);
+                return self.new_chat_event(Event::Submit);
+            }
             Event::Open => {
                 if self.create_room.is_some()
                     || self.closing
@@ -323,6 +452,237 @@ mod tests {
                 avatar_url: None,
             })
             .collect();
+    }
+
+    fn sender_action(app: &App, thread: bool) -> (Message, String) {
+        let generation = if thread {
+            app.selection.thread.as_ref().unwrap().0
+        } else {
+            app.selection.room.as_ref().unwrap().0
+        };
+        let pane = if thread {
+            &app.model.thread
+        } else {
+            &app.model.room
+        };
+        pane.as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .find_map(|row| {
+                app.sender_chat_action(row, thread, generation)
+                    .map(|action| (action, row.sender.clone()))
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn sender_clicks_open_the_exact_identity_and_preserve_room_and_thread_drafts() {
+        for thread in [false, true] {
+            let mut app = demo_app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let key = app.draft_key(thread).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("unfinished reply");
+            app.scroll_positions.insert(key.clone(), 87.0);
+            let scope = app.shell.space.clone();
+            let room = app.selection.room.as_ref().unwrap().1.clone();
+            let (action, user) = sender_action(&app, thread);
+            let _ = app.update(action);
+            let dm = format!("demo-dm:{user}");
+            assert_eq!(app.selection.room.as_ref().unwrap().1, dm);
+            assert!(app.new_chat.is_none());
+            assert_eq!(app.shell.space, scope);
+            assert_eq!(app.drafts[&key].content.text(), "unfinished reply");
+            assert_eq!(app.scroll_positions[&key], 87.0);
+            let _ = app.update(Message::Room(room));
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let (action, _) = sender_action(&app, thread);
+            let _ = app.update(action);
+            assert_eq!(
+                app.model.rooms.iter().filter(|room| room.id == dm).count(),
+                1
+            );
+            assert_eq!(app.pending_ops, 0);
+        }
+    }
+
+    #[test]
+    fn sender_actions_reject_stale_views_accounts_self_ids_and_busy_operations() {
+        for mode in 0..7 {
+            let mut app = demo_app();
+            let (action, _) = sender_action(&app, false);
+            match mode {
+                0 => {
+                    let _ = app.update(Message::Room("general".into()));
+                }
+                1 => app.account_id = Some("@other:example.org".into()),
+                2 => app.direct_request = Some(999),
+                3 => app.create_room_request = Some(999),
+                4 => app.composing = true,
+                5 => app.closing = true,
+                _ => app.stopped = true,
+            }
+            let selection = app.selection.clone();
+            let rooms = app.model.rooms.clone();
+            let _ = app.update(action);
+            assert_eq!(app.selection.room, selection.room);
+            assert_eq!(app.selection.thread, selection.thread);
+            assert_eq!(app.model.rooms.len(), rooms.len());
+            assert!(app.new_chat.is_none());
+        }
+        let mut app = demo_app();
+        let (action, _) = sender_action(&app, false);
+        let Message::NewChat(Event::OpenUser(target)) = action else {
+            unreachable!()
+        };
+        let mut row = app.model.room.as_ref().unwrap().rows[0].clone();
+        row.is_own = true;
+        assert!(app.sender_chat_action(&row, false, target.room.0).is_none());
+        row.is_own = false;
+        row.sender = "invalid user".into();
+        assert!(app.sender_chat_action(&row, false, target.room.0).is_none());
+        row.sender = "@me:example.org".into();
+        app.account_id = Some(row.sender.clone());
+        assert!(app.sender_chat_action(&row, false, target.room.0).is_none());
+
+        let _ = app.update(Message::Thread("review".into()));
+        let (action, _) = sender_action(&app, true);
+        let _ = app.update(Message::CloseThread);
+        let selected = app.selection.room.clone();
+        let _ = app.update(action);
+        assert_eq!(app.selection.room, selected);
+        assert!(app.new_chat.is_none());
+    }
+
+    #[test]
+    fn members_and_pins_open_chats_and_reject_obsolete_snapshots() {
+        for pinned in [false, true] {
+            for stale in [false, true] {
+                let mut app = demo_app();
+                let (action, user) = if pinned {
+                    let row = &app.model.pinned.as_ref().unwrap().rows[0];
+                    (app.pinned_chat_action(row).unwrap(), row.sender.clone())
+                } else {
+                    let _ = app.update(Message::Members(super::super::members::Event::Open));
+                    let members = app.model.members.as_ref().unwrap();
+                    let member = &members.rows[0];
+                    (
+                        app.member_chat_action(member, members.generation).unwrap(),
+                        member.user_id.clone(),
+                    )
+                };
+                if stale {
+                    if pinned {
+                        app.model.pinned = None;
+                    } else {
+                        let _ = app.update(Message::Members(super::super::members::Event::Retry));
+                    }
+                }
+                let selected = app.selection.room.clone();
+                let _ = app.update(action);
+                if stale {
+                    assert_eq!(app.selection.room, selected);
+                } else {
+                    assert_eq!(
+                        app.selection.room.as_ref().unwrap().1,
+                        format!("demo-dm:{user}")
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn rendered_sender_names_dispatch_one_click_in_rooms_threads_people_and_pins() {
+        use iced::advanced::{Layout, Shell, layout, mouse, widget};
+        struct FindName<'a> {
+            name: &'a str,
+            bounds: Option<iced::Rectangle>,
+        }
+        impl widget::Operation for FindName<'_> {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, text: &str) {
+                if text == self.name && self.bounds.is_none() {
+                    self.bounds = Some(bounds);
+                }
+            }
+        }
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        for source in 0..5 {
+            let mut app = demo_app();
+            let generation = app.selection.room.as_ref().unwrap().0;
+            if source == 1 || source == 4 {
+                let _ = app.update(Message::Thread("review".into()));
+            } else if source == 2 {
+                let _ = app.update(Message::Members(super::super::members::Event::Open));
+            } else if source == 3 {
+                let _ = app.update(Message::TogglePins(generation));
+            }
+            let user = if source == 1 {
+                "@maya:example.org"
+            } else {
+                "@alex:example.org"
+            };
+            let name = if source == 1 {
+                "Maya Chen"
+            } else {
+                "Alex Rivera"
+            };
+            let messages = {
+                let mut view = match source {
+                    0 => app.pane(false),
+                    1 => app.pane(true),
+                    2 => app.members_view(),
+                    3 => app.pinned_view(generation).unwrap(),
+                    _ => app.thread_original_view(),
+                };
+                let size = iced::Size::new(800.0, 1600.0);
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(iced::Size::ZERO, size),
+                );
+                let mut probe = FindName { name, bounds: None };
+                view.as_widget_mut()
+                    .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+                let point = probe.bounds.expect("sender is visible").center();
+                let mut messages = Vec::new();
+                for event in [
+                    iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+                ] {
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &event,
+                        Layout::new(&node),
+                        mouse::Cursor::Available(point),
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &iced::Rectangle::with_size(size),
+                    );
+                }
+                messages
+            };
+            let mut actions = messages
+                .into_iter()
+                .filter(|message| matches!(message, Message::NewChat(Event::OpenUser(_))));
+            let action = actions.next().expect("name emits a DM action");
+            assert!(actions.next().is_none());
+            let _ = app.update(action);
+            assert_eq!(
+                app.selection.room.as_ref().unwrap().1,
+                format!("demo-dm:{user}")
+            );
+        }
     }
     #[test]
     fn keyboard_selection_creates_once_and_keeps_drafts_and_filters() {

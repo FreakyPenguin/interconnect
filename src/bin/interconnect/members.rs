@@ -216,7 +216,11 @@ impl App {
                 .avatar_url
                 .as_ref()
                 .and_then(|uri| self.model.avatars.get(uri));
-            let name = text(&member.name).size(14).wrapping(text::Wrapping::None);
+            let name = super::presentation::sender_name(
+                text(&member.name).size(14).wrapping(text::Wrapping::None),
+                &member.user_id,
+                self.member_chat_action(member, snapshot.generation),
+            );
             let identity = column![
                 name,
                 text(&member.user_id)

@@ -4,6 +4,11 @@ The settled UI has no global polling or continuous redraw loop. SDK and network
 work still wake the process. CPU and scheduler measurements capture activity
 that timer and subscription tests alone cannot establish.
 
+Clickable sender names reuse the existing DM task only on click. They add no
+worker, polling, animation timer, or subscription. Rendered-widget click and
+layout tests cover the controls; fresh production CPU/wakeup measurements were
+not taken for this change (2026-11-17).
+
 ## Message bookmarks — 2026-11-15
 
 The account-wide bookmarks worker adds one storage-room cache subscription and

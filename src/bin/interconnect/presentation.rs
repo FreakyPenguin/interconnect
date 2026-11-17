@@ -2,18 +2,18 @@ use super::{Message, shell, single_line, tooltips};
 use chrono::{DateTime, Local, NaiveDate};
 use iced::{
     Element, Font, Length, font,
-    widget::{container, responsive, row, text, tooltip},
+    widget::{button, container, responsive, row, text, tooltip},
 };
 use interconnect::connected::{MessageRow, RowKind};
 
 /// Keep readable message lines on wide windows, without moving the scrollbar.
 pub(super) const MESSAGE_WIDTH: f32 = 840.0;
 
-pub(super) fn heading(message: &MessageRow) -> Element<'_, Message> {
+pub(super) fn heading(message: &MessageRow, action: Option<Message>) -> Element<'_, Message> {
     responsive(move |bounds| {
         let label = time_label(message);
         let reserved = if label.is_empty() { 0.0 } else { 44.0 };
-        let name = tooltips::tooltip(
+        let name = sender_name(
             container(
                 single_line::label(&message.display_name, 13)
                     .shrink()
@@ -24,7 +24,7 @@ pub(super) fn heading(message: &MessageRow) -> Element<'_, Message> {
             )
             .max_width((bounds.width - reserved).max(0.0)),
             &message.sender,
-            tooltip::Position::Top,
+            action.clone(),
         );
         let mut heading = row![name].spacing(8).align_y(iced::Alignment::Center);
         if !label.is_empty() {
@@ -39,6 +39,36 @@ pub(super) fn heading(message: &MessageRow) -> Element<'_, Message> {
     .width(Length::Fill)
     .height(18)
     .into()
+}
+
+pub(super) fn sender_name<'a>(
+    content: impl Into<Element<'a, Message>>,
+    user: &'a str,
+    action: Option<Message>,
+) -> Element<'a, Message> {
+    let content = content.into();
+    let hint = if action.is_some() {
+        format!("{user} · Open direct chat")
+    } else {
+        user.to_owned()
+    };
+    let name: Element<'a, Message> = if let Some(action) = action {
+        button(content)
+            .padding(0)
+            .style(|_, status| iced::widget::button::Style {
+                text_color: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                    shell::ACCENT
+                } else {
+                    shell::INK
+                },
+                ..Default::default()
+            })
+            .on_press(action)
+            .into()
+    } else {
+        content
+    };
+    tooltips::tooltip(name, hint, tooltip::Position::Top).into()
 }
 
 pub fn local_time(message: &MessageRow) -> Option<DateTime<Local>> {
@@ -96,7 +126,10 @@ mod tests {
             let mut message = message("@maya:example.org", Some(120_000));
             message.display_name = name;
             for width in [120.0, 300.0, 900.0] {
-                let mut view = heading(&message);
+                let mut view = heading(
+                    &message,
+                    Some(Message::NewChat(super::super::new_chat::Event::Ignore)),
+                );
                 let mut tree = widget::Tree::new(&view);
                 let node = view.as_widget_mut().layout(
                     &mut tree,

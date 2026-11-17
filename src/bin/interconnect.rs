@@ -2351,7 +2351,12 @@ impl App {
                 )
             } else {
                 column![
-                    presentation::heading(message),
+                    presentation::heading(
+                        message,
+                        self.selection.thread.as_ref().and_then(|(generation, _)| {
+                            self.sender_chat_action(message, true, *generation)
+                        }),
+                    ),
                     selectable::message_view_with_assets(
                         message,
                         self.inline_assets(),
@@ -2744,7 +2749,14 @@ impl App {
             } else if grouped {
                 column![body]
             } else {
-                column![presentation::heading(message), body].spacing(4)
+                column![
+                    presentation::heading(
+                        message,
+                        self.sender_chat_action(message, thread, *generation),
+                    ),
+                    body
+                ]
+                .spacing(4)
             };
             if message.edited {
                 entry = entry.push(text("edited").size(11).color(shell::MUTED));

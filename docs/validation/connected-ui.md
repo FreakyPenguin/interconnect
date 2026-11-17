@@ -52,6 +52,7 @@ see [renderer selection](../development.md#renderer-selection).
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens and focuses the room composer once its pane loads, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
+| Clickable usernames | Click another sender's name in room messages, thread originals/replies, pinned messages, or the People panel to open their DM. Hover highlights the name and shows their Matrix ID and **Open direct chat** hint. Own names stay plain. Return to the source room/thread and check drafts and reading positions; repeat the click to reuse the same demo DM. Space filters stay unchanged. |
 | Room creation | Ctrl+Shift+N or the **Create room** icon opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
 | Message deletion | Use the trash button in an eligible message’s hover popover or **Delete message…** in its context menu. Confirm explicitly; Escape/outside click cancels. Check own messages, media, thread originals/replies, permission loss, and server errors. |
 | Message editing | Use the pencil button in a message’s hover action popover, right-click and choose **Edit message**, or press Up in an empty focused composer to edit the latest own message in that conversation. Save uses the configured send shortcut; Cancel or Escape restores the previous draft. Check room messages, thread originals/replies, and navigation away and back. |
@@ -78,6 +79,16 @@ Tooltip styling was visually checked in an isolated headless Sway demo with
 tiny-skia at 1280×900: account name, header search, message timestamp near the
 right edge, and room-list toggle. macOS, wgpu, long topics, and multiline read
 receipts remain manual acceptance checks.
+
+Clickable usernames (2026-11-17): rendered-widget tests click sender names in
+rooms, thread originals/replies, People, and pins. State tests cover exact user
+IDs, repeated-chat reuse, draft/scroll/filter preservation, and rejection of
+obsolete room/thread/member/pin snapshots, changed accounts, self IDs, and busy
+operations. The existing DM flow owns asynchronous requests, errors, dismissal,
+and shutdown. Demo senders now have synthetic Matrix IDs; clicks remain offline.
+Formatting, workspace Clippy, all 303 UI tests, and the locked desktop build pass.
+Connected-account acceptance and native desktop rendering remain untested for
+this change.
 
 Popup placement and surfaces (2026-11-17): the composer emoji picker starts at
 its toolbar button and clamps to the window; reaction pickers retain their end
@@ -632,7 +643,7 @@ labels do not access saved accounts or send network requests.
 | Reactions | Chips toggle reactions; the emoji picker adds a selection. Pending/error state belongs to its captured message, with stale results rejected after navigation. |
 | Clipboard | Native file lists and images stage attachments; plain-text paths remain text. Multiple files leave the previous draft intact with an error. Host-selected paths need matching container access. |
 | File drops | Only the visible conversation under the pointer stages the file. Sidebar, disabled panes, and overlays are excluded. Wayland delivery and macOS coordinates have separate native coverage; see [the Winit patch](../architecture/winit-file-drops.md). |
-| Direct chats | People search accepts names and full Matrix IDs. Existing one-to-one DMs are reused; new chats invite the peer and enable encryption. Dismissal during creation prevents late navigation. |
+| Direct chats | People search accepts names and full Matrix IDs. Click another user's name in messages, thread originals/replies, pins, or People to open their chat directly. Check both an existing one-to-one DM and a peer without one; existing DMs are reused, and new chats invite the peer and enable encryption. Errors appear in the chat picker. Dismissal during creation prevents late navigation. |
 | Room management | Invitations, invitation accept/reject, directory search/join, member actions, topic changes, and pin/unpin depend on server permissions and expose request errors. |
 | Room creation | Public/private joining, history, directory visibility, and encryption become room state. Space permission denial fails before creation. A failed child link offers **Retry adding to space** and **Open room**; retry links the existing room. |
 

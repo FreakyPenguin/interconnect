@@ -85,7 +85,15 @@ impl App {
             let body = row![
                 icon,
                 column![
-                    row![shell::title(&message.display_name, 12), timestamp].spacing(10),
+                    row![
+                        presentation::sender_name(
+                            shell::title(&message.display_name, 12),
+                            &message.sender,
+                            self.pinned_chat_action(message),
+                        ),
+                        timestamp
+                    ]
+                    .spacing(10),
                     selectable::message_view_with_assets(message, self.inline_assets(), None),
                 ]
                 .spacing(4)

@@ -356,7 +356,18 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         key: id.into(),
         kind: RowKind::Message,
         event_id: Some(id.into()),
-        sender: sender.into(),
+        sender: if sender.starts_with('@') {
+            sender.into()
+        } else {
+            format!(
+                "@{}:example.org",
+                sender
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("user")
+                    .to_lowercase()
+            )
+        },
         display_name: sender.into(),
         avatar_url: None,
         image: None,
@@ -565,7 +576,7 @@ impl Demo {
                 row.read_by = vec!["@alex:demo.invalid".into(), "@maya:demo.invalid".into()];
             }
             for row in &mut rows {
-                if !row.is_own && row.sender == "Jamie Davis" {
+                if !row.is_own && row.sender == "@jamie:example.org" {
                     row.is_own = true;
                     if row.redactable
                         && row.kind == RowKind::Message
