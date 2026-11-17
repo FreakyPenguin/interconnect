@@ -108,6 +108,7 @@ show_preview = true
 
 [navigation]
 show_room_list = true
+show_unread_section = true
 
 [appearance]
 limit_room_width = true
@@ -129,6 +130,7 @@ gif_seconds = 5
 | `notifications.enabled` | `true` | Desktop message alerts following Matrix push rules while the app runs. Applies on Save/Reload. |
 | `notifications.show_preview` | `true` | Include room, sender, and text; `false` sends a generic private alert. Applies on Save/Reload. |
 | `navigation.show_room_list` | `true` | Initial room-list visibility on the next launch. Windows below 800 px automatically collapse the list; the rail button or Find room temporarily reveals it. Wide-window visibility and preferred size are retained. |
+| `navigation.show_unread_section` | `true` | **Navigation → Show unread section** adds a fixed Unread section above Favorites, including unread DMs and tagged rooms. Rooms also remain in their usual sections. Follows the selected space and room filter; hidden when empty. Applies on Save/Reload without restarting. |
 | `appearance.limit_room_width` | `true` | **Appearance → Limit room content width** centers headers, pins, messages, and composers in an 840 px column. Disable to use the full pane width. Applies on Save/Reload without restarting. |
 | `composer.send_shortcut` | `"ctrl_enter"` | Enter inserts a newline; Ctrl+Enter sends in room and thread composers. Set `"enter"` to send with Enter and use Shift+Enter for a newline. Ctrl+Enter still sends. IME composition suppresses sending. |
 | `graphics.gpu_enabled` | `true` | **Use GPU rendering**. On the next launch, try wgpu with software fallback. Set to `false` to force the CPU renderer, including when `ICED_BACKEND` requests wgpu. |

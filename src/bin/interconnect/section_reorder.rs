@@ -500,7 +500,7 @@ mod tests {
     };
 
     #[test]
-    fn dragging_moves_sections_and_the_shared_chats_slot_without_touching_conversations() {
+    fn dragging_moves_sections_and_chats_without_touching_conversations() {
         let mut app = demo_app();
         let _ = app.update(Message::Thread("review".into()));
         let selected = app.selection.room.clone();
@@ -515,7 +515,7 @@ mod tests {
         let collapse = app.shell.collapsed.clone();
         let _ = app.update(message(Event::Start(tag.into())));
         let _ = app.update(message(Event::Hover("Rooms".into(), Some(false))));
-        // Exiting the other header for the same Chats slot must not clear the target.
+        // The fixed Unread header cannot change a pending drop target.
         let _ = app.update(message(Event::Hover("Unread".into(), None)));
         let _ = app.update(message(Event::Finish));
         assert_eq!(
@@ -529,9 +529,9 @@ mod tests {
                 .map(|s| s.id.as_str())
                 .collect::<Vec<_>>(),
             [
+                "Unread",
                 "m.favourite",
                 "Direct messages",
-                "Unread",
                 "Rooms",
                 tag,
                 "m.lowpriority"
@@ -548,8 +548,10 @@ mod tests {
             section_order(&app.model.sections),
             ["im.vector.fake.direct", tag, "chats"]
         );
-        // Either chat header moves the entire slot; Direct messages is independently movable.
+        // Unread cannot be dragged; Rooms and Direct messages are independently movable.
         let _ = app.update(message(Event::Start("Unread".into())));
+        assert!(!app.section_dragging());
+        let _ = app.update(message(Event::Start("Rooms".into())));
         let _ = app.update(message(Event::Hover("Direct messages".into(), Some(true))));
         let _ = app.update(message(Event::Finish));
         assert_eq!(

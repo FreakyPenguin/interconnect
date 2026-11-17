@@ -484,10 +484,7 @@ impl App {
                                 let section = entry.section_in(&self.model.sections);
                                 section == id
                                     || (id == "chats"
-                                        && matches!(
-                                            section,
-                                            "Rooms" | "Unread" | "Direct messages"
-                                        ))
+                                        && matches!(section, "Rooms" | "Direct messages"))
                             }),
                         _ => false,
                     };

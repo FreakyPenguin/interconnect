@@ -37,7 +37,8 @@ pub struct RoomEntry {
     pub unread_count: u64,
 }
 impl RoomEntry {
-    /// Explicit tags win over inferred direct/unread grouping. Unknown tags fall back.
+    /// Explicit tags win over inferred direct grouping. Unknown tags fall back.
+    /// Unread is a separate shortcut section, so read state never changes membership.
     pub fn section_in<'a>(&'a self, sections: &'a [SectionEntry]) -> &'a str {
         if self.favorite {
             return "m.favourite";
@@ -52,8 +53,6 @@ impl RoomEntry {
             "m.favourite"
         } else if self.direct {
             "Direct messages"
-        } else if self.unread {
-            "Unread"
         } else {
             "Rooms"
         }
@@ -129,11 +128,14 @@ pub fn sections_from_settings(settings: &serde_json::Value) -> Vec<SectionEntry>
             .as_str()
             .map(str::to_owned),
     };
-    let mut result = vec![section("m.favourite", "Favorites")];
+    let mut result = vec![
+        section("Unread", "Unread"),
+        section("m.favourite", "Favorites"),
+    ];
     for tag in order {
         match tag.as_str() {
             "im.vector.fake.direct" => result.push(section("Direct messages", "Direct messages")),
-            "chats" => result.extend([section("Unread", "Unread"), section("Rooms", "Rooms")]),
+            "chats" => result.push(section("Rooms", "Rooms")),
             _ => result.push(section(&tag, &custom[&tag])),
         }
     }
@@ -342,10 +344,10 @@ mod tests {
         assert_eq!(
             ids,
             [
+                "Unread",
                 "m.favourite",
                 "Direct messages",
                 "element.io.section.c",
-                "Unread",
                 "Rooms",
                 "element.io.section.b",
                 "element.io.section.a",
@@ -423,7 +425,7 @@ mod tests {
         assert_eq!(room.section(), "Direct messages");
         assert!(includes(&Scope::Direct, &None, &room));
         room.direct = false;
-        assert_eq!(room.section(), "Unread");
+        assert_eq!(room.section(), "Rooms");
         room.unread = false;
         assert_eq!(room.section(), "Rooms");
     }

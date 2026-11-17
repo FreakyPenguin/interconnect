@@ -47,6 +47,7 @@ see [renderer selection](../development.md#renderer-selection).
 | --- | --- |
 | Custom sections | Use the room-list **⋯** to create/manage sections, or right-click a custom header to rename/remove it. Studio → Design groups Engineering and Research under an Element-format custom section. Collapse it, search for a room, and switch spaces; grouping follows the filtered list without switching the conversation. |
 | Navigation | Space selection filters the room list without switching the open conversation. Room and child-space rows stay 26 px high with no gaps between rows, including long names and unread badges. Long room, section, and space labels use a grapheme-safe ellipsis; hovering a room name reveals its full name after a short delay. Unread room names are semibold. Expanded section counts and zero-count Saved messages badges are hidden; collapsed sections retain nonzero room counts. Sections collapse independently; search filters rooms. |
+| Unread section | Unread stays above Favorites and includes all unread rooms in the selected space/filter, including DMs, favorites, and custom sections. Rooms remain in their usual groups. Collapse it independently; search temporarily expands it. It hides when empty. **Settings → Navigation → Show unread section** defaults on; Save/Reload applies immediately, Cancel discards changes. Marking a room read removes its shortcut while preserving its usual row, open conversation, drafts, and timeline position. |
 | Presence | Message-group avatars (rooms and threads) show an 8 px status mark; DM navigator rows show the peer’s status. Maya is online (green), Alex away (amber with a dash), Jamie offline (gray); other demo senders have no status mark. Hover a mark for its text label. Group continuations and room activity do not add marks. Switch spaces without changing the open conversation; check 26 px DM rows and minimum-window clipping. |
 | Tooltips | Hover the account avatar, spaces, room-list toggle, header controls, composer actions, message timestamps/senders, and emoji choices. Hints use compact 11 px light text in a charcoal rounded surface with consistent padding, a subtle border/shadow, and a gap from the control. Check long topics and multiline read receipts wrap within the surface, and hints stay inside the window near its edges. Native rendering remains a manual check. |
 | Global message search | **Search messages** above Saved messages or Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a full-size panel. Enter or **Search** submits; typing cancels the previous request and clears its results. Results span all rooms regardless of the selected space and include room, sender, date, highlighted text, and **Go to message/reply**. Check pagination, duplicate suppression, no matches, server failure with local results, and switching to Saved messages or a room. Back/Escape restores the previous conversation, thread, drafts, and scroll; the panel sends no read receipts for hidden conversations. |
@@ -75,6 +76,15 @@ see [renderer selection](../development.md#renderer-selection).
 | Account utilities | The account avatar opens Settings, Find room, and device verification. Routine connection/device status lives in this menu; the normal bottom bar is hidden. Incoming verification requests, connection problems, settings/notification failures, media errors, and stopped-session Exit remain visible when applicable. An account attention dot also marks issues and graphics restart notices. Demo identity stays visible in the space rail. |
 | Settings | The fixed header and footer keep Close, Cancel, and Save visible while the preferences body scrolls. Check 640×480 and ordinary desktop sizes: long descriptions, paths, and errors wrap within the card; controls use compact type and outlined fields. Save applies changes; Cancel/Close discards the dialog draft. Graphics changes show restart status. Demo settings stay in memory. |
 | Control icons | Navigation, header, message actions, pins, and composer use shared static outline icons. Check consistent size/stroke, hover/disabled colors, recognizable pin/unpin and bookmark states, and action tooltips. User-authored emoji and reaction glyphs remain emoji. |
+
+Unread section (2026-11-17): rendered-widget coverage checks the fixed top header,
+unread favorites/DMs/custom rooms, manual unread flags with zero message counts,
+independent collapse, filtering, empty-section hiding, and Save/Defaults behavior.
+State assertions retain the open thread, draft, and saved scroll position;
+settings tests cover cancellation, defaults for older files, and persistence.
+All 309 desktop and 168 library tests pass (two library tests remain opt-in), as
+does workspace Clippy with warnings denied. Native desktop and connected-account
+acceptance remain manual; no connected client was restarted.
 
 Composer paging (2026-11-17): rendered key-event tests cover room/thread routing,
 repeated paging, and preservation of draft text, caret, selection, and the other
@@ -418,18 +428,19 @@ sections and local per-space collapse state. Valid definitions omitted from the
 order are placed before Chats; invalid definitions and stale order entries are
 ignored. Unknown/deleted tags leave rooms in their usual groups.
 
-Favorites stays first and Low priority last. Explicit tags win over inferred
-Direct messages/Unread grouping; multiple tags use the first displayed explicit
-section. Element's `chats` order slot retains this client's Unread and Rooms
-groups, and `im.vector.fake.direct` positions Direct messages. Empty custom
-sections appear in their creation scope using Element's `spaceId` (`home-space`
+Unread stays first when enabled and nonempty, followed by Favorites; Low priority
+stays last. Unread duplicates matching rooms from their usual sections without
+changing membership. Explicit tags win over inferred Direct messages/Rooms
+grouping; multiple tags use the first displayed explicit section. Element's
+`chats` order slot positions Rooms, and `im.vector.fake.direct` positions Direct
+messages. Empty custom sections appear in their creation scope using Element's `spaceId` (`home-space`
 for All rooms/Direct messages); legacy sections without a scope default there.
 Search hides empty sections. Nonempty sections follow room membership in the
 selected space regardless of their creation scope.
 
 Right-click any joined room → **Move to section…** to move it to Favorites, a
 custom section (including an empty one), Low priority, or Default. Default clears
-explicit section tags, returning to inferred Direct messages/Unread/Rooms
+explicit section tags, returning to inferred Direct messages/Rooms
 grouping. These inferred groups are not independent move destinations. Choices
 use stable IDs even when labels are duplicated. Selecting the current destination
 keeps the room there rather than toggling it out.
@@ -470,8 +481,8 @@ Hover a movable section header to reveal its six-dot handle at the right, then
 drag it to reorder the section. Handles also remain visible during a drag; their
 space stays reserved so labels do not shift when they appear. The blue
 line marks insertion above/below the target header. Favorites and Low priority
-stay pinned. Direct messages moves independently; Unread and Rooms move together
-in Element's `chats` order slot. Order is account-wide, including sections hidden
+stay pinned, with Unread fixed above Favorites. Direct messages moves independently;
+Rooms uses Element's `chats` order slot. Order is account-wide, including sections hidden
 by the current space/search, and keyboard room navigation follows the new order.
 Right-click a header for **Move section up/down**; the same commands are available
 for empty/off-screen custom sections through **⋯ → section name**.
@@ -545,7 +556,7 @@ native desktop acceptance still require manual checks:
    failures and dismissal/close during a pending save with a dedicated account.
 
 8. Drag a custom section above and below another header, and move Direct messages.
-   Verify the insertion line, pinned endpoints, and shared Unread/Rooms movement.
+   Verify the insertion line, pinned endpoints, and that Unread cannot be moved.
    Compare the resulting order in Element after sync/relaunch. Use up/down commands
    on empty custom sections via **⋯**. Try Escape, outside release, scrolling,
    focus loss, account/space changes, and remote deletion during a drag. No canceled

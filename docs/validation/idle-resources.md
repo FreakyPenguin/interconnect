@@ -9,6 +9,11 @@ worker, polling, animation timer, or subscription. Rendered-widget click and
 layout tests cover the controls; fresh production CPU/wakeup measurements were
 not taken for this change (2026-11-17).
 
+The optional Unread section filters the existing navigation snapshot during view
+updates. It adds no SDK work, worker, subscription, polling, or timer. Unread
+shortcuts reuse ordinary room navigation and read handling. Production CPU and
+wakeup measurements were not repeated for this change (2026-11-17).
+
 ## Message bookmarks — 2026-11-15
 
 The account-wide bookmarks worker adds one storage-room cache subscription and

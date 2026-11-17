@@ -31,7 +31,7 @@ pub const ROOMS: &[Room] = &[
         id: "release",
         name: "Release notes",
         space: 1,
-        section: "Unread",
+        section: "Rooms",
         unread: 3,
     },
     Room {

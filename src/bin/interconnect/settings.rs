@@ -77,6 +77,7 @@ pub enum Event {
     Open,
     Cancel,
     ShowRoomList(bool),
+    ShowUnreadSection(bool),
     LimitRoomWidth(bool),
     SendShortcut(SendShortcut),
     GifPlayback(GifPlayback),
@@ -211,6 +212,11 @@ impl App {
             Event::ShowRoomList(show) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     draft.navigation.show_room_list = show;
+                }
+            }
+            Event::ShowUnreadSection(show) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.navigation.show_unread_section = show;
                 }
             }
             Event::LimitRoomWidth(limited) if !self.settings.busy => {
@@ -393,6 +399,15 @@ impl App {
         if available {
             visibility = visibility.on_toggle(|show| message(Event::ShowRoomList(show)));
         }
+        let mut unread_section = checkbox(draft.navigation.show_unread_section)
+            .label("Show unread section")
+            .size(16)
+            .text_size(13)
+            .spacing(9);
+        if available {
+            unread_section =
+                unread_section.on_toggle(|show| message(Event::ShowUnreadSection(show)));
+        }
         let mut room_width = checkbox(draft.appearance.limit_room_width)
             .label("Limit room content width")
             .size(16)
@@ -501,6 +516,8 @@ impl App {
             column![
                 shell::title("Navigation", 14),
                 visibility,
+                unread_section,
+                caption("Show unread rooms at the top, in addition to their usual sections. Follows the selected space and room filter."),
                 button(text("Manage emoji packs…").size(13))
                     .padding([7, 10])
                     .style(shell::quiet_button)
@@ -773,6 +790,7 @@ mod tests {
         let _ = app.settings_update(Event::Open);
         let _ = app.settings_update(Event::SendShortcut(SendShortcut::Enter));
         let _ = app.settings_update(Event::ShowRoomList(false));
+        let _ = app.settings_update(Event::ShowUnreadSection(false));
         let _ = app.settings_update(Event::LimitRoomWidth(false));
         let _ = app.update(Message::Room("another-room".into()));
         let _ = app.update(Message::Send(key.clone()));
@@ -788,6 +806,7 @@ mod tests {
         let _ = app.settings_update(Event::Open);
         let _ = app.settings_update(Event::SendShortcut(SendShortcut::Enter));
         let _ = app.settings_update(Event::ShowRoomList(false));
+        let _ = app.settings_update(Event::ShowUnreadSection(false));
         let _ = app.settings_update(Event::LimitRoomWidth(false));
         let _ = app.settings_update(Event::Save);
         assert!(app.settings.draft.is_none());
@@ -796,6 +815,7 @@ mod tests {
             SendShortcut::Enter
         );
         assert!(!app.settings.current.navigation.show_room_list);
+        assert!(!app.settings.current.navigation.show_unread_section);
         assert!(!app.settings.current.appearance.limit_room_width);
         assert_eq!(app.drafts[&key].content.text().trim_end(), "unsent");
         assert_eq!(app.scroll_positions[&key], 84.0);

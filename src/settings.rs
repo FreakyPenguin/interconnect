@@ -132,11 +132,13 @@ impl Default for Graphics {
 #[serde(default)]
 pub struct Navigation {
     pub show_room_list: bool,
+    pub show_unread_section: bool,
 }
 impl Default for Navigation {
     fn default() -> Self {
         Self {
             show_room_list: true,
+            show_unread_section: true,
         }
     }
 }
@@ -232,6 +234,10 @@ impl Store {
         replace(
             &mut document["navigation"]["show_room_list"],
             settings.navigation.show_room_list.into(),
+        );
+        replace(
+            &mut document["navigation"]["show_unread_section"],
+            settings.navigation.show_unread_section.into(),
         );
         replace(
             &mut document["composer"]["send_shortcut"],
@@ -332,6 +338,9 @@ mod tests {
         let settings = decode("[composer]\nsend_shortcut = 'enter'").unwrap();
         assert_eq!(settings.composer.send_shortcut, SendShortcut::Enter);
         assert!(settings.navigation.show_room_list);
+        assert!(settings.navigation.show_unread_section);
+        let settings = decode("[navigation]\nshow_unread_section = false").unwrap();
+        assert!(!settings.navigation.show_unread_section);
         assert_eq!(settings.graphics, Graphics::default());
         let settings = decode("[graphics]\ngpu_enabled = false\nlow_power = false").unwrap();
         assert!(!settings.graphics.gpu_enabled && !settings.graphics.low_power);
@@ -339,6 +348,7 @@ mod tests {
             "version = 2",
             "[composer]\nsend_shortcut = 'return'",
             "[navigation]\nshow_room_list = 1",
+            "[navigation]\nshow_unread_section = 1",
             "[navigation",
             "composer = false",
             "[appearance]\nlimit_room_width = 1",
@@ -365,6 +375,7 @@ mod tests {
         assert!(!path.exists());
         settings.composer.send_shortcut = SendShortcut::Enter;
         settings.navigation.show_room_list = false;
+        settings.navigation.show_unread_section = false;
         settings.appearance.limit_room_width = false;
         settings.graphics.gpu_enabled = false;
         settings.graphics.low_power = false;

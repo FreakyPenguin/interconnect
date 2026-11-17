@@ -128,10 +128,10 @@ pub fn new_section_tag() -> String {
     )
 }
 
-/// The two inferred chat groups share Element's single Chats order slot.
+/// Map movable room groups to Element's ordering slots. Unread stays pinned.
 pub fn reorder_tag(id: &str) -> Option<&str> {
     match id {
-        "Rooms" | "Unread" | "chats" => Some("chats"),
+        "Rooms" | "chats" => Some("chats"),
         "Direct messages" | "im.vector.fake.direct" => Some("im.vector.fake.direct"),
         tag if tag.starts_with("element.io.section.") => Some(tag),
         _ => None,
@@ -780,6 +780,8 @@ mod tests {
         );
         for (tag, target) in [
             ("m.favourite", "chats"),
+            ("Unread", "chats"),
+            ("chats", "Unread"),
             ("chats", "m.lowpriority"),
             ("chats", "element.io.section.deleted"),
             ("element.io.section.deleted", "chats"),
