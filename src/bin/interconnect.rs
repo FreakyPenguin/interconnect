@@ -445,6 +445,7 @@ impl App {
 
         if let Message::Membership(event) = message {
             let task = self.membership_event(event);
+            self.refresh_media_demand();
             self.publish_notification_context();
             if self.closing && self.pending_ops == 0 {
                 return task.chain(self.update(Message::Close));

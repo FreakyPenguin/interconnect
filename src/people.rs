@@ -92,6 +92,18 @@ impl Directory {
             ..Default::default()
         })
     }
+    pub async fn join_room(self, input: String) -> Result<crate::room_membership::Joined, String> {
+        let result = crate::room_membership::join(&self.0, &input).await;
+        let _ = self.1.send(());
+        result
+    }
+
+    pub async fn leave_room(self, room: String) -> Result<(), String> {
+        let result = crate::room_membership::leave(&self.0, &room).await;
+        let _ = self.1.send(());
+        result
+    }
+
     pub async fn respond_to_invitation(
         self,
         room: String,

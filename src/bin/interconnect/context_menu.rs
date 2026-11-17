@@ -122,6 +122,10 @@ impl App {
                     ),
                     ("Find room…", Action::Dispatch(Message::SearchFocus)),
                     (
+                        "Join room…",
+                        Action::Dispatch(Message::Membership(super::membership::Event::Join)),
+                    ),
+                    (
                         "Invitations…",
                         Action::Dispatch(Message::Membership(super::membership::Event::Open)),
                     ),
@@ -192,6 +196,12 @@ impl App {
                     ("Mark as unread", Action::MarkUnread),
                     ("Move to section…", Action::Sections),
                     ("Copy room ID", Action::Copy(id.clone())),
+                    (
+                        "Leave room…",
+                        Action::Dispatch(Message::Membership(super::membership::Event::Leave(
+                            id.clone(),
+                        ))),
+                    ),
                 ]
             }
             Target::Thread {

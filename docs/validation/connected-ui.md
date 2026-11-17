@@ -1645,3 +1645,25 @@ cover stripped-state snapshots without network reads, membership changes, stale
 invitations and retryable server failures. Connected acceptance remains manual:
 invite a disposable account from another client, verify live list updates, then
 accept/decline separate invitations and check the other client's membership view.
+
+## Join and leave rooms
+
+Use **Account → Join room…** to paste a full room ID, alias, matrix.to link or
+matrix: room link. Matrix links retain their routing servers; message links use
+their containing room. User links and unrelated URLs are rejected. Typing and
+Cancel do not send requests. Confirmed joins open the room; if the dialog has
+been dismissed, the room is added without switching the current conversation.
+Already joined room IDs reuse the local room without another join request.
+
+Right-click a room and choose **Leave room…**, then confirm explicitly. A
+successful leave removes that room; another open room stays open, while leaving
+the selected room clears its conversation/thread. Other drafts and positions
+remain intact. The SDK also leaves known predecessors of an upgraded room.
+Errors retain the dialog for retry; ambiguous timeouts advise checking the list.
+A submitted request finishes against its captured account after dismissal.
+
+Isolated HTTP tests cover link routing, joined-room reuse, successful leave,
+stale leave actions and server failure. UI tests cover validation, cancellation,
+confirmation and preserving unrelated drafts/conversations. Native connected
+join/leave remains a manual disposable-account check. Public-room browsing,
+knocking and OS-level Matrix link registration are outside this change.
