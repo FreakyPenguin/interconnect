@@ -47,6 +47,8 @@ mod markdown_composer;
 mod members;
 #[path = "interconnect/new_chat.rs"]
 mod new_chat;
+#[path = "interconnect/panel_resize.rs"]
+mod panel_resize;
 #[path = "interconnect/people_picker.rs"]
 mod people_picker;
 #[path = "interconnect/pin_action.rs"]
@@ -245,6 +247,7 @@ enum Message {
     DemoThreadReply,
     WindowFocused(bool),
     WindowResized(f32),
+    ResizePanel(panel_resize::Target, f32),
     TimelineVisible {
         thread: bool,
         generation: u64,
@@ -645,6 +648,7 @@ impl App {
                     )
                     | Message::Edit(..)
                     | Message::ResizeComposer { .. }
+                    | Message::ResizePanel(..)
                     | Message::Markdown(
                         markdown_composer::Event::Mode(_) | markdown_composer::Event::Preview(_)
                     )
@@ -859,6 +863,7 @@ impl App {
                 }
             }
             Message::WindowResized(width) => self.window_width = Some(width),
+            Message::ResizePanel(target, width) => self.resize_panel(target, width),
             Message::TimelineVisible {
                 thread,
                 generation,

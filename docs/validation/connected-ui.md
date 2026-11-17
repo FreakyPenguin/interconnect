@@ -46,6 +46,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Drafts and scrolling | Room/thread drafts and reading positions survive navigation and dialogs. Jump-to-newest resumes following incoming messages. |
 | Context menus | Right-click a room entry for **Open room**, **Move to section…**, and **Copy room ID**. The section picker includes empty custom sections, Favorites, Low priority, and Default; the current section is checked. Messages in rooms, thread originals, and replies offer **Copy text**, reactions, and permission-gated pin/unpin; room messages also offer **Reply in thread**. Thread summaries offer **Open thread** and **Copy thread ID**. Menus stay inside the window, dismiss on Escape/outside click/focus loss, and preserve drafts and reading positions. An outside click dismisses without activating the item underneath. |
 | Bookmarks | Hover a room message, thread original, or reply and use the outline/filled bookmark icon. **Saved messages** above the sections opens the account-wide view. Back/Escape restores drafts and reading positions. Demo bookmarks and previews stay in memory. |
+| Panel resizing | Drag the divider to the right of the room list or to the left of a split thread/People panel. The cursor changes to horizontal resize and the divider highlights on hover. Room-list, thread, and People widths are remembered independently for the current session. Viewport-dependent limits preserve usable conversation space. Narrow windows keep the existing replacement view for thread/People, without a side divider. |
 | Threads | The reply arrow or Alt+T opens a thread. Its original appears once above replies; long originals and replies scroll independently. |
 | Pinned messages | Studio → Design starts with a compact **2 pinned messages** disclosure. Expand/collapse it to show bounded, scrollable previews and permission-gated unpin buttons. Previews use the conversation rich-text renderer: check emphasis, lists, quotes, code, clickable links, and concealed spoilers. Space filters and thread navigation keep the disclosure; a newly opened room starts collapsed. Check long pins, unavailable/loading pins, and live additions/removals without losing the timeline reading position or drafts. |
 | Thread activity | Studio → Thread activity has interleaved replies. **New sample reply** updates the latest summary and new count for its thread. |
@@ -115,6 +116,22 @@ checks used the isolated Sway/tiny-skia demo at 1280×900 for both modes and
 tests (159 library and 261 UI passed; two environment-dependent tests ignored),
 and the desktop build pass. Connected-account and macOS/wgpu rendering were not
 exercised.
+
+Horizontal panel resizing was checked in an isolated Sway/tiny-skia demo at
+1280×900 for the room list, thread pane, and People panel, and at 640×480 for
+viewport clamping and the People replacement view. Dividers have 5 px hit areas
+and horizontal resize cursors. Preferred widths stay in memory for the session:
+room list 180–480 px, thread/People 300–640 px, with tighter limits when needed to
+leave at least 440 px for a split conversation or 320 px for a single view.
+Shrinking a window clamps displayed widths without overwriting preferred sizes;
+thread and People widths are independent. The split/replacement breakpoint takes
+the room-list width into account. Release, window exit/unfocus/resize, disabled
+controls, and changed side-panel generations cancel the drag. Automated tests
+exercise all three handles through full-view rebuilds, direction/limits, duplicate
+motion, preserved drafts/saved scroll positions, and stale/modal rejection.
+Formatting, workspace Clippy, all 263 UI tests, and the desktop build pass. No
+polling or animation subscription was added. macOS/wgpu, connected-account
+behavior, and production idle-resource measurements remain untested for this pass.
 
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.

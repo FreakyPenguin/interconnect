@@ -2,6 +2,7 @@
 use super::{
     App, Message,
     icons::{Kind, icon, sized},
+    panel_resize::{self, HANDLE, NAV_MAX, NAV_MIN, ROOM_MIN, SIDE_MAX, SIDE_MIN, Target},
     single_line,
 };
 use iced::{
@@ -24,6 +25,9 @@ pub struct State {
     pub collapsed: HashSet<String>,
     pub query: String,
     pub navigation: bool,
+    pub navigation_width: f32,
+    pub thread_width: f32,
+    pub people_width: f32,
 }
 impl Default for State {
     fn default() -> Self {
@@ -32,6 +36,9 @@ impl Default for State {
             collapsed: HashSet::new(),
             query: String::new(),
             navigation: true,
+            navigation_width: 242.0,
+            thread_width: 360.0,
+            people_width: 360.0,
         }
     }
 }
@@ -418,9 +425,20 @@ pub fn empty_state<'a>(heading: &'a str, detail: &'a str) -> Element<'a, Message
 }
 
 impl App {
+    pub(super) fn navigation_width(&self, width: f32) -> f32 {
+        self.shell.navigation_width.clamp(
+            NAV_MIN,
+            (width - 64.0 - HANDLE - 320.0).clamp(NAV_MIN, NAV_MAX),
+        )
+    }
     pub(super) fn side_panel_replaces_room(&self, width: f32) -> bool {
+        let navigation = if self.shell.navigation {
+            self.navigation_width(width) + HANDLE
+        } else {
+            0.0
+        };
         (self.selection.thread.is_some() || self.selection.members.is_some())
-            && width < if self.shell.navigation { 1120.0 } else { 870.0 }
+            && width < 64.0 + navigation + ROOM_MIN + HANDLE + SIDE_MIN
     }
     fn side_panel(&self) -> Element<'_, Message> {
         if self.selection.members.is_some() {
@@ -470,10 +488,27 @@ impl App {
     pub(super) fn shell_view(&self) -> Element<'_, Message> {
         widget::responsive(move |size| {
             let mut body = row![self.space_rail()].height(Length::Fill);
+            let navigation_width = self.navigation_width(size.width);
+            let split = !self.global_search.open
+                && !self.bookmarks.open
+                && (self.selection.thread.is_some() || self.selection.members.is_some())
+                && !self.side_panel_replaces_room(size.width);
+            let enabled = self.panel_resize_enabled();
             if self.shell.navigation {
+                let reserved = if split {
+                    ROOM_MIN + HANDLE + SIDE_MIN
+                } else {
+                    320.0
+                };
+                let max = (size.width - 64.0 - HANDLE - reserved).clamp(NAV_MIN, NAV_MAX);
                 body = body
-                    .push(self.room_navigation())
-                    .push(widget::rule::vertical(1));
+                    .push(container(self.room_navigation()).width(navigation_width))
+                    .push(panel_resize::divider(
+                        Target::Navigation,
+                        navigation_width,
+                        max,
+                        enabled,
+                    ));
             }
             if self.global_search.open {
                 body = body.push(container(self.global_search_view()).width(Length::Fill));
@@ -484,9 +519,25 @@ impl App {
             } else {
                 body = body.push(container(self.pane(false)).width(Length::Fill));
                 if self.selection.thread.is_some() || self.selection.members.is_some() {
+                    let (target, preferred) = if let Some(generation) = self.selection.members {
+                        (Target::People(generation), self.shell.people_width)
+                    } else {
+                        (
+                            Target::Thread(self.selection.thread.as_ref().unwrap().0),
+                            self.shell.thread_width,
+                        )
+                    };
+                    let navigation = if self.shell.navigation {
+                        navigation_width + HANDLE
+                    } else {
+                        0.0
+                    };
+                    let max = (size.width - 64.0 - navigation - HANDLE - ROOM_MIN)
+                        .clamp(SIDE_MIN, SIDE_MAX);
+                    let width = preferred.clamp(SIDE_MIN, max);
                     body = body
-                        .push(widget::rule::vertical(1))
-                        .push(container(self.side_panel()).width(360));
+                        .push(panel_resize::divider(target, width, max, enabled))
+                        .push(container(self.side_panel()).width(width));
                 }
             }
             let mut footer = row![
@@ -951,7 +1002,13 @@ impl App {
                             .style(icon_button)
                             .on_press(Message::ContextMenu(super::context_menu::Event::Open(
                                 super::context_menu::Target::Sections,
-                                iced::Point::new(280.0, 40.0)
+                                iced::Point::new(
+                                    38.0 + self
+                                        .window_width
+                                        .map_or(self.shell.navigation_width, |width| self
+                                            .navigation_width(width)),
+                                    40.0
+                                )
                             ))),
                         "Manage sections",
                         widget::tooltip::Position::Bottom
@@ -970,7 +1027,7 @@ impl App {
             .spacing(10),
         )
         .padding([12, 12])
-        .width(242)
+        .width(Length::Fill)
         .height(Length::Fill)
         .style(|_| surface(SIDEBAR))
         .into()
