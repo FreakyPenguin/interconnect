@@ -11,6 +11,10 @@ show_preview = true
 # Initial visibility only; the room-list button still toggles it during use.
 show_room_list = true
 
+[appearance]
+# Center room content in an 840 px column. Disable to use the full pane width.
+limit_room_width = true
+
 [composer]
 # "ctrl_enter": Enter inserts a newline; Ctrl+Enter sends.
 # "enter": Enter sends; Shift+Enter inserts a newline. Ctrl+Enter also sends.

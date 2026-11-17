@@ -108,6 +108,9 @@ show_preview = true
 [navigation]
 show_room_list = true
 
+[appearance]
+limit_room_width = true
+
 [composer]
 send_shortcut = "ctrl_enter"
 
@@ -125,6 +128,7 @@ gif_seconds = 5
 | `notifications.enabled` | `true` | Desktop message alerts following Matrix push rules while the app runs. Applies on Save/Reload. |
 | `notifications.show_preview` | `true` | Include room, sender, and text; `false` sends a generic private alert. Applies on Save/Reload. |
 | `navigation.show_room_list` | `true` | Initial room-list visibility on the next launch. The existing button still toggles it during use. |
+| `appearance.limit_room_width` | `true` | **Appearance → Limit room content width** centers headers, pins, messages, and composers in an 840 px column. Disable to use the full pane width. Applies on Save/Reload without restarting. |
 | `composer.send_shortcut` | `"ctrl_enter"` | Enter inserts a newline; Ctrl+Enter sends in room and thread composers. Set `"enter"` to send with Enter and use Shift+Enter for a newline. Ctrl+Enter still sends. IME composition suppresses sending. |
 | `graphics.gpu_enabled` | `true` | **Use GPU rendering**. On the next launch, try wgpu with software fallback. Set to `false` to force the CPU renderer, including when `ICED_BACKEND` requests wgpu. |
 | `graphics.low_power` | `true` | **Prefer a low-power GPU**. On the next launch, prefer a lower-power adapter when GPU rendering is enabled; `false` prefers higher performance. An explicit `WGPU_POWER_PREF` environment value takes priority. |

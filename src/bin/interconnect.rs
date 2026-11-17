@@ -2313,6 +2313,17 @@ impl App {
         .into()
     }
 
+    fn room_column<'a>(&self, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+        let width = if self.settings.current.appearance.limit_room_width {
+            presentation::MESSAGE_WIDTH
+        } else {
+            f32::INFINITY
+        };
+        container(container(content).width(Length::Fill).max_width(width))
+            .center_x(Length::Fill)
+            .into()
+    }
+
     fn pane(&self, thread: bool) -> Element<'_, Message> {
         iced::widget::responsive(move |size| self.pane_sized(thread, size)).into()
     }
@@ -2382,7 +2393,11 @@ impl App {
             ));
         }
         let mut content = column![
-            container(header).padding([18, 24]),
+            self.room_column(
+                container(header)
+                    .padding([18, 24])
+                    .id("conversation-header")
+            ),
             iced::widget::rule::horizontal(1)
         ]
         .spacing(0);
@@ -2391,15 +2406,16 @@ impl App {
             let pins = self
                 .pinned_view(*generation)
                 .unwrap_or_else(|| iced::widget::space().height(0).into());
-            content = content.push(iced::widget::keyed_column([(*generation, pins)]));
-            content = content.push(self.room_search_view());
+            content =
+                content.push(self.room_column(iced::widget::keyed_column([(*generation, pins)])));
+            content = content.push(self.room_column(self.room_search_view()));
         }
         if thread {
             // Reset the original's own scroll/selection state on thread changes.
-            content = content.push(iced::widget::keyed_column([(
+            content = content.push(self.room_column(iced::widget::keyed_column([(
                 *generation,
                 self.thread_original_view(),
-            )]));
+            )])));
         }
         let Some(pane) = current_pane(snapshot, *generation) else {
             return content
@@ -2727,26 +2743,22 @@ impl App {
             });
         }
         let view_generation = *generation;
-        let timeline = scrollable(
-            container(messages)
-                .width(Length::Fill)
-                .max_width(presentation::MESSAGE_WIDTH),
-        )
-        .width(Length::Fill)
-        .direction(shell::scrollbar())
-        .anchor_bottom()
-        .on_scroll(move |viewport| Message::Scrolled {
-            thread,
-            generation: view_generation,
-            offset: viewport.absolute_offset().y,
-        })
-        .style(shell::scroll_style)
-        .id(if thread {
-            "thread-timeline"
-        } else {
-            "room-timeline"
-        })
-        .height(Length::Fill);
+        let timeline = scrollable(self.room_column(messages))
+            .width(Length::Fill)
+            .direction(shell::scrollbar())
+            .anchor_bottom()
+            .on_scroll(move |viewport| Message::Scrolled {
+                thread,
+                generation: view_generation,
+                offset: viewport.absolute_offset().y,
+            })
+            .style(shell::scroll_style)
+            .id(if thread {
+                "thread-timeline"
+            } else {
+                "room-timeline"
+            })
+            .height(Length::Fill);
         // New view identity resets the scroll state; async rows retain that
         // state and a zero distance from the bottom follows loaded history.
         let keys = rows.iter().map(|row| Some(row.key())).collect();
@@ -2945,11 +2957,8 @@ impl App {
                 .padding([0, 24]),
             );
             if let Some(preview) = preview {
-                writing = writing.push(
-                    container(container(preview).padding([0, 24]))
-                        .width(Length::Fill)
-                        .max_width(presentation::MESSAGE_WIDTH),
-                );
+                writing = writing
+                    .push(container(container(preview).padding([0, 24])).width(Length::Fill));
             } else {
                 writing = writing.push(container(iced::widget::space().height(0)));
             }
@@ -2995,8 +3004,7 @@ impl App {
                     container(self.composer_emoji_host(composer, &key, *generation))
                         .padding([10, 24]),
                 )
-                .width(Length::Fill)
-                .max_width(presentation::MESSAGE_WIDTH),
+                .width(Length::Fill),
             );
         }
         let target = self
@@ -3004,7 +3012,11 @@ impl App {
             .and_then(|key| self.attachment_drop_target(&key, *generation));
         // Reserve the writing area before laying out the conversation. Long
         // previews or thread originals must not squeeze the toolbar to zero.
-        let pane = column![container(content).height(Length::Fill), writing].height(Length::Fill);
+        let pane = column![
+            container(content).height(Length::Fill),
+            self.room_column(writing)
+        ]
+        .height(Length::Fill);
         file_drop::view(pane.into(), target)
     }
 }
@@ -3891,10 +3903,19 @@ mod tests {
             bodies: Vec<(String, iced::Rectangle)>,
             times: Vec<(String, iced::Rectangle)>,
             viewport: Option<iced::Rectangle>,
+            header: Option<iced::Rectangle>,
+            editor: Option<iced::Rectangle>,
         }
         impl widget::Operation for Probe {
             fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
                 f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("conversation-header")) {
+                    self.header = Some(bounds);
+                } else if id == Some(&widget::Id::new("composer-editor-surface")) {
+                    self.editor = Some(bounds);
+                }
             }
             fn custom(
                 &mut self,
@@ -3939,7 +3960,13 @@ mod tests {
         let time = presentation::time_label(&next);
         pane.rows = std::sync::Arc::new(vec![first, next]);
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-        for width in [360.0, 1200.0] {
+        for (width, limited) in [(360.0_f32, true), (1200.0, true), (1200.0, false)] {
+            app.settings.current.appearance.limit_room_width = limited;
+            let column_width = if limited {
+                width.min(presentation::MESSAGE_WIDTH)
+            } else {
+                width
+            };
             let mut view = app.pane(false);
             let mut tree = widget::Tree::new(&view);
             let size = iced::Size::new(width, 800.0);
@@ -3954,6 +3981,12 @@ mod tests {
                 &mut probe,
             );
             assert_eq!(probe.viewport.unwrap().width, width);
+            let header = probe.header.unwrap();
+            let editor = probe.editor.unwrap();
+            assert!((header.width - column_width).abs() < 0.1);
+            assert!((header.center_x() - width / 2.0).abs() < 0.1);
+            assert!((editor.center_x() - header.center_x()).abs() < 0.1);
+            assert!((editor.width - (column_width - 50.0)).abs() < 0.1);
             let first = probe
                 .bodies
                 .iter()
@@ -3970,7 +4003,8 @@ mod tests {
                 (first.width - next.width).abs() < 0.1,
                 "continuations retain the full body width"
             );
-            assert!(first.width <= presentation::MESSAGE_WIDTH - 92.0);
+            assert!((first.width - (column_width - 92.0)).abs() < 0.1);
+            assert!(first.x >= header.x + 24.0 && first.x < header.center_x());
             let clock = probe
                 .times
                 .iter()

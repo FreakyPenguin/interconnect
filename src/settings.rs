@@ -18,6 +18,7 @@ const TEMPLATE: &str = include_str!("../config.example.toml");
 pub struct Settings {
     pub version: u32,
     pub navigation: Navigation,
+    pub appearance: Appearance,
     pub composer: Composer,
     pub graphics: Graphics,
     pub media: Media,
@@ -28,10 +29,23 @@ impl Default for Settings {
         Self {
             version: 1,
             navigation: Navigation::default(),
+            appearance: Appearance::default(),
             composer: Composer::default(),
             graphics: Graphics::default(),
             media: Media::default(),
             notifications: Notifications::default(),
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Appearance {
+    pub limit_room_width: bool,
+}
+impl Default for Appearance {
+    fn default() -> Self {
+        Self {
+            limit_room_width: true,
         }
     }
 }
@@ -204,6 +218,10 @@ impl Store {
             .parse::<DocumentMut>()?;
         replace(&mut document["version"], 1_i64.into());
         replace(
+            &mut document["appearance"]["limit_room_width"],
+            settings.appearance.limit_room_width.into(),
+        );
+        replace(
             &mut document["notifications"]["enabled"],
             settings.notifications.enabled.into(),
         );
@@ -323,6 +341,7 @@ mod tests {
             "[navigation]\nshow_room_list = 1",
             "[navigation",
             "composer = false",
+            "[appearance]\nlimit_room_width = 1",
             "[graphics]\ngpu_enabled = 'false'",
             "[graphics]\nlow_power = 1",
             "graphics = false",
@@ -346,6 +365,7 @@ mod tests {
         assert!(!path.exists());
         settings.composer.send_shortcut = SendShortcut::Enter;
         settings.navigation.show_room_list = false;
+        settings.appearance.limit_room_width = false;
         settings.graphics.gpu_enabled = false;
         settings.graphics.low_power = false;
         settings.media.gif_playback = GifPlayback::Duration;

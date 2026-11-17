@@ -77,6 +77,7 @@ pub enum Event {
     Open,
     Cancel,
     ShowRoomList(bool),
+    LimitRoomWidth(bool),
     SendShortcut(SendShortcut),
     GifPlayback(GifPlayback),
     GifSeconds(String),
@@ -209,6 +210,11 @@ impl App {
             Event::ShowRoomList(show) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     draft.navigation.show_room_list = show;
+                }
+            }
+            Event::LimitRoomWidth(limited) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.appearance.limit_room_width = limited;
                 }
             }
             Event::SendShortcut(shortcut) if !self.settings.busy => {
@@ -386,6 +392,14 @@ impl App {
         if available {
             visibility = visibility.on_toggle(|show| message(Event::ShowRoomList(show)));
         }
+        let mut room_width = checkbox(draft.appearance.limit_room_width)
+            .label("Limit room content width")
+            .size(16)
+            .text_size(13)
+            .spacing(9);
+        if available {
+            room_width = room_width.on_toggle(|value| message(Event::LimitRoomWidth(value)));
+        }
         let shortcut = pick_list(
             [SendShortcut::CtrlEnter, SendShortcut::Enter],
             Some(draft.composer.send_shortcut),
@@ -491,6 +505,12 @@ impl App {
                     .style(shell::quiet_button)
                     .on_press_maybe((available && (self.demo.is_some() || self.model.emoji_management.is_some()))
                         .then_some(Message::EmojiManagement(super::emoji_management::Event::Open))),
+            ].spacing(12),
+            iced::widget::rule::horizontal(1),
+            column![
+                shell::title("Appearance", 14),
+                room_width,
+                caption("Center headers, messages, and the composer in a readable column. Disable to use the full pane width."),
             ].spacing(12),
             iced::widget::rule::horizontal(1),
             column![
@@ -775,6 +795,7 @@ mod tests {
         let _ = app.settings_update(Event::Open);
         let _ = app.settings_update(Event::SendShortcut(SendShortcut::Enter));
         let _ = app.settings_update(Event::ShowRoomList(false));
+        let _ = app.settings_update(Event::LimitRoomWidth(false));
         let _ = app.update(Message::Room("another-room".into()));
         let _ = app.update(Message::Send(key.clone()));
         let _ = app.update(Message::ToggleNavigation);
@@ -789,6 +810,7 @@ mod tests {
         let _ = app.settings_update(Event::Open);
         let _ = app.settings_update(Event::SendShortcut(SendShortcut::Enter));
         let _ = app.settings_update(Event::ShowRoomList(false));
+        let _ = app.settings_update(Event::LimitRoomWidth(false));
         let _ = app.settings_update(Event::Save);
         assert!(app.settings.draft.is_none());
         assert_eq!(
@@ -796,6 +818,9 @@ mod tests {
             SendShortcut::Enter
         );
         assert!(!app.settings.current.navigation.show_room_list);
+        assert!(!app.settings.current.appearance.limit_room_width);
+        assert_eq!(app.drafts[&key].content.text().trim_end(), "unsent");
+        assert_eq!(app.scroll_positions[&key], 84.0);
         // Startup-only visibility must not disturb this session's scroll layout.
         assert!(app.shell.navigation);
         assert!(app.settings.path.is_none());

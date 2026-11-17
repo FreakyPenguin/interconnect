@@ -102,6 +102,20 @@ so scrollbar proportions refine as paragraphs are visited. No timer or backgroun
 worker was added. Formatting, workspace Clippy, all 261 UI tests, and the desktop
 build pass. Native macOS/wgpu and connected-account checks remain manual.
 
+Room content now shares a centered 840 px column, including channel/thread
+headers, pins, search controls, messages, typing status, formatting preview, and
+the composer. **Settings → Appearance → Limit room content width** is enabled by
+default; disabling it and saving uses the full pane width without restarting.
+The timeline scrollbar stays at the panel edge. The same widget structure is
+retained across the setting change. Automated checks cover centered header/editor
+bounds, capped and unrestricted message widths, full-width scroll viewports,
+Save/Cancel draft and scroll preservation, and settings file round trips. Visual
+checks used the isolated Sway/tiny-skia demo at 1280×900 for both modes and
+640×480 for the unrestricted layout. Formatting, workspace Clippy, all workspace
+tests (159 library and 261 UI passed; two environment-dependent tests ignored),
+and the desktop build pass. Connected-account and macOS/wgpu rendering were not
+exercised.
+
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
 Checks included expanding/collapsing pins, message-action icons, and scrolling
