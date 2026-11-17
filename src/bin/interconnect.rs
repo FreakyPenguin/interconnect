@@ -81,6 +81,8 @@ mod settings;
 mod shell;
 #[path = "interconnect/single_line.rs"]
 mod single_line;
+#[path = "interconnect/suspended.rs"]
+mod suspended;
 #[path = "interconnect/thread_activity.rs"]
 mod thread_activity;
 #[path = "interconnect/timeline.rs"]
@@ -1999,7 +2001,10 @@ impl App {
             layers = layers.push(self.quick_room_view());
         }
         if self.settings.draft.is_some() {
-            layers = layers.push(self.settings_view());
+            layers = layers.push(suspended::view(
+                self.settings_view(),
+                self.emoji_management.is_some(),
+            ));
         }
         if self.emoji_management.is_some() {
             layers = layers.push(self.emoji_management_view());

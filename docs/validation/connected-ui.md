@@ -176,6 +176,21 @@ checked in the isolated Sway/tiny-skia demo at 1280×900 and 640×480. Other nat
 forms, macOS/wgpu, and connected acceptance remain untested for this extension;
 no connected account was used.
 
+Emoji pack management now opens as one visible dialog. When launched from
+Settings, the Settings widget tree remains mounted but skips drawing, input,
+operations, and overlays; closing management restores its unsaved draft and
+scroll position. Pack browsing is separate from explicit Rename, New pack, and
+Add/Edit emoji forms. Header and actions stay fixed while the body scrolls.
+Removal replaces the editor with a scoped explanation and a visible Keep/Remove
+footer. Canceling an editor drops read/preparation tasks and rejects late file
+callbacks; submitted writes retain their existing shutdown handling. Regression
+checks cover each editor's minimum-window action bounds, read cancellation,
+confirmation isolation, Settings draft/scroll retention, and suspended-layer
+input/draw/overlay suppression. All 270 UI tests, formatting, and workspace
+Clippy pass. Browse, Add Emoji, and removal confirmation were visually checked
+in the isolated Sway/tiny-skia demo at 1280×900 and 640×480. Connected acceptance
+and macOS/wgpu rendering remain untested for this extension.
+
 The compact pins, shared control icons, and Settings layout were visually checked
 in an isolated headless Sway/tiny-skia demo at 1280×900, 800×700, and 640×480.
 Checks included expanding/collapsing pins, message-action icons, and scrolling

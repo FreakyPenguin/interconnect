@@ -29,7 +29,17 @@ pub struct State {
     uri: String,
     upload: Option<Upload>,
     confirm: Option<Edit>,
+    editor: Editor,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Editor {
+    #[default]
+    Browse,
+    Rename,
+    Create,
+    Image,
+}
+
 impl State {
     pub fn matches_account(&self, account: &Option<String>) -> bool {
         &self.account == account
@@ -47,6 +57,7 @@ impl State {
         self.uri.clear();
         self.upload = None;
         self.confirm = None;
+        self.editor = Editor::Browse;
     }
 }
 #[derive(Clone, Debug)]
@@ -63,6 +74,9 @@ pub enum Event {
     Rename,
     ChooseImage(String),
     NewImage,
+    BeginRename,
+    BeginCreate,
+    CancelEdit,
     Shortcode(String),
     Description(String),
     Uri(String),
@@ -151,6 +165,7 @@ impl App {
                     uri: String::new(),
                     upload: None,
                     confirm: None,
+                    editor: Editor::Browse,
                 });
                 return self.load_emoji_management();
             }
@@ -220,7 +235,7 @@ impl App {
                         }
                         Err(error) => state.error = Some(error),
                     }
-                    return iced::widget::operation::focus("emoji-pack-name");
+                    return Task::none();
                 }
             }
             Event::FilePicked(request, account, result) => {
@@ -248,6 +263,19 @@ impl App {
                     self.emoji_management = None;
                 }
             }
+            Event::CancelEdit => {
+                if let Some(state) = &mut self.emoji_management
+                    && !state.pending
+                    && !state.loading
+                    && state.confirm.is_none()
+                {
+                    self.generation += 1;
+                    state.request = self.generation;
+                    state.task = None;
+                    state.reset_editor();
+                    state.error = None;
+                }
+            }
             Event::Reload
                 if self
                     .emoji_management
@@ -271,6 +299,11 @@ impl App {
                 if state.task.is_some() && !matches!(event, Event::Ignore) {
                     return Task::none();
                 }
+                if state.confirm.is_some()
+                    && !matches!(event, Event::Confirm | Event::CancelConfirm | Event::Ignore)
+                {
+                    return Task::none();
+                }
                 match event {
                     Event::Select(index) if index < state.listing.packs.len() => {
                         state.selected = index;
@@ -285,7 +318,21 @@ impl App {
                         state.uri = value;
                         state.upload = None;
                     }
-                    Event::NewImage => state.reset_editor(),
+                    Event::BeginRename => {
+                        state.reset_editor();
+                        state.editor = Editor::Rename;
+                        return iced::widget::operation::focus("emoji-pack-name");
+                    }
+                    Event::BeginCreate => {
+                        state.reset_editor();
+                        state.editor = Editor::Create;
+                        return iced::widget::operation::focus("emoji-pack-create");
+                    }
+                    Event::NewImage => {
+                        state.reset_editor();
+                        state.editor = Editor::Image;
+                        return iced::widget::operation::focus("emoji-shortcode");
+                    }
                     Event::ChooseImage(key) => {
                         if let Some(image) = state
                             .listing
@@ -300,6 +347,8 @@ impl App {
                             state.uri = image["url"].as_str().unwrap_or("").into();
                             state.upload = None;
                             state.confirm = None;
+                            state.editor = Editor::Image;
+                            return iced::widget::operation::focus("emoji-shortcode");
                         }
                     }
                     Event::PickFile => {
@@ -552,291 +601,408 @@ impl App {
     fn emoji_management_card(&self, size: iced::Size) -> Element<'_, Message> {
         let state = self.emoji_management.as_ref().expect("open emoji manager");
         let available = !state.loading && !state.pending && state.task.is_none();
-        let mut close = button(text("Close").size(13))
-            .padding([7, 10])
-            .style(shell::quiet_button);
-        let mut reload = button(text("Reload").size(13))
-            .padding([7, 10])
-            .style(shell::quiet_button);
-        if !state.pending {
-            close = close.on_press(message(Event::Close));
-            reload = reload.on_press(message(Event::Reload));
-        }
-        let mut content = column![
+        let quiet = |label: &'static str, event: Event, enabled: bool| {
+            button(text(label).size(13))
+                .padding([7, 10])
+                .style(shell::quiet_button)
+                .on_press_maybe(enabled.then(|| message(event)))
+        };
+        let primary = |label: &'static str, event: Event, enabled: bool| {
+            button(text(label).size(13))
+                .padding([7, 14])
+                .style(shell::primary_button)
+                .on_press_maybe(enabled.then(|| message(event)))
+        };
+        let header = container(
             row![
-                shell::title("Emoji packs", 22),
+                shell::title("Emoji packs", 20),
                 iced::widget::space().width(Length::Fill),
-                reload,
-                close
+                quiet("Reload", Event::Reload, available),
             ]
-            .spacing(8),
-            text("Personal emoji are yours. Room packs are shared with everyone in that room.")
-                .size(12)
-                .color(shell::MUTED)
-        ]
-        .spacing(12);
-        content = content.push(
-            text(if self.demo.is_some() {
-                "Demo pack changes stay in memory."
-            } else {
-                "Changes apply per action and sync to your other clients."
-            })
-            .size(12)
-            .color(shell::MUTED),
-        );
-        if state.loading {
-            content = content.push(text("Loading packs…").size(13));
-        }
-        if !state.listing.packs.is_empty() {
-            let choices: Vec<_> = state
-                .listing
-                .packs
-                .iter()
-                .enumerate()
-                .map(|(index, pack)| Choice {
-                    index,
-                    label: format!(
-                        "{} · {}",
-                        pack.name,
-                        if matches!(pack.source, Source::Personal) {
-                            "Personal"
-                        } else {
-                            "Room pack"
-                        }
-                    ),
-                })
-                .collect();
-            let selected = choices.get(state.selected).cloned();
-            let selector: Element<'_, Message> = if available {
-                pick_list(choices, selected, |choice| {
-                    message(Event::Select(choice.index))
-                })
-                .width(Length::Fill)
-                .text_size(13)
-                .padding([7, 10])
-                .style(shell::select_style)
-                .into()
-            } else {
-                container(text(state.name.clone()).size(14)).into()
-            };
-            content = content.push(selector);
-        }
-        if let Some(pack) = state.listing.packs.get(state.selected) {
-            let writable = available && pack.writable;
-            let mut name = text_input("Pack name", &state.name)
-                .id("emoji-pack-name")
-                .size(13)
-                .padding([7, 10])
-                .style(shell::search_style)
-                .cursor_blinking(false);
-            let mut rename = button(text("Rename pack").size(13))
-                .padding([7, 10])
-                .style(shell::primary_button);
-            let mut delete = button(
-                text(if matches!(pack.source, Source::Personal) {
-                    "Clear personal pack"
-                } else {
-                    "Delete pack"
-                })
-                .size(12),
-            )
-            .style(shell::quiet_button);
-            if writable {
-                name = name.on_input(|v| message(Event::Name(v)));
-                rename = rename.on_press(message(Event::Rename));
-                delete = delete.on_press(message(Event::DeletePack));
-            }
-            content = content.push(row![name, rename, delete].spacing(8));
-            if let Source::Room { room, .. } = &pack.source {
-                let mut global = button(
-                    text(if pack.global {
-                        "Disable in other rooms"
-                    } else {
-                        "Use in all rooms"
-                    })
-                    .size(12),
-                )
-                .style(shell::quiet_button);
-                if available {
-                    global = global.on_press(message(Event::Global));
-                }
-                content = content
-                    .push(text(room.to_string()).size(11).color(shell::MUTED))
-                    .push(global);
-            }
-            if !pack.writable {
-                content = content.push(
-                    text("You can use this pack, but do not have permission to edit it.")
-                        .size(12)
-                        .color(shell::MUTED),
-                );
-            }
-            let mut entries = column![].spacing(4);
-            if let Some(images) = pack.content.as_ref().and_then(|v| v["images"].as_object()) {
-                for (shortcode, image) in images.iter().take(1024) {
-                    let mut select = button(
-                        text(format!(
-                            ":{shortcode}:  {}",
-                            image["body"].as_str().unwrap_or("")
-                        ))
-                        .size(12),
-                    )
-                    .width(Length::Fill)
-                    .style(shell::quiet_button);
-                    if available {
-                        select = select.on_press(message(Event::ChooseImage(shortcode.clone())));
-                    }
-                    entries = entries.push(select);
-                }
-            }
-            content =
-                content.push(container(scrollable(entries).height(Length::Shrink)).max_height(150));
-            let mut new = button(text("Add emoji").size(12)).style(shell::quiet_button);
-            if writable {
-                new = new.on_press(message(Event::NewImage));
-            }
-            content = content.push(new);
-            let mut shortcode = text_input("Shortcode", &state.shortcode)
-                .size(13)
-                .padding([7, 10])
-                .style(shell::search_style)
-                .cursor_blinking(false);
-            let mut description = text_input("Description / alternative text", &state.description)
-                .size(13)
-                .padding([7, 10])
-                .style(shell::search_style)
-                .cursor_blinking(false);
-            let mut uri = text_input("mxc:// image URL", &state.uri)
-                .size(13)
-                .padding([7, 10])
-                .style(shell::search_style)
-                .cursor_blinking(false);
-            let mut file = button(
-                text(if state.task.is_some() {
-                    "Preparing image…"
-                } else {
-                    "Choose image…"
-                })
-                .size(12),
-            )
-            .style(shell::quiet_button);
-            let mut save = button(
-                text(if state.previous.is_some() {
-                    "Save emoji"
-                } else {
-                    "Add to pack"
-                })
-                .size(13),
-            )
-            .padding([7, 10])
-            .style(shell::primary_button);
-            let mut remove = button(text("Remove emoji").size(12)).style(shell::quiet_button);
-            if writable {
-                shortcode = shortcode.on_input(|v| message(Event::Shortcode(v)));
-                description = description.on_input(|v| message(Event::Description(v)));
-                uri = uri.on_input(|v| message(Event::Uri(v)));
-                file = file.on_press(message(Event::PickFile));
-                save = save.on_press(message(Event::SaveImage));
-                if state.previous.is_some() {
-                    remove = remove.on_press(message(Event::RemoveImage));
-                }
-            }
-            content = content
-                .push(row![shortcode, description].spacing(8))
-                .push(row![uri, file].spacing(8));
-            if state.upload.is_none() {
-                let uri = matrix_sdk::ruma::OwnedMxcUri::from(state.uri.as_str());
-                if uri.is_valid() {
-                    if let Some(handle) = self
-                        .model
-                        .images
-                        .ready
-                        .get(&interconnect::image_media::Key::inline(uri))
-                    {
-                        content = content.push(
-                            image(handle.clone())
-                                .width(48)
-                                .height(48)
-                                .content_fit(iced::ContentFit::Contain),
-                        );
-                    } else {
-                        content = content.push(
-                            text("Image preview unavailable or loading")
-                                .size(11)
-                                .color(shell::MUTED),
-                        );
-                    }
-                }
-            }
-            if let Some(upload) = &state.upload {
-                content = content.push(
-                    row![
-                        image(upload.preview().clone())
-                            .width(48)
-                            .height(48)
-                            .content_fit(iced::ContentFit::Contain),
-                        text("Image ready · uploaded when you save").size(12)
-                    ]
-                    .spacing(8),
-                );
-            }
-            content = content.push(row![save, remove].spacing(8));
-        }
-        if state.listing.can_create {
-            let mut name = text_input("New room pack name", &state.create_name)
-                .size(13)
-                .padding([7, 10])
-                .style(shell::search_style)
-                .cursor_blinking(false);
-            let mut create = button(text("Create room pack").size(13))
-                .padding([7, 10])
-                .style(shell::primary_button);
-            if available {
-                name = name.on_input(|v| message(Event::CreateName(v)));
-                create = create.on_press(message(Event::Create));
-            }
-            content = content
-                .push(iced::widget::rule::horizontal(1))
-                .push(row![name, create].spacing(8));
-        }
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding([16, 20])
+        .width(Length::Fill)
+        .id("emoji-management-header");
+        let pack = state.listing.packs.get(state.selected);
+        let writable = available && pack.is_some_and(|pack| pack.writable);
+        let mut body = column![].spacing(12).width(Length::Fill);
+        let mut actions = row![].spacing(8).align_y(iced::Alignment::Center);
         if let Some(edit) = &state.confirm {
-            let explanation = if matches!(edit, Edit::Delete) {
-                "Remove this pack and all its emoji? Uploaded media will remain on the server."
+            let (title, explanation) = if matches!(edit, Edit::Delete) {
+                (
+                    "Remove this pack?",
+                    "All emoji in this pack will be removed. Uploaded media will remain on the server.",
+                )
             } else {
-                "Remove this emoji from the pack?"
+                (
+                    "Remove this emoji?",
+                    "This emoji will be removed from the pack. Uploaded media will remain on the server.",
+                )
             };
-            let mut confirm = button(text("Remove").size(13))
-                .padding([7, 10])
-                .style(shell::primary_button);
-            let mut cancel = button(text("Keep").size(12)).style(shell::quiet_button);
-            if available {
-                confirm = confirm.on_press(message(Event::Confirm));
-                cancel = cancel.on_press(message(Event::CancelConfirm));
+            body = body.push(shell::title(title, 16));
+            if let Some(pack) = pack {
+                body = body.push(text(&pack.name).size(13).color(shell::MUTED));
             }
-            content = content
-                .push(text(explanation).size(12))
-                .push(row![cancel, confirm].spacing(8));
+            if let Edit::RemoveImage(shortcode) = edit {
+                body = body.push(text(format!(":{shortcode}:")).size(14));
+            }
+            body = body.push(text(explanation).size(13));
+            actions = actions
+                .push(iced::widget::space().width(Length::Fill))
+                .push(quiet("Keep", Event::CancelConfirm, available))
+                .push(
+                    button(text("Remove").size(13))
+                        .padding([7, 14])
+                        .style(|theme, status| {
+                            let mut style = button::danger(theme, status);
+                            style.border = iced::Border::default().rounded(6);
+                            style
+                        })
+                        .on_press_maybe(writable.then(|| message(Event::Confirm))),
+                );
+        } else {
+            if state.loading {
+                body = body.push(text("Loading packs…").size(13).color(shell::MUTED));
+            }
+            match state.editor {
+                Editor::Browse => {
+                    body = body.push(
+                        text("Personal packs are yours. Room packs are shared with that room.")
+                            .size(12)
+                            .color(shell::MUTED),
+                    );
+                    if !state.listing.packs.is_empty() {
+                        let choices: Vec<_> = state
+                            .listing
+                            .packs
+                            .iter()
+                            .enumerate()
+                            .map(|(index, pack)| Choice {
+                                index,
+                                label: format!(
+                                    "{} · {}",
+                                    pack.name,
+                                    if matches!(pack.source, Source::Personal) {
+                                        "Personal"
+                                    } else {
+                                        "Room pack"
+                                    }
+                                ),
+                            })
+                            .collect();
+                        let selected = choices.get(state.selected).cloned();
+                        body = body.push(if available {
+                            Element::from(
+                                pick_list(choices, selected, |choice| {
+                                    message(Event::Select(choice.index))
+                                })
+                                .width(Length::Fill)
+                                .text_size(13)
+                                .padding([7, 10])
+                                .style(shell::select_style),
+                            )
+                        } else {
+                            container(text(&state.name).size(13)).into()
+                        });
+                    }
+                    if let Some(pack) = pack {
+                        let mut utilities = row![
+                            quiet("Rename pack", Event::BeginRename, writable),
+                            quiet(
+                                if matches!(pack.source, Source::Personal) {
+                                    "Clear pack…"
+                                } else {
+                                    "Delete pack…"
+                                },
+                                Event::DeletePack,
+                                writable
+                            )
+                        ]
+                        .spacing(8);
+                        if let Source::Room { room, .. } = &pack.source {
+                            body = body.push(text(room.to_string()).size(11).color(shell::MUTED));
+                            utilities = utilities.push(quiet(
+                                if pack.global {
+                                    "Disable in other rooms"
+                                } else {
+                                    "Use in all rooms"
+                                },
+                                Event::Global,
+                                available,
+                            ));
+                        }
+                        body = body.push(utilities);
+                        if !pack.writable {
+                            body = body.push(
+                                text(
+                                    "You can use this pack, but do not have permission to edit it.",
+                                )
+                                .size(12)
+                                .color(shell::MUTED),
+                            );
+                        }
+                        let mut entries = column![].spacing(4).width(Length::Fill);
+                        let mut count = 0;
+                        if let Some(images) =
+                            pack.content.as_ref().and_then(|v| v["images"].as_object())
+                        {
+                            for (shortcode, image) in images.iter().take(1024) {
+                                count += 1;
+                                entries = entries.push(
+                                    button(
+                                        text(format!(
+                                            ":{shortcode}:  {}",
+                                            image["body"].as_str().unwrap_or("")
+                                        ))
+                                        .size(13),
+                                    )
+                                    .padding([8, 10])
+                                    .width(Length::Fill)
+                                    .style(shell::quiet_button)
+                                    .on_press_maybe(
+                                        available.then(|| {
+                                            message(Event::ChooseImage(shortcode.clone()))
+                                        }),
+                                    ),
+                                );
+                            }
+                        }
+                        body = body
+                            .push(text(format!("{count} emoji")).size(12).color(shell::MUTED))
+                            .push(entries)
+                            .push(primary("Add emoji", Event::NewImage, writable));
+                    }
+                    if state.listing.can_create {
+                        actions =
+                            actions.push(quiet("New room pack…", Event::BeginCreate, available));
+                    }
+                    actions = actions
+                        .push(iced::widget::space().width(Length::Fill))
+                        .push(quiet("Close", Event::Close, !state.pending));
+                }
+                Editor::Rename => {
+                    body = body.push(shell::title("Rename pack", 16)).push(
+                        text_input("Pack name", &state.name)
+                            .id("emoji-pack-name")
+                            .size(13)
+                            .padding([7, 10])
+                            .style(shell::search_style)
+                            .cursor_blinking(false)
+                            .on_input_maybe(writable.then_some(|v| message(Event::Name(v)))),
+                    );
+                    actions = actions
+                        .push(quiet(
+                            "Cancel",
+                            Event::CancelEdit,
+                            !state.pending && !state.loading,
+                        ))
+                        .push(iced::widget::space().width(Length::Fill))
+                        .push(primary(
+                            "Save name",
+                            Event::Rename,
+                            writable && !state.name.trim().is_empty(),
+                        ));
+                }
+                Editor::Create => {
+                    body = body
+                        .push(shell::title("New room pack", 16))
+                        .push(
+                            text("This pack will be shared with the current room.")
+                                .size(12)
+                                .color(shell::MUTED),
+                        )
+                        .push(
+                            text_input("Pack name", &state.create_name)
+                                .id("emoji-pack-create")
+                                .size(13)
+                                .padding([7, 10])
+                                .style(shell::search_style)
+                                .cursor_blinking(false)
+                                .on_input_maybe(
+                                    available.then_some(|v| message(Event::CreateName(v))),
+                                ),
+                        );
+                    actions = actions
+                        .push(quiet(
+                            "Cancel",
+                            Event::CancelEdit,
+                            !state.pending && !state.loading,
+                        ))
+                        .push(iced::widget::space().width(Length::Fill))
+                        .push(primary(
+                            "Create pack",
+                            Event::Create,
+                            available
+                                && state.listing.can_create
+                                && !state.create_name.trim().is_empty(),
+                        ));
+                }
+                Editor::Image => {
+                    body = body.push(shell::title(
+                        if state.previous.is_some() {
+                            "Edit emoji"
+                        } else {
+                            "Add emoji"
+                        },
+                        16,
+                    ));
+                    if let Some(pack) = pack {
+                        body = body.push(text(&pack.name).size(12).color(shell::MUTED));
+                    }
+                    body = body
+                        .push(text("Shortcode").size(12).color(shell::MUTED))
+                        .push(
+                            text_input("Shortcode", &state.shortcode)
+                                .id("emoji-shortcode")
+                                .size(13)
+                                .padding([7, 10])
+                                .style(shell::search_style)
+                                .cursor_blinking(false)
+                                .on_input_maybe(
+                                    writable.then_some(|v| message(Event::Shortcode(v))),
+                                ),
+                        )
+                        .push(text("Description").size(12).color(shell::MUTED))
+                        .push(
+                            text_input("Description / alternative text", &state.description)
+                                .size(13)
+                                .padding([7, 10])
+                                .style(shell::search_style)
+                                .cursor_blinking(false)
+                                .on_input_maybe(
+                                    writable.then_some(|v| message(Event::Description(v))),
+                                ),
+                        )
+                        .push(text("Image").size(12).color(shell::MUTED))
+                        .push(
+                            text_input("mxc:// image URL", &state.uri)
+                                .size(13)
+                                .padding([7, 10])
+                                .style(shell::search_style)
+                                .cursor_blinking(false)
+                                .on_input_maybe(writable.then_some(|v| message(Event::Uri(v)))),
+                        )
+                        .push(quiet(
+                            if state.task.is_some() {
+                                "Preparing image…"
+                            } else {
+                                "Choose image…"
+                            },
+                            Event::PickFile,
+                            writable,
+                        ));
+                    if let Some(upload) = &state.upload {
+                        body = body.push(
+                            row![
+                                image(upload.preview().clone())
+                                    .width(48)
+                                    .height(48)
+                                    .content_fit(iced::ContentFit::Contain),
+                                text("Image ready · uploaded when you save").size(12)
+                            ]
+                            .spacing(8),
+                        );
+                    } else {
+                        let uri = matrix_sdk::ruma::OwnedMxcUri::from(state.uri.as_str());
+                        if uri.is_valid() {
+                            if let Some(handle) = self
+                                .model
+                                .images
+                                .ready
+                                .get(&interconnect::image_media::Key::inline(uri))
+                            {
+                                body = body.push(
+                                    image(handle.clone())
+                                        .width(48)
+                                        .height(48)
+                                        .content_fit(iced::ContentFit::Contain),
+                                );
+                            } else {
+                                body = body.push(
+                                    text("Image preview unavailable or loading")
+                                        .size(11)
+                                        .color(shell::MUTED),
+                                );
+                            }
+                        }
+                    }
+                    body = body.push(text("PNG, JPEG, WebP or GIF · up to 2 MiB and 4096 px. Images are visible to homeservers, including in encrypted rooms.").size(11).color(shell::MUTED));
+                    actions = actions.push(quiet(
+                        "Cancel",
+                        Event::CancelEdit,
+                        !state.pending && !state.loading,
+                    ));
+                    if state.previous.is_some() {
+                        actions = actions.push(quiet("Remove…", Event::RemoveImage, writable));
+                    }
+                    actions = actions
+                        .push(iced::widget::space().width(Length::Fill))
+                        .push(primary(
+                            "Save emoji",
+                            Event::SaveImage,
+                            writable && !state.shortcode.trim().is_empty(),
+                        ));
+                }
+            }
         }
-        if state.pending {
-            content = content.push(text("Saving…").size(12));
-        }
+        let mut footer = column![].spacing(8).width(Length::Fill);
         if let Some(error) = &state.error {
-            content = content.push(
+            footer = footer.push(
                 text(error)
                     .size(12)
                     .color(iced::Color::from_rgb8(174, 73, 78)),
             );
         }
-        content=content.push(text("PNG, JPEG, WebP or GIF · up to 2 MiB and 4096 px. Pack images are visible to homeservers, including in encrypted rooms.").size(11).color(shell::MUTED));
-        let card = container(scrollable(content).style(shell::scroll_style))
-            .padding(20)
-            .width(Length::Fill)
-            .max_width(760)
-            .max_height((size.height - 32.0).max(1.0))
-            .style(|_| container::Style {
-                border: iced::Border::default().rounded(12),
-                ..shell::surface(iced::Color::WHITE)
-            });
+        if state.pending {
+            footer = footer.push(text("Saving…").size(12).color(shell::MUTED));
+        }
+        if self.demo.is_some() && state.confirm.is_none() && state.editor == Editor::Browse {
+            body = body.push(
+                text("Demo changes stay in memory.")
+                    .size(11)
+                    .color(shell::MUTED),
+            );
+        }
+        footer = footer.push(actions);
+        let cap = if state.confirm.is_some() {
+            340.0
+        } else if matches!(
+            state.editor,
+            Editor::Browse | Editor::Rename | Editor::Create
+        ) {
+            480.0
+        } else {
+            640.0
+        };
+        let card = container(
+            column![
+                header,
+                iced::widget::rule::horizontal(1),
+                scrollable(container(body).padding(20).width(Length::Fill))
+                    .id("emoji-management-body")
+                    .height(Length::Fill)
+                    .direction(shell::scrollbar())
+                    .style(shell::scroll_style),
+                iced::widget::rule::horizontal(1),
+                container(footer)
+                    .padding([14, 20])
+                    .width(Length::Fill)
+                    .id("emoji-management-actions"),
+            ]
+            .spacing(0),
+        )
+        .width((size.width - 32.0).clamp(1.0, 700.0))
+        .height((size.height - 32.0).clamp(1.0, cap))
+        .style(|_| container::Style {
+            border: iced::Border {
+                color: shell::LINE,
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..shell::surface(iced::Color::WHITE)
+        });
         opaque(
             mouse_area(
                 container(card)
@@ -1094,6 +1260,176 @@ mod tests {
                 shell.redraw_request(),
                 iced::window::RedrawRequest::At(_)
             ));
+        }
+    }
+
+    #[test]
+    fn explicit_editors_and_confirmation_keep_actions_in_the_minimum_window() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Probe {
+            fields: Vec<String>,
+            actions: Option<iced::Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("emoji-management-actions")) {
+                    self.actions = Some(bounds);
+                }
+            }
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                _: iced::Rectangle,
+                _: &mut dyn widget::operation::Focusable,
+            ) {
+                for name in ["emoji-pack-name", "emoji-pack-create", "emoji-shortcode"] {
+                    if id == Some(&widget::Id::new(name)) {
+                        self.fields.push(name.into());
+                    }
+                }
+            }
+        }
+        let mut app = crate::tests::demo_app();
+        open(&mut app);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = iced::Size::new(640.0, 480.0);
+        for (action, expected) in [
+            (Event::Ignore, None),
+            (Event::BeginRename, Some("emoji-pack-name")),
+            (Event::BeginCreate, Some("emoji-pack-create")),
+            (Event::NewImage, Some("emoji-shortcode")),
+            (Event::ChooseImage("wave".into()), Some("emoji-shortcode")),
+            (Event::RemoveImage, None),
+        ] {
+            event(&mut app, action);
+            let mut view = app.emoji_management_view();
+            let mut tree = widget::Tree::new(&view);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            let mut probe = Probe::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut probe,
+            );
+            assert_eq!(
+                probe.fields,
+                expected.into_iter().map(str::to_owned).collect::<Vec<_>>()
+            );
+            let bounds = probe.actions.unwrap();
+            assert!(
+                bounds.height >= 50.0 && bounds.y >= 0.0 && bounds.y + bounds.height <= size.height
+            );
+        }
+        assert!(app.emoji_management.as_ref().unwrap().confirm.is_some());
+        event(&mut app, Event::NewImage); // A stale form action cannot dismiss confirmation.
+        assert!(app.emoji_management.as_ref().unwrap().confirm.is_some());
+        event(&mut app, Event::CancelConfirm);
+        assert_eq!(app.emoji_management.as_ref().unwrap().editor, Editor::Image);
+    }
+
+    #[test]
+    fn cancel_editor_aborts_reads_and_rejects_their_late_callbacks() {
+        let mut app = crate::tests::demo_app();
+        open(&mut app);
+        event(&mut app, Event::NewImage);
+        let state = app.emoji_management.as_mut().unwrap();
+        let old_request = state.request;
+        let (_, handle) =
+            Task::<Message>::perform(std::future::pending::<()>(), |_| message(Event::Ignore))
+                .abortable();
+        state.task = Some(handle.abort_on_drop());
+        event(&mut app, Event::CancelEdit);
+        let state = app.emoji_management.as_ref().unwrap();
+        assert!(state.task.is_none());
+        assert_eq!(state.editor, Editor::Browse);
+        assert_ne!(state.request, old_request);
+        event(
+            &mut app,
+            Event::FilePicked(old_request, None, Err("late failure".into())),
+        );
+        assert!(app.emoji_management.as_ref().unwrap().error.is_none());
+    }
+
+    #[test]
+    fn manager_suspends_settings_without_losing_its_draft_or_scroll_position() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Read(Option<f32>);
+        impl widget::Operation for Read {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                _: iced::Rectangle,
+                _: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("settings-body")) {
+                    self.0 = Some(translation.y);
+                }
+            }
+        }
+        let mut app = crate::tests::demo_app();
+        let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+        let _ = app.update(Message::Settings(
+            super::super::settings::Event::ShowRoomList(false),
+        ));
+        let draft = app.settings.draft.clone();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = iced::Size::new(640.0, 480.0);
+        let mut tree = widget::Tree::empty();
+        for stage in 0..3 {
+            if stage == 1 {
+                open(&mut app);
+            }
+            if stage == 2 {
+                event(&mut app, Event::Close);
+            }
+            let mut view = app.view();
+            tree.diff(view.as_widget());
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            if stage == 0 {
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut widget::operation::scrollable::scroll_to::<()>(
+                        widget::Id::new("settings-body"),
+                        iced::widget::operation::AbsoluteOffset {
+                            x: None,
+                            y: Some(180.0),
+                        },
+                    ),
+                );
+            }
+            let mut read = Read::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut read,
+            );
+            if stage == 1 {
+                assert!(
+                    read.0.is_none(),
+                    "covered Settings must not expose operations"
+                );
+            } else {
+                assert!((read.0.unwrap() - 180.0).abs() < 1.0);
+            }
+            assert_eq!(app.settings.draft, draft);
         }
     }
 
