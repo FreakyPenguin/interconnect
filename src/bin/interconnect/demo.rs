@@ -161,6 +161,8 @@ pub fn rooms() -> Vec<RoomEntry> {
             member_count: if r.section == "Direct messages" { 2 } else { 5 },
             can_edit_topic: r.section != "Direct messages" && r.id != "release",
             can_invite: r.id != "release",
+            can_redact_own: r.id != "release",
+            can_redact_other: false,
             can_pin: r.section != "Direct messages" && r.id != "release",
             pinned_events: if r.id == "studio" {
                 vec!["direction".into(), "proposal".into()]
@@ -361,6 +363,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         download: None,
         reactions: Vec::new(),
         can_react: true,
+        redactable: true,
         edit_source: None,
         edited: false,
         read_by: Vec::new(),
@@ -562,15 +565,16 @@ impl Demo {
                 row.read_by = vec!["@alex:demo.invalid".into(), "@maya:demo.invalid".into()];
             }
             for row in &mut rows {
-                if !row.is_own
-                    && row.sender == "Jamie Davis"
-                    && row.kind == RowKind::Message
-                    && row.image.is_none()
-                    && row.download.is_none()
-                {
+                if !row.is_own && row.sender == "Jamie Davis" {
                     row.is_own = true;
-                    row.edit_source =
-                        Some(interconnect::connected::EditSource::plain(row.body.clone()));
+                    if row.redactable
+                        && row.kind == RowKind::Message
+                        && row.image.is_none()
+                        && row.download.is_none()
+                    {
+                        row.edit_source =
+                            Some(interconnect::connected::EditSource::plain(row.body.clone()));
+                    }
                 }
             }
             let start = chrono::Local::now().timestamp_millis() - rows.len() as i64 * 60_000;
@@ -651,6 +655,28 @@ impl Demo {
                     interconnect::message_document::Document::plain_links(&row.body)
                         .map(std::sync::Arc::new)
                 });
+            }
+        }
+    }
+    pub fn delete_message(&mut self, room: &str, event: &str) {
+        for (key, rows) in &mut self.conversations {
+            if key.room == room {
+                for row in rows
+                    .iter_mut()
+                    .filter(|row| row.event_id.as_deref() == Some(event))
+                {
+                    row.body = "Message removed".into();
+                    row.formatted = None;
+                    row.image = None;
+                    row.download = None;
+                    row.reactions.clear();
+                    row.can_react = false;
+                    row.redactable = false;
+                    row.edit_source = None;
+                    row.edited = false;
+                    row.retry = None;
+                    row.send_state.clear();
+                }
             }
         }
     }

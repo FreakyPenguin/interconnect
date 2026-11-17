@@ -208,18 +208,33 @@ pub(super) fn composer_editor_style(
     style.placeholder = MUTED.scale_alpha(0.85);
     style
 }
+#[derive(Default)]
+pub struct MessageActions<'a> {
+    pub reply: Option<Message>,
+    pub reaction: Option<Message>,
+    pub edit: Option<Message>,
+    pub delete: Option<Message>,
+    pub pin: Option<Message>,
+    pub bookmark: Option<Message>,
+    pub popup: Option<(Element<'a, Message>, Message)>,
+}
 pub fn message_actions<'a>(
     body: impl Into<Element<'a, Message>>,
-    reply: Option<Message>,
-    reaction: Option<Message>,
-    edit: Option<Message>,
-    pin: Option<Message>,
-    bookmark: Option<Message>,
-    popup: Option<(Element<'a, Message>, Message)>,
+    actions: MessageActions<'a>,
 ) -> Element<'a, Message> {
+    let MessageActions {
+        reply,
+        reaction,
+        edit,
+        delete,
+        pin,
+        bookmark,
+        popup,
+    } = actions;
     if reply.is_none()
         && reaction.is_none()
         && edit.is_none()
+        && delete.is_none()
         && pin.is_none()
         && bookmark.is_none()
         && popup.is_none()
@@ -229,8 +244,9 @@ pub fn message_actions<'a>(
     let (content, dismiss) = popup.map_or((None, Message::Escape), |(content, dismiss)| {
         (Some(content), dismiss)
     });
+    let deleting = matches!(&dismiss, Message::Deletion(_));
     let mut controls = row![].spacing(2);
-    if reaction.is_some() || content.is_some() {
+    if reaction.is_some() || (content.is_some() && !deleting) {
         let add = container(
             button(container(icon(Kind::AddReaction)).center_x(28).center_y(20))
                 .padding(0)
@@ -329,6 +345,19 @@ pub fn message_actions<'a>(
             widget::tooltip::Position::Top,
         ));
     }
+    if delete.is_some() || deleting {
+        controls = controls.push(super::tooltips::tooltip(
+            container(
+                button(container(icon(Kind::Delete)).center_x(28).center_y(20))
+                    .padding(0)
+                    .style(icon_button)
+                    .on_press_maybe(delete),
+            )
+            .id("delete-message"),
+            "Delete message",
+            widget::tooltip::Position::Top,
+        ));
+    }
     let actions = container(controls).padding(1).style(|_| container::Style {
         border: Border {
             color: LINE,
@@ -346,7 +375,11 @@ pub fn message_actions<'a>(
     );
     super::popover::view(
         message,
-        Some(widget::Id::new("add-reaction")),
+        Some(widget::Id::new(if deleting {
+            "delete-message"
+        } else {
+            "add-reaction"
+        })),
         content,
         dismiss,
     )

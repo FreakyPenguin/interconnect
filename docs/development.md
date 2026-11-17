@@ -148,6 +148,9 @@ to reject stale conversations and permission changes; the menu adds no timers.
 `message_edit.rs` temporarily replaces each conversation’s composer, retaining its
 draft until Save/Cancel. The runtime-owned connected composer admits SDK replacement
 events asynchronously and rechecks the target’s ownership/content.
+`message_delete.rs` owns captured confirmation popups and account-scoped pending
+redactions. The connected composer rechecks membership, content, and Matrix power
+levels, then awaits the server using a stable transaction ID for explicit retry.
 `people_picker.rs` provides reusable directory search for invitations and new
 chats. Hosts namespace asynchronous results by account and form/view generation.
 See [architecture](architecture/client.md) for ownership and lifecycle rules.

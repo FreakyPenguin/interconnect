@@ -76,6 +76,7 @@ impl App {
             && self.create_room.is_none()
             && self.invite.is_none()
             && self.topic_editor.is_none()
+            && self.message_delete.is_none()
             && self.attachment_picker.is_none()
             && self.clipboard_paste.is_none()
     }
@@ -214,6 +215,9 @@ impl App {
                             target.clone(),
                         ))),
                     ));
+                }
+                if let Some(action) = self.delete_action(row, target.thread, target.generation) {
+                    actions.push(("Delete message…", Action::Dispatch(action)));
                 }
                 if !target.thread {
                     actions.push((

@@ -37,6 +37,64 @@ fn focus(key: &DraftKey) -> Task<Message> {
     })
 }
 impl App {
+    pub(super) fn restore_deleted_drafts(&mut self, room: &str, event: &str) {
+        let mut restored = false;
+        for (key, draft) in &mut self.drafts {
+            if key.room == room
+                && !draft.pending
+                && draft
+                    .editing
+                    .as_ref()
+                    .is_some_and(|editing| editing.event == event)
+            {
+                let editing = draft.editing.take().unwrap();
+                *draft = *editing.saved;
+                restored = true;
+            }
+        }
+        if restored {
+            self.emoji_completion.clear();
+        }
+    }
+    pub(super) fn validate_redacted_edits(&mut self) {
+        for thread in [false, true] {
+            let Some(key) = self.draft_key(thread) else {
+                continue;
+            };
+            let Some(event) = self
+                .drafts
+                .get(&key)
+                .and_then(|draft| draft.editing.as_ref())
+                .map(|editing| editing.event.clone())
+            else {
+                continue;
+            };
+            let selected = if thread {
+                &self.selection.thread
+            } else {
+                &self.selection.room
+            };
+            let Some((generation, _)) = selected else {
+                continue;
+            };
+            let target = reaction_picker::Target {
+                room: key.room.clone(),
+                thread,
+                generation: *generation,
+                event: event.clone(),
+            };
+            let row = self.message_row(&target).or_else(|| {
+                let (generation, _) = self.selection.room.as_ref()?;
+                super::current_pane(&self.model.room, *generation)?
+                    .rows
+                    .iter()
+                    .find(|row| row.event_id.as_ref() == Some(&event))
+            });
+            if row.is_some_and(|row| !row.redactable) {
+                self.restore_deleted_drafts(&key.room, &event);
+            }
+        }
+    }
     pub(super) fn message_edit_action(
         &self,
         row: &interconnect::connected::MessageRow,

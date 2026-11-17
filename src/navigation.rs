@@ -22,6 +22,8 @@ pub struct RoomEntry {
     pub member_count: u64,
     pub can_edit_topic: bool,
     pub can_pin: bool,
+    pub can_redact_own: bool,
+    pub can_redact_other: bool,
     pub can_invite: bool,
     pub pinned_events: Vec<String>,
     /// Room m.tag keys, including Element custom section membership.
@@ -237,6 +239,12 @@ pub async fn snapshot(
                         room.own_user_id(),
                         matrix_sdk::ruma::events::StateEventType::RoomPinnedEvents,
                     )
+                }),
+                can_redact_own: levels
+                    .as_ref()
+                    .is_some_and(|levels| levels.user_can_redact_own_event(room.own_user_id())),
+                can_redact_other: levels.as_ref().is_some_and(|levels| {
+                    levels.user_can_redact_event_of_other(room.own_user_id())
                 }),
                 pinned_events: room
                     .pinned_event_ids()

@@ -41,6 +41,17 @@ pub struct State {
     deep_error: Option<String>,
 }
 impl State {
+    pub(super) fn message_deleted(&mut self, room: &str, event: &str) {
+        self.cancel();
+        self.hits
+            .retain(|hit| hit.room != room || hit.event != event);
+        for (key, (_, hits)) in &mut self.cache {
+            if key.room == room {
+                Arc::make_mut(hits).retain(|hit| hit.event != event);
+            }
+        }
+    }
+
     fn stop_history(&mut self) {
         if let Some(abort) = self.deep_abort.take() {
             abort.abort();
@@ -110,7 +121,7 @@ fn message(event: Event) -> Message {
     Message::GlobalSearch(event)
 }
 fn hit(room: &str, row: &MessageRow) -> Option<Hit> {
-    if row.kind != RowKind::Message {
+    if row.kind != RowKind::Message || !row.redactable {
         return None;
     }
     Some(Hit {
@@ -1181,6 +1192,29 @@ mod tests {
                 .1
                 .iter()
                 .any(|hit| hit.body == "Edited text")
+        );
+        let row = app
+            .model
+            .room
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.key == "proposal")
+            .unwrap();
+        let action = app
+            .delete_action(row, false, app.selection.room.as_ref().unwrap().0)
+            .unwrap();
+        let _ = app.update(action);
+        let request = app.generation;
+        let _ = app.update(Message::Deletion(
+            super::super::message_delete::Event::Confirm(request),
+        ));
+        assert!(
+            app.global_search.cache[&key]
+                .1
+                .iter()
+                .all(|hit| hit.event != "proposal")
         );
     }
 }

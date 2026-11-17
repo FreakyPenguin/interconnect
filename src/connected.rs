@@ -14,6 +14,9 @@ use matrix_sdk_ui::{
 };
 use tokio::sync::{mpsc, watch};
 
+mod deleting;
+#[cfg(test)]
+mod deleting_tests;
 mod editing;
 #[cfg(test)]
 mod editing_tests;
@@ -81,6 +84,7 @@ pub struct MessageRow {
     pub download: Option<crate::download::Attachment>,
     pub reactions: Vec<Reaction>,
     pub can_react: bool,
+    pub redactable: bool,
     /// Editable source excludes presentation prefixes and reply fallbacks.
     pub edit_source: Option<EditSource>,
     pub edited: bool,
@@ -1399,6 +1403,7 @@ async fn timeline_rows_cached(
                     download: crate::download::Attachment::from_content(content),
                     reactions: reactions(content, &own_user),
                     can_react: event.event_id().is_some() && can_react(content),
+                    redactable: event.event_id().is_some() && deleting::redactable(content),
                     edit_source: if event.event_id().is_some() && event.is_editable() {
                         match content {
                             TimelineItemContent::MsgLike(content) => match &content.kind {

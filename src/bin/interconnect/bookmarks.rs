@@ -21,6 +21,19 @@ pub struct State {
     error: Option<(Pointer, String)>,
 }
 impl State {
+    pub(super) fn message_deleted(&mut self, room: &str, event: &str) {
+        if let Some(abort) = self.abort.take() {
+            abort.abort();
+        }
+        self.epoch += 1;
+        self.loading = false;
+        for preview in &mut self.previews {
+            if preview.pointer.matches(room, event) {
+                preview.body = "Message removed".into();
+            }
+        }
+    }
+
     pub fn start(&self) -> usize {
         self.limit.max(20) - 20
     }

@@ -1,7 +1,6 @@
 # Todo
 
 ## Rooms
-- message delete
 - Member invite link?
 
 ## Account and navigation

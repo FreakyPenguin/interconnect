@@ -5,8 +5,10 @@ macOS builds and notifications exist, but saved accounts still depend on Linux
 Secret Service.
 
 - Recovery/key-backup UI, mark-unread controls, ordinary reply
-  composition, redaction actions, and notification click navigation
+  composition and notification click navigation
   remain incomplete.
+- Message deletion supports synced message-like events with event IDs. Cancelling
+  unsent local echoes and redacting room-state/activity events remain unsupported.
 - Incoming receipt labels currently show room receipts only; the SDK does not
   expose thread-specific readers through timeline items. Thread activity badges
   remain local to this process. Receipt privacy preferences are not implemented.

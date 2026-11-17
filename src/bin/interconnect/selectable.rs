@@ -1049,12 +1049,10 @@ mod tests {
                     top: 5.0,
                     ..iced::Padding::ZERO
                 }),
-                Some(Message::Thread("$one".into())),
-                None,
-                None,
-                None,
-                None,
-                None,
+                shell::MessageActions {
+                    reply: Some(Message::Thread("$one".into())),
+                    ..Default::default()
+                },
             )
         ])
         .anchor_bottom()

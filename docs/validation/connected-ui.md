@@ -53,6 +53,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Quick switcher | Ctrl+P searches across all rooms. Up/Down selects, Enter/click opens and focuses the room composer once its pane loads, and Escape/backdrop dismisses. The sidebar filter remains unchanged. |
 | New chat | Ctrl+N or **+** opens people search. `Taylor` is a demo fixture; repeated selection reuses the same chat. Cancellation preserves the open thread and drafts. |
 | Room creation | Ctrl+Shift+N or the **Create room** icon opens the form, defaulting to the selected space or No space. Name is required. Joining, directory listing, encryption, and history options are independent where supported. Ctrl+Enter creates; Escape cancels. |
+| Message deletion | Use the trash button in an eligible message’s hover popover or **Delete message…** in its context menu. Confirm explicitly; Escape/outside click cancels. Check own messages, media, thread originals/replies, permission loss, and server errors. |
 | Message editing | Use the pencil button in a message’s hover action popover, right-click and choose **Edit message**, or press Up in an empty focused composer to edit the latest own message in that conversation. Save uses the configured send shortcut; Cancel or Escape restores the previous draft. Check room messages, thread originals/replies, and navigation away and back. |
 | Composer | Text and toolbar occupy separate rows within one focus-highlighted surface, aligned with the reading column. Attachment/emoji controls sit together on the left; the format pill and eye icon control literal/Markdown mode and preview. Send is blue when enabled and muted when unavailable. Attachments use an inline chip with filename ellipsis; errors stay inside the surface. Check multiline editing/scrolling, focus, toolbar hit targets, staged captions, preview toggling, and keyboard shortcuts in room and thread panes at 640×480. |
 | Drafts and scrolling | Room/thread drafts and reading positions survive navigation and dialogs. Jump-to-newest resumes following incoming messages. |
@@ -1173,3 +1174,62 @@ acceptance with an authorized test account should confirm encrypted edits in
 another client, offline queue delivery, server refusal/retry, and simultaneous
 edits/redactions from another device. No real Matrix events are needed for demo
 or automated fixture checks.
+
+## Message deletion — 2026-11-17
+
+The message hover action popover has a trash button, and the context menu offers
+**Delete message…**. Both open the same captured confirmation popup for room
+messages, thread originals, and thread replies, including attachments and other
+message-like events. Room power levels determine whether own messages and other
+senders’ messages can be deleted. State/activity events, already redacted rows,
+and unsent local echoes without event IDs have no delete action.
+
+Opening the popup sends nothing. **Delete message** or an unmodified,
+non-repeated Enter key confirms the displayed request. Escape or an outside click
+cancels without activating the background; normal composer shortcuts are
+suppressed while the popup owns input. A pending request can be dismissed with
+**Close** and continues against its captured account/room/event. Pending requests
+count toward graceful shutdown. Failures stay in the open popup for explicit
+retry, retaining the transaction ID; stale confirmations and late results cannot
+confirm or replace a newer popup. Navigation, hidden panes, account changes,
+permission loss, and remote redactions invalidate stale confirmations.
+
+The runtime-owned composer reads current SDK membership and power levels,
+rechecks the target, and awaits the homeserver redaction response with a 30-second
+bound. No content is sent in the redaction body. A timeout may have succeeded;
+the error asks the user to check before retrying. There is no automatic
+application retry, deletion worker, idle poll, or animation timer.
+
+The SDK sync projection supplies **Message removed** and releases the row’s
+formatted document, attachment controls, and reaction actions. Event identity and
+room placeholders preserve reading anchors. SDK 0.19.1 can remove a redacted reply
+from its thread view because redaction strips its relation; the room placeholder
+remains. Deleting a thread original leaves the other replies intact. Existing
+composer drafts, staged attachments, and scroll positions are retained. If a
+message being edited is deleted, its previous draft returns once any pending edit
+finishes. Search caches and saved-message preview text are invalidated after a
+successful deletion; bookmark/pin records themselves remain unchanged.
+
+Offline protocol tests cover own-message permissions, moderator permissions,
+permission changes, departure, plaintext redaction requests in an encrypted room,
+server refusal, stable-transaction retry, and room/thread sync updates. UI tests
+cover actual trash/confirmation click routing, popup clamping, cancellation,
+unchanged drafts/scroll, deleted media, original/reply copies, edits invalidated
+by local/remote deletion, stale account/request results, and shutdown while a
+redaction is pending. Workspace tests passed (163 library tests, two existing
+ignored checks); the final desktop suite passed all 298 tests. Formatting,
+workspace Clippy with warnings denied, and the locked desktop build passed. A
+360×480 software widget render was inspected for popup placement and an opaque
+surface; temporary render artifacts stayed outside the repository. Native
+appearance and connected-account acceptance remain separate checks. No real
+Matrix messages were deleted and the connected client was not restarted.
+
+For manual acceptance, use `--demo`: delete a Jamie Davis message from each entry
+point, cancel first, and repeat on the original and a reply in a thread. Check
+that another sender’s message has no delete action under the ordinary demo role.
+In Images, delete Jamie’s attachment and verify its media/download controls go
+away. Keep drafts in both composers and a scrolled reading position throughout.
+Repeat at 640×480. With an explicitly authorized test account, verify redaction
+in another client, revoked permissions, a server refusal, timeout/retry behavior,
+and deletion while an edited message is open. Demo and fixture checks require no
+saved account, network access, or real Matrix test messages.

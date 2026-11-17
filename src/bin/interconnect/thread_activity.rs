@@ -164,6 +164,7 @@ mod tests {
             download: None,
             reactions: Vec::new(),
             can_react: true,
+            redactable: true,
             edit_source: None,
             edited: false,
             read_by: Vec::new(),

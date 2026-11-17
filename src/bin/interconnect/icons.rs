@@ -20,6 +20,7 @@ pub(super) enum Kind {
     Unpin,
     Reply,
     Edit,
+    Delete,
     Bookmark,
     BookmarkFilled,
     Close,
@@ -148,6 +149,13 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                 Reply => {
                     line(&[(9.0, 5.0), (3.0, 11.0), (9.0, 17.0)]);
                     line(&[(3.0, 11.0), (15.0, 11.0), (19.0, 15.0), (19.0, 20.0)]);
+                }
+                Delete => {
+                    line(&[(4.0, 6.0), (20.0, 6.0)]);
+                    line(&[(9.0, 6.0), (9.0, 3.0), (15.0, 3.0), (15.0, 6.0)]);
+                    line(&[(6.0, 6.0), (7.0, 21.0), (17.0, 21.0), (18.0, 6.0)]);
+                    line(&[(10.0, 10.0), (10.0, 17.0)]);
+                    line(&[(14.0, 10.0), (14.0, 17.0)]);
                 }
                 Edit => {
                     line(&[

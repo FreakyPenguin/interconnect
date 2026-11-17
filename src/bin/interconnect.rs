@@ -45,6 +45,8 @@ mod login;
 mod markdown_composer;
 #[path = "interconnect/members.rs"]
 mod members;
+#[path = "interconnect/message_delete.rs"]
+mod message_delete;
 #[path = "interconnect/message_edit.rs"]
 mod message_edit;
 #[path = "interconnect/new_chat.rs"]
@@ -131,6 +133,8 @@ const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
     context_menu: Option<context_menu::State>,
+    message_delete: Option<message_delete::State>,
+    deleting: HashSet<message_delete::Sending>,
     manual_unread_generation: Option<u64>,
     section_reorder: section_reorder::State,
     bookmarks: bookmarks::State,
@@ -287,6 +291,7 @@ enum Message {
     Exit,
     Markdown(markdown_composer::Event),
     Editing(message_edit::Event),
+    Deletion(message_delete::Event),
     Edit(DraftKey, text_editor::Action),
     DeleteWord(DraftKey, text_editor::Motion),
     ResizeComposer {
@@ -324,6 +329,8 @@ impl App {
             shell: shell::State::default(),
             expanded_pins: None,
             context_menu: None,
+            message_delete: None,
+            deleting: HashSet::new(),
             manual_unread_generation: None,
             section_reorder: Default::default(),
             demo: None,
@@ -384,6 +391,55 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if let Some(state) = &self.message_delete {
+            if matches!(message, Message::Escape) {
+                return self.update(state.dismiss());
+            }
+            if matches!(message, Message::Focus(_)) {
+                return Task::none();
+            }
+        }
+        if self.message_delete.is_some()
+            && matches!(
+                &message,
+                Message::ContextMenu(_)
+                    | Message::QuickRoom(_)
+                    | Message::Settings(settings::Event::Open)
+                    | Message::Verification(verification::Event::Open)
+                    | Message::EmojiManagement(emoji_management::Event::Open)
+                    | Message::Reaction(
+                        reaction_picker::Event::Open(_) | reaction_picker::Event::Chip { .. }
+                    )
+                    | Message::ComposerEmoji(_)
+                    | Message::Image(images::Event::Open { .. })
+                    | Message::NewChat(new_chat::Event::Open)
+                    | Message::CreateRoom(create_room::Event::Open)
+                    | Message::Topic(topic::Event::Open(..))
+                    | Message::Invite(invite::Event::Open)
+                    | Message::Pin(pin_action::Event::Set(..))
+                    | Message::Bookmark(bookmarks::Event::Set(..))
+                    | Message::Edit(..)
+                    | Message::Send(_)
+                    | Message::Markdown(
+                        markdown_composer::Event::Mode(_) | markdown_composer::Event::Preview(_)
+                    )
+                    | Message::EmojiCompletion(_)
+                    | Message::DeleteWord(..)
+                    | Message::Editing(
+                        message_edit::Event::Start(_)
+                            | message_edit::Event::Latest(_)
+                            | message_edit::Event::Cancel(_)
+                    )
+                    | Message::Attachment(
+                        attachments::Event::Pick(_)
+                            | attachments::Event::Drop(..)
+                            | attachments::Event::Paste(_)
+                    )
+            )
+        {
+            return Task::none();
+        }
+
         if matches!(
             message,
             Message::SearchFocus | Message::Search(_) | Message::Focus(_) | Message::RoomSearch(_)
@@ -739,8 +795,15 @@ impl App {
                     members::Event::Open | members::Event::Close | members::Event::Retry
                 )
         );
-        let observe_threads =
-            navigation || matches!(&message, Message::State(_) | Message::DemoThreadReply);
+        let observe_threads = navigation
+            || matches!(
+                &message,
+                Message::State(_)
+                    | Message::DemoThreadReply
+                    | Message::Deletion(
+                        message_delete::Event::Confirm(_) | message_delete::Event::Finished { .. }
+                    )
+            );
         let opening_image = matches!(&message, Message::Image(images::Event::Open { .. }));
         let closing_image = matches!(&message, Message::Image(images::Event::Close));
         let refresh_media = matches!(
@@ -750,6 +813,7 @@ impl App {
                 | Message::Reaction(_)
                 | Message::Markdown(_)
                 | Message::Editing(_)
+                | Message::Deletion(_)
                 | Message::Edit(..)
                 | Message::DeleteWord(..)
                 | Message::Composing(_)
@@ -1167,6 +1231,7 @@ impl App {
 
             Message::Markdown(event) => action_task = self.markdown_event(event),
             Message::Editing(event) => action_task = self.message_edit_event(event),
+            Message::Deletion(event) => action_task = self.delete_event(event),
             Message::Composing(active) => {
                 self.composing = active;
                 if !active && let Some(key) = self.emoji_completion.editing.clone() {
@@ -1554,6 +1619,8 @@ impl App {
             self.stop_typing();
         }
         self.validate_section_drag();
+        self.validate_message_delete();
+        self.validate_redacted_edits();
         self.validate_context_menu();
         self.validate_download();
         self.validate_invite();
@@ -1973,7 +2040,9 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.create_room.is_some() && !self.composing {
+            if self.message_delete.is_some() {
+                self.delete_subscription()
+            } else if self.create_room.is_some() && !self.composing {
                 iced::event::listen_with(create_room::shortcut)
             } else if self.new_chat.is_some() && !self.composing {
                 iced::event::listen_with(new_chat::shortcut)
@@ -2356,16 +2425,27 @@ impl App {
                         self.pin_feedback(original, message, true, generation),
                         message,
                     ),
-                    None,
-                    self.reaction_action(message, true, generation),
-                    self.message_edit_action(message, true, generation),
-                    self.pin_action(message, true, generation),
-                    self.bookmark_action(message, true, generation),
-                    self.reaction_popup(
-                        true,
-                        generation,
-                        message.event_id.as_deref().unwrap_or_default(),
-                    ),
+                    shell::MessageActions {
+                        reply: None,
+                        reaction: self.reaction_action(message, true, generation),
+                        edit: self.message_edit_action(message, true, generation),
+                        delete: self.delete_action(message, true, generation),
+                        pin: self.pin_action(message, true, generation),
+                        bookmark: self.bookmark_action(message, true, generation),
+                        popup: self
+                            .delete_popup(
+                                true,
+                                generation,
+                                message.event_id.as_deref().unwrap_or_default(),
+                            )
+                            .or_else(|| {
+                                self.reaction_popup(
+                                    true,
+                                    generation,
+                                    message.event_id.as_deref().unwrap_or_default(),
+                                )
+                            }),
+                    },
                 ),
                 message,
                 true,
@@ -2795,12 +2875,17 @@ impl App {
                         self.pin_feedback(body.into(), message, thread, *generation),
                         message,
                     ),
-                    reply,
-                    self.reaction_action(message, thread, *generation),
-                    self.message_edit_action(message, thread, *generation),
-                    self.pin_action(message, thread, *generation),
-                    self.bookmark_action(message, thread, *generation),
-                    self.reaction_popup(thread, *generation, id),
+                    shell::MessageActions {
+                        reply,
+                        reaction: self.reaction_action(message, thread, *generation),
+                        edit: self.message_edit_action(message, thread, *generation),
+                        delete: self.delete_action(message, thread, *generation),
+                        pin: self.pin_action(message, thread, *generation),
+                        bookmark: self.bookmark_action(message, thread, *generation),
+                        popup: self
+                            .delete_popup(thread, *generation, id)
+                            .or_else(|| self.reaction_popup(thread, *generation, id)),
+                    },
                 )
             } else {
                 body.into()
