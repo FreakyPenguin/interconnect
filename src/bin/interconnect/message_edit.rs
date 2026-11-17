@@ -312,6 +312,7 @@ impl App {
                     text("Editing message").size(12).color(shell::MUTED),
                     iced::widget::space().width(iced::Length::Fill),
                     button(text("Cancel").size(12))
+                        .padding([2, 0])
                         .style(shell::quiet_button)
                         .on_press_maybe(
                             (!draft.pending).then(|| message(Event::Cancel(key.clone())))
@@ -319,7 +320,12 @@ impl App {
                 ]
                 .align_y(iced::Alignment::Center),
             )
-            .padding([4, 12])
+            .padding(iced::Padding {
+                top: 4.0,
+                right: 12.0,
+                bottom: 0.0,
+                left: 12.0,
+            })
             .into(),
         )
     }
@@ -662,5 +668,72 @@ mod tests {
                 }
             }
         }
+    }
+    #[tokio::test]
+    async fn two_line_edit_has_no_blank_row_between_header_and_text() {
+        use iced::advanced::{Layout, layout, widget};
+        #[derive(Default)]
+        struct Probe {
+            header: Option<iced::Rectangle>,
+            editor: Option<iced::Rectangle>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, value: &str) {
+                if value == "Editing message" {
+                    self.header = Some(bounds);
+                }
+            }
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _: &mut dyn widget::operation::Focusable,
+            ) {
+                if id == Some(&widget::Id::new("room-composer")) {
+                    self.editor = Some(bounds);
+                }
+            }
+        }
+        let mut app = demo_app();
+        let key = app.draft_key(false).unwrap();
+        let source = "*this is italic*\n**this is bold**";
+        let prepared = composition::prepare(source.into(), Format::Markdown)
+            .await
+            .unwrap();
+        app.demo.as_mut().unwrap().send_prepared(&key, prepared);
+        app.refresh_demo();
+        let row = target(&app, false);
+        start(&mut app, row);
+        assert_eq!(app.drafts[&key].content.text(), source);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut view = app.pane(false);
+        let mut tree = widget::Tree::new(&view);
+        let size = iced::Size::new(800.0, 600.0);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        let mut probe = Probe::default();
+        view.as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+        let header = probe.header.unwrap();
+        let editor = probe.editor.unwrap();
+        app.drafts[&key].content.with_editor(|content| {
+            let buffer = content.buffer();
+            let visible = buffer.size().1.unwrap();
+            let first = buffer.layout_runs().next().unwrap();
+            let top_padding = editor.height - visible - 8.0;
+            let gap = editor.y + top_padding + first.line_top - (header.y + header.height);
+            assert!(
+                gap <= 6.1,
+                "edit header leaves a blank-looking row: {gap}px"
+            );
+            assert!(
+                visible >= buffer.metrics().line_height * 2.0,
+                "two short lines should fit without a scrollbar: {visible}px"
+            );
+        });
     }
 }

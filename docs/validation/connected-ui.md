@@ -1135,6 +1135,17 @@ this source editor. Review its preview before saving such a message. Edited
 rows show a quiet **edited** label without changing event identity or timestamp.
 Editing adds no polling subscription or animation timer.
 
+Edit-composer spacing (2026-11-17): the edit header uses compact Cancel padding
+and replaces the editor’s usual top inset. The editing resize gutter is 4 px,
+and the header has no bottom inset, reducing the header-to-text gap from 14 px
+to 6 px. The scrollbar rail and visible-height calculation use the same padding
+and gutter as the native editor. A two-line Markdown regression preserves the
+exact source, limits the gap to 6 px, and verifies that both lines fit without
+overflow. Formatting, workspace Clippy, all 291 UI tests, and the locked desktop
+build passed. An 800×600 software widget render was visually checked; the demo
+compositor constrained its window to 211 px wide, so it could not verify the
+intended desktop layout. Native macOS and connected-account checks remain open.
+
 Automated coverage includes offline replacement payloads (`m.replace` and
 `m.new_content`), emote type, mentions, thread identity, incoming edit projection,
 redaction rejection, plain/Markdown authoring, custom emoji after SDK sanitizing,

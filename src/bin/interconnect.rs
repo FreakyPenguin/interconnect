@@ -2930,6 +2930,12 @@ impl App {
             let send_key = key.clone();
             let composing = self.composing;
             let shortcut = self.settings.current.composer.send_shortcut;
+            let editor_padding = iced::Padding {
+                top: if draft.editing.is_some() { 0.0 } else { 12.0 },
+                right: 18.0,
+                bottom: 8.0,
+                left: 12.0,
+            };
             let mut editor = text_editor(&draft.content)
                 .id(if thread {
                     "thread-composer"
@@ -2940,12 +2946,7 @@ impl App {
                 .cursor_blinking(false)
                 .height(Length::Fill)
                 .size(14)
-                .padding(iced::Padding {
-                    top: 12.0,
-                    right: 18.0,
-                    bottom: 8.0,
-                    left: 12.0,
-                })
+                .padding(editor_padding)
                 .style(shell::composer_editor_style)
                 .placeholder(if draft.attachment.is_some() {
                     "Add a caption…"
@@ -2983,12 +2984,20 @@ impl App {
                 &draft.content,
                 &key,
                 *generation,
-                draft.composer_height.unwrap_or(composer_editor::MIN_HEIGHT),
-                max_height,
-                self.context_menu_allowed()
-                    && self.context_menu.is_none()
-                    && self.emoji_management.is_none()
-                    && !draft.pending,
+                composer_editor::Options {
+                    height: draft.composer_height.unwrap_or(composer_editor::MIN_HEIGHT),
+                    max_height,
+                    enabled: self.context_menu_allowed()
+                        && self.context_menu.is_none()
+                        && self.emoji_management.is_none()
+                        && !draft.pending,
+                    padding: editor_padding,
+                    grip_height: if draft.editing.is_some() {
+                        4.0
+                    } else {
+                        composer_editor::GRIP_HEIGHT
+                    },
+                },
             );
             let send_label: Element<'_, Message> = if draft.editing.is_some() {
                 container(text(if draft.pending { "Saving…" } else { "Save" }).size(12))

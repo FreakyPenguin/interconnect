@@ -11,25 +11,33 @@ use iced::{
 
 pub(super) const MIN_HEIGHT: f32 = 56.0;
 pub(super) const MAX_HEIGHT: f32 = 320.0;
-const GRIP: f32 = 8.0;
+pub(super) const GRIP_HEIGHT: f32 = 8.0;
+
+pub(super) struct Options {
+    pub height: f32,
+    pub max_height: f32,
+    pub enabled: bool,
+    pub padding: iced::Padding,
+    pub grip_height: f32,
+}
 
 pub(super) fn view<'a>(
     editor: Element<'a, Message>,
     content: &'a text_editor::Content,
     key: &DraftKey,
     generation: u64,
-    height: f32,
-    max_height: f32,
-    enabled: bool,
+    options: Options,
 ) -> Element<'a, Message> {
     Element::new(Editor {
         editor,
         content,
         key: key.clone(),
         generation,
-        height: height.clamp(MIN_HEIGHT, max_height),
-        max_height,
-        enabled,
+        height: options.height.clamp(MIN_HEIGHT, options.max_height),
+        max_height: options.max_height,
+        enabled: options.enabled,
+        padding: options.padding,
+        grip_height: options.grip_height,
     })
 }
 struct Editor<'a> {
@@ -40,6 +48,8 @@ struct Editor<'a> {
     height: f32,
     max_height: f32,
     enabled: bool,
+    padding: iced::Padding,
+    grip_height: f32,
 }
 #[derive(Clone, Copy, Debug, Default)]
 struct Metrics {
@@ -81,12 +91,13 @@ struct State {
     hovered: bool,
 }
 impl Editor<'_> {
-    fn rail(bounds: Rectangle) -> Rectangle {
+    fn rail(&self, bounds: Rectangle) -> Rectangle {
         Rectangle {
             x: bounds.x + bounds.width - 9.0,
-            y: bounds.y + GRIP + 12.0,
+            y: bounds.y + self.grip_height + self.padding.top,
             width: 4.0,
-            height: (bounds.height - GRIP - 20.0).max(0.0),
+            height: (bounds.height - self.grip_height - (self.padding.top + self.padding.bottom))
+                .max(0.0),
         }
     }
     fn scroll_to(
@@ -154,7 +165,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         tree.diff_children(std::slice::from_ref(&self.editor));
     }
     fn size(&self) -> Size<Length> {
-        Size::new(Length::Fill, Length::Fixed(self.height + GRIP))
+        Size::new(Length::Fill, Length::Fixed(self.height + self.grip_height))
     }
     fn layout(
         &mut self,
@@ -162,12 +173,14 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let limits = limits.shrink(Size::new(0.0, GRIP)).height(self.height);
+        let limits = limits
+            .shrink(Size::new(0.0, self.grip_height))
+            .height(self.height);
         let node = self
             .editor
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, &limits);
-        let size = Size::new(node.size().width, node.size().height + GRIP);
+        let size = Size::new(node.size().width, node.size().height + self.grip_height);
         tree.state.downcast_mut::<State>().metrics = self.content.with_editor(|editor| {
             let buffer = editor.buffer();
             let line = buffer.metrics().line_height;
@@ -189,11 +202,14 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
             Metrics {
                 offset,
                 total,
-                visible: (size.height - GRIP - 20.0).max(0.0),
+                visible: (size.height
+                    - self.grip_height
+                    - (self.padding.top + self.padding.bottom))
+                    .max(0.0),
                 line,
             }
         });
-        layout::Node::with_children(size, vec![node.move_to(Point::new(0.0, GRIP))])
+        layout::Node::with_children(size, vec![node.move_to(Point::new(0.0, self.grip_height))])
     }
     fn operate(
         &mut self,
@@ -243,7 +259,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
             shell.request_redraw();
         }
         let bounds = layout.bounds();
-        let rail = Self::rail(bounds);
+        let rail = self.rail(bounds);
         if let Event::Mouse(mouse::Event::CursorMoved { position }) = event {
             match state.drag {
                 Some(Drag::Resize { y, height }) => {
@@ -285,7 +301,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
             )
         {
             let point = cursor.position().unwrap();
-            if point.y <= bounds.y + GRIP {
+            if point.y <= bounds.y + self.grip_height {
                 state.drag = Some(Drag::Resize {
                     y: point.y,
                     height: self.height,
@@ -348,7 +364,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         let over = cursor.is_over(bounds) && cursor.is_over(*viewport);
         let grip = Rectangle {
             x: bounds.center_x() - 14.0,
-            y: bounds.y + 3.0,
+            y: bounds.y + (self.grip_height - 2.0) / 2.0,
             width: 28.0,
             height: 2.0,
         };
@@ -366,7 +382,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                 },
             );
         }
-        if let Some(thumb) = state.metrics.thumb(Self::rail(bounds))
+        if let Some(thumb) = state.metrics.thumb(self.rail(bounds))
             && let Some(bounds) = thumb.intersection(viewport)
         {
             renderer.fill_quad(
@@ -399,7 +415,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                     && cursor.is_over(bounds)
                     && cursor
                         .position()
-                        .is_some_and(|point| point.y <= bounds.y + GRIP)))
+                        .is_some_and(|point| point.y <= bounds.y + self.grip_height)))
         {
             return if matches!(state.drag, Some(Drag::Resize { .. })) {
                 mouse::Interaction::Grabbing
@@ -407,7 +423,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                 mouse::Interaction::Grab
             };
         }
-        let rail = Self::rail(bounds);
+        let rail = self.rail(bounds);
         if self.enabled
             && (matches!(state.drag, Some(Drag::Scroll { .. }))
                 || (state.metrics.thumb(rail).is_some()
@@ -477,6 +493,13 @@ mod tests {
             height: 56.0,
             max_height: 200.0,
             enabled: true,
+            grip_height: GRIP_HEIGHT,
+            padding: iced::Padding {
+                top: 12.0,
+                right: 18.0,
+                bottom: 8.0,
+                left: 12.0,
+            },
         }
     }
     fn dispatch(
@@ -598,7 +621,7 @@ mod tests {
         let mut tree = Tree::new(&editor as &dyn Widget<Message, Theme, Renderer>);
         let limits = layout::Limits::new(Size::ZERO, Size::new(300.0, 400.0));
         let node = editor.layout(&mut tree, &renderer, &limits);
-        let rail = Editor::rail(Rectangle::with_size(node.size()));
+        let rail = editor.rail(Rectangle::with_size(node.size()));
         let metrics = tree.state.downcast_ref::<State>().metrics;
         assert!(metrics.thumb(rail).is_some());
         let bottom = Point::new(rail.center_x(), rail.y + rail.height);
@@ -624,7 +647,7 @@ mod tests {
         assert!(metrics.offset > 0.0);
         assert!(metrics.offset >= metrics.maximum() - metrics.line);
         let thumb = metrics
-            .thumb(Editor::rail(Rectangle::with_size(node.size())))
+            .thumb(editor.rail(Rectangle::with_size(node.size())))
             .unwrap();
         assert!(thumb.y + thumb.height <= rail.y + rail.height + 0.1);
         dispatch(
