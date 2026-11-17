@@ -49,7 +49,7 @@ see [renderer selection](../development.md#renderer-selection).
 | Navigation | Space selection filters the room list without switching the open conversation. Room and child-space rows stay 26 px high with no gaps between rows, including long names and unread badges. Long room, section, and space labels use a grapheme-safe ellipsis; hovering a room name reveals its full name after a short delay. Unread room names are semibold. Expanded section counts and zero-count Saved messages badges are hidden; collapsed sections retain nonzero room counts. Sections collapse independently; search filters rooms. |
 | Unread section | Unread stays above Favorites and includes all unread rooms in the selected space/filter, including DMs, favorites, and custom sections. Rooms remain in their usual groups. Collapse it independently; search temporarily expands it. It hides when empty. **Settings → Navigation → Show unread section** defaults on; Save/Reload applies immediately, Cancel discards changes. Marking a room read removes its shortcut while preserving its usual row, open conversation, drafts, and timeline position. |
 | Space unread dots | A small blue dot at the bottom right of a rail icon means its scope contains unread rooms or DMs, including manually marked unread rooms and nested spaces. All rooms covers every room; Direct messages covers DMs. The dot clears when the last unread room is read or removed. Indicators ignore room search, collapsed sections, and the Show unread section setting. In the demo, All rooms and Studio start with a dot for Release notes. Hover adds **Unread messages** to the space hint; clicking the dot still selects the space without switching the open conversation. |
-| Presence | Opening a DM or People page checks status on demand; Refresh status rechecks the current view. Marks are last-checked snapshots, with a 60-second cache and no polling. Message-group avatars (rooms and threads) show an 8 px status mark; DM navigator rows reuse the peer’s checked status. Maya is online (green), Alex away (amber with a dash), Jamie offline (gray); other demo senders have no status mark. Hover a mark for its text label. Group continuations and room activity do not add marks. Switch spaces without changing the open conversation; check 26 px DM rows and minimum-window clipping. |
+| Presence | Opening a DM or People page checks status on demand; Refresh status rechecks the current view. Marks are last-checked snapshots with a 60-second cache. Settings → Presence optionally enables periodic refresh (off by default, 60-second interval). Message-group avatars (rooms and threads) show an 8 px status mark; DM navigator rows reuse the peer’s checked status. Maya is online (green), Alex away (amber with a dash), Jamie offline (gray); other demo senders have no status mark. Hover a mark for its text label. Group continuations and room activity do not add marks. Switch spaces without changing the open conversation; check 26 px DM rows and minimum-window clipping. |
 | Tooltips | Hover the account avatar, spaces, room-list toggle, header controls, composer actions, message timestamps/senders, and emoji choices. Hints use compact 11 px light text in a charcoal rounded surface with consistent padding, a subtle border/shadow, and a gap from the control. Check long topics and multiline read receipts wrap within the surface, and hints stay inside the window near its edges. Native rendering remains a manual check. |
 | Global message search | **Search messages** above Saved messages or Ctrl+Shift+F (Cmd+Shift+F on macOS) opens a full-size panel. Enter or **Search** submits; typing cancels the previous request and clears its results. Results span all rooms regardless of the selected space and include room, sender, date, highlighted text, and **Go to message/reply**. Check pagination, duplicate suppression, no matches, server failure with local results, and switching to Saved messages or a room. Back/Escape restores the previous conversation, thread, drafts, and scroll; the panel sends no read receipts for hidden conversations. |
 | In-room search | Header magnifier or Ctrl+F (Cmd+F on macOS) opens and focuses the bar. Search is a case-insensitive substring of loaded message bodies, including loaded replies; it does not query server history. Matches appear in timeline order, starting at the newest. Enter/↑ selects the previous match, ↓ the next, wrapping at either end. Every occurrence in visible plain and formatted message text has a yellow highlight while search is open; the selected message also has a row highlight and is scrolled into view. Check repeated terms, wrapped text, links, code, emoji, and RTL text. Clearing or closing search removes text highlights without changing selection/copy behavior or wrapping. Check no matches, Unicode text, edits, history pagination, and Escape/× closing without changing drafts or the open thread. Space filtering keeps search; switching rooms clears it. At narrow widths, opening search returns from the side pane to the room, retaining drafts. |
@@ -1329,30 +1329,61 @@ saved account, network access, or real Matrix test messages.
 
 ## User presence
 
-Opening a DM requests its unambiguous Matrix peer's current status. Opening People,
-changing its search, or paging requests the visible joined members, excluding
-self and invitees. Each demand is capped at 50 users with four concurrent requests
-and a five-second per-request timeout. Responses use the standard
+Opening a DM requests its unambiguous Matrix peer's current status. Existing
+timeline viewport reports also request unique senders of visible room/thread
+messages, plus the pinned thread original. Scrolling updates this demand without
+fetching offscreen history or introducing a timer. Own messages, activity rows,
+collapsed thread summaries, hidden panes, and stale generations are excluded.
+Sender changes in a current model snapshot refresh stationary viewport demand.
+Opening People, changing its search, or paging requests the visible joined
+members, excluding self and invitees. People demand is capped at 50 users;
+viewport senders are added separately so that cap does not drop a visible sender.
+Enabled periodic refresh also includes every unambiguous DM contact across the
+navigator, without the page cap. Requests are deduplicated across all sources,
+exclude self and invalid IDs, and use four concurrent requests with a five-second
+per-request timeout. Responses use the standard
 [per-user presence endpoint](https://spec.matrix.org/v1.19/client-server-api/#get_matrixclientv3presenceuseridstatus)
 through the stock SDK. Presence never calls `/sync` or changes encryption cursors.
+Completed reads update the shared cache as they arrive; a slow member cannot
+hold back navigator statuses. Viewport cancellation preserves completed reads
+while rejecting late results from the superseded batch.
 
 Results are last-checked snapshots, not continuous live presence. Opening another
-view reuses results checked within 60 seconds. Cache age is checked only on view
-demand; no timer expires entries or polls the server. **Refresh status** in a DM
-header or People panel bypasses the cache for the current view; **Checking…**
+view reuses results checked within 60 seconds. Cache age is checked on view
+demand; with periodic refresh disabled, no periodic refresh timer runs.
+**Refresh status** in a DM header or People panel bypasses the cache for the current view; **Checking…**
 disables duplicate refreshes. A failed or unsupported lookup hides that user's
-mark and is cached as unknown until another eligible lookup or explicit refresh.
-The memory cache retains at most 8192 users and is released with the account.
+mark and is cached as unknown until another eligible lookup, explicit refresh,
+or enabled periodic refresh.
+The memory cache retains up to 8192 users or the current requested set, whichever
+is larger, and is released with the account. Requested contacts are protected
+from eviction while their batch completes.
+
+**Settings → Presence → Refresh presence periodically** defaults off. Its interval
+defaults to 60 seconds and accepts whole seconds from 15 to 3600. Save/Reload
+applies the policy immediately; Cancel discards draft edits. When enabled, a
+single deadline refreshes all unambiguous DM contacts, visible message senders,
+and the visible joined People page, bypassing the cache. DM contacts outside the
+selected space, search, collapsed sections, or open conversation are included. It works with a group
+conversation or no conversation open; room/space changes alone do not cancel or
+postpone navigator refresh. It is scheduled after the previous batch completes,
+so slow requests never overlap or accumulate missed ticks. Disabling it, opening a
+dialog, losing window focus, or shutdown cancels pending periodic work.
+Changing the People page cancels superseded member requests. Refocusing restores
+normal demand. With polling disabled, lookups remain scoped to the active view.
+Demo mode keeps its fixtures in memory even when polling is enabled.
 
 Online/away/offline marks retain their existing colors and dimensions. Tooltips
 say **Last checked**; People explains the snapshot behavior. Unknown status has
 no mark and is never presented as Offline. Room/thread avatars and DM navigator
-rows can reuse previously checked users; opening a group conversation alone does
-not request every sender. Space filtering preserves the open conversation and
+rows share the same cache. A group conversation requests its visible message
+senders, without enumerating the entire room membership. Space filtering preserves the open conversation and
 its demand. Modal dialogs cancel demand. Demo fixtures stay in memory and issue
 no presence requests, including when Refresh is clicked.
 
-A superseding room, People view, page, or refresh cancels its pending batch.
+A superseding room, thread generation, viewport sender set, People view/page, or
+refresh cancels active-view requests;
+navigator-only requests survive conversation navigation.
 Responses are checked against current demand before entering the cache, and a
 session owns its own worker/cache. Lookup completion cannot replace conversation
 selection, drafts, reading positions, or another account's data. Connection status
@@ -1366,7 +1397,37 @@ self/invite exclusion, stale refresh controls, modal/draft/scroll preservation,
 click routing, and demo isolation. Existing avatar tests cover fixed bounds and
 idle redraw behavior. Cursor migration and stock-SDK reopening are covered above.
 
+Periodic-refresh fixtures cover every contact in a 75-peer navigator (including
+without an open room), demand beyond 50 contacts, view/space independence,
+deduplication, self/invalid-ID exclusion, large-cache contraction without evicting
+requested contacts, fresh-cache bypass, interval rescheduling,
+disabled/empty-view cancellation, slow batches without overlap, and rejection of
+cancelled results. UI/settings tests cover persistence, interval validation,
+Save/Cancel/Defaults, focus and dialog gating, and demo isolation. These are
+automated checks; native visual acceptance and real-server 60-second polling have
+not been exercised for this addition.
+
+Visible-sender regressions cover deduplication, scrolling/cache reuse, self and
+activity exclusion, event IDs differing from local row keys, stale viewport and
+model generations, sender updates without scrolling, room/thread navigation,
+late thread results, completed navigator progress during viewport cancellation,
+narrow hidden panes, modal/draft/scroll preservation, demo
+isolation, polling with no DM contacts, and combined demand beyond a People page.
+Native visible-sender acceptance and production resource measurements remain
+manual checks.
+
+Visible-sender validation: formatting, Clippy with warnings denied, locked
+workspace tests (180 library and 319 desktop tests passed; 2 library tests
+ignored), the locked desktop build, and diff whitespace checks passed. No
+connected client restart or test messages were used.
+
 For manual acceptance, open a DM and People at ordinary and 640×480 window sizes.
+Open a group room without People and check presence marks for visible message
+senders. Scroll to other senders, open a thread, and switch between split and
+narrow replacement layouts; check that only visible panes retain sender demand.
+Enable periodic refresh, leave a group conversation open, and check that unopened
+DM contacts update after an interval, including after changing space filters.
+Disable it and verify that periodic requests stop; repeat focus/modal pausing.
 Hover a status mark, change a test peer's status in another client, then click
 Refresh and check the new snapshot. Navigate away during a pending request; check
 that the new view's statuses and drafts stay intact. Test unsupported presence,

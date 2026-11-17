@@ -29,6 +29,7 @@ pub struct State {
     close_after_save: bool,
     launched_graphics: Graphics,
     gif_seconds_input: String,
+    presence_seconds_input: String,
     notification_test_busy: bool,
     notification_test_result: Option<Result<(), String>>,
 }
@@ -86,6 +87,8 @@ pub enum Event {
     LowPower(bool),
     NotificationsEnabled(bool),
     NotificationPreview(bool),
+    PresencePolling(bool),
+    PresenceSeconds(String),
     TestNotification,
     NotificationTested(Result<(), String>),
     Defaults,
@@ -139,6 +142,17 @@ impl App {
                 .gif_seconds_input
                 .parse::<u16>()
                 .is_ok_and(|seconds| (1..=300).contains(&seconds))
+    }
+    fn valid_presence_seconds(&self) -> bool {
+        self.settings
+            .draft
+            .as_ref()
+            .is_none_or(|draft| !draft.presence.poll_enabled)
+            || self
+                .settings
+                .presence_seconds_input
+                .parse::<u16>()
+                .is_ok_and(|seconds| (15..=3600).contains(&seconds))
     }
     pub(super) fn boot(startup: Startup) -> (Self, Task<Message>) {
         let mut app = Self::new();
@@ -198,6 +212,12 @@ impl App {
             Event::Open if self.settings.draft.is_none() && !self.closing => {
                 self.settings.gif_seconds_input =
                     self.settings.current.media.gif_seconds.to_string();
+                self.settings.presence_seconds_input = self
+                    .settings
+                    .current
+                    .presence
+                    .poll_interval_seconds
+                    .to_string();
                 self.settings.draft = Some(self.settings.current.clone());
                 // Remove focus from composers/search while the modal is visible.
                 return iced::widget::operation::focus("settings-dialog");
@@ -245,6 +265,21 @@ impl App {
                     self.settings.gif_seconds_input = input;
                 }
             }
+            Event::PresencePolling(enabled) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.presence.poll_enabled = enabled;
+                }
+            }
+            Event::PresenceSeconds(input) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    if let Ok(seconds) = input.parse::<u16>()
+                        && (15..=3600).contains(&seconds)
+                    {
+                        draft.presence.poll_interval_seconds = seconds;
+                    }
+                    self.settings.presence_seconds_input = input;
+                }
+            }
             Event::GpuEnabled(enabled) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     draft.graphics.gpu_enabled = enabled;
@@ -261,6 +296,8 @@ impl App {
                 if let Some(draft) = &mut self.settings.draft {
                     *draft = Settings::default();
                     self.settings.gif_seconds_input = draft.media.gif_seconds.to_string();
+                    self.settings.presence_seconds_input =
+                        draft.presence.poll_interval_seconds.to_string();
                 }
             }
             Event::Reload if self.settings.draft.is_some() => return self.load_settings(),
@@ -282,6 +319,8 @@ impl App {
                         if self.settings.draft.is_some() {
                             self.settings.gif_seconds_input =
                                 settings.media.gif_seconds.to_string();
+                            self.settings.presence_seconds_input =
+                                settings.presence.poll_interval_seconds.to_string();
                             self.settings.draft = Some(settings.clone());
                         }
                         self.settings.current = settings;
@@ -298,7 +337,7 @@ impl App {
                 let Some(settings) = self.settings.draft.clone() else {
                     return Task::none();
                 };
-                if !self.valid_gif_seconds() {
+                if !self.valid_gif_seconds() || !self.valid_presence_seconds() {
                     return Task::none();
                 }
                 if self.demo.is_some() {
@@ -400,6 +439,36 @@ impl App {
         if available {
             visibility = visibility.on_toggle(|show| message(Event::ShowRoomList(show)));
         }
+        let mut presence_polling = checkbox(draft.presence.poll_enabled)
+            .label("Refresh presence periodically")
+            .size(16)
+            .text_size(13)
+            .spacing(9);
+        if available {
+            presence_polling =
+                presence_polling.on_toggle(|enabled| message(Event::PresencePolling(enabled)));
+        }
+        let mut presence_controls = column![presence_polling].spacing(12);
+        if draft.presence.poll_enabled {
+            let mut seconds = text_input("15–3600", &self.settings.presence_seconds_input)
+                .cursor_blinking(false)
+                .width(88)
+                .size(13)
+                .padding([7, 10])
+                .style(shell::search_style);
+            if available {
+                seconds = seconds.on_input(|value| message(Event::PresenceSeconds(value)));
+            }
+            presence_controls = presence_controls.push(
+                row![
+                    text("Refresh every").size(13),
+                    seconds,
+                    text("seconds").size(13)
+                ]
+                .spacing(12)
+                .align_y(iced::Alignment::Center),
+            );
+        }
         let mut unread_section = checkbox(draft.navigation.show_unread_section)
             .label("Show unread section")
             .size(16)
@@ -465,7 +534,10 @@ impl App {
             if self.settings.path.is_some() {
                 reload = reload.on_press(message(Event::Reload));
             }
-            if (self.demo.is_some() || self.settings.store.is_some()) && self.valid_gif_seconds() {
+            if (self.demo.is_some() || self.settings.store.is_some())
+                && self.valid_gif_seconds()
+                && self.valid_presence_seconds()
+            {
                 save = save.on_press(message(Event::Save));
             }
         }
@@ -513,6 +585,16 @@ impl App {
         }
         let mut content = column![
             column![shell::title("Notifications", 14), notification_controls].spacing(12),
+            iced::widget::rule::horizontal(1),
+            column![
+                shell::title("Presence", 14),
+                presence_controls,
+                caption(if self.valid_presence_seconds() {
+                    "Refresh all DM contacts, visible message senders, and the People page while focused. Choose 15–3600 seconds; 60 is the default."
+                } else {
+                    "Enter a whole number from 15 to 3600 seconds to save."
+                }),
+            ].spacing(12),
             iced::widget::rule::horizontal(1),
             column![
                 shell::title("Navigation", 14),
@@ -654,6 +736,35 @@ fn caption<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn presence_polling_validates_interval_and_applies_on_save_with_cancel_and_defaults() {
+        let mut app = super::super::tests::demo_app();
+        let _ = app.settings_update(Event::Open);
+        assert_eq!(app.settings.presence_seconds_input, "60");
+        let _ = app.settings_update(Event::PresencePolling(true));
+        for invalid in ["", "0", "14", "3601", "1.5", "bad"] {
+            let _ = app.settings_update(Event::PresenceSeconds(invalid.into()));
+            assert!(!app.valid_presence_seconds());
+            let _ = app.settings_update(Event::Save);
+            assert!(app.settings.draft.is_some());
+            assert!(!app.settings.current.presence.poll_enabled);
+        }
+        let _ = app.settings_update(Event::PresenceSeconds("120".into()));
+        let _ = app.settings_update(Event::Cancel);
+        assert_eq!(app.settings.current.presence, settings::Presence::default());
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::PresencePolling(true));
+        let _ = app.settings_update(Event::PresenceSeconds("120".into()));
+        let _ = app.settings_update(Event::Save);
+        assert!(app.settings.current.presence.poll_enabled);
+        assert_eq!(app.settings.current.presence.poll_interval_seconds, 120);
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::Defaults);
+        assert_eq!(app.settings.presence_seconds_input, "60");
+        let _ = app.settings_update(Event::Save);
+        assert_eq!(app.settings.current.presence, settings::Presence::default());
+    }
 
     #[test]
     fn notification_preferences_and_focus_reach_backend_only_when_applied() {

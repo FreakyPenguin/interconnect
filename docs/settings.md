@@ -106,6 +106,10 @@ version = 1
 enabled = true
 show_preview = true
 
+[presence]
+poll_enabled = false
+poll_interval_seconds = 60
+
 [navigation]
 show_room_list = true
 show_unread_section = true
@@ -129,6 +133,8 @@ gif_seconds = 5
 | --- | --- | --- |
 | `notifications.enabled` | `true` | Desktop message alerts following Matrix push rules while the app runs. Applies on Save/Reload. |
 | `notifications.show_preview` | `true` | Include room, sender, and text; `false` sends a generic private alert. Applies on Save/Reload. |
+| `presence.poll_enabled` | `false` | **Presence → Refresh presence periodically** refreshes all unambiguous DM contacts across the navigator, visible room/thread message senders, and the visible People page while focused. Includes DM contacts outside the selected space or room filter, even with no open conversation. Pauses in dialogs, unfocused windows, and accounts with no requested users. Applies on Save/Reload. |
+| `presence.poll_interval_seconds` | `60` | Whole seconds between completed presence batches, from 15 to 3600. Periodic refresh bypasses the cache and never overlaps another batch. Manual Refresh remains available. |
 | `navigation.show_room_list` | `true` | Initial room-list visibility on the next launch. Windows below 800 px automatically collapse the list; the rail button or Find room temporarily reveals it. Wide-window visibility and preferred size are retained. |
 | `navigation.show_unread_section` | `true` | **Navigation → Show unread section** adds a fixed Unread section above Favorites, including unread DMs and tagged rooms. Rooms also remain in their usual sections. Follows the selected space and room filter; hidden when empty. Applies on Save/Reload without restarting. |
 | `appearance.limit_room_width` | `true` | **Appearance → Limit room content width** centers headers, pins, messages, and composers in an 840 px column. Disable to use the full pane width. Applies on Save/Reload without restarting. |
@@ -171,7 +177,7 @@ Reload immediately applies the disk values and replaces the dialog's unsaved
 values; startup visibility and graphics choices still wait for the next launch. Restarting also
 loads disk values. Opening the dialog alone does not reread the file.
 
-There is no file watcher or polling timer. Initial settings are read before Iced
+Settings files have no watcher or polling timer. Initial settings are read before Iced
 and the Tokio runtime start, so renderer configuration is available during
 initialization; this pre-window read has the same file-size/type/schema checks.
 The loaded store/settings are handed to the UI without a second UI-side read.

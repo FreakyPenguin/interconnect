@@ -7,6 +7,12 @@ enabled = true
 # Include room, sender, and message text. false uses a generic private alert.
 show_preview = true
 
+[presence]
+# Refresh all DM contacts, visible message senders, and People while focused.
+poll_enabled = false
+# Whole seconds, from 15 to 3600. Applies when polling is enabled.
+poll_interval_seconds = 60
+
 [navigation]
 # Initial visibility only; the room-list button still toggles it during use.
 show_room_list = true

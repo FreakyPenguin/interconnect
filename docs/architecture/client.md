@@ -25,9 +25,16 @@ The local Iced widget patch disables recurring editor caret blinking; its change
 are documented in [PATCH.md](../../vendor/iced_widget/PATCH.md).
 Wayland file drops use a [pinned Winit fork](winit-file-drops.md).
 
-Presence uses the stock SDK's per-user status endpoint on demand. Opening a DM
-or a People page checks a bounded set of users; explicit Refresh bypasses the
-60-second memory cache. No second sync stream or periodic presence timer runs.
+Presence uses the stock SDK's per-user status endpoint on demand. Opening a DM,
+viewing room/thread messages, or opening People requests their peers, unique
+visible senders, or visible members. Existing viewport reports drive message
+lookups; self, activity rows, collapsed thread summaries, hidden panes, and stale
+generations are excluded. The pinned thread original is included. Explicit Refresh
+bypasses the 60-second memory cache. Optional periodic refresh defaults off, with a 60-second
+interval when enabled. While focused, it refreshes every unambiguous DM contact
+across the navigator, plus visible message senders and the People page. Room and
+space navigation does not interrupt navigator-only demand. Four concurrent requests bound network
+work; batches never overlap. There is no second sync stream or UI animation tick.
 See [presence validation](../validation/connected-ui.md#user-presence) for limits
 and the one-time migration from older shared sync cursors. All Matrix SDK crates
 remain pinned to the unmodified 0.19.1 release.
@@ -117,7 +124,7 @@ Attachment preparation reads bounded bytes and builds optional thumbnails away
 from the UI thread. Clipboard reads occur only on paste; file drops use the
 native event loop. Demo mode keeps its data in memory without account access.
 
-Settled UI has no global polling or animation tick. Deadlines exist for pending
-operations, typing expiry, and explicitly playing GIFs; stopped, hidden, or closed
-content releases its visual timers. Resource measurements and their limits live
+Settled UI has no global animation tick. Deadlines exist for optional presence
+polling, pending operations, typing expiry, and explicitly playing GIFs; stopped,
+hidden, or closed content releases its visual timers. Resource measurements and their limits live
 in [idle-resource validation](../validation/idle-resources.md).

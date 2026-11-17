@@ -23,6 +23,7 @@ pub struct Settings {
     pub graphics: Graphics,
     pub media: Media,
     pub notifications: Notifications,
+    pub presence: Presence,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -34,6 +35,7 @@ impl Default for Settings {
             graphics: Graphics::default(),
             media: Media::default(),
             notifications: Notifications::default(),
+            presence: Presence::default(),
         }
     }
 }
@@ -60,6 +62,20 @@ impl Default for Notifications {
         Self {
             enabled: true,
             show_preview: true,
+        }
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Presence {
+    pub poll_enabled: bool,
+    pub poll_interval_seconds: u16,
+}
+impl Default for Presence {
+    fn default() -> Self {
+        Self {
+            poll_enabled: false,
+            poll_interval_seconds: 60,
         }
     }
 }
@@ -110,6 +126,10 @@ impl Settings {
         ensure!(
             (1..=300).contains(&self.media.gif_seconds),
             "GIF playback duration must be between 1 and 300 seconds"
+        );
+        ensure!(
+            (15..=3600).contains(&self.presence.poll_interval_seconds),
+            "Presence refresh interval must be between 15 and 3600 seconds"
         );
         Ok(())
     }
@@ -219,6 +239,14 @@ impl Store {
             .unwrap_or(TEMPLATE)
             .parse::<DocumentMut>()?;
         replace(&mut document["version"], 1_i64.into());
+        replace(
+            &mut document["presence"]["poll_enabled"],
+            settings.presence.poll_enabled.into(),
+        );
+        replace(
+            &mut document["presence"]["poll_interval_seconds"],
+            i64::from(settings.presence.poll_interval_seconds).into(),
+        );
         replace(
             &mut document["appearance"]["limit_room_width"],
             settings.appearance.limit_room_width.into(),
@@ -337,6 +365,10 @@ mod tests {
         assert_eq!(decode(TEMPLATE).unwrap(), Settings::default());
         let settings = decode("[composer]\nsend_shortcut = 'enter'").unwrap();
         assert_eq!(settings.composer.send_shortcut, SendShortcut::Enter);
+        assert_eq!(settings.presence, Presence::default());
+        let polling = decode("[presence]\npoll_enabled = true").unwrap();
+        assert!(polling.presence.poll_enabled);
+        assert_eq!(polling.presence.poll_interval_seconds, 60);
         assert!(settings.navigation.show_room_list);
         assert!(settings.navigation.show_unread_section);
         let settings = decode("[navigation]\nshow_unread_section = false").unwrap();
@@ -361,6 +393,10 @@ mod tests {
             "[media]\ngif_seconds = '5'",
             "[notifications]\nenabled = 'true'",
             "[notifications]\nshow_preview = 1",
+            "[presence]\npoll_enabled = 'true'",
+            "[presence]\npoll_interval_seconds = 14",
+            "[presence]\npoll_interval_seconds = 3601",
+            "[presence]\npoll_interval_seconds = '60'",
         ] {
             assert!(decode(invalid).is_err(), "accepted {invalid}");
         }
@@ -383,6 +419,8 @@ mod tests {
         settings.media.gif_seconds = 17;
         settings.notifications.enabled = false;
         settings.notifications.show_preview = false;
+        settings.presence.poll_enabled = true;
+        settings.presence.poll_interval_seconds = 120;
         store.save(&settings).unwrap();
         assert_eq!(Store::load(path.clone()).unwrap().1, settings);
         assert_eq!(

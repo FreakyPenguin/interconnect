@@ -1,8 +1,9 @@
 # Idle resources and lifecycle
 
-The settled UI has no global polling or continuous redraw loop. SDK and network
-work still wake the process. CPU and scheduler measurements capture activity
-that timer and subscription tests alone cannot establish.
+The settled UI has no continuous redraw loop. Optional presence polling runs in
+the account worker; SDK and network work still wake the process. CPU and scheduler
+measurements capture activity that timer and subscription tests alone cannot
+establish.
 
 Clickable sender names reuse the existing DM task only on click. They add no
 worker, polling, animation timer, or subscription. Rendered-widget click and
@@ -22,9 +23,11 @@ request `Wait`; production CPU/wakeups remain unmeasured for this addition
 
 On-demand presence (2026-11-17) removes the extra classic-sync connection and
 temporary SDK fork. Cached per-user reads run only when opening a DM/People page
-or explicitly refreshing. The one-time saved-cursor migration runs before SDK
-startup under the profile lock and retains account/device keys. There is no
-presence polling, retry worker, expiry timer, or recovery delay. See
+or explicitly refreshing by default. Optional periodic refresh defaults off and
+uses one deadline for all DM contacts, visible message senders, and People while focused.
+The one-time
+saved-cursor migration runs before SDK startup under the profile lock and retains
+account/device keys. There is no extra sync stream, expiry timer, or recovery delay. See
 [presence validation](connected-ui.md#user-presence).
 
 Earlier connected diagnostics observed a shared-cursor retry loop at roughly one
@@ -203,11 +206,15 @@ measurements remain separate manual checks; no production resource claim is made
 
 ### User presence — 2026-11-17
 
-Presence uses explicit GET requests for at most 50 users per view, with four in
-flight at once and five-second request deadlines. A 60-second memory cache is
-checked only on new demand; it has no expiry timer and is capped at 8192 users.
-Manual Refresh bypasses cache age. Failures become unknown, with no automatic
-retry. A settled worker waits for selection changes and makes no requests.
+Presence uses explicit GET requests for at most 50 People members, unique visible
+room/thread message senders (including the pinned original), and every
+unambiguous navigator DM contact when periodic refresh is enabled, with
+four in flight at once and five-second request deadlines. A 60-second memory
+cache is checked only on new demand; it has no expiry timer. It retains up to
+8192 users or the currently requested set, whichever is larger.
+Manual Refresh bypasses cache age. Failures become unknown. With optional
+periodic refresh disabled, there is no automatic retry; a settled worker waits
+for selection changes and makes no requests.
 Navigation/account replacement/shutdown cancel pending reads. UI status marks
 remain static, and their tooltips identify last-checked snapshots.
 
@@ -216,3 +223,31 @@ migration uses the pinned SDK store API once per saved store, under the profile
 lock, before any sync starts. Fixtures cover cancellation, stale-result rejection,
 cache/refresh behavior, no idle/classic-sync requests, and stock-SDK reopening.
 Production wakeups, large-account behavior, and battery impact remain unmeasured.
+
+Optional periodic refresh (2026-11-17) is disabled by default, with a saved
+60-second interval when enabled (15–3600 seconds). It arms a deadline only for
+all navigator DM contacts, visible message senders, and People while focused, bypassing
+cache age on each tick. Space filters, collapsed sections, and the open room do
+not limit the navigator set; no room needs to be open. Contacts are deduplicated
+and none are dropped by the 50-member page cap. Requests remain limited to four
+in flight, so large accounts can take longer than the configured interval.
+The deadline starts after a batch completes, preventing overlapping work and
+catch-up bursts. Room/space changes do not restart a navigator-only batch or its
+deadline. Disabling it, opening a modal, losing focus, or shutdown cancels periodic
+work. Accounts without requested contacts and demo mode never poll. This adds
+configured network/SDK wakeups when enabled, without an animation
+or UI redraw timer. Production CPU, wakeups, and battery impact for enabled
+polling have not been measured.
+
+Visible-message presence reuses event-driven timeline viewport reports. It adds
+no timer or subscription: new senders use the 60-second cache and the existing
+four-request concurrency limit. Hidden room/thread panes, collapsed thread
+summaries, activity rows, and own messages contribute no lookup demand. Scrolling,
+navigation, and stale snapshots cancel superseded demand. When periodic refresh
+is enabled, visible senders join its existing batch and deadline. Completed
+reads update the cache as they arrive so a slow sender or viewport cancellation
+does not discard completed navigator work. Unchanged status values produce no
+additional model update. Automated regressions cover viewport changes, cache
+reuse, thread cancellation, hidden
+panes, demo isolation, and unchanged drafts/scroll positions; production CPU and
+wakeups for this addition have not been measured.
