@@ -1,6 +1,7 @@
 # Todo
 
 ## Rooms
+- users clickable for dm
 - Member invite link?
 
 ## Account and navigation

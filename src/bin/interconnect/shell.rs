@@ -852,7 +852,7 @@ impl App {
                         .align_y(Alignment::Center)
                 )
                 .width(Length::Fill)
-                .padding([8, 10])
+                .padding([5, 10])
                 .style(move |_, status| navigation_button(self.global_search.open, status))
                 .on_press_maybe(
                     (!self.closing && !self.stopped)
@@ -863,7 +863,7 @@ impl App {
             ),
             button(saved_messages)
                 .width(Length::Fill)
-                .padding([8, 10])
+                .padding([5, 10])
                 .style(move |_, status| navigation_button(self.bookmarks.open, status))
                 .on_press_maybe(
                     (!self.closing && !self.stopped)
@@ -871,7 +871,7 @@ impl App {
                 ),
             widget::rule::horizontal(1),
         ]
-        .spacing(2);
+        .spacing(0);
         let sections = &*self.model.sections;
         let visible = self.visible_rooms();
         if let Some(error) = &self.model.preferences_error {
@@ -893,7 +893,7 @@ impl App {
                 .filter(|s| space.children.contains(&s.id))
                 .collect();
             if !children.is_empty() {
-                rooms = rooms.push(container(title("Spaces", 11).color(MUTED)).padding([6, 8]));
+                rooms = rooms.push(container(title("Spaces", 11).color(MUTED)).padding([4, 8]));
                 for child in children {
                     rooms = rooms.push(
                         button(
@@ -905,8 +905,8 @@ impl App {
                             .align_y(Alignment::Center),
                         )
                         .width(Length::Fill)
-                        .padding([4, 10])
-                        .height(32)
+                        .padding([2, 10])
+                        .height(26)
                         .style(quiet_button)
                         .on_press(Message::Space(Scope::Space(child.id.clone()))),
                     );
@@ -967,7 +967,7 @@ impl App {
                 .align_y(Alignment::Center),
             )
             .width(Length::Fill)
-            .padding([6, 8])
+            .padding([4, 8])
             .style(|theme, status| {
                 let mut style = quiet_button(theme, status);
                 style.text_color = MUTED;
@@ -1040,8 +1040,8 @@ impl App {
                 }
                 let mut control = button(label)
                     .width(Length::Fill)
-                    .padding([4, 10])
-                    .height(32)
+                    .padding([2, 10])
+                    .height(26)
                     .style(move |_, status| navigation_button(selected, status));
                 if !self.closing && !self.stopped {
                     control = control.on_press(Message::Room(room.id.clone()));
@@ -1121,7 +1121,7 @@ impl App {
                 .style(scroll_style)
                 .height(Length::Fill),
             ]
-            .spacing(10),
+            .spacing(8),
         )
         .padding([12, 12])
         .width(Length::Fill)
@@ -1385,7 +1385,7 @@ mod navigation_tests {
             .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut probe);
         assert!(probe.bounds.len() >= 4);
         for bounds in probe.bounds {
-            assert_eq!(bounds.height, 32.0);
+            assert_eq!(bounds.height, 26.0);
             assert!(bounds.x >= 0.0 && bounds.x + bounds.width <= 242.0);
         }
     }
