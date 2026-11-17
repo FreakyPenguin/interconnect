@@ -87,6 +87,8 @@ mod selection;
 mod settings;
 #[path = "interconnect/shell.rs"]
 mod shell;
+#[path = "interconnect/sign_out.rs"]
+mod sign_out;
 #[path = "interconnect/single_line.rs"]
 mod single_line;
 #[path = "interconnect/suspended.rs"]
@@ -145,6 +147,7 @@ struct App {
     global_search: global_search::State,
     settings: settings::State,
     login: login::State,
+    sign_out_open: bool,
     verification: verification::State,
     profile: String,
     account_id: Option<String>,
@@ -227,6 +230,7 @@ enum Message {
     },
     Invite(invite::Event),
     Login(login::Event),
+    SignOut(sign_out::Event),
     Verification(verification::Event),
     Settings(settings::Event),
     Image(images::Event),
@@ -325,6 +329,7 @@ impl App {
             global_search: global_search::State::default(),
             settings: settings::State::default(),
             login: login::State::default(),
+            sign_out_open: false,
             verification: verification::State::default(),
             profile: String::new(),
             account_id: None,
@@ -405,6 +410,27 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if let Message::SignOut(event) = message {
+            return self.sign_out_event(event);
+        }
+        if self.sign_out_open {
+            if matches!(message, Message::Escape) {
+                return self.sign_out_event(sign_out::Event::Cancel);
+            }
+            if !matches!(
+                message,
+                Message::State(_)
+                    | Message::Stopped(_)
+                    | Message::Close
+                    | Message::Exit
+                    | Message::WindowFocused(_)
+                    | Message::WindowResized(_)
+                    | Message::Control(_)
+            ) {
+                return Task::none();
+            }
+        }
+
         if let Some(state) = &self.message_delete {
             if matches!(message, Message::Escape) {
                 return self.update(state.dismiss());
@@ -1444,12 +1470,25 @@ impl App {
                     self.retry_errors.insert(id, error);
                 }
             }
-            Message::Login(_) | Message::Verification(_) => unreachable!(),
+            Message::Login(_) | Message::Verification(_) | Message::SignOut(_) => unreachable!(),
             Message::Control(sender) => {
                 sender.send_replace(self.selection.clone());
                 self.control = Some(sender);
             }
             Message::State(mut state) => {
+                if state.sign_out == interconnect::connected::SignOut::Complete {
+                    self.signed_out(*state);
+                    return if self.closing {
+                        iced::exit()
+                    } else {
+                        Task::none()
+                    };
+                }
+
+                if self.selection.sign_out != 0 && state.sign_out_request != self.selection.sign_out
+                {
+                    state.sign_out = self.model.sign_out.clone();
+                }
                 let bookmarks_changed = self.model.bookmarks.entries != state.bookmarks.entries
                     || self.model.bookmarks.loading != state.bookmarks.loading;
                 if self.demo.is_none()
@@ -2060,7 +2099,15 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.message_delete.is_some() {
+            if self.sign_out_open {
+                iced::event::listen_with(|event, _, _| match event {
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        ..
+                    }) => Some(Message::SignOut(sign_out::Event::Cancel)),
+                    _ => None,
+                })
+            } else if self.message_delete.is_some() {
                 self.delete_subscription()
             } else if self.create_room.is_some() && !self.composing {
                 iced::event::listen_with(create_room::shortcut)
@@ -2143,6 +2190,9 @@ impl App {
             && let Some(authentication) = &self.model.authentication
         {
             return self.login_view(authentication);
+        }
+        if self.sign_out_open {
+            return self.sign_out_view();
         }
         let mut layers = iced::widget::stack![self.shell_view()];
         if self.create_room.is_some() {

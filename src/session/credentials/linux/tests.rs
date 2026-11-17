@@ -470,3 +470,80 @@ async fn invalid_records_and_duplicate_names_are_never_silently_replaced() {
     fixture.store.delete_secret(&profile).await.unwrap();
     assert!(fixture.store.read(&profile).await.unwrap().is_none());
 }
+
+#[tokio::test]
+async fn desktop_sign_out_retains_failed_requests_and_retries_only_local_cleanup_after_revocation()
+{
+    use crate::session::DesktopSession;
+    use matrix_sdk::{Client, config::RequestConfig, sliding_sync::VersionBuilder};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path as http_path},
+    };
+    let fixture = Fixture::new().await;
+    let parent = tempfile::tempdir().unwrap();
+    let profile = Profile::open(&parent.path().join("profile"), true).unwrap();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(http_path("/_matrix/client/versions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"versions":["v1.11"]})),
+        )
+        .mount(&server)
+        .await;
+    let client = Client::builder()
+        .homeserver_url(server.uri())
+        .request_config(RequestConfig::default().retry_limit(0))
+        .sliding_sync_version_builder(VersionBuilder::Native)
+        .build()
+        .await
+        .unwrap();
+    let mut record = saved();
+    record.homeserver = server.uri();
+    client
+        .matrix_auth()
+        .restore_session(record.session.clone().unwrap(), Default::default())
+        .await
+        .unwrap();
+    let original = serde_json::to_vec(&record).unwrap();
+    fixture
+        .insert(&profile, APPLICATION, original.clone())
+        .await;
+    let mut desktop = DesktopSession {
+        profile,
+        service: Some(fixture.store),
+        client: Some(client),
+        revoked: false,
+    };
+    let failure =
+        Mock::given(method("POST"))
+            .and(http_path("/_matrix/client/v3/logout"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(
+                serde_json::json!({"errcode":"M_UNKNOWN","error":"fixture failure"}),
+            ))
+            .expect(1)
+            .mount_as_scoped(&server)
+            .await;
+    assert!(desktop.sign_out().await.is_err());
+    assert!(desktop.client.is_some());
+    assert!(!desktop.revoked);
+    assert_eq!(fixture.records.lock().unwrap()[0].secret, original);
+    drop(failure);
+    Mock::given(method("POST"))
+        .and(http_path("/_matrix/client/v3/logout"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    fixture.records.lock().unwrap()[0].reject = "write";
+    assert!(desktop.sign_out().await.is_err());
+    assert!(desktop.client.is_none());
+    assert!(desktop.revoked);
+    fixture.records.lock().unwrap()[0].reject = "";
+    desktop.sign_out().await.unwrap();
+    let records = fixture.records.lock().unwrap();
+    assert!(records[0].deleted);
+    let cleaned = SavedSession::decode(&records[0].secret).unwrap();
+    assert!(cleaned.logged_out);
+    assert!(cleaned.session.is_none());
+}

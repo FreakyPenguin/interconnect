@@ -1607,3 +1607,22 @@ that the new view's statuses and drafts stay intact. Test unsupported presence,
 People search/paging, account replacement, and shutdown while a lookup is pending.
 Use dedicated authorized test accounts for encrypted message/verification checks;
 no test sends or new logins are necessary for ordinary demo/fixture validation.
+
+## Desktop sign-out
+
+The account avatar menu offers **Sign out…** when no message or account write
+is pending. Cancel preserves the open conversation and drafts. Confirm stops
+typing, view workers, verification and sync before revoking this device and
+removing its credential record. Successful sign-out clears account content and
+returns to sign-in; another login uses a fresh device/store. Existing encrypted
+SDK stores remain on disk. Demo confirmation performs no account operation.
+
+Automated coverage checks cancelled confirmation, blocked background input,
+pending-write exclusion, retries after failure, revoked-session cleanup controls,
+account-state clearing, and HTTP success/expired-token/server-error handling.
+Native credential removal and connected sign-out remain manual checks: use a
+disposable account/profile, cancel once, then confirm; verify the old device is
+revoked and reopening shows sign-in. When offline, confirm an error is visible
+and Cancel reconnects the existing session. If server revocation succeeds but
+local cleanup fails, only retry/close is available; the revoked session is never
+resumed. No connected client was launched for implementation validation.

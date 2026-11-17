@@ -324,11 +324,7 @@ async fn resume_inner(directory: &str, logout: bool, live: bool) -> anyhow::Resu
         .restore_session(session.clone(), Default::default())
         .await?;
     if logout {
-        // Retain credentials on network/server errors, so logout can be retried.
-        tokio::time::timeout(Duration::from_secs(30), client.matrix_auth().logout())
-            .await
-            .context("logout timed out; credentials retained")?
-            .context("logout failed; credentials retained")?;
+        revoke_session(&client).await?;
         saved.logged_out = true;
         saved.session = None;
         profile
@@ -404,6 +400,7 @@ pub struct DesktopSession {
     profile: Profile,
     service: Option<CredentialStore>,
     pub client: Option<Client>,
+    revoked: bool,
 }
 
 impl DesktopSession {
@@ -416,6 +413,7 @@ impl DesktopSession {
                 profile,
                 service: None,
                 client: None,
+                revoked: false,
             });
         }
         let service = connect().await?;
@@ -428,7 +426,38 @@ impl DesktopSession {
             profile,
             service: Some(service),
             client,
+            revoked: false,
         })
+    }
+
+    /// Sync and view workers must be stopped before calling this method.
+    /// Failed server requests retain both credentials and the live client. Once
+    /// revoked, retries only finish local cleanup, even if saving the tombstone failed.
+    pub async fn sign_out(&mut self) -> anyhow::Result<()> {
+        let service = self
+            .service
+            .as_ref()
+            .context("Credential store is unavailable")?;
+        let mut saved = self
+            .profile
+            .read(service)
+            .await?
+            .context("No saved session")?;
+        if !self.revoked && !saved.logged_out {
+            let client = self.client.as_ref().context("Session is unavailable")?;
+            revoke_session(client).await?;
+        }
+        self.revoked = true;
+        self.client = None;
+        saved.logged_out = true;
+        saved.session = None;
+        self.profile.save(service, &saved).await
+            .context("Signed out on the server; could not mark local credentials revoked. Retry sign-out before closing")?;
+        self.profile
+            .delete_secret(service)
+            .await
+            .context("Signed out on the server; local credential cleanup failed. Retry sign-out")?;
+        Ok(())
     }
 
     pub async fn sign_in(
@@ -475,7 +504,29 @@ impl DesktopSession {
         self.profile.save(service, &saved).await
             .context("Could not save login; remove the Interconnect device in another client before retrying")?;
         self.client = Some(client);
+        self.revoked = false;
         Ok(())
+    }
+}
+
+/// A rejected/expired token is already signed out; other failures must retain it.
+async fn revoke_session(client: &Client) -> anyhow::Result<()> {
+    match tokio::time::timeout(Duration::from_secs(30), client.matrix_auth().logout()).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error))
+            if error.client_api_error_kind().is_some_and(|kind| {
+                matches!(
+                    kind,
+                    matrix_sdk::ruma::api::error::ErrorKind::UnknownToken(_)
+                )
+            }) =>
+        {
+            Ok(())
+        }
+        Ok(Err(error)) => {
+            Err(anyhow::Error::new(error).context("Sign-out failed; credentials retained"))
+        }
+        Err(_) => bail!("Sign-out timed out; credentials retained. Retry when connected"),
     }
 }
 
@@ -956,6 +1007,62 @@ mod tests {
         assert_eq!(client.device_id().unwrap().as_str(), "FIXTURE");
         let requests = server.received_requests().await.unwrap();
         assert!(!requests.iter().any(|r| r.url.path().ends_with("/sync")));
+    }
+
+    #[tokio::test]
+    async fn sign_out_accepts_revoked_tokens_but_preserves_sessions_on_server_failure() {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+        for (status, body, success) in [
+            (200, serde_json::json!({}), true),
+            (
+                401,
+                serde_json::json!({"errcode":"M_UNKNOWN_TOKEN", "error":"expired"}),
+                true,
+            ),
+            (
+                500,
+                serde_json::json!({"errcode":"M_UNKNOWN", "error":"offline"}),
+                false,
+            ),
+            (
+                403,
+                serde_json::json!({"errcode":"M_FORBIDDEN", "error":"refused"}),
+                false,
+            ),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/_matrix/client/versions"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({"versions":["v1.11"]})),
+                )
+                .mount(&server)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/_matrix/client/v3/logout"))
+                .respond_with(ResponseTemplate::new(status).set_body_json(body))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let client = Client::builder()
+                .homeserver_url(server.uri())
+                .request_config(matrix_sdk::config::RequestConfig::default().retry_limit(0))
+                .sliding_sync_version_builder(VersionBuilder::Native)
+                .build()
+                .await
+                .unwrap();
+            client.matrix_auth().restore_session(serde_json::from_value::<MatrixSession>(serde_json::json!({
+                "user_id":"@fixture:example.org", "device_id":"FIXTURE", "access_token":"fixture-token"
+            })).unwrap(), Default::default()).await.unwrap();
+            assert_eq!(revoke_session(&client).await.is_ok(), success);
+            if !success {
+                assert!(client.matrix_auth().session().is_some());
+            }
+        }
     }
 
     #[test]

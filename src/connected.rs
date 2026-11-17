@@ -43,6 +43,8 @@ pub struct Selection {
     /// Unique request generation; only load the selected room while People is open.
     pub members: Option<u64>,
     pub shutdown: bool,
+    /// Nonzero explicit sign-out request; UI waits for pending writes first.
+    pub sign_out: u64,
     pub preferences: Option<crate::navigation_preferences::Preferences>,
     pub avatars: Vec<matrix_sdk::ruma::OwnedMxcUri>,
     pub images: Vec<crate::image_media::Key>,
@@ -574,8 +576,22 @@ impl std::fmt::Display for SignInRequired {
 }
 impl std::error::Error for SignInRequired {}
 
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum SignOut {
+    #[default]
+    Idle,
+    Running,
+    Failed {
+        error: String,
+        revoked: bool,
+    },
+    Complete,
+}
+
 #[derive(Clone, Debug)]
 pub struct Model {
+    pub sign_out: SignOut,
+    pub sign_out_request: u64,
     pub custom_emoji: Arc<crate::custom_emoji::Snapshot>,
     pub emoji_management: Option<crate::custom_emoji::management::Service>,
     pub search: Option<crate::search::Service>,
@@ -611,6 +627,8 @@ pub struct Model {
 impl Default for Model {
     fn default() -> Self {
         Self {
+            sign_out: SignOut::Idle,
+            sign_out_request: 0,
             custom_emoji: Arc::default(),
             emoji_management: None,
             search: None,
@@ -720,6 +738,55 @@ pub async fn run(
             s.status = "Loading conversations…".into();
         });
         let result = run_authenticated(&profile, client, selection.clone(), state.clone()).await;
+        if selection.borrow().sign_out != 0 && !selection.borrow().shutdown {
+            loop {
+                let request = selection.borrow().sign_out;
+                state.send_modify(|s| {
+                    s.sign_out = SignOut::Running;
+                    s.sign_out_request = request;
+                });
+                // Keep the session owner alive throughout revocation and local cleanup.
+                match desktop.sign_out().await {
+                    Ok(()) => {
+                        state.send_replace(Model {
+                            sign_out: SignOut::Complete,
+                            authentication: Some(Authentication::SignIn { error: None }),
+                            ..Model::default()
+                        });
+                        // Wait until the UI has destroyed all account-scoped state.
+                        if selection
+                            .wait_for(|s| s.sign_out == 0 || s.shutdown)
+                            .await
+                            .is_err()
+                            || selection.borrow().shutdown
+                        {
+                            return Ok(());
+                        }
+                        state.send_modify(|s| s.sign_out = SignOut::Idle);
+                        break;
+                    }
+                    Err(error) => state.send_modify(|s| {
+                        s.sign_out = SignOut::Failed {
+                            error: format!("{error:#}"),
+                            revoked: desktop.client.is_none(),
+                        }
+                    }),
+                }
+                if selection
+                    .wait_for(|s| s.shutdown || s.sign_out != request)
+                    .await
+                    .is_err()
+                    || selection.borrow().shutdown
+                {
+                    return Ok(());
+                }
+                if selection.borrow().sign_out == 0 && desktop.client.is_some() {
+                    state.send_modify(|s| s.sign_out = SignOut::Idle);
+                    break;
+                }
+            }
+            continue;
+        }
         if result.as_ref().is_err_and(|e| e.is::<SignInRequired>()) && !selection.borrow().shutdown
         {
             desktop.client = None;
@@ -892,7 +959,7 @@ async fn connected(
     let result = async {
         loop {
             let next = selection.borrow_and_update().clone();
-            if next.shutdown { break; }
+            if next.shutdown || next.sign_out != 0 { break; }
             let demand = crate::media::Demand { uris: next.avatars.clone(), retry_epoch };
             avatar_requests.send_if_modified(|old| {
                 if *old == demand { false } else { *old = demand; true }

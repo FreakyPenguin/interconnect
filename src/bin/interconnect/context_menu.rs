@@ -63,6 +63,9 @@ pub fn trigger<'a>(base: impl Into<Element<'a, Message>>, target: Target) -> Ele
 }
 impl App {
     pub(super) fn context_menu_allowed(&self) -> bool {
+        if self.sign_out_open {
+            return false;
+        }
         !self.closing
             && !self.stopped
             && (self.demo.is_some() || self.model.authentication.is_none())
@@ -131,6 +134,12 @@ impl App {
                             "Verify device…"
                         },
                         Action::Dispatch(Message::Verification(super::verification::Event::Open)),
+                    ));
+                }
+                if self.pending_ops == 0 {
+                    actions.push((
+                        "Sign out…",
+                        Action::Dispatch(Message::SignOut(super::sign_out::Event::Open)),
                     ));
                 }
                 actions
