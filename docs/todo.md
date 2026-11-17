@@ -2,7 +2,9 @@
 
 ## Rooms
 - Member invite link?
-- page up and down in composer should scroll room
+- room settings
+- removing members
+
 
 ## Account and navigation
 

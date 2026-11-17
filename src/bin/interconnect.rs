@@ -294,6 +294,11 @@ enum Message {
     Deletion(message_delete::Event),
     Edit(DraftKey, text_editor::Action),
     DeleteWord(DraftKey, text_editor::Motion),
+    PageConversation {
+        key: DraftKey,
+        generation: u64,
+        up: bool,
+    },
     ResizeComposer {
         key: DraftKey,
         generation: u64,
@@ -1130,6 +1135,11 @@ impl App {
                     }
                 }
             }
+            Message::PageConversation {
+                key,
+                generation,
+                up,
+            } => return self.page_conversation(key, generation, up),
             Message::Space(space) if !self.closing && !self.stopped => {
                 self.shell.space = space;
                 self.shell.query.clear();
@@ -3072,6 +3082,9 @@ impl App {
                                 self.attachment_paste_binding(&send_key, *generation, &press)
                             })
                             .or_else(|| self.message_edit_binding(&send_key, &press))
+                            .or_else(|| {
+                                composer::page_binding(&press, composing, &send_key, *generation)
+                            })
                             .or_else(|| composer_binding(press, composing, &send_key, shortcut))
                     });
             }

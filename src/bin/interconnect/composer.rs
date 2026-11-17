@@ -9,6 +9,32 @@ use iced::{
     widget::text_editor,
 };
 
+pub(super) fn page_binding(
+    press: &text_editor::KeyPress,
+    composing: bool,
+    key: &DraftKey,
+    generation: u64,
+) -> Option<text_editor::Binding<Message>> {
+    use iced::keyboard::{Key, key::Named};
+
+    if composing
+        || !matches!(press.status, text_editor::Status::Focused { .. })
+        || !press.modifiers.is_empty()
+    {
+        return None;
+    }
+    let up = match press.key {
+        Key::Named(Named::PageUp) => true,
+        Key::Named(Named::PageDown) => false,
+        _ => return None,
+    };
+    Some(text_editor::Binding::Custom(Message::PageConversation {
+        key: key.clone(),
+        generation,
+        up,
+    }))
+}
+
 pub(super) fn editing_binding(
     press: text_editor::KeyPress,
     composing: bool,
@@ -45,6 +71,66 @@ pub(super) fn editing_binding(
 }
 
 impl App {
+    pub(super) fn page_conversation(
+        &mut self,
+        key: DraftKey,
+        generation: u64,
+        up: bool,
+    ) -> iced::Task<Message> {
+        let thread = key.root.is_some();
+        let index = usize::from(thread);
+        let pane = if thread {
+            &self.model.thread
+        } else {
+            &self.model.room
+        };
+        let selected = if thread {
+            &self.selection.thread
+        } else {
+            &self.selection.room
+        };
+        if self.composing
+            || !self.context_menu_allowed()
+            || self.context_menu.is_some()
+            || self.emoji_management.is_some()
+            || !self.selection.conversation_visible
+            || self.pending_scroll[index].is_some()
+            || self.draft_key(thread).as_ref() != Some(&key)
+            || !selected
+                .as_ref()
+                .is_some_and(|(view, _)| *view == generation)
+            || self.drafts.get(&key).is_none_or(|draft| draft.pending)
+            || !pane
+                .as_ref()
+                .is_some_and(|pane| pane.generation == generation)
+        {
+            return iced::Task::none();
+        }
+        let Some((view, _, metrics)) = self.timeline_metrics[index] else {
+            return iced::Task::none();
+        };
+        if view != generation {
+            return iced::Task::none();
+        }
+        // Leave a little overlap so the reader can keep their place. Timelines
+        // are bottom-anchored, so paging up increases the saved offset.
+        let page = metrics.height * 0.9;
+        let offset = (self.saved_scroll(thread) + if up { page } else { -page })
+            .clamp(0.0, metrics.maximum());
+        self.scroll_positions.insert(key, offset);
+        if thread {
+            self.thread_scroll_target = Some((generation, offset));
+        }
+        iced::widget::operation::scroll_to(
+            if thread {
+                "thread-timeline"
+            } else {
+                "room-timeline"
+            },
+            iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset },
+        )
+    }
+
     pub(super) fn delete_word(
         &mut self,
         key: DraftKey,
@@ -273,6 +359,189 @@ mod tests {
             Modifiers::ALT
         } else {
             Modifiers::CTRL
+        }
+    }
+
+    #[test]
+    fn page_keys_scroll_the_focused_composers_conversation_and_preserve_drafts() {
+        for thread in [false, true] {
+            let mut app = crate::tests::demo_app();
+            let _ = app.update(Message::WindowFocused(true));
+            let _ = app.update(Message::Thread("review".into()));
+            for pane in [&mut app.model.room, &mut app.model.thread] {
+                let pane = pane.as_mut().unwrap();
+                let sample = pane.rows[0].clone();
+                pane.rows = std::sync::Arc::new(
+                    (0..60)
+                        .map(|index| {
+                            let mut row = sample.clone();
+                            row.key = format!("page-row-{index}");
+                            row.event_id = Some(row.key.clone());
+                            row.body = "A message in the scrollable conversation.".into();
+                            row
+                        })
+                        .collect(),
+                );
+            }
+            let key = app.draft_key(thread).unwrap();
+            let other = app.draft_key(!thread).unwrap();
+            let draft = &mut app.drafts.get_mut(&key).unwrap().content;
+            *draft = text_editor::Content::with_text(&"A draft line\n".repeat(30));
+            draft.move_to(text_editor::Cursor {
+                position: text_editor::Position {
+                    line: 15,
+                    column: 7,
+                },
+                selection: Some(text_editor::Position {
+                    line: 14,
+                    column: 2,
+                }),
+            });
+            let before = (draft.text(), draft.cursor(), draft.selection());
+            app.drafts.get_mut(&other).unwrap().content =
+                text_editor::Content::with_text("other draft");
+            app.scroll_positions.insert(other.clone(), 123.0);
+            let selection = app.selection.clone();
+
+            press(&mut app, thread, Named::PageUp, Modifiers::empty());
+            let metrics = app.timeline_metrics[usize::from(thread)].unwrap().2;
+            assert!(metrics.maximum() > metrics.height * 2.0);
+            assert!((app.saved_scroll(thread) - metrics.height * 0.9).abs() < 0.1);
+            // Holding the key produces repeated presses, each advancing a page.
+            press(&mut app, thread, Named::PageUp, Modifiers::empty());
+            assert!((app.saved_scroll(thread) - metrics.height * 1.8).abs() < 0.1);
+            press(&mut app, thread, Named::PageDown, Modifiers::empty());
+            assert!((app.saved_scroll(thread) - metrics.height * 0.9).abs() < 0.1);
+            press(&mut app, thread, Named::PageDown, Modifiers::empty());
+            assert!(app.saved_scroll(thread) < 0.1);
+
+            let draft = &app.drafts[&key].content;
+            assert_eq!((draft.text(), draft.cursor(), draft.selection()), before);
+            assert_eq!(app.drafts[&other].content.text(), "other draft");
+            assert_eq!(app.scroll_positions[&other], 123.0);
+            assert_eq!(app.selection.room, selection.room);
+            assert_eq!(app.selection.thread, selection.thread);
+            assert_eq!(app.selection.event_focus, selection.event_focus);
+            assert_eq!(app.pending_ops, 0);
+        }
+    }
+
+    #[test]
+    fn page_binding_requires_focus_and_unmodified_keys_and_yields_to_ime() {
+        let key = DraftKey {
+            room: "studio".into(),
+            root: None,
+        };
+        for named in [Named::PageUp, Named::PageDown] {
+            let mut press = text_editor::KeyPress {
+                key: Key::Named(named),
+                modified_key: Key::Named(named),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                modifiers: Modifiers::empty(),
+                text: None,
+                status: text_editor::Status::Focused { is_hovered: false },
+            };
+            assert!(page_binding(&press, false, &key, 42).is_some());
+            assert!(page_binding(&press, true, &key, 42).is_none());
+            for modifiers in [
+                Modifiers::SHIFT,
+                Modifiers::CTRL,
+                Modifiers::ALT,
+                Modifiers::LOGO,
+            ] {
+                press.modifiers = modifiers;
+                assert!(page_binding(&press, false, &key, 42).is_none());
+            }
+            press.modifiers = Modifiers::SHIFT;
+            assert!(matches!(
+                editing_binding(press.clone(), false, &key),
+                Some(text_editor::Binding::Select(_))
+            ));
+            press.modifiers = Modifiers::empty();
+            for status in [text_editor::Status::Active, text_editor::Status::Disabled] {
+                press.status = status;
+                assert!(page_binding(&press, false, &key, 42).is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn conversation_paging_clamps_and_rejects_stale_or_blocked_requests() {
+        for thread in [false, true] {
+            for blocked in [
+                "none",
+                "closing",
+                "stopped",
+                "ime",
+                "pending",
+                "settings",
+                "hidden",
+                "restoring",
+                "stale-key",
+                "stale-view",
+                "stale-metrics",
+                "no-metrics",
+            ] {
+                let mut app = crate::tests::demo_app();
+                let _ = app.update(Message::WindowFocused(true));
+                let _ = app.update(Message::Thread("review".into()));
+                let mut key = app.draft_key(thread).unwrap();
+                let mut generation = if thread {
+                    app.selection.thread.as_ref().unwrap().0
+                } else {
+                    app.selection.room.as_ref().unwrap().0
+                };
+                let index = usize::from(thread);
+                app.timeline_metrics[index] = Some((
+                    generation,
+                    0,
+                    super::super::timeline::Metrics {
+                        height: 200.0,
+                        content_height: 800.0,
+                        translation: 600.0,
+                    },
+                ));
+                match blocked {
+                    "none" => {}
+                    "closing" => app.closing = true,
+                    "stopped" => app.stopped = true,
+                    "ime" => app.composing = true,
+                    "pending" => app.drafts.get_mut(&key).unwrap().pending = true,
+                    "settings" => {
+                        let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+                    }
+                    "hidden" => app.selection.conversation_visible = false,
+                    "restoring" => app.pending_scroll[index] = Some(100.0),
+                    "stale-key" => key.room = "different-room".into(),
+                    "stale-view" => generation += 1,
+                    "stale-metrics" => app.timeline_metrics[index].as_mut().unwrap().0 += 1,
+                    "no-metrics" => app.timeline_metrics[index] = None,
+                    _ => unreachable!(),
+                }
+                for _ in 0..5 {
+                    let task = app.update(Message::PageConversation {
+                        key: key.clone(),
+                        generation,
+                        up: true,
+                    });
+                    assert_eq!(task.units() > 0, blocked == "none", "{thread} {blocked}");
+                }
+                assert_eq!(
+                    app.saved_scroll(thread),
+                    if blocked == "none" { 600.0 } else { 0.0 }
+                );
+                for _ in 0..5 {
+                    let _ = app.update(Message::PageConversation {
+                        key: key.clone(),
+                        generation,
+                        up: false,
+                    });
+                }
+                assert_eq!(app.saved_scroll(thread), 0.0);
+                assert_eq!(app.saved_scroll(!thread), 0.0);
+            }
         }
     }
 
