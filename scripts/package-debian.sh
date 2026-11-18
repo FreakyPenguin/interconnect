@@ -32,6 +32,10 @@ for notice in OFL.txt FONT_NOTICE.txt; do
     install -Dm644 "$project_root/assets/licenses/katex/$notice" \
         "$package_root/usr/share/doc/interconnect/katex/$notice"
 done
+for notice in LICENSE-MIT ACKNOWLEDGEMENTS.md; do
+    install -Dm644 "$project_root/assets/licenses/two-face/$notice" \
+        "$package_root/usr/share/doc/interconnect/two-face/$notice"
+done
 strip --strip-unneeded "$package_root/usr/bin/interconnect"
 
 # dpkg-shlibdeps resolves linked libraries using this distribution's metadata.

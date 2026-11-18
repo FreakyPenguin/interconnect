@@ -11,8 +11,11 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   arbitrary HTML round-tripping are unsupported.
 - Receipt labels show room readers, not thread-specific readers. Thread unread
   badges are local to the process; receipt privacy preferences are missing.
-- Formatting omits full tables, syntax highlighting, visual rich-text editing,
+- Formatting omits full tables, visual rich-text editing,
   inline-image authoring, and formatted media captions. Excerpts use plain text.
+- Code highlighting uses declared languages from the bundled syntax collection;
+  missing/unknown languages, blocks over 16 KiB, and lines over 2048 bytes stay
+  plain monospace. Language detection and composer-source highlighting are absent.
 - User mention completion suggests up to six joined room members from a snapshot
   of at most 4096 users. Full display names insert as editable text with per-occurrence
   identities and visual highlighting. Room link completion via `#` searches only

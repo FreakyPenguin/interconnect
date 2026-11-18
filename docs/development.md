@@ -10,6 +10,17 @@ See the [Dockerfile](../.devcontainer/Dockerfile) for native dependencies.
 TLS uses Rustls and Secret Service uses Rust cryptography; OpenSSL and libdbus
 development packages are unnecessary.
 
+Code highlighting uses `syntect` with `two-face`'s bundled, bat-curated syntax
+definitions and themes; no language definitions are maintained in this repository.
+The Oniguruma backend compiles its bundled C source with the existing C toolchain.
+Received-message projection and Markdown preparation cache light/dark code colors
+on blocking workers, alongside formula preparation. `Document::parse` deliberately
+remains a cheap structural parser; `parse_with_formulas` prepares both assets and
+must be called on a worker. Syntax colors survive resizing and theme changes
+without parsing again. Cached code colors are document-owned, with no polling,
+background animation, or global message-content cache. Syntax/theme assets are
+embedded and require no network access.
+
 ```sh
 cargo build --locked --bin interconnect
 cargo fmt --all -- --check

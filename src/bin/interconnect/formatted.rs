@@ -230,29 +230,49 @@ impl State {
                     } else {
                         shell::palette(theme).ink
                     };
-                    // Combine ordinary text into spans; keep complete emoji graphemes in their font.
+                    // Split at grapheme boundaries so syntax colors never break emoji.
                     let text = run.content.text();
+                    let syntax = block.syntax.as_ref().map(|syntax| match self.mode {
+                        interconnect::settings::ThemeMode::Light => &syntax.light,
+                        interconnect::settings::ThemeMode::Dark => &syntax.dark,
+                    });
+                    let run_start = canonical_offset - text_len;
                     let mut start = 0;
+                    let mut previous = None;
                     for (offset, grapheme) in text.grapheme_indices(true) {
-                        if !grapheme.contains('\u{fe0e}')
-                            && emojis::get(grapheme).is_some()
-                            && let Some(font) = emoji::font()
+                        let foreground = syntax
+                            .and_then(|spans| {
+                                let position = run_start + offset;
+                                let index =
+                                    spans.partition_point(|span| span.range.end <= position);
+                                spans
+                                    .get(index)
+                                    .filter(|span| span.range.contains(&position))
+                            })
+                            .map_or(color, |span| {
+                                iced::Color::from_rgb8(span.rgb[0], span.rgb[1], span.rgb[2])
+                            });
+                        let font =
+                            if !grapheme.contains('\u{fe0e}') && emojis::get(grapheme).is_some() {
+                                emoji::font().unwrap_or(base)
+                            } else {
+                                base
+                            };
+                        if let Some((old_font, old_color)) = previous
+                            && (font, foreground) != (old_font, old_color)
                         {
-                            if start < offset {
-                                spans.push(
-                                    text::Span::new(&text[start..offset])
-                                        .font(base)
-                                        .color(color),
-                                );
-                                runs.push(i);
-                            }
-                            spans.push(text::Span::new(grapheme).font(font).color(color));
+                            spans.push(
+                                text::Span::new(&text[start..offset])
+                                    .font(old_font)
+                                    .color(old_color),
+                            );
                             runs.push(i);
-                            start = offset + grapheme.len();
+                            start = offset;
                         }
+                        previous = Some((font, foreground));
                     }
-                    if start < text.len() {
-                        spans.push(text::Span::new(&text[start..]).font(base).color(color));
+                    if let Some((font, foreground)) = previous {
+                        spans.push(text::Span::new(&text[start..]).font(font).color(foreground));
                         runs.push(i);
                     }
                 }
@@ -851,6 +871,52 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn syntax_colors_preserve_unicode_copy_offsets_wrapping_and_theme_cache() {
+        use interconnect::settings::ThemeMode;
+        let html = "<pre><code class='language-rust'>/* comment\ncontinuation */\nlet <b>café</b> = \"👩🏽‍💻\";\n</code></pre>";
+        let document = Arc::new(Document::parse_with_formulas(html).unwrap());
+        let syntax = document.blocks[0].syntax.as_ref().unwrap().clone();
+        let expected = "/* comment\ncontinuation */\nlet café = \"👩🏽‍💻\";\n";
+        let mut state = State::new(document.clone());
+        let mut plain = State::new(Arc::new(Document::parse(html).unwrap()));
+        let colors = |state: &State| {
+            state.blocks[0]
+                .paragraph
+                .buffer()
+                .layout_runs()
+                .flat_map(|line| line.glyphs.iter().map(|glyph| glyph.color_opt))
+                .collect::<Vec<_>>()
+        };
+        for width in [400.0, 110.0] {
+            let light_bounds = state.layout(width).bounds();
+            assert_eq!(light_bounds, plain.layout(width).bounds());
+            assert_eq!(state.text(), expected);
+            let light_colors = colors(&state);
+            assert!(light_colors.windows(2).any(|pair| pair[0] != pair[1]));
+            // Hit-testing maps each syntax span back to the original semantic run.
+            let block = &state.blocks[0];
+            for (index, run) in block.runs.iter().enumerate() {
+                for region in block.paragraph.span_bounds(index) {
+                    let point = block.bounds.position() + (region.center() - Point::ORIGIN);
+                    assert!(expected.is_char_boundary(state.hit(point)));
+                    assert_eq!(state.run_at(point).unwrap(), &block.block.runs[*run]);
+                }
+            }
+            state.set_theme(ThemeMode::Dark);
+            assert_eq!(state.layout(width).bounds(), light_bounds);
+            assert_ne!(colors(&state), light_colors);
+            assert_eq!(state.text(), expected);
+            state.set_theme(ThemeMode::Light);
+            state.layout(width);
+            assert_eq!(colors(&state), light_colors);
+            assert!(Arc::ptr_eq(
+                document.blocks[0].syntax.as_ref().unwrap(),
+                &syntax
+            ));
+        }
+    }
     #[test]
     fn theme_switch_refreshes_span_colors_without_changing_geometry_or_interaction() {
         use interconnect::settings::ThemeMode;

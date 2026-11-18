@@ -25,6 +25,7 @@ pub mod search;
 pub mod session;
 pub mod settings;
 pub mod sso;
+pub mod syntax;
 pub mod verification;
 
 use tokio::{sync::mpsc, task::JoinHandle};

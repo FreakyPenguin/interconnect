@@ -27,6 +27,9 @@ cp assets/icons/interconnect.icns "$bundle_path/Contents/Resources/interconnect.
 mkdir -p "$bundle_path/Contents/Resources/licenses/katex"
 cp assets/licenses/katex/OFL.txt assets/licenses/katex/FONT_NOTICE.txt \
     "$bundle_path/Contents/Resources/licenses/katex/"
+mkdir -p "$bundle_path/Contents/Resources/licenses/two-face"
+cp assets/licenses/two-face/LICENSE-MIT assets/licenses/two-face/ACKNOWLEDGEMENTS.md \
+    "$bundle_path/Contents/Resources/licenses/two-face/"
 plutil -lint "$bundle_path/Contents/Info.plist"
 # Give local builds a stable app identity. Distribution requires proper signing
 # and notarization; ad-hoc signing is only for development on this machine.

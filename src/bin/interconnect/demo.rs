@@ -252,6 +252,7 @@ pub struct Demo {
     pub(super) emoji_uploads: std::collections::VecDeque<interconnect::image_media::Key>,
     pub(super) invitations: HashMap<String, Vec<interconnect::connected::Member>>,
     conversations: HashMap<DraftKey, Vec<MessageRow>>,
+    code: Option<std::sync::Arc<interconnect::message_document::Document>>,
     next_message: u64,
 }
 pub fn attachment(missing: bool) -> interconnect::image_media::Attachment {
@@ -471,7 +472,28 @@ fn reacted(mut message: MessageRow, reactions: &[(&str, usize, bool)]) -> Messag
         .collect();
     message
 }
+pub(super) const CODE_SAMPLE: &str = r#"<pre><code class='language-rust'>fn main() {
+    println!("hello 👋");
+}</code></pre><pre><code class='language-typescript'>const answer: number = 42;</code></pre><pre><code class='language-toml'>[package]
+name = "interconnect"</code></pre><pre><code class='language-dockerfile'>FROM debian:stable
+RUN true</code></pre><pre><code class='language-unknown'>Unknown languages stay plain.</code></pre><p>An image placeholder: <img src='mxc://example.org/diagram' alt='Architecture diagram' width='320' height='160'></p>"#;
+
 impl Demo {
+    pub(super) fn install_code(
+        &mut self,
+        code: std::sync::Arc<interconnect::message_document::Document>,
+    ) {
+        for rows in self.conversations.values_mut() {
+            for row in rows
+                .iter_mut()
+                .filter(|row| row.event_id.as_deref() == Some("format-code"))
+            {
+                row.formatted = Some(code.clone());
+            }
+        }
+        self.code = Some(code);
+    }
+
     fn seed(&self, key: &DraftKey) -> Vec<MessageRow> {
         if let Some(root) = &key.root {
             let source = self
@@ -557,7 +579,13 @@ impl Demo {
             "formatting" => vec![
                 formatted("format-intro", "<h2>Formatting preview</h2><p>Try <b>bold <i>and italic</i></b>, <u>underline</u>, <del>strikethrough</del>, and <code>inline code</code>. Emoji stay intact: café 👩🏽‍💻 ❤️ 🇩🇪.</p><p>Select across paragraphs and into the next message. العربية עברית 日本語</p>"),
                 formatted("format-blocks", "<blockquote><p>A quiet quotation.</p><blockquote>Nested quotation.</blockquote></blockquote><ol start='3'><li>Third item<ul><li>Nested item</li></ul></li><li>Fourth item</li></ol>"),
-                formatted("format-code", "<pre><code class='language-rust'>fn main() {\n    println!(\"hello 👋\");\n}</code></pre><p>An image placeholder: <img src='mxc://example.org/diagram' alt='Architecture diagram' width='320' height='160'></p>"),
+                {
+                    let mut row = formatted("format-code", CODE_SAMPLE);
+                    if let Some(code) = &self.code {
+                        row.formatted = Some(code.clone());
+                    }
+                    row
+                },
                 formatted("format-mentions", "<p>Thanks <a href='https://matrix.to/#/@maya:example.org'>Maya Chen</a>! Could <a href='matrix:u/jules:example.org'>Jules 👋</a> take a look?</p><p>A longer mention wraps naturally: <a href='https://matrix.to/#/%40alex%3Aexample.org'>Alex with a deliberately long display name</a>. Plain @maya and @room stay literal.</p><p>قبل <a href='https://matrix.to/#/@maya:example.org'>مايا</a> אחרי. <span data-mx-spoiler><a href='https://matrix.to/#/@jules:example.org'>Hidden mention</a></span></p>"),
                 {
                     let mut row = formatted("format-room-wide", "<p>Attention @room! This is a room-wide notification.</p><p>قبل @room אחרי. <code>@room</code> stays code. <span data-mx-spoiler>Hidden @room</span></p>");

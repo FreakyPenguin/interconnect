@@ -58,6 +58,29 @@ macOS validation. Automated coverage checks settings compatibility/round trips,
 Save/Cancel/Defaults, state preservation, and rich-text cache refresh on theme
 changes. No connected account is needed for those tests.
 
+### Code highlighting
+
+In **Message formatting**, inspect Rust, TypeScript, TOML, and Dockerfile blocks
+in Light and Dark. The unknown-language sample stays plain monospace. Resize
+the room and thread panes; colors must remain stable and text must wrap without
+clipping. Select/copy across colored tokens, emoji, lines, and adjacent blocks;
+the clipboard must contain the exact displayed text without color markup.
+
+In Markdown mode, preview fenced blocks with `rust`, `typescript`, `toml`,
+an unknown language, and no language. Check multiline comments/strings, Unicode,
+and inline code. Inline code stays unhighlighted. Edit the preview source and
+switch conversations while preparation is pending: stale results must not replace
+the new preview or another conversation's draft. Hidden code spoilers must stay
+concealed until revealed. Blocks over 16 KiB or with lines over 2048 bytes retain
+plain rendering; excessive span counts or highlighting errors also fall back.
+
+Automated fixtures cover bundled languages, multiline state, byte coverage,
+fallback limits, spoiler concealment, Unicode copy/hit mappings, wrapping, and
+light/dark cache reuse. These checks do not establish native desktop appearance,
+connected delivery, macOS behavior, or measured CPU/wakeup performance. After
+opening code samples, use the [idle procedure](idle-resources.md) to compare
+settled windows; code highlighting must introduce no periodic work.
+
 ### Received mentions
 
 In the demo's **Message formatting** room, inspect the user mentions at wide and

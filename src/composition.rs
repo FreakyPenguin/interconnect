@@ -884,6 +884,7 @@ mod tests {
         );
         let doc = prepared.document.unwrap();
         assert!(doc.blocks.iter().any(|block| matches!(&block.kind, BlockKind::Code { language: Some(language) } if language == "rust")));
+        assert!(doc.blocks.iter().any(|block| block.syntax.is_some()));
         assert!(
             doc.blocks
                 .iter()

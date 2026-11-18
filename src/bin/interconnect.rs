@@ -291,6 +291,7 @@ enum Message {
     Thread(String),
     OpenThreadLatest(String),
     DemoThreadReply,
+    DemoCodeReady(Option<std::sync::Arc<interconnect::message_document::Document>>),
     WindowFocused(bool),
     WindowResized(f32),
     ResizePanel(panel_resize::Target, f32),
@@ -1217,6 +1218,10 @@ impl App {
                     }
                     return self.update(Message::Thread(root));
                 }
+            }
+            Message::DemoCodeReady(Some(code)) if self.demo.is_some() => {
+                self.demo.as_mut().unwrap().install_code(code);
+                self.refresh_demo();
             }
             Message::DemoThreadReply if self.demo.is_some() => {
                 self.demo.as_mut().unwrap().incoming();

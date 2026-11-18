@@ -163,15 +163,33 @@ impl App {
     }
     pub(super) fn boot(startup: Startup) -> (Self, Task<Message>) {
         let mut app = Self::new();
+        let demo_code = if app.demo.is_some() {
+            Task::perform(
+                async {
+                    tokio::task::spawn_blocking(|| {
+                        interconnect::message_document::Document::parse_with_formulas(
+                            super::demo::CODE_SAMPLE,
+                        )
+                        .map(std::sync::Arc::new)
+                    })
+                    .await
+                    .ok()
+                    .flatten()
+                },
+                Message::DemoCodeReady,
+            )
+        } else {
+            Task::none()
+        };
         let Some(loaded) = startup.loaded else {
-            return (app, Task::none());
+            return (app, demo_code);
         };
         app.settings.initial_load = true;
         app.settings.path = startup.path;
         app.settings.busy = true;
         let task = app.settings_update(Event::Loaded(0, loaded));
         app.update_notification_context();
-        (app, task)
+        (app, Task::batch([task, demo_code]))
     }
     fn load_settings(&mut self) -> Task<Message> {
         if self.settings.busy {

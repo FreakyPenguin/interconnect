@@ -23,7 +23,6 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 
 - Follow system appearance and support custom theme palettes.
 - Text size control
-- Syntax highlighting.
 - Scrollable code blocks (optional in settings, preview lines configurable).
 - Copy link action on URLs.
 

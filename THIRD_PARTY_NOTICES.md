@@ -22,6 +22,10 @@ assets retain their own copyright notices and licenses.
 - **Winit fork**, fetched by Cargo rather than vendored, is licensed under
   Apache-2.0. See the [source and pinned revision](docs/architecture/winit-file-drops.md)
   and its [upstream license](https://github.com/FreakyPenguin/winit/blob/752d80adf83bca01e2992f7e2ff6c7baa78444a4/LICENSE).
+- **two-face** 0.5.2+bat-0.26.1 bundles bat-curated syntax definitions and themes
+  for syntect highlighting. See the copied [MIT license](assets/licenses/two-face/LICENSE-MIT)
+  and [bundled asset notices](assets/licenses/two-face/ACKNOWLEDGEMENTS.md).
+  macOS and Debian packages include these notices alongside the font licenses.
 
 Other Cargo dependencies retain their upstream licenses. [Cargo.lock](Cargo.lock)
 records the resolved versions; this file highlights copied assets and patched

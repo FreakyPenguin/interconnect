@@ -92,6 +92,8 @@ pub struct Block {
     pub quote_depth: usize,
     pub list_depth: usize,
     pub runs: Vec<Run>,
+    /// Prepared on the document worker; byte offsets refer to concatenated run text.
+    pub syntax: Option<Arc<crate::syntax::Highlight>>,
 }
 #[derive(Clone, PartialEq, Eq)]
 pub struct Document {
@@ -177,7 +179,7 @@ impl Document {
     pub fn parse(source: &str) -> Option<Self> {
         Self::parse_inner(source, false)
     }
-    /// Parse and typeset Matrix math on a blocking worker, never on the UI thread.
+    /// Parse, typeset Matrix math and highlight code on a blocking worker, never on the UI thread.
     /// Unchanged documents should be reused, as in `from_message`.
     pub fn parse_with_formulas(source: &str) -> Option<Self> {
         Self::parse_inner(source, true)
@@ -198,6 +200,11 @@ impl Document {
         builder.flush();
         if builder.bytes + builder.blocks.len().saturating_sub(1) * 2 > MAX_BYTES {
             return None;
+        }
+        if formulas {
+            for block in &mut builder.blocks {
+                block.syntax = crate::syntax::highlight(block).map(Arc::new);
+            }
         }
         (!builder.blocks.is_empty()).then(|| Self {
             source: source.into(),
@@ -312,6 +319,15 @@ impl Document {
             .iter()
             .map(|block| {
                 let mut visible = block.clone();
+                // Replacing hidden runs changes byte offsets. Never apply cached
+                // source colors to a spoiler placeholder or its adjacent text.
+                if block
+                    .runs
+                    .iter()
+                    .any(|run| run.style.spoilers.iter().any(|id| !revealed.contains(id)))
+                {
+                    visible.syntax = None;
+                }
                 visible.runs = block
                     .runs
                     .iter()
