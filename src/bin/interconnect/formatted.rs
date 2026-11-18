@@ -189,7 +189,9 @@ impl State {
                     let base = Font {
                         weight: if style.bold {
                             font::Weight::Bold
-                        } else if (style.mention.is_some() || style.room_mention.is_some())
+                        } else if (style.mention.is_some()
+                            || style.room_mention.is_some()
+                            || style.room_wide)
                             && !style.code
                         {
                             font::Weight::Semibold
@@ -207,7 +209,9 @@ impl State {
                             Font::with_name("Inter")
                         }
                     };
-                    let color = if style.room_mention.is_some() {
+                    let color = if style.room_wide {
+                        shell::ROOM_WIDE_ACCENT
+                    } else if style.room_mention.is_some() {
                         shell::ROOM_ACCENT
                     } else if style.link.is_some()
                         || style.spoilers.iter().any(|id| !self.revealed.contains(id))
@@ -607,8 +611,10 @@ impl State {
                     }
                     // Keep the background inside the shaped span so wrapping, bidi,
                     // selection and hit testing all use exactly the same geometry.
-                    let mention =
-                        (style.mention.is_some() || style.room_mention.is_some()) && !style.code;
+                    let mention = (style.mention.is_some()
+                        || style.room_mention.is_some()
+                        || style.room_wide)
+                        && !style.code;
                     if mention {
                         renderer.fill_quad(
                             renderer::Quad {
@@ -616,7 +622,9 @@ impl State {
                                 border: iced::Border::default().rounded(4.0),
                                 ..renderer::Quad::default()
                             },
-                            if style.room_mention.is_some() {
+                            if style.room_wide {
+                                shell::ROOM_WIDE_ACCENT.scale_alpha(0.12)
+                            } else if style.room_mention.is_some() {
                                 shell::ROOM_ACCENT.scale_alpha(0.12)
                             } else {
                                 iced::Color::from_rgba8(73, 121, 211, 0.12)
@@ -818,6 +826,35 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn room_wide_mentions_wrap_copy_and_do_not_open_links_or_chats() {
+        let document = Arc::new(
+            Document::parse("<p>Hi @room!</p>")
+                .unwrap()
+                .with_room_wide_mention(true),
+        );
+        for width in [50.0, 300.0] {
+            let mut state = State::new(document.clone());
+            state.layout(width);
+            assert_eq!(state.text(), "Hi @room!");
+            let mut points = Vec::new();
+            for block in &state.blocks {
+                for (index, run_index) in block.runs.iter().enumerate() {
+                    if block.block.runs[*run_index].style.room_wide {
+                        points.extend(block.paragraph.span_bounds(index).iter().map(|region| {
+                            region.center() + (block.bounds.position() - Point::ORIGIN)
+                        }));
+                    }
+                }
+            }
+            assert!(!points.is_empty());
+            for point in points {
+                let mut messages = Vec::new();
+                assert!(!state.activate(point, &mut |message| messages.push(message)));
+                assert!(messages.is_empty());
+            }
+        }
+    }
     #[test]
     fn inline_images_reserve_exact_boxes_and_keep_alt_copy_offsets_across_loading() {
         let alt = "a long alternative café 👋";

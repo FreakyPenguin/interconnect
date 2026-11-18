@@ -503,6 +503,17 @@ mod tests {
                     via: vec!["route.example.org".parse().unwrap()],
                 },
             });
+        let start = reply.content.text().len() + 1;
+        reply.perform(iced::widget::text_editor::Action::Edit(
+            iced::widget::text_editor::Edit::Paste(Arc::new(" @room".into())),
+        ));
+        reply
+            .markdown
+            .named_mentions
+            .push(interconnect::composition::NamedMention {
+                range: start..start + 5,
+                target: interconnect::composition::MentionTarget::RoomWide { room_wide: () },
+            });
         first.drafts.insert(thread.clone(), reply);
         first.capture_persistent_drafts();
         let expected = first.draft_persistence.current.clone();
@@ -532,7 +543,7 @@ mod tests {
             .range
             .clone();
         assert_eq!(&restored.drafts[&thread].content.text()[range], "Maya");
-        assert_eq!(restored.drafts[&thread].markdown.named_mentions.len(), 2);
+        assert_eq!(restored.drafts[&thread].markdown.named_mentions.len(), 3);
         assert_eq!(
             restored.drafts[&thread].markdown.named_mentions[1]
                 .target
@@ -540,6 +551,11 @@ mod tests {
                 .unwrap()
                 .as_str(),
             "!room:example.org"
+        );
+        assert!(
+            restored.drafts[&thread].markdown.named_mentions[2]
+                .target
+                .is_room_wide()
         );
         assert_eq!(*restored.draft_persistence.current, *expected);
     }

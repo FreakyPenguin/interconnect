@@ -32,17 +32,29 @@ impl EditSource {
         }
     }
     pub fn from_prepared(prepared: &Prepared) -> Self {
-        Self::new(prepared.source.clone(), prepared.html.as_deref())
+        Self::new(
+            prepared.source.clone(),
+            prepared.html.as_deref(),
+            prepared.room_mention,
+        )
     }
+    #[cfg(test)]
     pub(super) fn from_message(
         message: &matrix_sdk::ruma::events::room::message::MessageType,
+    ) -> Self {
+        Self::from_message_with_room_mention(message, false)
+    }
+    pub(super) fn from_message_with_room_mention(
+        message: &matrix_sdk::ruma::events::room::message::MessageType,
+        room_mention: bool,
     ) -> Self {
         Self::new(
             message.body().to_owned(),
             crate::message_document::Document::html(message),
+            room_mention,
         )
     }
-    fn new(body: String, html: Option<&str>) -> Self {
+    fn new(body: String, html: Option<&str>, room_mention: bool) -> Self {
         let mut source = Self::plain(body);
         if let Some(html) = html {
             source.format = Format::Markdown;
@@ -122,7 +134,9 @@ impl EditSource {
                     }
                 }
             }
-            if let Some(document) = crate::message_document::Document::parse(html) {
+            if let Some(document) = crate::message_document::Document::parse(html)
+                .map(|doc| doc.with_room_wide_mention(room_mention))
+            {
                 source.mentions = document
                     .blocks
                     .iter()
@@ -141,6 +155,15 @@ impl EditSource {
                     source.format = Format::Plain;
                 }
             }
+        }
+        if html.is_none() && room_mention {
+            source.named_mentions = crate::message_document::room_wide_ranges(&source.body)
+                .take(256)
+                .map(|range| crate::composition::NamedMention {
+                    range,
+                    target: crate::composition::MentionTarget::RoomWide { room_wide: () },
+                })
+                .collect();
         }
         source
     }
@@ -199,7 +222,7 @@ impl Composer {
         format: crate::composition::Format,
         bindings: crate::composition::Bindings,
     ) -> Result<(), String> {
-        self.edit_message_with_mention_tracking(event, body, format, bindings, Vec::new())
+        self.edit_message_with_mention_tracking(event, body, format, bindings, Vec::new(), false)
             .await
     }
     /// Track explicitly represented mentions so deleting their last occurrence
@@ -211,6 +234,7 @@ impl Composer {
         format: crate::composition::Format,
         bindings: crate::composition::Bindings,
         original_mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+        original_room_mention: bool,
     ) -> Result<(), String> {
         use matrix_sdk::ruma::events::room::message::{
             MessageType, RoomMessageEventContentWithoutRelation,
@@ -256,12 +280,14 @@ impl Composer {
                 mentions.user_ids.retain(|user| {
                     !original_mentions.contains(user) || surviving_mentions.contains(user)
                 });
+                if original_room_mention {
+                    mentions.room = prepared.room_mention;
+                }
             }
-            if !prepared.mentions.is_empty() {
-                replacement = replacement.add_mentions(
-                    matrix_sdk::ruma::events::Mentions::with_user_ids(prepared.mentions.clone()),
-                );
+            if prepared.room_mention && !message.mentions().is_some_and(|mentions| mentions.room) {
+                self.check_room_notification_permission().await?;
             }
+            replacement = replacement.add_mentions(prepared.notification_mentions());
             Box::pin(self.0.edit(
                 &item.identifier(),
                 matrix_sdk::room::edit::EditedContent::RoomMessage(replacement),

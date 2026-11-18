@@ -4,7 +4,6 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 
 ## Messaging and media
 
-- Room-wide mention completion (`@room`).
 - Ordinary replies.
 - Multiple attachments per send.
 - Standalone stickers and animated custom emoji.

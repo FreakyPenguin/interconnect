@@ -449,7 +449,9 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                 let regions = mention_regions(editor.buffer(), &state.line_offsets, self.mentions);
                 renderer.with_layer(clip, |renderer| {
                     for (index, region) in regions {
-                        let accent = if self.mentions[index].target.room_id().is_some() {
+                        let accent = if self.mentions[index].target.is_room_wide() {
+                            shell::ROOM_WIDE_ACCENT
+                        } else if self.mentions[index].target.room_id().is_some() {
                             shell::ROOM_ACCENT
                         } else {
                             shell::ACCENT
@@ -461,7 +463,9 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                                 border: iced::Border::default().rounded(4.0),
                                 ..Default::default()
                             },
-                            if self.mentions[index].target.room_id().is_some() {
+                            if self.mentions[index].target.room_id().is_some()
+                                || self.mentions[index].target.is_room_wide()
+                            {
                                 accent.scale_alpha(0.12)
                             } else {
                                 Color::from_rgba8(73, 121, 211, 0.12)

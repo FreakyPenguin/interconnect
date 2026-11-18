@@ -49,6 +49,25 @@ labels, including edit recovery and partial/whole deletion. Only user targets
 contribute to `m.mentions.user_ids`; room links never set `m.mentions.room`.
 Legacy user draft bindings retain their serialized `user_id` representation.
 
+Room-wide notifications use an explicit occurrence binding (`room_wide: true` in
+encrypted drafts) and `m.mentions.room` on the wire. They have no permalink and
+never navigate on click. Received `@room` tokens are highlighted in amber only
+when that metadata is true, excluding code, existing links, and image alternative
+text. Splitting runs retains inline formatting, copy text, wrapping, and spoiler
+privacy; the document cache includes the notification flag. There is no
+notification inference for incoming legacy messages without mention metadata.
+
+Only accepted room-wide choices create outgoing notifications. Literal `@room`
+text stays unbound; outgoing messages include explicit empty mention metadata to
+suppress legacy body-based notification matching. Partial or whole deletion of
+the bound token drops its notification identity. Edit recovery preserves tracked
+room-wide tokens; removing their last occurrence clears the replacement flag,
+while unrepresented existing room notification metadata is retained. SDK edits
+compute notification differences so surviving broadcasts are not re-notified.
+New room notifications recheck `user_can_trigger_room_notification` on the SDK
+worker before queue admission. Completion reads cached room permissions without
+new subscriptions or polling. See the [Matrix mention specification](https://spec.matrix.org/v1.17/client-server-api/#user-and-room-mentions).
+
 ## Inline images and local embedded assets
 
 Incoming HTML images accept validated MXC sources only; HTTP, file, data, and
@@ -118,7 +137,10 @@ Up/Down changes selection; Enter/Tab or clicking accepts; Escape dismisses witho
 closing a thread. Acceptance inserts the full display name (or Matrix ID when unnamed) plus a
 trailing space at line end, preserving adjacent punctuation. It never sends the message. Email
 addresses, URLs, selections, attachments, hidden panes, and IME preedit do not
-open completion. `@room` has no special authoring behavior.
+open completion. `@room` is offered as **Everyone in this room** when the
+cached power levels allow room notifications. Accepting it inserts a bound
+`@room` token with an amber background and underline. User choices stay first
+for an empty `@` query; the room-wide choice is first for matching prefixes.
 
 The account's existing directory handle loads joined members on demand, with a
 30-second deadline and at most 4096 projected people. There is no directory-wide

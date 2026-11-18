@@ -20,6 +20,7 @@ pub struct Style {
     /// Explicit Matrix user anchor; labels remain sender-provided text.
     pub mention: Option<matrix_sdk::ruma::OwnedUserId>,
     pub room_mention: Option<crate::room_membership::Address>,
+    pub room_wide: bool,
     pub spoilers: Vec<usize>,
 }
 
@@ -96,6 +97,7 @@ pub struct Block {
 pub struct Document {
     source: String,
     plain: bool,
+    room_wide: bool,
     pub blocks: Vec<Block>,
 }
 // Documents can contain private messages. Do not print their contents in model diagnostics.
@@ -108,6 +110,13 @@ impl std::fmt::Debug for Document {
 }
 impl Document {
     pub fn from_message(message: &MessageType, previous: Option<&Arc<Self>>) -> Option<Arc<Self>> {
+        Self::from_message_with_room_mention(message, previous, false)
+    }
+    pub fn from_message_with_room_mention(
+        message: &MessageType,
+        previous: Option<&Arc<Self>>,
+        room_wide: bool,
+    ) -> Option<Arc<Self>> {
         let body = match message {
             MessageType::Text(m) => &m.body,
             MessageType::Notice(m) => &m.body,
@@ -116,14 +125,25 @@ impl Document {
         };
         let html = Self::html(message);
         let source = html.unwrap_or(body);
-        if let Some(previous) =
-            previous.filter(|doc| doc.source == source && doc.plain == html.is_none())
-        {
+        if let Some(previous) = previous.filter(|doc| {
+            doc.source == source && doc.plain == html.is_none() && doc.room_wide == room_wide
+        }) {
             return Some(previous.clone());
         }
         html.and_then(Self::parse_with_formulas)
             .or_else(|| Self::plain_links(body))
-            .map(Arc::new)
+            .or_else(|| {
+                (room_wide && body.len() <= MAX_BYTES).then(|| Self {
+                    source: body.clone(),
+                    plain: true,
+                    room_wide: false,
+                    blocks: vec![Block {
+                        runs: linked_runs(body, &Style::default()),
+                        ..Default::default()
+                    }],
+                })
+            })
+            .map(|doc| Arc::new(doc.with_room_wide_mention(room_wide)))
     }
     /// Literal text with clickable web URLs; no Markdown or HTML interpretation.
     /// Messages without links keep the ordinary plain-text renderer.
@@ -137,6 +157,7 @@ impl Document {
             .then(|| Self {
                 source: source.into(),
                 plain: true,
+                room_wide: false,
                 blocks: vec![Block {
                     runs,
                     ..Block::default()
@@ -181,8 +202,80 @@ impl Document {
         (!builder.blocks.is_empty()).then(|| Self {
             source: source.into(),
             plain: false,
+            room_wide: false,
             blocks: builder.blocks,
         })
+    }
+    /// Room-wide mentions are plain visible tokens backed by event metadata,
+    /// never navigation links. Split existing runs without changing copy text.
+    pub fn with_room_wide_mention(mut self, enabled: bool) -> Self {
+        if self.room_wide == enabled {
+            return self;
+        }
+        self.room_wide = enabled;
+        if !enabled {
+            for run in self.blocks.iter_mut().flat_map(|block| &mut block.runs) {
+                run.style.room_wide = false;
+            }
+            return self;
+        }
+        let mut budget = 256;
+        for block in &mut self.blocks {
+            let text: String = block
+                .runs
+                .iter()
+                .map(|run| {
+                    if !run.style.code
+                        && run.style.link.is_none()
+                        && matches!(run.content, Inline::Text(_))
+                    {
+                        run.content.text().to_owned()
+                    } else {
+                        " ".repeat(run.content.text().len())
+                    }
+                })
+                .collect();
+            let ranges: Vec<_> = room_wide_ranges(&text).take(budget).collect();
+            budget -= ranges.len();
+            let mut offset = 0;
+            let mut runs = Vec::new();
+            for mut run in std::mem::take(&mut block.runs) {
+                run.style.room_wide = false;
+                let length = run.content.text().len();
+                let mut copied = 0;
+                for range in &ranges {
+                    let start = range.start.saturating_sub(offset).min(length);
+                    let end = range.end.saturating_sub(offset).min(length);
+                    if start >= end {
+                        continue;
+                    }
+                    if copied < start {
+                        runs.push(Run {
+                            content: Inline::Text(run.content.text()[copied..start].into()),
+                            style: run.style.clone(),
+                        });
+                    }
+                    let mut style = run.style.clone();
+                    style.room_wide = true;
+                    runs.push(Run {
+                        content: Inline::Text(run.content.text()[start..end].into()),
+                        style,
+                    });
+                    copied = end;
+                }
+                if copied == 0 {
+                    runs.push(run);
+                } else if copied < length {
+                    runs.push(Run {
+                        content: Inline::Text(run.content.text()[copied..].into()),
+                        style: run.style,
+                    });
+                }
+                offset += length;
+            }
+            block.runs = runs;
+        }
+        self
     }
     pub fn image_keys(&self) -> Vec<crate::image_media::Key> {
         let mut keys = Vec::new();
@@ -300,6 +393,32 @@ pub fn safe_link(value: &str) -> Option<String> {
         _ => None,
     }
 }
+pub(crate) fn room_wide_ranges(source: &str) -> impl Iterator<Item = Range<usize>> + '_ {
+    source.match_indices("@room").filter_map(|(start, _)| {
+        let range = start..start + "@room".len();
+        room_wide_token(source, range.clone()).then_some(range)
+    })
+}
+/// Constant-time boundary check, also used while tracking bindings on keystrokes.
+pub(crate) fn room_wide_token(source: &str, range: Range<usize>) -> bool {
+    if source.get(range.clone()) != Some("@room") {
+        return false;
+    }
+    let before = source[..range.start].chars().next_back();
+    let after = &source[range.end..];
+    before.is_none_or(|c| {
+        c.is_whitespace() || matches!(c, '(' | '[' | '{' | '\'' | '"' | '`' | '*' | '~')
+    }) && (after.chars().next().is_none_or(|c| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                ',' | ';' | '!' | '?' | ')' | ']' | '}' | '`' | '*' | '~' | '\'' | '"'
+            )
+    }) || after
+        .strip_prefix('.')
+        .is_some_and(|tail| tail.is_empty() || tail.starts_with(char::is_whitespace)))
+}
+
 /// Only explicit user permalinks identify user mentions.
 pub(crate) fn user_mention(link: &str) -> Option<matrix_sdk::ruma::OwnedUserId> {
     use matrix_sdk::ruma::{MatrixToUri, MatrixUri, matrix_uri::MatrixId};
@@ -613,6 +732,49 @@ mod tests {
             .flat_map(|b| &b.runs)
             .filter_map(|r| r.style.link.as_deref())
             .collect()
+    }
+    #[test]
+    fn room_wide_rendering_uses_metadata_preserves_text_and_invalidates_cache() {
+        use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
+        let message = MessageType::Text(TextMessageEventContent::plain("Hi @room!"));
+        assert!(Document::from_message(&message, None).is_none());
+        let doc = Document::from_message_with_room_mention(&message, None, true).unwrap();
+        assert_eq!(doc.text(&Default::default()), "Hi @room!");
+        assert!(doc.blocks[0].runs.iter().any(|run| run.style.room_wide
+            && run.content.text() == "@room"
+            && run.style.link.is_none()));
+        assert!(Arc::ptr_eq(
+            &doc,
+            &Document::from_message_with_room_mention(&message, Some(&doc), true).unwrap()
+        ));
+        assert!(Document::from_message_with_room_mention(&message, Some(&doc), false).is_none());
+        let html = "<p>@<b>room</b> <code>@room</code> <a href='https://example.org'>@room</a> @roommates x@room @room:example.org <span data-mx-spoiler>@room</span></p>";
+        let plain = Document::parse(html).unwrap();
+        let copy = plain.text(&BTreeSet::from([1]));
+        let styled = plain.with_room_wide_mention(true);
+        assert_eq!(styled.text(&BTreeSet::from([1])), copy);
+        let mentions: Vec<_> = styled
+            .blocks
+            .iter()
+            .flat_map(|block| &block.runs)
+            .filter(|run| run.style.room_wide)
+            .collect();
+        assert_eq!(
+            mentions
+                .iter()
+                .map(|run| run.content.text())
+                .collect::<Vec<_>>(),
+            ["@", "room", "@room"]
+        );
+        assert!(!styled.text(&Default::default()).ends_with("@room"));
+        assert!(
+            styled
+                .visible_blocks(&Default::default())
+                .iter()
+                .flat_map(|block| &block.runs)
+                .filter(|run| run.style.room_wide)
+                .all(|run| run.style.spoilers.is_empty())
+        );
     }
     #[test]
     fn room_anchors_require_valid_room_permalinks_and_keep_routing() {

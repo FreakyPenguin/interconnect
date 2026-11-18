@@ -48,7 +48,11 @@ enum Action {
     Sections,
     MarkUnread,
     Copy(String),
-    Dispatch(Message),
+    Dispatch(Box<Message>),
+}
+// Keep menu actions compact as asynchronous result messages grow.
+fn dispatch(message: Message) -> Action {
+    Action::Dispatch(Box::new(message))
 }
 fn message(event: Event) -> Message {
     Message::ContextMenu(event)
@@ -118,16 +122,16 @@ impl App {
                 let mut actions = vec![
                     (
                         "Settings…",
-                        Action::Dispatch(Message::Settings(super::settings::Event::Open)),
+                        dispatch(Message::Settings(super::settings::Event::Open)),
                     ),
-                    ("Find room…", Action::Dispatch(Message::SearchFocus)),
+                    ("Find room…", dispatch(Message::SearchFocus)),
                     (
                         "Join room…",
-                        Action::Dispatch(Message::Membership(super::membership::Event::Join)),
+                        dispatch(Message::Membership(super::membership::Event::Join)),
                     ),
                     (
                         "Invitations…",
-                        Action::Dispatch(Message::Membership(super::membership::Event::Open)),
+                        dispatch(Message::Membership(super::membership::Event::Open)),
                     ),
                 ];
                 if self.demo.is_some() || self.model.verification.control.is_some() {
@@ -141,13 +145,13 @@ impl App {
                         } else {
                             "Verify device…"
                         },
-                        Action::Dispatch(Message::Verification(super::verification::Event::Open)),
+                        dispatch(Message::Verification(super::verification::Event::Open)),
                     ));
                 }
                 if self.pending_ops == 0 {
                     actions.push((
                         "Sign out…",
-                        Action::Dispatch(Message::SignOut(super::sign_out::Event::Open)),
+                        dispatch(Message::SignOut(super::sign_out::Event::Open)),
                     ));
                 }
                 actions
@@ -170,17 +174,19 @@ impl App {
                         if index > 0 {
                             actions.push((
                                 "Move section up",
-                                Action::Dispatch(Message::Reorder(
-                                    super::section_reorder::Event::Step(tag.into(), true),
-                                )),
+                                dispatch(Message::Reorder(super::section_reorder::Event::Step(
+                                    tag.into(),
+                                    true,
+                                ))),
                             ));
                         }
                         if index + 1 < order.len() {
                             actions.push((
                                 "Move section down",
-                                Action::Dispatch(Message::Reorder(
-                                    super::section_reorder::Event::Step(tag.into(), false),
-                                )),
+                                dispatch(Message::Reorder(super::section_reorder::Event::Step(
+                                    tag.into(),
+                                    false,
+                                ))),
                             ));
                         }
                     }
@@ -192,13 +198,13 @@ impl App {
                     return Vec::new();
                 }
                 vec![
-                    ("Open room", Action::Dispatch(Message::Room(id.clone()))),
+                    ("Open room", dispatch(Message::Room(id.clone()))),
                     ("Mark as unread", Action::MarkUnread),
                     ("Move to section…", Action::Sections),
                     ("Copy room ID", Action::Copy(id.clone())),
                     (
                         "Leave room…",
-                        Action::Dispatch(Message::Membership(super::membership::Event::Leave(
+                        dispatch(Message::Membership(super::membership::Event::Leave(
                             id.clone(),
                         ))),
                     ),
@@ -221,7 +227,7 @@ impl App {
                 vec![
                     (
                         "Open thread",
-                        Action::Dispatch(Message::OpenThreadLatest(root.clone())),
+                        dispatch(Message::OpenThreadLatest(root.clone())),
                     ),
                     ("Copy thread ID", Action::Copy(root.clone())),
                 ]
@@ -234,22 +240,22 @@ impl App {
                 if self.can_edit_message(target) {
                     actions.push((
                         "Edit message",
-                        Action::Dispatch(Message::Editing(super::message_edit::Event::Start(
+                        dispatch(Message::Editing(super::message_edit::Event::Start(
                             target.clone(),
                         ))),
                     ));
                 }
                 if let Some(action) = self.delete_action(row, target.thread, target.generation) {
-                    actions.push(("Delete message…", Action::Dispatch(action)));
+                    actions.push(("Delete message…", dispatch(action)));
                 }
                 if !target.thread {
                     actions.push((
                         "Reply in thread",
-                        Action::Dispatch(Message::Thread(target.event.clone())),
+                        dispatch(Message::Thread(target.event.clone())),
                     ));
                 }
                 if let Some(action) = self.reaction_action(row, target.thread, target.generation) {
-                    actions.push(("Add reaction…", Action::Dispatch(action)));
+                    actions.push(("Add reaction…", dispatch(action)));
                 }
                 if let Some(action) = self.pin_action(row, target.thread, target.generation) {
                     let unpin = matches!(
@@ -262,7 +268,7 @@ impl App {
                         } else {
                             "Pin message"
                         },
-                        Action::Dispatch(action),
+                        dispatch(action),
                     ));
                 }
                 actions
@@ -389,7 +395,7 @@ impl App {
                         }
                         Action::Dispatch(action) => {
                             self.context_menu = None;
-                            self.update(action)
+                            self.update(*action)
                         }
                     };
                 }

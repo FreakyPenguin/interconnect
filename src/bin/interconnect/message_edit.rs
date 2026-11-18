@@ -12,6 +12,7 @@ pub struct State {
     event: String,
     request: u64,
     original_mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    original_room_mention: bool,
     pub(super) saved: Box<Draft>,
 }
 #[derive(Clone, Debug)]
@@ -152,6 +153,10 @@ impl App {
                     editing: Some(State {
                         event: target.event,
                         request: self.generation,
+                        original_room_mention: source
+                            .named_mentions
+                            .iter()
+                            .any(|mention| mention.target.is_room_wide()),
                         original_mentions: source
                             .mentions
                             .iter()
@@ -339,6 +344,7 @@ impl App {
         let event = editing.event.clone();
         let request = editing.request;
         let original_mentions = editing.original_mentions.clone();
+        let original_room_mention = editing.original_room_mention;
         let source = draft.content.text();
         let format = draft.markdown.format;
         let bindings = draft.markdown.bindings();
@@ -379,6 +385,7 @@ impl App {
                             format,
                             bindings,
                             original_mentions,
+                            original_room_mention,
                         )
                         .await
                         .map(|()| None)
@@ -607,13 +614,14 @@ mod tests {
                 let _ = app.update(Message::Thread("review".into()));
             }
             let key = app.draft_key(thread).unwrap();
-            let html = "<p>Hello <a href='https://matrix.to/#/@maya:example.org'>Maya Chen</a> in <a href='https://matrix.to/#/!old:example.org?via=route.example.org'>#Old room</a></p>";
+            let html = "<p>Hello <a href='https://matrix.to/#/@maya:example.org'>Maya Chen</a> in <a href='https://matrix.to/#/!old:example.org?via=route.example.org'>#Old room</a> @room</p>";
             let prepared = Prepared {
-                source: "Hello Maya Chen in #Old room".into(),
+                source: "Hello Maya Chen in #Old room @room".into(),
                 html: Some(html.into()),
                 document: interconnect::message_document::Document::parse(html)
-                    .map(std::sync::Arc::new),
+                    .map(|doc| std::sync::Arc::new(doc.with_room_wide_mention(true))),
                 mentions: vec!["@maya:example.org".parse().unwrap()],
+                room_mention: true,
             };
             app.demo.as_mut().unwrap().send_prepared(&key, prepared);
             app.refresh_demo();
@@ -626,7 +634,7 @@ mod tests {
             let target = target(&app, thread);
             let event = target.event.clone();
             start(&mut app, target);
-            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 2);
+            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 3);
             let _ = app.update(Message::Edit(
                 key.clone(),
                 text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
@@ -689,7 +697,7 @@ mod tests {
                     .as_ref()
                     .unwrap()
                     .text(&Default::default()),
-                "Hello Maya Chen in #Old room and Jules and #General "
+                "Hello Maya Chen in #Old room @room and Jules and #General "
             );
             let rooms: Vec<_> = prepared
                 .document
@@ -700,6 +708,7 @@ mod tests {
                 .flat_map(|block| &block.runs)
                 .filter_map(|run| run.style.room_mention.as_ref())
                 .collect();
+            assert!(prepared.room_mention);
             assert_eq!(rooms.len(), 2);
             assert_eq!(rooms[0].room.as_str(), "!old:example.org");
             assert_eq!(rooms[0].via[0].as_str(), "route.example.org");
@@ -737,7 +746,41 @@ mod tests {
             // A second edit recovers both the old label and the newly inserted ID.
             let target = self::target(&app, thread);
             start(&mut app, target);
-            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 4);
+            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 5);
+            let range = app.drafts[&key]
+                .markdown
+                .named_mentions
+                .iter()
+                .find(|mention| mention.target.is_room_wide())
+                .unwrap()
+                .range
+                .clone();
+            app.drafts.get_mut(&key).unwrap().content.move_to(
+                iced::advanced::text::editor::Cursor {
+                    position: iced::advanced::text::editor::Position {
+                        line: 0,
+                        column: range.end,
+                    },
+                    selection: Some(iced::advanced::text::editor::Position {
+                        line: 0,
+                        column: range.start,
+                    }),
+                },
+            );
+            let _ = app.update(Message::Edit(
+                key.clone(),
+                text_editor::Action::Edit(text_editor::Edit::Delete),
+            ));
+            let draft = &app.drafts[&key];
+            let removed = composition::prepare_with_bindings(
+                draft.content.text(),
+                draft.markdown.format,
+                draft.markdown.bindings(),
+            )
+            .await
+            .unwrap();
+            assert!(!removed.room_mention);
+            assert_eq!(removed.mentions.len(), 2);
             let _ = app.update(message(Event::Cancel(key.clone())));
             assert_eq!(app.drafts[&key].content.text(), "Unsent @alex:example.org");
         }

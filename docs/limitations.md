@@ -17,7 +17,9 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   of at most 4096 users. Full display names insert as editable text with per-occurrence
   identities and visual highlighting. Room link completion via `#` searches only
   joined rooms in the current snapshot, with canonical aliases (not alternate
-  aliases or a server directory). Room-wide `@room` completion/styling is unsupported.
+  aliases or a server directory). `@room` is an explicit completion choice,
+  offered only when cached room permissions allow notifications; sending rechecks
+  permission. Received room-wide styling requires `m.mentions.room` metadata.
 - Custom emoji packs support management and uploads, but not standalone stickers,
   bulk import/export, or animation. Received emoji retain sender dimensions because
   the pinned SDK strips the emoticon marker.

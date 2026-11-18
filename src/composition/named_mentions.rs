@@ -7,6 +7,11 @@ use std::ops::Range;
 )]
 #[serde(untagged, deny_unknown_fields)]
 pub enum MentionTarget {
+    /// Explicit room-wide notification, serialized distinctly from room links.
+    RoomWide {
+        #[serde(with = "room_wide_marker")]
+        room_wide: (),
+    },
     User {
         user_id: OwnedUserId,
     },
@@ -16,21 +21,40 @@ pub enum MentionTarget {
         via: Vec<OwnedServerName>,
     },
 }
+// Keep the persisted marker explicit and reject false/missing markers. Using
+// a custom codec also preserves the existing flattened user/room draft schema.
+mod room_wide_marker {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+    pub fn serialize<S: Serializer>(_: &(), serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_bool(true)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<(), D::Error> {
+        if bool::deserialize(deserializer)? {
+            Ok(())
+        } else {
+            Err(D::Error::custom("room-wide mention marker must be true"))
+        }
+    }
+}
 impl MentionTarget {
     pub fn user_id(&self) -> Option<&OwnedUserId> {
         match self {
             Self::User { user_id } => Some(user_id),
-            Self::Room { .. } => None,
+            Self::Room { .. } | Self::RoomWide { .. } => None,
         }
     }
     pub fn room_id(&self) -> Option<&OwnedRoomOrAliasId> {
         match self {
             Self::Room { room_id, .. } => Some(room_id),
-            Self::User { .. } => None,
+            Self::User { .. } | Self::RoomWide { .. } => None,
         }
     }
-    pub fn uri(&self) -> String {
-        match self {
+    pub fn is_room_wide(&self) -> bool {
+        matches!(self, Self::RoomWide { .. })
+    }
+    pub fn uri(&self) -> Option<String> {
+        Some(match self {
+            Self::RoomWide { .. } => return None,
             Self::User { user_id } => user_id.matrix_to_uri().to_string(),
             Self::Room { room_id, via } => {
                 match <&matrix_sdk::ruma::RoomId>::try_from(&**room_id) {
@@ -38,7 +62,7 @@ impl MentionTarget {
                     Err(alias) => alias.matrix_to_uri().to_string(),
                 }
             }
-        }
+        })
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -50,9 +74,11 @@ pub struct NamedMention {
 impl NamedMention {
     pub fn valid(&self, source: &str) -> bool {
         self.range.start < self.range.end
-            && source
-                .get(self.range.clone())
-                .is_some_and(|label| !label.trim().is_empty())
+            && source.get(self.range.clone()).is_some_and(|label| {
+                !label.trim().is_empty()
+                    && (!self.target.is_room_wide()
+                        || crate::message_document::room_wide_token(source, self.range.clone()))
+            })
     }
 }
 /// Changes are exact editor replacements in descending source order. Identity
@@ -95,6 +121,7 @@ pub fn update_named_mentions(
         mention.range.end = mention.range.start + trimmed.len();
         !trimmed.is_empty()
     });
+    mentions.retain(|mention| mention.valid(source));
 }
 
 #[cfg(test)]
@@ -106,6 +133,36 @@ mod tests {
             target: MentionTarget::User {
                 user_id: user.parse().unwrap(),
             },
+        }
+    }
+    #[test]
+    fn room_wide_binding_roundtrips_and_any_token_change_removes_it() {
+        let mention = NamedMention {
+            range: 3..8,
+            target: MentionTarget::RoomWide { room_wide: () },
+        };
+        assert!(mention.valid("Hi @room!"));
+        for invalid in [
+            r#"{"range":{"start":3,"end":8}}"#,
+            r#"{"range":{"start":3,"end":8},"room_wide":false}"#,
+        ] {
+            assert!(serde_json::from_str::<NamedMention>(invalid).is_err());
+        }
+
+        assert!(mention.target.uri().is_none());
+        assert_eq!(
+            serde_json::from_str::<NamedMention>(&serde_json::to_string(&mention).unwrap())
+                .unwrap(),
+            mention
+        );
+        for (body, change) in [
+            ("Hi @roo!", (7..8, 0)),
+            ("Hi !", (3..8, 0)),
+            ("Hi @roommate!", (8..8, 4)),
+        ] {
+            let mut mentions = vec![mention.clone()];
+            update_named_mentions(&mut mentions, body, &[change]);
+            assert!(mentions.is_empty(), "{body}");
         }
     }
     #[test]
@@ -124,7 +181,7 @@ mod tests {
             serde_json::from_str::<NamedMention>(&serde_json::to_string(&room).unwrap()).unwrap(),
             room
         );
-        assert!(room.target.uri().contains("via=route.example.org"));
+        assert!(room.target.uri().unwrap().contains("via=route.example.org"));
         assert!(serde_json::from_str::<NamedMention>(r#"{"range":{"start":0,"end":4},"user_id":"@maya:example.org","room_id":"!room:example.org"}"#).is_err());
         let mut rooms = vec![room];
         update_named_mentions(&mut rooms, "#Room", &[(5..7, 0)]);

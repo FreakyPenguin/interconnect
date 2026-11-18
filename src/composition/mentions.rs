@@ -29,6 +29,7 @@ pub(crate) fn recover_mentions(
             let start = canonical.len();
             let text = if run.style.mention.is_none()
                 && run.style.room_mention.is_none()
+                && !run.style.room_wide
                 && let crate::message_document::Inline::Image {
                     source: Some(crate::message_document::ImageSource::Matrix(uri)),
                     alt,
@@ -265,6 +266,9 @@ fn markdown_ranges(
 }
 
 fn target(style: &crate::message_document::Style) -> Option<MentionTarget> {
+    if style.room_wide {
+        return Some(MentionTarget::RoomWide { room_wide: () });
+    }
     style
         .mention
         .as_ref()

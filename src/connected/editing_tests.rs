@@ -60,7 +60,12 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
             "formatted_body":"<p>Hello <a href='https://matrix.to/#/@maya:example.org'>Maya</a></p>",
             "m.mentions":{"user_ids":["@maya:example.org"], "room":true}}),
     );
-    for event in [&text, &reply, &mentions] {
+    let room_wide = original(
+        "$roomwide",
+        "@test:example.org",
+        json!({"msgtype":"m.text", "body":"Hey @room", "m.mentions":{"room":true,"user_ids":["@other:example.org"]}}),
+    );
+    for event in [&text, &reply, &mentions, &room_wide] {
         Mock::given(method("GET"))
             .and(path_regex(format!(
                 ".*/event/.*{}.*",
@@ -76,6 +81,10 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
             let content: Value = serde_json::from_slice(&request.body).unwrap();
             let event = if content["m.relates_to"]["event_id"] == "$reply" {
                 "$edit-reply"
+            } else if content["m.relates_to"]["event_id"] == "$roomwide" {
+                "$edit-roomwide"
+            } else if content["m.new_content"]["body"] == "Hello @room!" {
+                "$edit-roomwide-added"
             } else if content["m.relates_to"]["event_id"] == "$mentions" {
                 if content["m.new_content"]["body"] == "Hello Jules" {
                     "$edit-mentions-deleted"
@@ -92,6 +101,7 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
     let sync = Arc::new(std::sync::Mutex::new(
         json!({"next_batch":"one", "rooms":{"join":{"!room:example.org":{
             "state":{"events":[
+                {"type":"m.room.create","state_key":"","sender":"@test:example.org","event_id":"$create","origin_server_ts":0,"content":{"creator":"@test:example.org","room_version":"10"}},
                 {"type":"m.room.member","state_key":"@test:example.org","sender":"@test:example.org","event_id":"$member","origin_server_ts":1,"content":{"membership":"join"}},
                 {"type":"m.room.member","state_key":"@other:example.org","sender":"@other:example.org","event_id":"$other-member","origin_server_ts":1,"content":{"membership":"join"}},
                 {"type":"m.room.power_levels","state_key":"","sender":"@test:example.org","event_id":"$levels","origin_server_ts":1,"content":{"users":{"@test:example.org":100}}}
@@ -142,14 +152,14 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
     );
     let (_, updates) = timeline.subscribe().await;
     tokio::pin!(updates);
-    *sync.lock().unwrap() = json!({"next_batch":"two","rooms":{"join":{"!room:example.org":{"timeline":{"events":[text,reply,other,image,mentions],"limited":false}}}}});
+    *sync.lock().unwrap() = json!({"next_batch":"two","rooms":{"join":{"!room:example.org":{"timeline":{"events":[text,reply,other,image,mentions,room_wide],"limited":false}}}}});
     client
         .sync_once(SyncSettings::default().timeout(Duration::ZERO))
         .await
         .unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if timeline_rows(&timeline).await.len() == 5 {
+            if timeline_rows(&timeline).await.len() == 6 {
                 break;
             }
             updates.next().await.unwrap();
@@ -169,6 +179,22 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
     );
     assert!(rows[2].edit_source.is_none());
     assert!(rows[3].edit_source.is_none());
+    let broadcast = rows.iter().find(|row| row.key == "$roomwide").unwrap();
+    assert!(
+        broadcast.edit_source.as_ref().unwrap().named_mentions[0]
+            .target
+            .is_room_wide()
+    );
+    assert!(
+        broadcast
+            .formatted
+            .as_ref()
+            .unwrap()
+            .blocks
+            .iter()
+            .flat_map(|block| &block.runs)
+            .any(|run| run.style.room_wide)
+    );
     let composer = Composer(RuntimeOwned::new(timeline.clone()));
     for id in ["$other", "$image", "$missing"] {
         assert!(
@@ -334,7 +360,7 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
         loop {
             let rows = timeline_rows(&timeline).await;
             if rows.iter().filter(|row| row.edited).count() == 3 {
-                assert_eq!(rows.len(), 5);
+                assert_eq!(rows.len(), 6);
                 let row = rows.iter().find(|row| row.key == "$reply").unwrap();
                 assert_eq!(row.thread_root.as_deref(), Some("$text"));
                 assert_eq!(row.edit_source.as_ref().unwrap().body, "waves again");
@@ -366,6 +392,7 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
                 "@maya:example.org".parse().unwrap(),
                 "@jules:example.org".parse().unwrap(),
             ],
+            false,
         )
         .await
         .unwrap();
@@ -385,6 +412,70 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
                     json!(["@jules:example.org"])
                 );
                 assert_eq!(content["m.new_content"]["m.mentions"]["room"], true);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    // Removing an explicitly represented broadcast clears only its room flag.
+    composer
+        .clone()
+        .edit_message_with_mention_tracking(
+            "$roomwide".into(),
+            "Hello all".into(),
+            crate::composition::Format::Plain,
+            crate::composition::Bindings::default(),
+            vec![],
+            true,
+        )
+        .await
+        .unwrap();
+    // Adding a new room-wide mention sets both replacement and notification metadata.
+    composer
+        .clone()
+        .edit_message_with_mention_tracking(
+            "$text".into(),
+            "Hello @room!".into(),
+            crate::composition::Format::Plain,
+            crate::composition::Bindings {
+                named_mentions: vec![crate::composition::NamedMention {
+                    range: 6..11,
+                    target: crate::composition::MentionTarget::RoomWide { room_wide: () },
+                }],
+                ..Default::default()
+            },
+            vec![],
+            false,
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let sent: Vec<Value> = server
+                .received_requests()
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|request| request.url.path().contains("/send/m.room.message/"))
+                .filter_map(|request| serde_json::from_slice(&request.body).ok())
+                .collect();
+            let deleted = sent
+                .iter()
+                .find(|content| content["m.new_content"]["body"] == "Hello all");
+            let added = sent
+                .iter()
+                .find(|content| content["m.new_content"]["body"] == "Hello @room!");
+            if let (Some(deleted), Some(added)) = (deleted, added) {
+                assert_ne!(deleted["m.new_content"]["m.mentions"]["room"], true);
+                assert_ne!(deleted["m.mentions"]["room"], true);
+                assert_eq!(
+                    deleted["m.new_content"]["m.mentions"]["user_ids"],
+                    json!(["@other:example.org"])
+                );
+                assert_eq!(added["m.new_content"]["m.mentions"]["room"], true);
+                assert_eq!(added["m.mentions"]["room"], true);
                 break;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -435,6 +526,48 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
             .await
             .is_err()
     );
+    // A permission downgrade rejects new broadcasts before send admission.
+    *sync.lock().unwrap() = json!({"next_batch":"five","rooms":{"join":{"!room:example.org":{"state":{"events":[
+        {"type":"m.room.power_levels","state_key":"","sender":"@test:example.org","event_id":"$lower-levels","origin_server_ts":6,"content":{"users":{"@test:example.org":0},"notifications":{"room":50}}}
+    ]},"timeline":{"events":[],"limited":false}}}}});
+    client
+        .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+        .await
+        .unwrap();
+    let before = server.received_requests().await.unwrap().len();
+    let broadcast = crate::composition::Bindings {
+        named_mentions: vec![crate::composition::NamedMention {
+            range: 3..8,
+            target: crate::composition::MentionTarget::RoomWide { room_wide: () },
+        }],
+        ..Default::default()
+    };
+    let composer = Composer(RuntimeOwned::new(timeline.clone()));
+    assert!(
+        composer
+            .clone()
+            .send_with_bindings(
+                "Hi @room".into(),
+                crate::composition::Format::Plain,
+                broadcast.clone()
+            )
+            .await
+            .unwrap_err()
+            .contains("permission")
+    );
+    assert!(
+        composer
+            .edit_message_with_bindings(
+                "$reply".into(),
+                "Hi @room".into(),
+                crate::composition::Format::Plain,
+                broadcast
+            )
+            .await
+            .unwrap_err()
+            .contains("permission")
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), before);
 }
 
 #[tokio::test]
@@ -482,7 +615,7 @@ async fn custom_emoji_sources_recover_disambiguated_tokens_and_ignore_untrusted_
         .unwrap();
     assert_eq!(roundtrip.html, prepared.html);
     let prepared = crate::composition::Prepared {
-        source: "literal :wave:".into(), document: None, mentions: Vec::new(),
+        source: "literal :wave:".into(), document: None, mentions: Vec::new(), room_mention: false,
         html: Some("<img src='https://example.org/image' title='wave' data-mx-emoticon><img src='mxc://example.org/image' title='other'>".into()),
     };
     assert!(EditSource::from_prepared(&prepared).emoji.is_empty());
@@ -522,6 +655,7 @@ async fn display_name_mentions_survive_edits_duplicate_labels_mode_changes_and_r
         html: Some(html.into()),
         document: crate::message_document::Document::parse(html).map(Arc::new),
         mentions: vec![],
+        room_mention: false,
     };
     let mut source = EditSource::from_prepared(&initial);
     assert_eq!(source.named_mentions.len(), 2);
@@ -654,6 +788,7 @@ async fn named_mention_recovery_keeps_custom_emoji_bindings_in_the_same_edit() {
         html: Some(html.into()),
         document: crate::message_document::Document::parse(html).map(Arc::new),
         mentions: vec![],
+        room_mention: false,
     };
     let source = EditSource::from_prepared(&original);
     assert_eq!(source.emoji.len(), 1);

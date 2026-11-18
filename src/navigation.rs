@@ -27,6 +27,7 @@ pub struct RoomEntry {
     pub can_redact_own: bool,
     pub can_redact_other: bool,
     pub can_invite: bool,
+    pub can_notify_room: bool,
     pub pinned_events: Vec<String>,
     /// Room m.tag keys, including Element custom section membership.
     pub tags: Vec<String>,
@@ -260,6 +261,9 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<Snapshot> {
                         room.own_user_id(),
                         matrix_sdk::ruma::events::StateEventType::RoomTopic,
                     )
+                }),
+                can_notify_room: levels.as_ref().is_some_and(|levels| {
+                    levels.user_can_trigger_room_notification(room.own_user_id())
                 }),
                 can_invite: levels
                     .as_ref()

@@ -122,7 +122,8 @@ impl App {
                         room_id: address.room,
                         via: address.via,
                     }
-                    .uri();
+                    .uri()
+                    .unwrap_or_default();
                 }
                 return task;
             }

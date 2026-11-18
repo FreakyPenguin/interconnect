@@ -38,6 +38,7 @@ pub struct Prepared {
     pub html: Option<String>,
     pub document: Option<Arc<Document>>,
     pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    pub room_mention: bool,
 }
 impl std::fmt::Debug for Prepared {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -53,6 +54,7 @@ impl Prepared {
             html: None,
             document: None,
             mentions: Vec::new(),
+            room_mention: false,
         }
     }
     pub fn text_content(&self) -> TextMessageEventContent {
@@ -65,13 +67,13 @@ impl Prepared {
         let content = RoomMessageEventContent::new(
             matrix_sdk::ruma::events::room::message::MessageType::Text(self.text_content()),
         );
-        if self.mentions.is_empty() {
-            content
-        } else {
-            content.add_mentions(matrix_sdk::ruma::events::Mentions::with_user_ids(
-                self.mentions.clone(),
-            ))
-        }
+        // Explicit empty metadata also prevents legacy @room text matching.
+        content.add_mentions(self.notification_mentions())
+    }
+    pub fn notification_mentions(&self) -> matrix_sdk::ruma::events::Mentions {
+        let mut mentions = matrix_sdk::ruma::events::Mentions::with_user_ids(self.mentions.clone());
+        mentions.room = self.room_mention;
+        mentions
     }
 }
 /// A conservative fast path, never a Markdown parser. All possible syntax and
@@ -238,6 +240,7 @@ fn convert_with_choices(
         markers.push((marker, Choice::User(user)));
     }
     let mut mentioned = std::collections::BTreeSet::new();
+    let mut room_mention = false;
     let restore = |text: &str| {
         let mut text = text.to_owned();
         for (marker, choice) in &markers {
@@ -298,6 +301,7 @@ fn convert_with_choices(
                     &markers,
                     &mut events,
                     &mut mentioned,
+                    &mut room_mention,
                     links.is_empty(),
                 );
                 if events.len() > 4096 {
@@ -364,12 +368,15 @@ fn convert_with_choices(
             return Err(TOO_COMPLEX.into());
         }
     }
-    let document = Document::parse_with_formulas(&html).ok_or_else(|| TOO_COMPLEX.to_owned())?;
+    let document = Document::parse_with_formulas(&html)
+        .ok_or_else(|| TOO_COMPLEX.to_owned())?
+        .with_room_wide_mention(room_mention);
     Ok(Prepared {
         source,
         html: Some(html),
         document: Some(Arc::new(document)),
         mentions: mentioned.into_iter().collect(),
+        room_mention,
     })
 }
 fn escaped(text: &str) -> String {
@@ -427,6 +434,7 @@ fn selected_text<'a>(
     choices: &[(char, Choice<'_>)],
     events: &mut Vec<Event<'a>>,
     mentioned: &mut std::collections::BTreeSet<matrix_sdk::ruma::OwnedUserId>,
+    room_mention: &mut bool,
     allow_users: bool,
 ) {
     let mut start = 0;
@@ -439,14 +447,19 @@ fn selected_text<'a>(
         }
         if let Choice::Named(user, label) = choice {
             if allow_users {
-                events.push(Event::InlineHtml(
-                    format!(
-                        "<a href=\"{}\">{}</a>",
-                        escaped(&user.uri()),
-                        escaped(label).replace('\n', "<br>")
-                    )
-                    .into(),
-                ));
+                if user.is_room_wide() {
+                    *room_mention = true;
+                    events.push(Event::Text((*label).to_owned().into()));
+                } else if let Some(uri) = user.uri() {
+                    events.push(Event::InlineHtml(
+                        format!(
+                            "<a href=\"{}\">{}</a>",
+                            escaped(&uri),
+                            escaped(label).replace('\n', "<br>")
+                        )
+                        .into(),
+                    ));
+                }
                 if let Some(user) = user.user_id() {
                     mentioned.insert(user.clone());
                 }
@@ -460,11 +473,11 @@ fn selected_text<'a>(
             continue;
         }
         if let Choice::Link(link) = choice {
-            if allow_users {
+            if allow_users && let Some(uri) = link.target.uri() {
                 events.push(Event::InlineHtml(
                     format!(
                         "<a href=\"{}\">{}</a>",
-                        escaped(&link.target.uri()),
+                        escaped(&uri),
                         escaped(&link.label).replace('\n', "<br>")
                     )
                     .into(),
@@ -557,6 +570,78 @@ mod tests {
     use crate::message_document::{BlockKind, Inline};
     use std::collections::BTreeSet;
 
+    #[tokio::test]
+    async fn explicit_room_wide_choices_emit_metadata_and_recover_through_edits() {
+        for format in [Format::Plain, Format::Markdown] {
+            let prepared = prepare_with_bindings(
+                "Hi @room!".into(),
+                format,
+                Bindings {
+                    named_mentions: vec![NamedMention {
+                        range: 3..8,
+                        target: MentionTarget::RoomWide { room_wide: () },
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            assert!(prepared.room_mention);
+            assert!(prepared.mentions.is_empty());
+            let wire = serde_json::to_value(prepared.message_content()).unwrap();
+            assert_eq!(wire["m.mentions"]["room"], true);
+            assert!(!wire["formatted_body"].as_str().unwrap().contains("<a"));
+            let doc = prepared.document.as_ref().unwrap();
+            assert!(
+                doc.blocks
+                    .iter()
+                    .flat_map(|block| &block.runs)
+                    .any(|run| run.style.room_wide)
+            );
+            let edit = crate::connected::EditSource::from_prepared(&prepared);
+            assert_eq!(edit.named_mentions.len(), 1);
+            let roundtrip = prepare_with_bindings(edit.body.clone(), edit.format, edit.bindings())
+                .await
+                .unwrap();
+            assert!(roundtrip.room_mention);
+            assert_eq!(roundtrip.source, prepared.source);
+        }
+        let literal = prepare("Hi @room!".into(), Format::Plain).await.unwrap();
+        assert!(!literal.room_mention);
+        assert_eq!(
+            serde_json::to_value(literal.message_content()).unwrap()["m.mentions"],
+            serde_json::json!({})
+        );
+    }
+    #[tokio::test]
+    async fn room_wide_choices_in_literal_contexts_or_partial_tokens_do_not_notify() {
+        for source in [
+            "`@room`",
+            "```\n@room\n```",
+            "[@room](https://example.org)",
+            "![alt @room](https://example.org/image)",
+            "<span title='@room'>text</span>",
+            "@roommates",
+            "x@room",
+            "@room:example.org",
+        ] {
+            let start = source.find("@room").unwrap();
+            let prepared = prepare_with_bindings(
+                source.into(),
+                Format::Markdown,
+                Bindings {
+                    named_mentions: vec![NamedMention {
+                        range: start..start + 5,
+                        target: MentionTarget::RoomWide { room_wide: () },
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            assert!(!prepared.room_mention, "{source}");
+        }
+    }
     #[tokio::test]
     async fn room_labels_roundtrip_edits_without_creating_notification_mentions() {
         for format in [Format::Plain, Format::Markdown] {

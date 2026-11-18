@@ -287,11 +287,7 @@ impl App {
         {
             self.user_completion.clear();
         }
-        if self
-            .user_completion
-            .active
-            .as_ref()
-            .is_some_and(|active| active.trigger.kind == Kind::Room)
+        if self.user_completion.active.as_ref().is_some()
             && self
                 .user_completion
                 .rooms
@@ -302,7 +298,14 @@ impl App {
         }
     }
     fn update_user_suggestions(&mut self) {
+        let can_notify_room = self.user_completion.active.as_ref().is_some_and(|active| {
+            self.model
+                .rooms
+                .iter()
+                .any(|room| room.id == active.trigger.key.room && room.can_notify_room)
+        });
         let state = &mut self.user_completion;
+        state.rooms = Some(self.model.rooms.clone());
         if let Some(active) = &mut state.active {
             active.matches = match active.trigger.kind {
                 Kind::Room => {
@@ -332,6 +335,23 @@ impl App {
                 })
                 .collect(),
             };
+            if active.trigger.kind == Kind::User
+                && can_notify_room
+                && "room".starts_with(&active.trigger.query.to_lowercase())
+            {
+                let everyone = Choice {
+                    key: "@room".into(),
+                    name: "@room".into(),
+                    detail: "Everyone in this room".into(),
+                    target: interconnect::composition::MentionTarget::RoomWide { room_wide: () },
+                };
+                if active.trigger.query.is_empty() {
+                    active.matches.push(everyone);
+                } else {
+                    active.matches.insert(0, everyone);
+                }
+                active.matches.truncate(LIMIT);
+            }
             active.selected = active.selected.min(active.matches.len().saturating_sub(1));
         }
     }
@@ -465,6 +485,8 @@ impl App {
         {
             return Task::none();
         }
+        // Room permissions or membership can change while a popup is open.
+        self.update_user_suggestions();
         let active = self.user_completion.active.as_mut().unwrap();
         let user = match event {
             Event::Move(_, forward) => {
@@ -604,7 +626,7 @@ impl App {
             text(if active.trigger.kind == Kind::Room {
                 "LINK A ROOM"
             } else {
-                "MENTION A USER"
+                "MENTION"
             })
             .size(11)
             .color(shell::MUTED)
@@ -691,6 +713,50 @@ mod tests {
             key.clone(),
             text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(source.into()))),
         ));
+    }
+    #[test]
+    fn room_wide_completion_in_rooms_and_threads_respects_live_permissions() {
+        for thread in [false, true] {
+            let mut app = app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let key = app.draft_key(thread).unwrap();
+            edit(&mut app, &key, "Hi @ro");
+            let active = app.user_completion.active.as_ref().unwrap();
+            assert_eq!(active.matches[0].key, "@room");
+            assert_eq!(active.matches[0].detail, "Everyone in this room");
+            let trigger = active.trigger.clone();
+            let _ = app.update(Message::UserCompletion(Event::Accept(trigger)));
+            assert_eq!(app.drafts[&key].content.text(), "Hi @room ");
+            assert!(
+                app.drafts[&key].markdown.named_mentions[0]
+                    .target
+                    .is_room_wide()
+            );
+            assert!(!app.drafts[&key].pending);
+        }
+        let mut app = app();
+        let key = app.draft_key(false).unwrap();
+        edit(&mut app, &key, "@room");
+        let trigger = app.user_completion.active.as_ref().unwrap().trigger.clone();
+        for room in std::sync::Arc::make_mut(&mut app.model.rooms) {
+            room.can_notify_room = false;
+        }
+        let _ = app.update(Message::UserCompletion(Event::Choose(
+            trigger,
+            "@room".into(),
+        )));
+        assert!(app.drafts[&key].markdown.named_mentions.is_empty());
+        assert!(
+            app.user_completion
+                .active
+                .as_ref()
+                .unwrap()
+                .matches
+                .iter()
+                .all(|choice| !choice.target.is_room_wide())
+        );
     }
     #[test]
     fn room_completion_is_local_searches_aliases_and_preserves_editable_labels() {

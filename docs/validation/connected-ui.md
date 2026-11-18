@@ -76,9 +76,31 @@ General inside the app. Dragging must select text without navigating. The
 unknown room link must open a prefilled Join dialog without submitting a join;
 Cancel must retain the conversation draft. Check narrow wrapping, RTL text,
 spoilers, and copying visible labels. Event permalinks remain ordinary links.
-Only joined rooms in the current room snapshot are offered; `@room` broadcast
-completion remains unsupported. Server-dependent joining is a separate,
-authorized connected check.
+Only joined rooms in the current room snapshot are offered. Server-dependent
+joining is a separate, authorized connected check.
+
+### Room-wide mentions
+
+In demo mode, type `@ro` in a room composer and a thread reply. Verify the
+**@room — Everyone in this room** choice. Enter, Tab, and mouse acceptance
+insert an amber `@room` without sending. Preview and local demo Send retain the
+amber background; clicks must not navigate or open a DM. The demo's **Release
+notes** room denies room notification permission and must omit that choice.
+
+Edit a local message containing user mentions, room links, and `@room`. Check
+that saving and editing again preserve all three. Remove the `@room` token and
+verify preview drops its amber styling and the prepared notification flag.
+Changing part of the token also removes its binding. Check room/thread draft
+switches and encrypted draft restart with a disposable store. Keep unselected
+literal `@room`, longer words, code, links, and image alternatives unbound.
+In **Message formatting**, compare ordinary `@room` text with the metadata-backed
+room-wide fixture; check wrapping, RTL text, copying, and concealed spoilers.
+
+Automated fixtures cover completion permission changes while open, plaintext and
+HTML received styling, metadata-aware document reuse, payload flags, edit
+addition/removal without losing unrelated user IDs or legacy metadata, and
+backend rejection after a power-level downgrade. Real homeserver delivery and
+recipient push behavior remain separate authorized connected checks.
 
 ### User mention completion
 

@@ -178,7 +178,7 @@ mod tests {
             .await
             .unwrap();
             assert!(prepared.mentions.is_empty());
-            assert!(prepared.message_content().mentions.is_none());
+            assert!(!prepared.message_content().mentions.unwrap().room);
         }
         let mut draft = draft("Hi Maya Chen!", std::slice::from_ref(&(3..12)));
         draft.content.move_to(Cursor {

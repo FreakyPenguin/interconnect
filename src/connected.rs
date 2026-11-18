@@ -513,6 +513,17 @@ impl Composer {
         )
         .await
     }
+    async fn check_room_notification_permission(&self) -> Result<(), String> {
+        let room = self.0.room();
+        let levels = room
+            .power_levels()
+            .await
+            .map_err(|_| "Could not check permission to notify this room.".to_owned())?;
+        if !levels.user_can_trigger_room_notification(room.own_user_id()) {
+            return Err("You do not have permission to notify everyone in this room.".into());
+        }
+        Ok(())
+    }
     pub async fn send_with_bindings(
         self,
         body: String,
@@ -520,6 +531,9 @@ impl Composer {
         bindings: crate::composition::Bindings,
     ) -> Result<(), String> {
         let prepared = crate::composition::prepare_with_bindings(body, format, bindings).await?;
+        if prepared.room_mention {
+            self.check_room_notification_permission().await?;
+        }
         Box::pin(self.0.send(prepared.message_content().into()))
             .await
             .map(|_| ())
@@ -1572,7 +1586,7 @@ async fn timeline_rows_cached(
                         match content {
                             TimelineItemContent::MsgLike(content) => match &content.kind {
                                 matrix_sdk_ui::timeline::MsgLikeKind::Message(message)
-                                    if matches!(message.msgtype(), matrix_sdk::ruma::events::room::message::MessageType::Text(_) | matrix_sdk::ruma::events::room::message::MessageType::Emote(_)) => Some(EditSource::from_message(message.msgtype())),
+                                    if matches!(message.msgtype(), matrix_sdk::ruma::events::room::message::MessageType::Text(_) | matrix_sdk::ruma::events::room::message::MessageType::Emote(_)) => Some(EditSource::from_message_with_room_mention(message.msgtype(), message.mentions().is_some_and(|mentions| mentions.room))),
                                 _ => None,
                             },
                             _ => None,
@@ -1603,11 +1617,12 @@ async fn timeline_rows_cached(
                                     TimelineEventItemId::EventId(id) => id.to_string(),
                                     TimelineEventItemId::TransactionId(id) => format!("local:{id}"),
                                 };
-                                crate::message_document::Document::from_message(
+                                crate::message_document::Document::from_message_with_room_mention(
                                     message.msgtype(),
                                     previous
                                         .get(key.as_str())
                                         .and_then(|row| row.formatted.as_ref()),
+                                    message.mentions().is_some_and(|mentions| mentions.room),
                                 )
                             }
                             _ => None,
