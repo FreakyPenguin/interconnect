@@ -93,7 +93,7 @@ impl App {
             .filter_map(|thread| self.draft_key(thread))
             .filter_map(|key| self.drafts.get(&key))
             .filter(|draft| {
-                draft.attachment.is_none()
+                draft.attachments.is_empty()
                     && draft.markdown.preview.as_ref().is_some_and(|preview| {
                         preview.source == draft.content.text()
                             && preview.format == draft.markdown.format
@@ -135,7 +135,7 @@ impl App {
             && self
                 .drafts
                 .get(&target.key)
-                .is_some_and(|draft| !draft.pending && draft.attachment.is_none())
+                .is_some_and(|draft| !draft.pending && draft.attachments.is_empty())
     }
     pub(super) fn markdown_event(&mut self, event: Event) -> Task<Message> {
         match event {
@@ -259,7 +259,7 @@ impl App {
         generation: u64,
     ) -> Element<'_, Message> {
         let draft = &self.drafts[key];
-        if draft.attachment.is_some() {
+        if !draft.attachments.is_empty() {
             return text("Plain text caption")
                 .size(11)
                 .style(shell::muted_text)
@@ -318,7 +318,7 @@ impl App {
     }
     pub(super) fn markdown_preview<'a>(&'a self, key: &DraftKey) -> Option<Element<'a, Message>> {
         let draft = self.drafts.get(key)?;
-        if draft.attachment.is_some() {
+        if !draft.attachments.is_empty() {
             return None;
         }
         let preview = draft.markdown.preview.as_ref().filter(|preview| {

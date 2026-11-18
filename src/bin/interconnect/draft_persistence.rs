@@ -94,6 +94,7 @@ pub fn may_change(message: &Message) -> bool {
             | Message::DeleteWord(..)
             | Message::Send(_)
             | Message::Sent(..)
+            | Message::AttachmentsSent(..)
             | Message::Markdown(_)
             | Message::Editing(_)
             | Message::Replying(_)

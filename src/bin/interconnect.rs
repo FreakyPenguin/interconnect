@@ -153,7 +153,7 @@ struct Draft {
     composer_height: Option<f32>,
     markdown: markdown_composer::State,
     content: text_editor::Content,
-    attachment: Option<interconnect::attachment::Attachment>,
+    attachments: Vec<interconnect::attachment::Attachment>,
     pending: bool,
     error: Option<String>,
 }
@@ -355,6 +355,7 @@ enum Message {
     },
     Send(DraftKey),
     Sent(DraftKey, Option<String>, Result<(), String>),
+    AttachmentsSent(DraftKey, Option<String>, usize, Result<(), String>),
     Retry(RetrySend),
     Retried(String, Result<(), String>),
     Composing(bool),
@@ -1619,9 +1620,10 @@ impl App {
                 if self.demo.is_some() {
                     if let Some(draft) = self.drafts.get_mut(&key) {
                         let body = draft.content.text();
-                        if !draft.pending && (!body.trim().is_empty() || draft.attachment.is_some())
+                        if !draft.pending
+                            && (!body.trim().is_empty() || !draft.attachments.is_empty())
                         {
-                            if draft.attachment.is_none()
+                            if draft.attachments.is_empty()
                                 && (interconnect::composition::needs_conversion(
                                     &body,
                                     draft.markdown.format,
@@ -1653,7 +1655,8 @@ impl App {
                             self.demo.as_mut().unwrap().send_attachment_or_text(
                                 &key,
                                 body,
-                                draft.attachment.take(),
+                                std::mem::take(&mut draft.attachments),
+                                draft.reply.clone(),
                             );
                             self.demo
                                 .as_mut()
@@ -1674,29 +1677,50 @@ impl App {
                 if let Some(composer) = self.composer_for(&key)
                     && let Some(draft) = self.drafts.get_mut(&key)
                     && !draft.pending
-                    && (!draft.content.text().trim().is_empty() || draft.attachment.is_some())
+                    && (!draft.content.text().trim().is_empty() || !draft.attachments.is_empty())
                 {
                     let body = draft.content.text();
                     let format = draft.markdown.format;
                     let bindings = draft.markdown.bindings();
-                    let attachment = draft.attachment.clone();
+                    let attachments = draft.attachments.clone();
                     let reply = draft.reply.clone();
                     let account = self.account_id.clone();
                     draft.pending = true;
                     draft.error = None;
                     self.pending_ops += 1;
+                    if !attachments.is_empty() {
+                        return Task::perform(
+                            async move {
+                                let count = attachments.len();
+                                for (index, attachment) in attachments.into_iter().enumerate() {
+                                    let caption = if index == 0 {
+                                        body.clone()
+                                    } else {
+                                        String::new()
+                                    };
+                                    let filename = attachment.filename.clone();
+                                    if let Err(error) = composer
+                                        .clone()
+                                        .send_attachment_reply(attachment, caption, reply.clone())
+                                        .await
+                                    {
+                                        return (index, Err(format!("{filename}: {error}")));
+                                    }
+                                }
+                                (count, Ok(()))
+                            },
+                            move |(queued, result)| {
+                                Message::AttachmentsSent(
+                                    key.clone(),
+                                    account.clone(),
+                                    queued,
+                                    result,
+                                )
+                            },
+                        );
+                    }
                     return Task::perform(
-                        async move {
-                            if let Some(attachment) = attachment {
-                                composer
-                                    .send_attachment_reply(attachment, body, reply)
-                                    .await
-                            } else {
-                                composer
-                                    .send_reply_with_bindings(body, format, bindings, reply)
-                                    .await
-                            }
-                        },
+                        composer.send_reply_with_bindings(body, format, bindings, reply),
                         move |result| Message::Sent(key.clone(), account.clone(), result),
                     );
                 }
@@ -1715,6 +1739,23 @@ impl App {
                 self.pending_ops -= 1;
                 self.room_menu_finished(account, request, result);
             }
+            Message::AttachmentsSent(key, account, queued, result) => {
+                if account == self.account_id
+                    && queued > 0
+                    && let Some(draft) = self.drafts.get_mut(&key)
+                {
+                    draft
+                        .attachments
+                        .drain(..queued.min(draft.attachments.len()));
+                    draft.content = text_editor::Content::new();
+                    draft.markdown.clear_preview();
+                    draft.markdown.emoji.clear();
+                    draft.markdown.mentions.clear();
+                    draft.markdown.mention_links.clear();
+                    draft.markdown.named_mentions.clear();
+                }
+                return self.update_inner(Message::Sent(key, account, result));
+            }
             Message::Sent(key, account, result) => {
                 self.pending_ops -= 1;
                 if account == self.account_id
@@ -1723,7 +1764,7 @@ impl App {
                     draft.pending = false;
                     match result {
                         Ok(()) => {
-                            draft.attachment = None;
+                            draft.attachments.clear();
                             draft.reply = None;
                             draft.markdown.emoji.clear();
                             draft.markdown.mentions.clear();
@@ -3576,7 +3617,7 @@ impl App {
                 .size(14)
                 .padding(editor_padding)
                 .style(shell::composer_editor_style)
-                .placeholder(if draft.attachment.is_some() {
+                .placeholder(if !draft.attachments.is_empty() {
                     "Add a caption…"
                 } else if thread {
                     "Reply to this thread…"
@@ -3606,8 +3647,8 @@ impl App {
             let reserved = 94.0
                 + 180.0
                 + if preview.is_some() { 164.0 } else { 0.0 }
-                + if draft.attachment.is_some() {
-                    50.0
+                + if !draft.attachments.is_empty() {
+                    (draft.attachments.len() as f32 * 36.0).min(108.0) + 16.0
                 } else {
                     0.0
                 }
@@ -3618,7 +3659,7 @@ impl App {
             let editor = composer_editor::view(
                 editor.into(),
                 &draft.content,
-                if draft.attachment.is_none() {
+                if draft.attachments.is_empty() {
                     &draft.markdown.named_mentions
                 } else {
                     &[]
@@ -3663,7 +3704,7 @@ impl App {
                 && self.pending_ops < MAX_PENDING_OPERATIONS
                 && pane.is_some_and(|pane| pane.composer.is_some() || self.demo.is_some())
                 && !self.attachment_picking(&key)
-                && (!draft.content.text().trim().is_empty() || draft.attachment.is_some())
+                && (!draft.content.text().trim().is_empty() || !draft.attachments.is_empty())
             {
                 send = send.on_press(Message::Send(key.clone()));
             }

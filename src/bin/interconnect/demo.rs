@@ -699,31 +699,36 @@ impl Demo {
         &mut self,
         key: &DraftKey,
         body: String,
-        attachment: Option<interconnect::attachment::Attachment>,
+        attachments: Vec<interconnect::attachment::Attachment>,
+        reply: Option<String>,
     ) {
-        let Some(attachment) = attachment else {
+        if attachments.is_empty() {
             return self.send(key, body);
-        };
-        let label = if body.trim().is_empty() {
-            attachment.filename
-        } else {
-            format!("{}\n{}", attachment.filename, body)
-        };
-        self.send(key, label);
-        for target in [
-            key.clone(),
-            DraftKey {
-                room: key.room.clone(),
-                root: None,
-            },
-        ] {
-            if let Some(row) = self
-                .conversations
-                .get_mut(&target)
-                .and_then(|rows| rows.last_mut())
-            {
-                row.edit_source = None;
+        }
+        for (index, attachment) in attachments.into_iter().enumerate() {
+            let body = if index == 0 { body.as_str() } else { "" };
+            let label = if body.trim().is_empty() {
+                attachment.filename
+            } else {
+                format!("{}\n{}", attachment.filename, body)
+            };
+            self.send(key, label);
+            for target in [
+                key.clone(),
+                DraftKey {
+                    room: key.room.clone(),
+                    root: None,
+                },
+            ] {
+                if let Some(row) = self
+                    .conversations
+                    .get_mut(&target)
+                    .and_then(|rows| rows.last_mut())
+                {
+                    row.edit_source = None;
+                }
             }
+            self.set_sent_reply(key, reply.clone());
         }
         // Demo sends stay entirely in memory; never upload or read file contents.
     }

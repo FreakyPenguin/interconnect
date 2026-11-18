@@ -266,7 +266,7 @@ impl App {
             && self
                 .drafts
                 .get(key)
-                .is_some_and(|d| !d.pending && d.attachment.is_none())
+                .is_some_and(|d| !d.pending && d.attachments.is_empty())
             && (key.root.is_some()
                 || !self
                     .window_width

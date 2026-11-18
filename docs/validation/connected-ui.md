@@ -35,6 +35,31 @@ Screenshots in the README use only demo data. Capture an ordinary conversation
 with a thread and a separate account-wide search view; keep window size and
 renderer consistent, and check the exported images for clipping or private data.
 
+### Multiple attachments
+
+In demo mode, select several files in one picker, paste a native file list, and
+drop several files into each pane. Repeat selections to append files; check
+selection order, individual removal, long filenames, and scrolling with many files
+at 640×480. Cancel a picker and try a batch containing an inaccessible file or a
+file over 50 MiB: the existing list and caption must survive unchanged. Switch
+rooms/spaces, close/reopen threads, and cancel an edit; each draft must retain its
+own list. Navigate or change accounts during file preparation to reject stale
+results. Lists remain in memory and do not survive restart.
+
+Send with/without a caption and with a reply target. Expect one message per file,
+the caption only on the first, and the reply target on every file. Demo sends
+must remain local even if a selected file disappears after staging. In an
+authorized connected test profile, remove the second file after staging: the
+first should queue, the remaining files should stay staged, and retry should
+send only those remaining after fixing/removing the missing file. Failure before
+the first file queues must preserve the caption. Check room and thread relations,
+encryption, offline queue/retry, and close during a batch.
+
+Automated tests cover multi-file staging, removal, pane routing, demo sends,
+partial completion handling, stale results, and local clipboard file-list
+validation. Native picker/clipboard/drop behavior and real-server batch delivery
+still require the acceptance checks above.
+
 ### Ordinary replies
 
 Hover a synced message and choose **Reply**, or use **Reply** in its context menu.

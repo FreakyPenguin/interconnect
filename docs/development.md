@@ -252,7 +252,12 @@ See [account checks](validation/connected-ui.md#native-macos-account-storage).
 Linux file picking uses the desktop portal; macOS uses a native picker. Pasted
 files and picker results must be accessible from the client environment: mount
 host-selected paths at the same paths when using a container. Paste prefers file
-lists, then images, then text. One file up to 50 MiB may be attached per send.
+lists, then images, then text. Multiple files may be attached per send, up to
+50 MiB each. Picker, paste, and drop selections append to the current
+conversation’s draft. Each file sends
+as its own message in selection order, with the caption on the first file.
+If queue admission fails partway through, only the remaining files stay staged;
+the caption clears once its file has been queued.
 
 Open attachments through `xdg-open` on Linux or `open` on macOS; temporary files
 remain until quit so the external application can read them. File drops use the

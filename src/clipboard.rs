@@ -7,6 +7,7 @@ use crate::attachment::Attachment;
 #[derive(Clone)]
 pub enum Content {
     Attachment(Attachment),
+    Attachments(Vec<Attachment>),
     Text(String),
     Empty,
 }
@@ -14,6 +15,7 @@ impl std::fmt::Debug for Content {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Attachment(attachment) => attachment.fmt(f),
+            Self::Attachments(attachments) => attachments.fmt(f),
             Self::Text(_) => f.write_str("ClipboardText"),
             Self::Empty => f.write_str("Empty"),
         }
@@ -26,7 +28,7 @@ pub enum Error {
 }
 
 enum Native {
-    File(PathBuf),
+    Files(Vec<PathBuf>),
     Content(Content),
 }
 
@@ -38,10 +40,13 @@ pub async fn read() -> Result<Content, Error> {
     .await
     .map_err(|_| Error::Unavailable)??;
     match native {
-        Native::File(path) => Attachment::from_path(path)
-            .await
-            .map(Content::Attachment)
-            .map_err(Error::Invalid),
+        Native::Files(paths) => {
+            let mut attachments = Vec::with_capacity(paths.len());
+            for path in paths {
+                attachments.push(Attachment::from_path(path).await.map_err(Error::Invalid)?);
+            }
+            Ok(Content::Attachments(attachments))
+        }
         Native::Content(content) => Ok(content),
     }
 }
@@ -73,11 +78,11 @@ fn offered<T>(result: Result<T, arboard::Error>) -> Result<Option<T>, Error> {
     }
 }
 fn read_from(reader: &mut impl Reader) -> Result<Native, Error> {
-    if let Some(files) = offered(reader.files())? {
-        if files.len() > 1 {
-            return Err(Error::Invalid("Paste one file at a time.".into()));
-        }
-        if let Some(path) = files.into_iter().next() {
+    if let Some(files) = offered(reader.files())?
+        && !files.is_empty()
+    {
+        let mut paths = Vec::with_capacity(files.len());
+        for path in files {
             // Never interpret text paths/URLs as file copies or fetch remote URLs.
             let path = if path.is_absolute() {
                 path
@@ -88,9 +93,11 @@ fn read_from(reader: &mut impl Reader) -> Result<Native, Error> {
                     "Only local clipboard files can be attached.".into(),
                 ));
             };
-            return Ok(Native::File(path));
+            paths.push(path);
         }
+        return Ok(Native::Files(paths));
     }
+
     if let Some(image) = offered(reader.image())? {
         return encode_image(image)
             .map(|attachment| Native::Content(Content::Attachment(attachment)));
@@ -185,22 +192,24 @@ mod tests {
     }
 
     #[test]
-    fn native_files_take_priority_and_multiple_or_remote_files_are_rejected() {
+    fn native_file_lists_take_priority_and_remote_files_are_rejected() {
         let mut fixture = Fixture {
             files: vec!["/tmp/local fixture.png".into()],
             image: Some(pixels()),
             ..Default::default()
         };
         assert!(
-            matches!(read_from(&mut fixture), Ok(Native::File(path)) if path == std::path::Path::new("/tmp/local fixture.png"))
+            matches!(read_from(&mut fixture), Ok(Native::Files(paths)) if paths == vec![PathBuf::from("/tmp/local fixture.png")])
         );
         fixture.files = vec!["/one".into(), "/two".into()];
-        assert!(matches!(read_from(&mut fixture), Err(Error::Invalid(_))));
+        assert!(
+            matches!(read_from(&mut fixture), Ok(Native::Files(paths)) if paths == vec![PathBuf::from("/one"), PathBuf::from("/two")])
+        );
         fixture.files = vec!["remote.example/image.png".into()];
         assert!(matches!(read_from(&mut fixture), Err(Error::Invalid(_))));
         fixture.files = vec!["localhost/tmp/image.png".into()];
         assert!(
-            matches!(read_from(&mut fixture), Ok(Native::File(path)) if path == std::path::Path::new("/tmp/image.png"))
+            matches!(read_from(&mut fixture), Ok(Native::Files(paths)) if paths == vec![PathBuf::from("/tmp/image.png")])
         );
     }
 
@@ -254,9 +263,10 @@ mod tests {
         let file = dir.path().join("clipboard #fixture.txt");
         std::fs::write(&file, "local fixture").unwrap();
         owner.set().file_list(&[&file]).unwrap();
-        let Content::Attachment(attachment) = read().await.unwrap() else {
+        let Content::Attachments(attachments) = read().await.unwrap() else {
             panic!("native file missing");
         };
+        let attachment = attachments.into_iter().next().unwrap();
         assert_eq!(attachment.filename, "clipboard #fixture.txt");
         assert_eq!(attachment.read().await.unwrap().bytes, b"local fixture");
         owner
@@ -266,7 +276,7 @@ mod tests {
             matches!(read().await.unwrap(), Content::Text(text) if text == "file:///tmp/plain%20text.png\ntext fixture")
         );
         owner.set().file_list(&[&file, &file]).unwrap();
-        assert!(matches!(read().await, Err(Error::Invalid(_))));
+        assert!(matches!(read().await, Ok(Content::Attachments(files)) if files.len() == 2));
         owner.clear().unwrap();
         assert!(matches!(read().await.unwrap(), Content::Empty));
     }

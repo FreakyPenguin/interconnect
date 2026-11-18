@@ -2,7 +2,7 @@
 use super::{App, DraftKey, Message, current_pane, shell};
 use iced::{
     Element, Task,
-    widget::{button, container, row, text, tooltip},
+    widget::{button, column, container, row, scrollable, text, tooltip},
 };
 use interconnect::{attachment::Attachment, clipboard};
 
@@ -22,12 +22,11 @@ pub struct Paste {
 #[derive(Clone, Debug)]
 pub enum Event {
     Pick(Target),
-    Drop(Target, std::path::PathBuf),
-    DropRejected(Target),
+    Drop(Target, Vec<std::path::PathBuf>),
     Paste(Target),
     Pasted(Target, Result<clipboard::Content, clipboard::Error>),
-    Picked(Target, Result<Option<Attachment>, String>),
-    Remove(Target),
+    Picked(Target, Result<Vec<Attachment>, String>),
+    Remove(Target, usize),
 }
 
 impl App {
@@ -91,21 +90,27 @@ impl App {
                 return Task::perform(
                     async move {
                         let result = match rfd::AsyncFileDialog::new()
-                            .set_title("Attach a file")
-                            .pick_file()
+                            .set_title("Attach files")
+                            .pick_files()
                             .await
                         {
-                            Some(file) => Attachment::from_path(file.path().to_owned())
+                            Some(files) => {
+                                prepare_files(
+                                    files
+                                        .into_iter()
+                                        .map(|file| file.path().to_owned())
+                                        .collect(),
+                                )
                                 .await
-                                .map(Some),
-                            None => Ok(None),
+                            }
+                            None => Ok(Vec::new()),
                         };
                         (target, result)
                     },
                     |(target, result)| Message::Attachment(Event::Picked(target, result)),
                 );
             }
-            Event::Drop(target, path)
+            Event::Drop(target, paths)
                 if self
                     .attachment_drop_target(&target.key, target.generation)
                     .as_ref()
@@ -114,18 +119,9 @@ impl App {
                 self.attachment_picker = Some(target.clone());
                 self.emoji_completion.clear();
                 self.user_completion.clear();
-                return Task::perform(Attachment::from_path(path), move |result| {
-                    Message::Attachment(Event::Picked(target.clone(), result.map(Some)))
+                return Task::perform(prepare_files(paths), move |result| {
+                    Message::Attachment(Event::Picked(target.clone(), result))
                 });
-            }
-            Event::DropRejected(target)
-                if self
-                    .attachment_drop_target(&target.key, target.generation)
-                    .as_ref()
-                    == Some(&target) =>
-            {
-                self.drafts.get_mut(&target.key).unwrap().error =
-                    Some("Drop one file at a time.".into());
             }
             Event::Paste(target)
                 if self.attachment_picker.is_none()
@@ -176,11 +172,11 @@ impl App {
                 if self.attachment_target_valid(&target) {
                     let draft = self.drafts.get_mut(&target.key).unwrap();
                     match result {
-                        Ok(Some(attachment)) => {
-                            draft.attachment = Some(attachment);
+                        Ok(attachments) if !attachments.is_empty() => {
+                            draft.attachments.extend(attachments);
                             draft.error = None;
                         }
-                        Ok(None) => {}
+                        Ok(_) => {}
                         Err(error) => draft.error = Some(error),
                     }
                     return iced::widget::operation::focus(if target.key.root.is_some() {
@@ -190,11 +186,13 @@ impl App {
                     });
                 }
             }
-            Event::Remove(target)
+            Event::Remove(target, index)
                 if self.clipboard_paste.is_none() && self.attachment_target_valid(&target) =>
             {
                 let draft = self.drafts.get_mut(&target.key).unwrap();
-                draft.attachment = None;
+                if index < draft.attachments.len() {
+                    draft.attachments.remove(index);
+                }
                 draft.error = None;
             }
             _ => {}
@@ -228,8 +226,12 @@ impl App {
         }
         let draft = self.drafts.get_mut(&target.key).unwrap();
         match result {
+            Ok(clipboard::Content::Attachments(attachments)) => {
+                draft.attachments.extend(attachments);
+                draft.error = None;
+            }
             Ok(clipboard::Content::Attachment(attachment)) => {
-                draft.attachment = Some(attachment);
+                draft.attachments.push(attachment);
                 draft.error = None;
             }
             Ok(clipboard::Content::Text(text)) => {
@@ -315,7 +317,7 @@ impl App {
         }
         super::tooltips::tooltip(
             container(pick).id("composer-attachment"),
-            "Attach a file (up to 50 MiB)",
+            "Attach files (up to 50 MiB each)",
             tooltip::Position::Top,
         )
         .into()
@@ -327,42 +329,64 @@ impl App {
         generation: u64,
     ) -> Option<Element<'_, Message>> {
         let draft = self.drafts.get(key)?;
-        let attachment = draft.attachment.as_ref()?;
-        let target = self.attachment_target(key, generation);
-        let mut remove = button(super::icons::icon(super::icons::Kind::Close))
-            .padding([2, 6])
-            .style(shell::icon_button);
-        if self.clipboard_paste.is_none() && self.attachment_target_valid(&target) {
-            remove = remove.on_press(Message::Attachment(Event::Remove(target)));
+        if draft.attachments.is_empty() {
+            return None;
         }
+        let target = self.attachment_target(key, generation);
+        let chips = draft
+            .attachments
+            .iter()
+            .enumerate()
+            .map(|(index, attachment)| {
+                let mut remove = button(super::icons::icon(super::icons::Kind::Close))
+                    .padding([2, 6])
+                    .style(shell::icon_button);
+                if self.clipboard_paste.is_none() && self.attachment_target_valid(&target) {
+                    remove =
+                        remove.on_press(Message::Attachment(Event::Remove(target.clone(), index)));
+                }
+                container(
+                    row![
+                        super::tooltips::tooltip(
+                            super::single_line::label(&attachment.filename, 12),
+                            &attachment.filename,
+                            tooltip::Position::Top,
+                        ),
+                        text(format!("{} KiB", attachment.size.div_ceil(1024)))
+                            .size(11)
+                            .style(shell::muted_text),
+                        remove
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding([4, 8])
+                .style(|theme| container::Style {
+                    border: iced::Border {
+                        color: shell::palette(theme).line,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..shell::surface(theme, shell::palette(theme).toolbar)
+                })
+                .into()
+            });
         Some(
-            container(
-                row![
-                    super::tooltips::tooltip(
-                        super::single_line::label(&attachment.filename, 12),
-                        &attachment.filename,
-                        tooltip::Position::Top,
-                    ),
-                    text(format!("{} KiB", attachment.size.div_ceil(1024)))
-                        .size(11)
-                        .style(shell::muted_text),
-                    remove
-                ]
-                .spacing(8)
-                .align_y(iced::Alignment::Center),
-            )
-            .padding([4, 8])
-            .style(|theme| container::Style {
-                border: iced::Border {
-                    color: shell::palette(theme).line,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..shell::surface(theme, shell::palette(theme).toolbar)
-            })
-            .into(),
+            scrollable(column(chips).spacing(4))
+                .height(iced::Length::Fixed(
+                    (draft.attachments.len() as f32 * 36.0).min(108.0),
+                ))
+                .into(),
         )
     }
+}
+
+async fn prepare_files(paths: Vec<std::path::PathBuf>) -> Result<Vec<Attachment>, String> {
+    let mut attachments = Vec::with_capacity(paths.len());
+    for path in paths {
+        attachments.push(Attachment::from_path(path).await?);
+    }
+    Ok(attachments)
 }
 
 #[cfg(test)]
@@ -388,9 +412,179 @@ mod tests {
         app.attachment_target(&key, generation)
     }
 
-    fn picked(app: &mut App, target: &Target, result: Result<Option<Attachment>, String>) {
+    fn picked(app: &mut App, target: &Target, result: Result<Vec<Attachment>, String>) {
         app.attachment_picker = Some(target.clone());
         let _ = app.update(Message::Attachment(Event::Picked(target.clone(), result)));
+    }
+
+    #[tokio::test]
+    async fn selections_append_remove_individually_and_send_in_order_with_one_caption() {
+        for thread in [false, true] {
+            let (dir, first) = fixture().await;
+            let path = dir.path().join("second.txt");
+            std::fs::write(&path, "second").unwrap();
+            let second = Attachment::from_path(path).await.unwrap();
+            let mut app = demo_app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let target = target(&app, thread);
+            picked(&mut app, &target, Ok(vec![first.clone(), second.clone()]));
+            begin_paste(&mut app, &target);
+            let _ = app.update(Message::Attachment(Event::Pasted(
+                target.clone(),
+                Ok(clipboard::Content::Attachments(vec![first, second])),
+            )));
+            assert_eq!(app.drafts[&target.key].attachments.len(), 4);
+            let _ = app.update(Message::Attachment(Event::Remove(target.clone(), 1)));
+            let _ = app.update(Message::Attachment(Event::Remove(target.clone(), 1)));
+            assert_eq!(
+                app.drafts[&target.key]
+                    .attachments
+                    .iter()
+                    .map(|a| a.filename.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["fixture.txt", "second.txt"]
+            );
+            picked(&mut app, &target, Ok(vec![])); // Cancelling preserves the list.
+            picked(&mut app, &target, Err("invalid selection".into()));
+            assert_eq!(app.drafts[&target.key].attachments.len(), 2);
+            let draft = app.drafts.get_mut(&target.key).unwrap();
+            draft.content = iced::widget::text_editor::Content::with_text("caption");
+            draft.reply = Some(if thread { "review-reply-1" } else { "review" }.into());
+            // Demo must not read or upload files at send time.
+            drop(dir);
+            let _ = app.update(Message::Send(target.key.clone()));
+            let pane = if thread {
+                app.model.thread.as_ref()
+            } else {
+                app.model.room.as_ref()
+            }
+            .unwrap();
+            let rows = &pane.rows[pane.rows.len() - 2..];
+            assert_eq!(rows[0].body, "fixture.txt\ncaption");
+            assert_eq!(rows[1].body, "second.txt");
+            assert!(rows.iter().all(|row| row.reply.is_some()));
+            assert!(app.drafts[&target.key].attachments.is_empty());
+            assert_eq!(app.pending_ops, 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn long_attachment_lists_keep_send_visible_in_small_room_and_thread_panes() {
+        use iced::advanced::{Layout, layout, widget};
+        #[derive(Default)]
+        struct Probe(Option<iced::Rectangle>);
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("composer-send")) {
+                    self.0 = Some(bounds);
+                }
+            }
+        }
+        let (_dir, mut attachment) = fixture().await;
+        attachment.filename = "Long attachment name 🌍 ".repeat(30);
+        for thread in [false, true] {
+            let mut app = demo_app();
+            let _ = app.update(Message::Thread("review".into()));
+            let target = target(&app, thread);
+            picked(&mut app, &target, Ok(vec![attachment.clone(); 50]));
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+            let size = iced::Size::new(300.0, 446.0);
+            let mut view = app.pane(thread);
+            let mut tree = widget::Tree::new(&view);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            let mut probe = Probe::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+            let send = probe.0.unwrap();
+            assert!(send.x >= 0.0 && send.y >= 0.0);
+            assert!(send.x + send.width <= size.width);
+            assert!(send.y + send.height <= size.height);
+        }
+    }
+
+    #[tokio::test]
+    async fn batch_preparation_is_atomic_and_preserves_selection_order() {
+        let (dir, _) = fixture().await;
+        let first = dir.path().join("fixture.txt");
+        let second = dir.path().join("second.txt");
+        std::fs::write(&second, "second").unwrap();
+        let prepared = prepare_files(vec![second.clone(), first.clone()])
+            .await
+            .unwrap();
+        assert_eq!(
+            prepared
+                .iter()
+                .map(|a| a.filename.as_str())
+                .collect::<Vec<_>>(),
+            vec!["second.txt", "fixture.txt"]
+        );
+        assert!(
+            prepare_files(vec![first, dir.path().join("missing"), second])
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn partial_queue_completion_retains_only_unsent_files_and_ignores_old_accounts() {
+        let (_dir, attachment) = fixture().await;
+        let mut app = demo_app();
+        let room = target(&app, false);
+        picked(&mut app, &room, Ok(vec![attachment.clone(); 3]));
+        let draft = app.drafts.get_mut(&room.key).unwrap();
+        draft.content = iced::widget::text_editor::Content::with_text("caption");
+        draft.reply = Some("review".into());
+        draft.pending = true;
+        app.pending_ops = 1;
+        let _ = app.update(Message::AttachmentsSent(
+            room.key.clone(),
+            Some("old account".into()),
+            2,
+            Err("stale".into()),
+        ));
+        assert_eq!(app.drafts[&room.key].attachments.len(), 3);
+        assert_eq!(app.drafts[&room.key].content.text().trim(), "caption");
+        app.pending_ops = 1;
+        let _ = app.update(Message::AttachmentsSent(
+            room.key.clone(),
+            app.account_id.clone(),
+            0,
+            Err("first failed".into()),
+        ));
+        assert_eq!(app.drafts[&room.key].attachments.len(), 3);
+        assert_eq!(app.drafts[&room.key].content.text().trim(), "caption");
+        // Completion must still update the original draft after navigating away.
+        let _ = app.update(Message::Room("threads".into()));
+        app.pending_ops = 1;
+        let _ = app.update(Message::AttachmentsSent(
+            room.key.clone(),
+            app.account_id.clone(),
+            1,
+            Err("second failed".into()),
+        ));
+        let draft = &app.drafts[&room.key];
+        assert_eq!(draft.attachments.len(), 2);
+        assert!(draft.content.text().trim().is_empty());
+        assert_eq!(draft.reply.as_deref(), Some("review"));
+        assert!(!draft.pending);
+        assert!(draft.error.as_ref().unwrap().contains("second failed"));
+        assert_eq!(app.pending_ops, 0);
+        app.pending_ops = 1;
+        let _ = app.update(Message::AttachmentsSent(
+            room.key.clone(),
+            app.account_id.clone(),
+            0,
+            Ok(()),
+        ));
+        assert!(app.drafts[&room.key].attachments.is_empty());
+        assert!(app.drafts[&room.key].reply.is_none());
     }
 
     #[tokio::test]
@@ -398,19 +592,19 @@ mod tests {
         let (_dir, attachment) = fixture().await;
         let mut app = demo_app();
         let room = target(&app, false);
-        picked(&mut app, &room, Ok(Some(attachment.clone())));
+        picked(&mut app, &room, Ok(vec![attachment.clone()]));
         let _ = app.update(Message::Thread("$kickoff".into()));
         let thread = target(&app, true);
-        picked(&mut app, &thread, Ok(Some(attachment)));
+        picked(&mut app, &thread, Ok(vec![attachment]));
         app.drafts.get_mut(&thread.key).unwrap().content =
             iced::widget::text_editor::Content::with_text("caption");
         let _ = app.update(Message::CloseThread);
         let _ = app.update(Message::Thread("$kickoff".into()));
-        assert!(app.drafts[&room.key].attachment.is_some());
-        assert!(app.drafts[&thread.key].attachment.is_some());
+        assert!(!app.drafts[&room.key].attachments.is_empty());
+        assert!(!app.drafts[&thread.key].attachments.is_empty());
         let _ = app.update(Message::Send(thread.key.clone()));
-        assert!(app.drafts[&thread.key].attachment.is_none());
-        assert!(app.drafts[&room.key].attachment.is_some());
+        assert!(app.drafts[&thread.key].attachments.is_empty());
+        assert!(!app.drafts[&room.key].attachments.is_empty());
         assert!(
             app.model
                 .thread
@@ -422,7 +616,7 @@ mod tests {
                     && row.thread_root.as_deref() == Some("$kickoff"))
         );
         let _ = app.update(Message::Send(room.key.clone()));
-        assert!(app.drafts[&room.key].attachment.is_none());
+        assert!(app.drafts[&room.key].attachments.is_empty());
         assert!(
             app.model
                 .room
@@ -442,18 +636,18 @@ mod tests {
         let original = target(&app, false);
         let _ = app.update(Message::Room("threads".into()));
         let _ = app.update(Message::Room(original.key.room.clone()));
-        picked(&mut app, &original, Ok(Some(attachment.clone())));
-        assert!(app.drafts[&original.key].attachment.is_none());
+        picked(&mut app, &original, Ok(vec![attachment.clone()]));
+        assert!(app.drafts[&original.key].attachments.is_empty());
         let current = target(&app, false);
         app.account_id = Some("@other:example.org".into());
-        picked(&mut app, &current, Ok(Some(attachment.clone())));
-        assert!(app.drafts[&original.key].attachment.is_none());
+        picked(&mut app, &current, Ok(vec![attachment.clone()]));
+        assert!(app.drafts[&original.key].attachments.is_empty());
         let current = target(&app, false);
-        picked(&mut app, &current, Ok(Some(attachment)));
-        picked(&mut app, &current, Ok(None));
-        assert!(app.drafts[&original.key].attachment.is_some());
-        let _ = app.update(Message::Attachment(Event::Remove(current)));
-        assert!(app.drafts[&original.key].attachment.is_none());
+        picked(&mut app, &current, Ok(vec![attachment]));
+        picked(&mut app, &current, Ok(vec![]));
+        assert!(!app.drafts[&original.key].attachments.is_empty());
+        let _ = app.update(Message::Attachment(Event::Remove(current, 0)));
+        assert!(app.drafts[&original.key].attachments.is_empty());
     }
 
     #[tokio::test]
@@ -461,20 +655,20 @@ mod tests {
         let (_dir, attachment) = fixture().await;
         let mut app = demo_app();
         let room = target(&app, false);
-        picked(&mut app, &room, Ok(Some(attachment)));
+        picked(&mut app, &room, Ok(vec![attachment]));
         app.drafts.get_mut(&room.key).unwrap().content =
             iced::widget::text_editor::Content::with_text("keep caption");
         app.drafts.get_mut(&room.key).unwrap().pending = true;
         app.pending_ops = 1;
-        let _ = app.update(Message::Attachment(Event::Remove(room.clone())));
-        assert!(app.drafts[&room.key].attachment.is_some());
+        let _ = app.update(Message::Attachment(Event::Remove(room.clone(), 0)));
+        assert!(!app.drafts[&room.key].attachments.is_empty());
         let _ = app.update(Message::Room("threads".into()));
         let _ = app.update(Message::Sent(
             room.key.clone(),
             app.account_id.clone(),
             Err("fixture queue error".into()),
         ));
-        assert!(app.drafts[&room.key].attachment.is_some());
+        assert!(!app.drafts[&room.key].attachments.is_empty());
         assert!(app.drafts[&room.key].error.is_some());
         assert_eq!(app.drafts[&room.key].content.text().trim(), "keep caption");
         // Completion from a previous account must not clear this account's draft.
@@ -484,14 +678,14 @@ mod tests {
             Some("@old:example.org".into()),
             Ok(()),
         ));
-        assert!(app.drafts[&room.key].attachment.is_some());
+        assert!(!app.drafts[&room.key].attachments.is_empty());
         app.pending_ops = 1;
         let _ = app.update(Message::Sent(
             room.key.clone(),
             app.account_id.clone(),
             Ok(()),
         ));
-        assert!(app.drafts[&room.key].attachment.is_none());
+        assert!(app.drafts[&room.key].attachments.is_empty());
         assert!(app.drafts[&room.key].content.text().trim().is_empty());
     }
     fn begin_paste(app: &mut App, target: &Target) {
@@ -515,7 +709,7 @@ mod tests {
             Ok(clipboard::Content::Attachment(attachment.clone())),
         )));
         assert!(app.clipboard_paste.is_none());
-        assert!(app.drafts[&room.key].attachment.is_some());
+        assert!(!app.drafts[&room.key].attachments.is_empty());
         assert_eq!(app.drafts[&room.key].content.text().trim(), "caption");
         let _ = app.update(Message::Thread("$kickoff".into()));
         let thread = target(&app, true);
@@ -524,8 +718,8 @@ mod tests {
             thread.clone(),
             Ok(clipboard::Content::Attachment(attachment)),
         )));
-        assert!(app.drafts[&thread.key].attachment.is_some());
-        assert!(app.drafts[&room.key].attachment.is_some());
+        assert!(!app.drafts[&thread.key].attachments.is_empty());
+        assert!(!app.drafts[&room.key].attachments.is_empty());
         assert_eq!(app.pending_ops, 0);
     }
 
@@ -541,7 +735,7 @@ mod tests {
             room.clone(),
             Ok(clipboard::Content::Attachment(attachment.clone())),
         )));
-        assert!(app.drafts[&room.key].attachment.is_none());
+        assert!(app.drafts[&room.key].attachments.is_empty());
         let current = target(&app, false);
         begin_paste(&mut app, &current);
         app.account_id = Some("@different:example.org".into());
@@ -549,9 +743,9 @@ mod tests {
             current.clone(),
             Ok(clipboard::Content::Attachment(attachment.clone())),
         )));
-        assert!(app.drafts[&current.key].attachment.is_none());
+        assert!(app.drafts[&current.key].attachments.is_empty());
         let current = target(&app, false);
-        app.drafts.get_mut(&current.key).unwrap().attachment = Some(attachment);
+        app.drafts.get_mut(&current.key).unwrap().attachments = vec![attachment];
         begin_paste(&mut app, &current);
         let _ = app.update(Message::Edit(
             current.key.clone(),
@@ -562,13 +756,13 @@ mod tests {
             Ok(clipboard::Content::Text("old paste".into())),
         )));
         assert_eq!(app.drafts[&current.key].content.text().trim(), "x");
-        assert!(app.drafts[&current.key].attachment.is_some());
+        assert!(!app.drafts[&current.key].attachments.is_empty());
         begin_paste(&mut app, &current);
         let _ = app.update(Message::Attachment(Event::Pasted(
             current.clone(),
             Err(clipboard::Error::Invalid("fixture failure".into())),
         )));
-        assert!(app.drafts[&current.key].attachment.is_some());
+        assert!(!app.drafts[&current.key].attachments.is_empty());
         assert_eq!(
             app.drafts[&current.key].error.as_deref(),
             Some("fixture failure")
@@ -603,7 +797,7 @@ mod tests {
             app.drafts[&room.key].content.text().trim_end(),
             "hello 🌍\nnext line"
         );
-        assert!(app.drafts[&room.key].attachment.is_none());
+        assert!(app.drafts[&room.key].attachments.is_empty());
         assert!(app.clipboard_paste.is_none());
     }
 
@@ -712,34 +906,37 @@ mod tests {
             iced::widget::text_editor::Content::with_text("caption");
         let _ = app.update(Message::Attachment(Event::Drop(
             room.clone(),
-            "/fixture".into(),
+            vec!["/fixture".into()],
         )));
         assert!(app.attachment_picker.is_some());
         let _ = app.update(Message::Attachment(Event::Picked(
             room.clone(),
-            Ok(Some(attachment.clone())),
+            Ok(vec![attachment.clone()]),
         )));
-        assert!(app.drafts[&room.key].attachment.is_some());
-        let _ = app.update(Message::Attachment(Event::DropRejected(room.clone())));
+        assert!(!app.drafts[&room.key].attachments.is_empty());
+        picked(&mut app, &room, Err("fixture rejection".into()));
         assert_eq!(app.drafts[&room.key].content.text().trim(), "caption");
-        assert!(app.drafts[&room.key].attachment.is_some());
+        assert!(!app.drafts[&room.key].attachments.is_empty());
         assert_eq!(
             app.drafts[&room.key].error.as_deref(),
-            Some("Drop one file at a time.")
+            Some("fixture rejection")
         );
         let _ = app.update(Message::Attachment(Event::Drop(
             room.clone(),
-            "/fixture".into(),
+            vec!["/fixture".into()],
         )));
         let _ = app.update(Message::Room("threads".into()));
         let _ = app.update(Message::Attachment(Event::Picked(
             room.clone(),
-            Ok(Some(attachment)),
+            Ok(vec![attachment]),
         )));
         assert!(app.attachment_picker.is_none());
         let current = app.draft_key(false).unwrap();
-        assert!(app.drafts[&current].attachment.is_none());
-        let _ = app.update(Message::Attachment(Event::Drop(room, "/stale".into())));
+        assert!(app.drafts[&current].attachments.is_empty());
+        let _ = app.update(Message::Attachment(Event::Drop(
+            room,
+            vec!["/stale".into()],
+        )));
         assert!(app.attachment_picker.is_none());
         app.window_width = Some(640.0);
         let _ = app.update(Message::Thread("$kickoff".into()));

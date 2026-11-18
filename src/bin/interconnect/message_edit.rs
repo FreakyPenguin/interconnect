@@ -299,7 +299,7 @@ impl App {
             && self.drafts.get(key).is_some_and(|draft| {
                 !draft.pending
                     && draft.editing.is_none()
-                    && draft.attachment.is_none()
+                    && draft.attachments.is_empty()
                     && draft.content.text().is_empty()
             })
     }
@@ -480,17 +480,17 @@ mod tests {
             .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
         draft.markdown.format = Format::Plain;
         draft.composer_height = Some(177.0);
-        draft.attachment = Some(
+        draft.attachments = vec![
             interconnect::attachment::Attachment::from_path(file.path().to_owned())
                 .await
                 .unwrap(),
-        );
+        ];
         let cursor = draft.content.cursor();
         app.scroll_positions.insert(key.clone(), 87.0);
         let row = target(&app, false);
         start(&mut app, row.clone());
         assert_eq!(app.drafts[&key].editing.as_ref().unwrap().event, row.event);
-        assert!(app.drafts[&key].attachment.is_none());
+        assert!(app.drafts[&key].attachments.is_empty());
         let selection = app.selection.room.clone();
         let _ = app.update(Message::Space(interconnect::navigation::Scope::All));
         assert_eq!(app.selection.room, selection);
@@ -504,7 +504,7 @@ mod tests {
         assert_eq!(draft.content.cursor(), cursor);
         assert_eq!(draft.markdown.format, Format::Plain);
         assert_eq!(draft.composer_height, Some(177.0));
-        assert!(draft.attachment.is_some());
+        assert!(!draft.attachments.is_empty());
         assert_eq!(app.scroll_positions[&key], 87.0);
     }
     #[tokio::test]

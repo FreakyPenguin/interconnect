@@ -229,14 +229,14 @@ mod tests {
             text_editor::Content::with_text("unsent draft");
         let file = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(file.path(), "reply attachment fixture").unwrap();
-        app.drafts.get_mut(&room).unwrap().attachment = Some(
+        app.drafts.get_mut(&room).unwrap().attachments = vec![
             interconnect::attachment::Attachment::from_path(file.path().to_owned())
                 .await
                 .unwrap(),
-        );
+        ];
         let filename = app.drafts[&room]
-            .attachment
-            .as_ref()
+            .attachments
+            .first()
             .unwrap()
             .filename
             .clone();
@@ -271,7 +271,7 @@ mod tests {
         assert_eq!(app.drafts[&room].content.text(), "unsent draft");
         assert!(app.drafts[&room].reply.is_none());
         assert_eq!(
-            app.drafts[&room].attachment.as_ref().unwrap().filename,
+            app.drafts[&room].attachments.first().unwrap().filename,
             filename
         );
     }

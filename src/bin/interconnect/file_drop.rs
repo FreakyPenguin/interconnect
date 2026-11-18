@@ -89,7 +89,7 @@ impl Widget<Message, Theme, Renderer> for DropZone<'_> {
             cursor.is_over(layout.bounds()) && cursor.is_over(*viewport) && self.target.is_some();
         match event {
             Event::Window(iced::window::Event::FileHovered(path)) => {
-                if state.files.len() < 2 && !state.files.contains(path) {
+                if !state.files.contains(path) {
                     state.files.push(path.clone());
                 }
             }
@@ -103,11 +103,13 @@ impl Widget<Message, Theme, Renderer> for DropZone<'_> {
             {
                 state.claimed = true;
                 let target = self.target.as_ref().unwrap().clone();
-                shell.publish(Message::Attachment(if state.files.len() > 1 {
-                    AttachmentEvent::DropRejected(target)
-                } else {
-                    AttachmentEvent::Drop(target, path.clone())
-                }));
+                if !state.files.contains(path) {
+                    state.files.push(path.clone());
+                }
+                shell.publish(Message::Attachment(AttachmentEvent::Drop(
+                    target,
+                    state.files.clone(),
+                )));
                 shell.capture_event();
             }
             _ => {}
@@ -154,11 +156,7 @@ impl Widget<Message, Theme, Renderer> for DropZone<'_> {
                 renderer::Quad {
                     bounds: layout.bounds().shrink(4.0),
                     border: iced::Border {
-                        color: if state.files.len() > 1 {
-                            theme.extended_palette().danger.base.color
-                        } else {
-                            shell::palette(theme).accent
-                        },
+                        color: shell::palette(theme).accent,
                         width: 2.0,
                         radius: 8.0.into(),
                     },
@@ -294,12 +292,12 @@ mod tests {
                 .collect();
             assert_eq!(messages.len(), 1);
             assert!(
-                matches!(&messages[0], Message::Attachment(AttachmentEvent::Drop(target, path)) if target == &expected && path == &file)
+                matches!(&messages[0], Message::Attachment(AttachmentEvent::Drop(target, path)) if target == &expected && path == &vec![file.clone()])
             );
         }
     }
     #[test]
-    fn multiple_files_are_rejected_once_and_hover_does_not_send_application_messages() {
+    fn multiple_files_are_staged_once_and_hover_does_not_send_application_messages() {
         let app = app();
         let expected = target(&app, false);
         let mut view = view(
@@ -347,7 +345,7 @@ mod tests {
             point,
         );
         assert!(
-            matches!(messages.as_slice(), [Message::Attachment(AttachmentEvent::DropRejected(target))] if target == &expected)
+            matches!(messages.as_slice(), [Message::Attachment(AttachmentEvent::Drop(target, paths))] if target == &expected && paths == &vec![PathBuf::from("/one"), PathBuf::from("/two")])
         );
         assert!(
             dispatch(

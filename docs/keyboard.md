@@ -87,7 +87,8 @@ shortcuts. Space navigation and type-to-jump schedule no periodic work.
 | Ctrl+Backspace/Delete (macOS: Option+Backspace/Delete) | Delete the preceding/following word. |
 
 Pasting into a composer prefers native file lists, then clipboard images, then
-text. Attachments are limited to one file per send, up to 50 MiB.
+text. Pick, paste, or drop multiple attachments, up to 50 MiB each. Remove files
+individually before sending. The caption goes on the first file.
 
 Type a colon and at least two query characters, such as `:sm`, to open emoji
 completion. Up/Down selects a suggestion, Enter or Tab inserts it, and Escape
