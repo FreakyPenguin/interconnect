@@ -93,7 +93,8 @@ Command+Shift+L) toggles it directly without moving focus.
 The breadcrumb bar replaces the space rail. Its Home arrow and per-level menus
 support expandable branches; the account menu lives at the top right. Shared
 spaces retain the path used to reach them, and cycles cannot expand indefinitely.
-The sidebar contains room sections; space navigation stays in the breadcrumb menus.
+The sidebar contains room sections. Ctrl+Shift+P (macOS: Command+Shift+P) opens
+a space picker with icons and breadcrumb trails; typing searches names and paths.
 Selecting a space changes the room list without switching the open conversation.
 
 The selected location, path, expanded branches, and per-location subspace toggles

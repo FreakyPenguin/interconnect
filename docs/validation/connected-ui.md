@@ -215,6 +215,14 @@ hierarchy through the breadcrumb menus and Home's arrow.
 Breadcrumbs and dropdown rows show the space avatar, with an initial fallback
 while missing, loading, or failed. Cached avatar arrival and replacement must
 keep icon dimensions, row heights, focus, and the open conversation stable.
+Open the space picker with Ctrl+Shift+P (macOS: Command+Shift+P), including from
+the composer, room filter, and breadcrumb menus. Check icons, smaller breadcrumb
+trails, duplicate space names, and filtering by ancestor and descendant names.
+Up/Down must wrap through matches; Enter or a click selects the location without
+switching the room/thread or changing drafts and reading positions. Escape
+returns to the composer, Tab keeps the current search mode, and Ctrl+P switches
+to rooms. Check empty results and rename/removal/link changes while the picker
+is open; stale choices must be ignored. An account change must close the picker.
 At 640×480 and with long names/paths, the current breadcrumb, Home, and account
 avatar must remain usable; overflow/root menus must expose hidden ancestors.
 Check the [keyboard model](../keyboard.md#space-navigation), including one
@@ -227,8 +235,9 @@ expanded branches and toggles restore. An older All rooms preference restores as
 recursive Home. SDK metadata changes must invalidate removed links and stale menu
 actions without changing the open conversation unnecessarily.
 
-Automated fixtures cover filtering, deduplication/cycles, path identity, preference
-compatibility, modal/IME guards, focusable button activation, menu dismissal,
+Automated fixtures cover filtering, deduplication/cycles, path identity, space
+search by name and breadcrumb, stale picker choices, preference compatibility,
+modal/IME guards, focusable button activation, menu dismissal,
 viewport bounds, and absence of scheduled idle redraws. Native macOS appearance,
 VoiceOver, hardware rendering, and connected-account acceptance still require
 the manual checks above; automated fixtures do not establish those behaviors.

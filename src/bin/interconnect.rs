@@ -1884,6 +1884,7 @@ impl App {
         self.validate_emoji_completion();
         self.validate_user_completion();
         self.validate_space_navigation();
+        action_task = Task::batch([action_task, self.refresh_space_picker()]);
         if self.closing && self.pending_ops == 0 {
             if self.stopped {
                 return iced::exit();
@@ -2348,7 +2349,7 @@ impl App {
                 iced::event::listen_with(create_room::shortcut)
             } else if self.new_chat.is_some() && !self.composing {
                 iced::event::listen_with(new_chat::shortcut)
-            } else if self.room_picker.is_some() {
+            } else if self.room_picker.is_some() && !self.composing {
                 iced::event::listen_with(room_picker::shortcut)
             } else if self.verification.open {
                 iced::event::listen_with(|event, _, _| match event {
@@ -3644,6 +3645,9 @@ fn shell_shortcut(
     }
     if room_picker::is_shortcut(key, modifiers) {
         return Some(Message::QuickRoom(room_picker::Event::Open));
+    }
+    if room_picker::is_space_shortcut(key, modifiers) {
+        return Some(Message::QuickRoom(room_picker::Event::OpenSpaces));
     }
     if space_navigation::is_toggle_shortcut(key, modifiers) {
         return Some(Message::SpaceNavigation(

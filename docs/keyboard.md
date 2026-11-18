@@ -12,6 +12,7 @@ sends from the composer on every platform, including macOS.
 | Ctrl+N / Command+N | Start a direct chat. |
 | Ctrl+Shift+N / Command+Shift+N | Create a room. |
 | Ctrl+P / Command+P | Open the quick room switcher. |
+| Ctrl+Shift+P / Command+Shift+P | Open the searchable space picker. |
 | Ctrl+K / Command+K | Focus the sidebar room filter. Enter opens the first matching room. |
 | Ctrl+L / Command+L | Focus the current space breadcrumb (Home at the root). |
 | Ctrl+Shift+L / Command+Shift+L | Toggle Include subspaces for the current space or Home, preserving focus and the room filter. |
@@ -24,12 +25,19 @@ sends from the composer on every platform, including macOS.
 | Tab / Shift+Tab | Move between focusable controls, including breadcrumb, account, Include subspaces, section, and room controls. Other views still have incomplete button traversal. |
 | Escape | Dismiss the active overlay or search/filter; otherwise close People or the thread pane and return focus to the room composer. |
 
-The room switcher and new-chat picker use Up/Down to select, Enter to open,
+The room switcher, space picker, and new-chat picker use Up/Down to select, Enter to open,
 and Escape to close. In room search, Enter steps to the previous match;
 the on-screen arrow buttons navigate both ways. In account-wide search, Enter
 submits the query; Escape returns to the conversation.
 
 ### Space navigation
+
+Ctrl+Shift+P (macOS: Command+Shift+P) lists Home and joined spaces with their
+icons and smaller breadcrumb trails. Typing filters names and paths, including
+loose subsequence matches. Up/Down wraps through results; Enter selects a location
+and focuses its breadcrumb without switching the open room or thread. Escape
+cancels and returns to the composer. Tab refocuses search. Ctrl+P switches to
+room search; Ctrl+Shift+P switches back to space search.
 
 The Home button returns to the root; the arrow beside it opens the complete
 space tree. Each breadcrumb opens the spaces at that level, including its peers.

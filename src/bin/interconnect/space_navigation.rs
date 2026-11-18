@@ -156,7 +156,7 @@ struct Entry {
 }
 
 impl App {
-    fn space_icon(&self, id: &str) -> Element<'static, Message> {
+    pub(super) fn space_icon(&self, id: &str) -> Element<'static, Message> {
         let space = self.model.spaces.iter().find(|space| space.id == id);
         let image = space
             .and_then(|space| space.avatar_url.as_ref())
@@ -665,7 +665,11 @@ impl App {
         let home = super::tooltips::tooltip(home, "Home", iced::widget::tooltip::Position::Bottom);
         let roots = super::tooltips::tooltip(
             roots,
-            "Browse spaces",
+            if cfg!(target_os = "macos") {
+                "Browse spaces · Search: Command+Shift+P"
+            } else {
+                "Browse spaces · Search: Ctrl+Shift+P"
+            },
             iced::widget::tooltip::Position::Bottom,
         );
         let mut trail = row![home, roots].spacing(2).align_y(Alignment::Center);
