@@ -53,7 +53,7 @@ impl Directory {
         self.1.subscribe()
     }
     /// Reuse a joined one-to-one DM; otherwise explicitly create an encrypted DM.
-    /// Once submitted, this write is allowed to finish even if its picker closes.
+    /// Creation is a single attempt; dropping this future cancels pending network work.
     pub async fn open_direct(self, input: String) -> Result<crate::navigation::RoomEntry, String> {
         let user = parse_user_id(&input)?;
         if self.0.user_id() == Some(user.as_ref()) {
@@ -64,31 +64,63 @@ impl Directory {
         let mut opened = self.2.lock().await;
         let cached = opened
             .get(user.as_str())
-            .and_then(|id| self.0.get_room(id))
-            .filter(|room| {
-                room.state() == matrix_sdk::RoomState::Joined && room.active_members_count() <= 2
-            });
-        let room = match cached.or_else(|| {
-            self.0
-                .get_dm_rooms(&user)
-                .find(|room| room.active_members_count() <= 2)
-        }) {
-            Some(room) => room,
-            None => self.0.create_dm(&user).await.map_err(|_| {
-                "Could not open the chat. Check your room list before trying again.".to_owned()
-            })?,
+            .filter(|id| {
+                self.0.get_room(id).is_none_or(|room| {
+                    room.state() == matrix_sdk::RoomState::Joined
+                        && room.active_members_count() <= 2
+                })
+            })
+            .cloned();
+        let existing = self
+            .0
+            .get_dm_rooms(&user)
+            .find(|room| room.active_members_count() <= 2);
+        let id = match cached.or_else(|| existing.as_ref().map(|room| room.room_id().to_owned())) {
+            Some(id) => id,
+            None => {
+                use matrix_sdk::ruma::{
+                    api::client::room::create_room::v3::{Request, RoomPreset},
+                    events::{InitialStateEvent, room::encryption::RoomEncryptionEventContent},
+                };
+                let mut request = Request::new();
+                request.invite = vec![user.clone()];
+                request.is_direct = true;
+                request.preset = Some(RoomPreset::TrustedPrivateChat);
+                request.initial_state = vec![
+                    InitialStateEvent::with_empty_state_key(
+                        RoomEncryptionEventContent::with_recommended_defaults(),
+                    )
+                    .to_raw_any(),
+                ];
+                let id = crate::room_creation::send_create(&self.0, request).await?;
+                // Remember the confirmed ID before ancillary account-data work, so
+                // cancellation or a failed m.direct update cannot recreate this room.
+                opened.insert(user.to_string(), id.clone());
+                let _ = self.1.send(());
+                let _ = tokio::time::timeout(
+                    Duration::from_secs(10),
+                    self.0
+                        .account()
+                        .mark_as_dm(&id, std::slice::from_ref(&user)),
+                )
+                .await;
+                id
+            }
         };
-        opened.insert(user.to_string(), room.room_id().to_owned());
-        let _ = self.1.send(());
+        opened.insert(user.to_string(), id.clone());
+        let room = self.0.get_room(&id);
         Ok(crate::navigation::RoomEntry {
-            id: room.room_id().to_string(),
+            id: id.to_string(),
             name: room
-                .name()
-                .or_else(|| room.cached_display_name().map(|name| name.to_string()))
+                .as_ref()
+                .and_then(|room| {
+                    room.name()
+                        .or_else(|| room.cached_display_name().map(|name| name.to_string()))
+                })
                 .unwrap_or_else(|| user.to_string()),
             direct: true,
             direct_user: Some(user.to_string()),
-            member_count: room.joined_members_count(),
+            member_count: room.as_ref().map_or(1, |room| room.joined_members_count()),
             ..Default::default()
         })
     }
@@ -400,6 +432,73 @@ mod tests {
                 .any(|request| request.url.path().contains("/receipt/")
                     || request.url.path().contains("/read_markers"))
         );
+    }
+
+    #[tokio::test]
+    async fn cancelled_dm_metadata_update_keeps_confirmed_room_reusable() {
+        let server = MockServer::start().await;
+        let client = direct_fixture(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/_matrix/client/v3/createRoom"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"room_id":"!new:example.org"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let metadata_started = Arc::new(tokio::sync::Notify::new());
+        let notify = metadata_started.clone();
+        Mock::given(method("GET"))
+            .and(path(
+                "/_matrix/client/v3/user/@test:example.org/account_data/m.direct",
+            ))
+            .respond_with(move |_: &wiremock::Request| {
+                notify.notify_one();
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({}))
+                    .set_delay(Duration::from_secs(30))
+            })
+            .expect(1)
+            .mount(&server)
+            .await;
+        let directory = Directory::new(client);
+        let task = tokio::spawn(directory.clone().open_direct("@peer:example.org".into()));
+        tokio::time::timeout(Duration::from_secs(2), metadata_started.notified())
+            .await
+            .expect("creation should reach metadata update");
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let reused = tokio::time::timeout(
+            Duration::from_secs(2),
+            directory.open_direct("@peer:example.org".into()),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(reused.id, "!new:example.org");
+    }
+
+    #[tokio::test]
+    async fn direct_creation_server_failure_returns_after_one_attempt() {
+        let server = MockServer::start().await;
+        let client = direct_fixture(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/_matrix/client/v3/createRoom"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_json(json!({"errcode":"M_UNKNOWN","error":"ambiguous"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let directory = Directory::new(client);
+        let result = tokio::time::timeout(
+            Duration::from_secs(2),
+            directory.open_direct("@peer:example.org".into()),
+        )
+        .await
+        .expect("DM creation must not retry indefinitely");
+        assert!(result.unwrap_err().contains("Check your room list"));
     }
 
     #[tokio::test]

@@ -160,30 +160,42 @@ async fn writable_space(client: &Client, id: &str) -> Result<matrix_sdk::Room, S
         .get_room(&id)
         .filter(|room| room.state() == RoomState::Joined && room.is_space())
         .ok_or("The selected space is no longer available.")?;
-    let levels = room
-        .power_levels()
+    let levels = tokio::time::timeout(std::time::Duration::from_secs(10), room.power_levels())
         .await
+        .map_err(|_| "Checking space permissions timed out.")?
         .map_err(|_| "Could not check permissions for the selected space.")?;
     if !levels.user_can_send_state(room.own_user_id(), StateEventType::SpaceChild) {
         return Err("You do not have permission to add rooms to this space. Choose another space or No space.".into());
     }
     Ok(room)
 }
+/// createRoom has no transaction ID: replaying an ambiguous POST can create duplicates.
+/// Keep retry policy local so sync and idempotent SDK operations retain their policy.
+pub(crate) async fn send_create(client: &Client, request: Request) -> Result<OwnedRoomId, String> {
+    client
+        .send(request)
+        .with_request_config(
+            matrix_sdk::config::RequestConfig::default()
+                .disable_retry()
+                .timeout(std::time::Duration::from_secs(30)),
+        )
+        .await
+        .map(|response| response.room_id)
+        .map_err(|_| {
+            "Could not confirm room creation. Check your room list before trying again.".to_owned()
+        })
+}
+
 pub(crate) async fn create(client: &Client, options: Options) -> Result<Created, String> {
     options.validate()?;
     let user = client.user_id().ok_or("Sign in before creating a room.")?;
     if let Some(id) = &options.space {
         writable_space(client, id).await?;
     }
-    let room = client
-        .create_room(options.request(user.server_name().to_owned()))
-        .await
-        .map_err(|_| {
-            "Could not confirm room creation. Check your room list before trying again.".to_owned()
-        })?;
+    let room = send_create(client, options.request(user.server_name().to_owned())).await?;
     let created = Created {
         room: RoomEntry {
-            id: room.room_id().to_string(),
+            id: room.to_string(),
             name: options.name.trim().to_owned(),
             topic: options.topic.trim().to_owned(),
             member_count: 1,
@@ -198,13 +210,22 @@ pub(crate) async fn link(client: &Client, mut created: Created) -> Created {
     if let Some(space) = &created.space {
         let result = async {
             let parent = writable_space(client, space).await?;
-            let user = client.user_id().ok_or("Sign in before adding the room to a space.")?;
-            let id = created.room.id.parse::<OwnedRoomId>().map_err(|_| "The created room ID is invalid.")?;
+            let user = client
+                .user_id()
+                .ok_or("Sign in before adding the room to a space.")?;
+            let id = created
+                .room
+                .id
+                .parse::<OwnedRoomId>()
+                .map_err(|_| "The created room ID is invalid.")?;
             parent.send_state_event_for_key(&id, SpaceChildEventContent::new(vec![user.server_name().to_owned()])).await
                 .map_err(|_| "Could not add the room to the space. You can retry adding it or open the room now.".to_owned())?;
             Ok::<_, String>(())
-        }.await;
-        created.link_error = result.err();
+        };
+        created.link_error = match tokio::time::timeout(std::time::Duration::from_secs(10), result).await {
+            Ok(result) => result.err(),
+            Err(_) => Some("Room created, but adding it to the space timed out. Retry adding it or open the room now.".into()),
+        };
     }
     created
 }
@@ -336,6 +357,31 @@ mod tests {
                 .unwrap();
         }
         client
+    }
+    #[tokio::test]
+    async fn ambiguous_creation_failures_are_never_replayed() {
+        for response in [
+            ResponseTemplate::new(500)
+                .set_body_json(json!({"errcode":"M_UNKNOWN","error":"Failed after creation"})),
+            ResponseTemplate::new(429).set_body_json(
+                json!({"errcode":"M_LIMIT_EXCEEDED","error":"Busy","retry_after_ms":1}),
+            ),
+            ResponseTemplate::new(200).set_body_json(json!({"unexpected":"lost room id"})),
+        ] {
+            let server = MockServer::start().await;
+            let client = fixture(&server, None).await;
+            Mock::given(method("POST"))
+                .and(path("/_matrix/client/v3/createRoom"))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            let result =
+                tokio::time::timeout(std::time::Duration::from_secs(2), create(&client, named()))
+                    .await
+                    .expect("creation must return instead of retrying");
+            assert!(result.unwrap_err().contains("Check your room list"));
+        }
     }
     #[tokio::test]
     async fn creation_links_both_sides_and_failed_link_retries_without_recreating() {

@@ -259,6 +259,11 @@ impl App {
                 return iced::widget::operation::focus(people_picker::SEARCH_ID);
             }
             Event::Close => {
+                if self.direct_request.is_some()
+                    && let Some(cancel) = &self.creation_cancel
+                {
+                    cancel.cancel();
+                }
                 if let Some(state) = self.new_chat.take() {
                     return iced::widget::operation::focus(if state.thread {
                         "thread-composer"
@@ -369,16 +374,25 @@ impl App {
                 state.error = None;
                 self.pending_ops += 1;
                 self.direct_request = Some(request);
-                // A creation write is not aborted on dismissal; shutdown waits for it.
-                return Task::perform(directory.open_direct(user), move |result| {
-                    message(Event::Completed(request, account.clone(), result))
-                });
+                let cancel = tokio_util::sync::CancellationToken::new();
+                self.creation_cancel = Some(cancel.clone());
+                return Task::perform(
+                    async move {
+                        tokio::select! {
+                            biased;
+                            _ = cancel.cancelled() => Err("Chat creation cancelled. Check your room list before trying again.".into()),
+                            result = tokio::time::timeout(std::time::Duration::from_secs(45), directory.open_direct(user)) => result.unwrap_or_else(|_| Err("Chat creation timed out. Check your room list before trying again.".into())),
+                        }
+                    },
+                    move |result| message(Event::Completed(request, account.clone(), result)),
+                );
             }
             Event::Completed(request, account, result) => {
                 if self.direct_request != Some(request) {
                     return Task::none();
                 }
                 self.direct_request = None;
+                self.creation_cancel = None;
                 self.pending_ops -= 1;
                 if self.closing
                     || self.stopped
@@ -444,6 +458,13 @@ impl App {
                 .map(move |event| message(Event::Picker(request, event))),
         ]
         .spacing(10);
+        if busy {
+            content = content.push(
+                button(text("Cancel opening chat").size(13))
+                    .style(shell::quiet_button)
+                    .on_press(message(Event::Close)),
+            );
+        }
         if state.picker.selected.is_some() {
             let mut start = button(text("Open chat").size(13)).style(shell::quiet_button);
             if !busy {
@@ -456,7 +477,7 @@ impl App {
         }
         content = content.push(
             text(if busy {
-                "Opening chat…"
+                "Opening chat… · Esc cancels · A room may already have been created"
             } else {
                 "New direct chat · Type a name · ↑ ↓ select · Enter open · Esc close"
             })
@@ -531,6 +552,38 @@ mod tests {
 
     fn mention(user: &str) -> Message {
         message(Event::Mention(user.parse().unwrap()))
+    }
+
+    #[test]
+    fn dismissal_and_quit_cancel_creation_and_release_pending_operation() {
+        for quit in [false, true] {
+            let mut app = demo_app();
+            let request = open(&mut app);
+            app.demo = None;
+            app.direct_request = Some(request);
+            app.pending_ops = 1;
+            let cancel = tokio_util::sync::CancellationToken::new();
+            app.creation_cancel = Some(cancel.clone());
+            let selection = app.selection.room.clone();
+            let _ = app.update(if quit {
+                Message::Close
+            } else {
+                message(Event::Close)
+            });
+            assert!(cancel.is_cancelled());
+            let _ = app.update(message(Event::Completed(
+                request,
+                None,
+                Err("Cancelled".into()),
+            )));
+            assert_eq!(app.pending_ops, 0);
+            assert!(app.direct_request.is_none());
+            assert!(app.creation_cancel.is_none());
+            assert_eq!(app.selection.room, selection);
+            if quit {
+                assert!(app.selection.shutdown);
+            }
+        }
     }
 
     #[test]

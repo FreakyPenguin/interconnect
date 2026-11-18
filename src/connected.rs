@@ -1040,7 +1040,16 @@ async fn connected(
                 subscribed_rooms = rooms;
             }
             if room_changed && let Some((generation, id)) = &next.room {
-                typing_view = typing::incoming(client.clone(), id.clone(), *generation, state.clone());
+                let typing_client = client.clone();
+                let typing_id = id.clone();
+                let typing_generation = *generation;
+                let typing_state = state.clone();
+                typing_view = Box::pin(async move {
+                    let Ok(id) = typing_id.parse::<matrix_sdk::ruma::OwnedRoomId>() else { return; };
+                    if wait_for_room(&typing_client, &id).await.is_ok() {
+                        typing::incoming(typing_client, typing_id, typing_generation, typing_state).await;
+                    }
+                });
                 room_view = Box::pin(view(client.clone(), id.clone(), None, *generation, state.clone(), selection.clone()));
                 pinned_view = Box::pin(pinned::view(client.clone(), id.clone(), *generation, state.clone()));
             }
@@ -1254,6 +1263,29 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
     }
 }
 
+/// A single-attempt createRoom returns an ID before sync has registered its room.
+/// Subscribe before checking to avoid missing that first update. The owning view
+/// cancels this wait on navigation/shutdown; no polling or extra join is needed.
+async fn wait_for_room(
+    client: &Client,
+    id: &matrix_sdk::ruma::RoomId,
+) -> anyhow::Result<matrix_sdk::Room> {
+    let mut updates = client.subscribe_to_all_room_updates();
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Some(room) = client.get_room(id) {
+                return Ok(room);
+            }
+            match updates.recv().await {
+                Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                Err(error) => return Err(anyhow::Error::from(error)),
+            }
+        }
+    })
+    .await
+    .context("Waiting for the room to sync timed out")?
+}
+
 async fn view(
     client: Client,
     room_id: String,
@@ -1273,7 +1305,7 @@ async fn view(
     let result: anyhow::Result<()> = async {
         let setup = async {
             let room_id: matrix_sdk::ruma::OwnedRoomId = room_id.parse()?;
-            let room = client.get_room(&room_id).context("Room is not loaded")?;
+            let room = wait_for_room(&client, &room_id).await?;
             // The SDK handles both room types and chooses encryption when sending.
             let focus = match &root {
                 Some(root) => TimelineFocus::Thread {
@@ -1631,6 +1663,63 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path, path_regex, query_param},
     };
+
+    #[tokio::test]
+    async fn newly_created_room_waits_for_sync_and_wait_is_cancellable() {
+        use matrix_sdk::{authentication::matrix::MatrixSession, config::SyncSettings};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/versions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
+            .mount(&server)
+            .await;
+        let client = Client::builder()
+            .homeserver_url(server.uri())
+            .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+            .build()
+            .await
+            .unwrap();
+        client
+            .matrix_auth()
+            .restore_session(
+                serde_json::from_value::<MatrixSession>(json!({
+                    "user_id":"@test:example.org","device_id":"TEST","access_token":"fake"
+                }))
+                .unwrap(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        let id = matrix_sdk::ruma::room_id!("!new:example.org");
+        let wait = wait_for_room(&client, id);
+        tokio::pin!(wait);
+        assert!(iced::futures::poll!(&mut wait).is_pending());
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/v3/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "next_batch":"one","rooms":{"join":{"!new:example.org":{
+                    "state":{"events":[]},"timeline":{"events":[],"limited":false}
+                }}}
+            })))
+            .mount(&server)
+            .await;
+        client
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        let room = tokio::time::timeout(Duration::from_secs(2), &mut wait)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(room.room_id(), id);
+        // A view switch drops a wait without awaiting a network deadline.
+        let mut missing = Box::pin(wait_for_room(
+            &client,
+            matrix_sdk::ruma::room_id!("!missing:example.org"),
+        ));
+        assert!(iced::futures::poll!(&mut missing).is_pending());
+        drop(missing);
+    }
 
     #[tokio::test]
     async fn event_navigation_loads_room_and_thread_targets_outside_live_history_and_cancels() {

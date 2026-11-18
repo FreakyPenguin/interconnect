@@ -214,6 +214,7 @@ struct App {
     create_room_request: Option<u64>,
     pending_created_space: Option<(String, String)>,
     direct_request: Option<u64>,
+    creation_cancel: Option<tokio_util::sync::CancellationToken>,
     pending_created_room: Option<interconnect::navigation::RoomEntry>,
 }
 #[derive(Clone, Debug)]
@@ -407,6 +408,7 @@ impl App {
             create_room_request: None,
             pending_created_space: None,
             direct_request: None,
+            creation_cancel: None,
             pending_created_room: None,
         };
         if std::env::args().any(|arg| arg == "--demo") {
@@ -1732,6 +1734,9 @@ impl App {
                 self.global_search.close();
                 if self.stopped && self.pending_ops == 0 {
                     return iced::exit();
+                }
+                if let Some(cancel) = &self.creation_cancel {
+                    cancel.cancel();
                 }
                 self.closing = true;
                 self.selection.shutdown = self.pending_ops == 0;

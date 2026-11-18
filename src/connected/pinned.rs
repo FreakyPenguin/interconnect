@@ -24,7 +24,7 @@ pub(super) async fn view(
     let Ok(id) = room.parse::<matrix_sdk::ruma::OwnedRoomId>() else {
         return;
     };
-    let Some(room) = client.get_room(&id) else {
+    let Ok(room) = super::wait_for_room(&client, &id).await else {
         return;
     };
     // Subscribe before reading state, including rooms whose first pins arrive later.

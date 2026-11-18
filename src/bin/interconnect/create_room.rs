@@ -132,6 +132,11 @@ impl App {
                 return iced::widget::operation::focus(NAME);
             }
             Event::Close => {
+                if self.create_room_request.is_some()
+                    && let Some(cancel) = &self.creation_cancel
+                {
+                    cancel.cancel();
+                }
                 if let Some(state) = self.create_room.take() {
                     return iced::widget::operation::focus(if state.thread {
                         "thread-composer"
@@ -202,12 +207,20 @@ impl App {
                 self.create_room_request = Some(request);
                 let options = state.options.clone();
                 let created = state.created.clone();
+                let cancel = tokio_util::sync::CancellationToken::new();
+                self.creation_cancel = Some(cancel.clone());
                 return Task::perform(
                     async move {
-                        if let Some(created) = created {
-                            Ok(service.link_created_room(created).await)
-                        } else {
-                            service.create_room(options).await
+                        tokio::select! {
+                            biased;
+                            _ = cancel.cancelled() => Err("Room creation cancelled. Check your room list before trying again.".into()),
+                            result = tokio::time::timeout(std::time::Duration::from_secs(60), async move {
+                                if let Some(created) = created {
+                                    Ok(service.link_created_room(created).await)
+                                } else {
+                                    service.create_room(options).await
+                                }
+                            }) => result.unwrap_or_else(|_| Err("Room creation timed out. Check your room list before trying again.".into())),
                         }
                     },
                     move |result| {
@@ -220,6 +233,7 @@ impl App {
                     return Task::none();
                 }
                 self.create_room_request = None;
+                self.creation_cancel = None;
                 self.pending_ops -= 1;
                 if self.closing
                     || self.stopped
@@ -432,7 +446,10 @@ impl App {
                 .push(shell::title("Room created · space link incomplete", 14))
                 .push(text(error).size(12).color(shell::MUTED));
         }
-        let close = button(text(if busy { "Dismiss" } else { "Cancel" }).size(13))
+        if busy {
+            content = content.push(text("Cancelling stops waiting; a room may already have been created. Check your room list before trying again.").size(12).color(shell::MUTED));
+        }
+        let close = button(text(if busy { "Cancel creation" } else { "Cancel" }).size(13))
             .padding([7, 14])
             .style(shell::quiet_button)
             .on_press(message(Event::Close));
@@ -557,6 +574,38 @@ mod tests {
             link_error: error.map(str::to_owned),
         }
     }
+    #[test]
+    fn dismissal_and_quit_cancel_creation_and_release_pending_operation() {
+        for quit in [false, true] {
+            let mut app = demo_app();
+            let request = open(&mut app);
+            app.demo = None;
+            app.create_room_request = Some(request);
+            app.pending_ops = 1;
+            let cancel = tokio_util::sync::CancellationToken::new();
+            app.creation_cancel = Some(cancel.clone());
+            let selection = app.selection.room.clone();
+            let _ = app.update(if quit {
+                Message::Close
+            } else {
+                message(Event::Close)
+            });
+            assert!(cancel.is_cancelled());
+            let _ = app.update(message(Event::Completed(
+                request,
+                None,
+                Box::new(Err("Cancelled".into())),
+            )));
+            assert_eq!(app.pending_ops, 0);
+            assert!(app.create_room_request.is_none());
+            assert!(app.creation_cancel.is_none());
+            assert_eq!(app.selection.room, selection);
+            if quit {
+                assert!(app.selection.shutdown);
+            }
+        }
+    }
+
     #[test]
     fn defaults_follow_current_space_and_demo_creation_preserves_drafts_and_filters() {
         let mut app = demo_app();

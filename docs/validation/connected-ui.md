@@ -267,3 +267,26 @@ layout. Neither establishes real homeserver interoperability, native prompts,
 GPU behavior, or idle resource use. Record platform, build, renderer, and observed
 failures with any acceptance result; keep run logs and private artifacts out of
 this reference.
+
+## Conversation creation failures and cancellation
+
+Room and DM creation send `createRoom` once per explicit submission, with a
+30-second request timeout and no automatic replay, including on server errors or
+rate limits. Other SDK requests retain their existing retry policy. Rooms become
+available to SDK views through sync; a confirmed ID is shown provisionally in the
+room list. DM IDs are cached before updating `m.direct` to prevent recreation if
+that follow-up fails or is cancelled.
+
+Using an authorized test account and a controlled homeserver/proxy, exercise a
+failed response after accepting creation, a 500, a 429, and a stalled response.
+Verify one creation request, an actionable error, and no further rooms unless
+explicitly submitted again. Cancel using Escape, the backdrop, or the dialog's
+Cancel button; quit during a stalled creation and verify shutdown completes
+without waiting for the network. Cancellation cannot undo a request already
+accepted by the homeserver: check the room list before manually retrying.
+Space-link failure should retain the created room and offer retry of the link.
+
+Automated fixtures cover single-attempt room/DM errors, malformed success and
+rate-limit responses, cancellation signals on dismissal/quit, pending-operation
+release, and DM reuse before sync. These do not establish native desktop behavior
+or a particular homeserver's behavior after a lost response.
