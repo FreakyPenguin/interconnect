@@ -1,4 +1,4 @@
-//! On-demand room-user completion. The editor keeps focus; dropping state cancels loads.
+//! On-demand user and joined-room completion. The editor keeps focus; dropping state cancels loads.
 use super::{App, DraftKey, Message, current_pane, emoji_picker, shell};
 use iced::advanced::text::editor::{Cursor, Position};
 use iced::{
@@ -8,10 +8,94 @@ use iced::{
 };
 use interconnect::people::Person;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    User,
+    Room,
+}
+#[derive(Clone)]
+struct Choice {
+    key: String,
+    name: String,
+    detail: String,
+    target: interconnect::composition::MentionTarget,
+}
+/// Stable room IDs are used on the wire; the alias is a searchable/display aid.
+pub(super) fn room_target(
+    room: &interconnect::navigation::RoomEntry,
+    demo: bool,
+    account: Option<&str>,
+) -> Option<interconnect::composition::MentionTarget> {
+    let room_id = room
+        .id
+        .parse::<matrix_sdk::ruma::OwnedRoomOrAliasId>()
+        .ok()
+        .or_else(|| {
+            demo.then(|| format!("!demo-{}:example.org", room.id).parse().ok())
+                .flatten()
+        })?;
+    let via = account
+        .and_then(|account| account.parse::<matrix_sdk::ruma::OwnedUserId>().ok())
+        .map(|user| user.server_name().to_owned())
+        .or_else(|| demo.then(|| matrix_sdk::ruma::owned_server_name!("example.org")))
+        .into_iter()
+        .collect();
+    Some(interconnect::composition::MentionTarget::Room { room_id, via })
+}
+fn room_suggestions(
+    rooms: &[interconnect::navigation::RoomEntry],
+    query: &str,
+    demo: bool,
+    account: Option<&str>,
+) -> Vec<Choice> {
+    let query = query.to_lowercase();
+    let mut matches: Vec<_> = rooms
+        .iter()
+        .filter(|room| {
+            room.name.to_lowercase().contains(&query)
+                || room
+                    .canonical_alias
+                    .as_ref()
+                    .is_some_and(|alias| alias.to_lowercase().contains(&query))
+                || room.id.to_lowercase().contains(&query)
+        })
+        .collect();
+    matches.sort_by_cached_key(|room| {
+        let name = room.name.trim_start_matches('#').to_lowercase();
+        let alias = room
+            .canonical_alias
+            .as_deref()
+            .unwrap_or("")
+            .trim_start_matches('#')
+            .to_lowercase();
+        (
+            !(name == query || alias == query),
+            !(name.starts_with(&query) || alias.starts_with(&query)),
+            name,
+            room.id.clone(),
+        )
+    });
+    matches
+        .into_iter()
+        .filter_map(|room| {
+            Some(Choice {
+                key: room.id.clone(),
+                name: room.name.clone(),
+                detail: room
+                    .canonical_alias
+                    .clone()
+                    .unwrap_or_else(|| room.id.clone()),
+                target: room_target(room, demo, account)?,
+            })
+        })
+        .take(LIMIT)
+        .collect()
+}
 const LIMIT: usize = 6;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Trigger {
     key: DraftKey,
+    kind: Kind,
     generation: u64,
     account: Option<String>,
     line: usize,
@@ -23,7 +107,7 @@ pub struct Trigger {
 }
 struct Active {
     trigger: Trigger,
-    matches: Vec<Person>,
+    matches: Vec<Choice>,
     selected: usize,
 }
 #[derive(Default)]
@@ -31,6 +115,7 @@ pub struct State {
     active: Option<Active>,
     dismissed: Option<Trigger>,
     people: Option<Vec<Person>>,
+    rooms: Option<std::sync::Arc<Vec<interconnect::navigation::RoomEntry>>>,
     error: Option<String>,
     request: u64,
     task: Option<iced::task::Handle>,
@@ -39,6 +124,7 @@ impl State {
     pub fn clear(&mut self) {
         self.active = None;
         self.people = None;
+        self.rooms = None;
         self.error = None;
         self.task = None;
         self.request = self.request.wrapping_add(1);
@@ -80,7 +166,12 @@ fn token(
     let line = content.line(cursor.position.line)?;
     let line = line.text.as_ref();
     let prefix = line.get(..cursor.position.column)?;
-    let start = prefix.rfind('@')?;
+    let start = prefix.rfind(['@', '#'])?;
+    let kind = if prefix.as_bytes()[start] == b'#' {
+        Kind::Room
+    } else {
+        Kind::User
+    };
     if prefix[..start]
         .chars()
         .next_back()
@@ -101,6 +192,7 @@ fn token(
             .sum::<usize>();
     Some(Trigger {
         key: key.clone(),
+        kind,
         generation,
         account,
         line: cursor.position.line,
@@ -195,15 +287,51 @@ impl App {
         {
             self.user_completion.clear();
         }
+        if self
+            .user_completion
+            .active
+            .as_ref()
+            .is_some_and(|active| active.trigger.kind == Kind::Room)
+            && self
+                .user_completion
+                .rooms
+                .as_ref()
+                .is_none_or(|rooms| !std::sync::Arc::ptr_eq(rooms, &self.model.rooms))
+        {
+            self.update_user_suggestions();
+        }
     }
     fn update_user_suggestions(&mut self) {
         let state = &mut self.user_completion;
         if let Some(active) = &mut state.active {
-            active.matches = suggestions(
-                state.people.as_deref().unwrap_or_default(),
-                &active.trigger.query,
-                self.account_id.as_deref(),
-            );
+            active.matches = match active.trigger.kind {
+                Kind::Room => {
+                    state.rooms = Some(self.model.rooms.clone());
+                    room_suggestions(
+                        &self.model.rooms,
+                        &active.trigger.query,
+                        self.demo.is_some(),
+                        self.account_id.as_deref(),
+                    )
+                }
+                Kind::User => suggestions(
+                    state.people.as_deref().unwrap_or_default(),
+                    &active.trigger.query,
+                    self.account_id.as_deref(),
+                )
+                .into_iter()
+                .filter_map(|person| {
+                    Some(Choice {
+                        key: person.user_id.clone(),
+                        name: person.name,
+                        detail: person.user_id.clone(),
+                        target: interconnect::composition::MentionTarget::User {
+                            user_id: person.user_id.parse().ok()?,
+                        },
+                    })
+                })
+                .collect(),
+            };
             active.selected = active.selected.min(active.matches.len().saturating_sub(1));
         }
     }
@@ -234,6 +362,7 @@ impl App {
             active.trigger.key != trigger.key
                 || active.trigger.generation != trigger.generation
                 || active.trigger.account != trigger.account
+                || active.trigger.kind != trigger.kind
         }) {
             self.user_completion.clear();
         }
@@ -249,6 +378,9 @@ impl App {
                 selected: 0,
             });
             self.update_user_suggestions();
+        }
+        if trigger.kind == Kind::Room {
+            return Task::none();
         }
         if self.user_completion.people.is_some()
             || self.user_completion.task.is_some()
@@ -353,11 +485,11 @@ impl App {
                 let Some(person) = active.matches.get(active.selected) else {
                     return Task::none();
                 };
-                person.user_id.clone()
+                person.key.clone()
             }
             Event::Loaded { .. } => unreachable!(),
         };
-        let Some(person) = active.matches.iter().find(|person| person.user_id == user) else {
+        let Some(person) = active.matches.iter().find(|person| person.key == user) else {
             return Task::none();
         };
         let label = person.name.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -366,14 +498,17 @@ impl App {
         } else {
             label
         };
+        let target = person.target.clone();
+        let label = if target.room_id().is_some() && !label.starts_with('#') {
+            format!("#{label}")
+        } else {
+            label
+        };
         let trigger = active.trigger.clone();
         let draft = self.drafts.get_mut(&trigger.key).unwrap();
         if draft.markdown.named_mentions.len() >= 256 {
             return Task::none();
         }
-        let Ok(user_id) = user.parse() else {
-            return Task::none();
-        };
         let start = draft
             .content
             .text()
@@ -413,7 +548,7 @@ impl App {
             .named_mentions
             .push(interconnect::composition::NamedMention {
                 range: start..start + label.len(),
-                user_id,
+                target,
             });
         draft
             .markdown
@@ -465,14 +600,23 @@ impl App {
             .active
             .as_ref()
             .filter(|a| &a.trigger.key == key && a.trigger.generation == generation)?;
-        let mut choices = column![text("MENTION A USER").size(11).color(shell::MUTED)].spacing(4);
+        let mut choices = column![
+            text(if active.trigger.kind == Kind::Room {
+                "LINK A ROOM"
+            } else {
+                "MENTION A USER"
+            })
+            .size(11)
+            .color(shell::MUTED)
+        ]
+        .spacing(4);
         for (index, person) in active.matches.iter().enumerate() {
             let selected = index == active.selected;
             choices = choices.push(
                 button(
                     column![
                         text(&person.name).size(13),
-                        text(&person.user_id).size(11).color(shell::MUTED)
+                        text(&person.detail).size(11).color(shell::MUTED)
                     ]
                     .spacing(2),
                 )
@@ -487,17 +631,24 @@ impl App {
                 })
                 .on_press(Message::UserCompletion(Event::Choose(
                     active.trigger.clone(),
-                    person.user_id.clone(),
+                    person.key.clone(),
                 ))),
             );
         }
         if active.matches.is_empty() {
             choices = choices.push(
-                text(state.error.as_deref().unwrap_or(if state.people.is_some() {
-                    "No matching room members"
-                } else {
-                    "Loading room members…"
-                }))
+                text(
+                    state
+                        .error
+                        .as_deref()
+                        .unwrap_or(if active.trigger.kind == Kind::Room {
+                            "No matching joined rooms"
+                        } else if state.people.is_some() {
+                            "No matching room members"
+                        } else {
+                            "Loading room members…"
+                        }),
+                )
                 .size(12)
                 .color(shell::MUTED),
             );
@@ -540,6 +691,62 @@ mod tests {
             key.clone(),
             text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(source.into()))),
         ));
+    }
+    #[test]
+    fn room_completion_is_local_searches_aliases_and_preserves_editable_labels() {
+        for thread in [false, true] {
+            let mut app = app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let key = app.draft_key(thread).unwrap();
+            let selected = app.selection.room.clone();
+            edit(&mut app, &key, "See #gen");
+            let active = app.user_completion.active.as_ref().unwrap();
+            assert_eq!(active.trigger.kind, Kind::Room);
+            assert!(app.user_completion.task.is_none());
+            assert_eq!(active.matches[0].key, "general");
+            let trigger = active.trigger.clone();
+            let _ = app.update(Message::UserCompletion(Event::Accept(trigger)));
+            assert!(app.drafts[&key].content.text().starts_with("See #"));
+            let mention = &app.drafts[&key].markdown.named_mentions[0];
+            assert_eq!(
+                mention.target.room_id().unwrap().as_str(),
+                "!demo-general:example.org"
+            );
+            assert_eq!(app.selection.room, selected);
+            assert!(!app.drafts[&key].pending);
+            assert_eq!(
+                room_suggestions(&app.model.rooms, "general:example.org", true, None)[0].key,
+                "general"
+            );
+        }
+    }
+    #[test]
+    fn room_triggers_exclude_url_fragments_and_markdown_headings() {
+        let key = DraftKey {
+            room: "room".into(),
+            root: None,
+        };
+        for source in ["#", "See #gen", "(#design", "#общая"] {
+            assert_eq!(
+                token(&key, 1, None, &at(source, source.len()))
+                    .unwrap()
+                    .kind,
+                Kind::Room
+            );
+        }
+        for source in [
+            "https://example.org/#gen",
+            "##heading",
+            "# heading",
+            "word#gen",
+        ] {
+            assert!(
+                token(&key, 1, None, &at(source, source.len())).is_none(),
+                "{source}"
+            );
+        }
     }
     #[test]
     fn trigger_supports_unicode_and_caret_suffix_but_excludes_emails_and_selections() {
@@ -592,12 +799,16 @@ mod tests {
             app.drafts.get_mut(&key).unwrap().content = at("Hi @mayalater, end", 6);
             let _ = app.refresh_user_completion(&key);
             let active = app.user_completion.active.as_ref().unwrap();
-            assert_eq!(active.matches[0].user_id, "@maya:example.org");
+            assert_eq!(active.matches[0].key, "@maya:example.org");
             let trigger = active.trigger.clone();
             let _ = app.update(Message::UserCompletion(Event::Accept(trigger.clone())));
             assert_eq!(app.drafts[&key].content.text(), "Hi Maya Chen, end");
             assert_eq!(
-                app.drafts[&key].markdown.named_mentions[0].user_id.as_str(),
+                app.drafts[&key].markdown.named_mentions[0]
+                    .target
+                    .user_id()
+                    .unwrap()
+                    .as_str(),
                 "@maya:example.org"
             );
             assert!(!app.drafts[&key].pending);

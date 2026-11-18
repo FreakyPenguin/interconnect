@@ -189,7 +189,9 @@ impl State {
                     let base = Font {
                         weight: if style.bold {
                             font::Weight::Bold
-                        } else if style.mention.is_some() && !style.code {
+                        } else if (style.mention.is_some() || style.room_mention.is_some())
+                            && !style.code
+                        {
                             font::Weight::Semibold
                         } else {
                             font::Weight::Normal
@@ -205,7 +207,9 @@ impl State {
                             Font::with_name("Inter")
                         }
                     };
-                    let color = if style.link.is_some()
+                    let color = if style.room_mention.is_some() {
+                        shell::ROOM_ACCENT
+                    } else if style.link.is_some()
                         || style.spoilers.iter().any(|id| !self.revealed.contains(id))
                     {
                         shell::ACCENT
@@ -497,6 +501,10 @@ impl State {
             publish(Message::NewChat(crate::new_chat::Event::Mention(
                 user.clone(),
             )));
+        } else if let Some(room) = &run.style.room_mention {
+            publish(Message::Membership(crate::membership::Event::Link(
+                room.clone(),
+            )));
         } else if let Some(link) = &run.style.link {
             publish(Message::OpenMessageLink(link.clone()));
         }
@@ -599,7 +607,8 @@ impl State {
                     }
                     // Keep the background inside the shaped span so wrapping, bidi,
                     // selection and hit testing all use exactly the same geometry.
-                    let mention = style.mention.is_some() && !style.code;
+                    let mention =
+                        (style.mention.is_some() || style.room_mention.is_some()) && !style.code;
                     if mention {
                         renderer.fill_quad(
                             renderer::Quad {
@@ -607,7 +616,11 @@ impl State {
                                 border: iced::Border::default().rounded(4.0),
                                 ..renderer::Quad::default()
                             },
-                            iced::Color::from_rgba8(73, 121, 211, 0.12),
+                            if style.room_mention.is_some() {
+                                shell::ROOM_ACCENT.scale_alpha(0.12)
+                            } else {
+                                iced::Color::from_rgba8(73, 121, 211, 0.12)
+                            },
                         );
                     }
                     if style.underline || (style.link.is_some() && !mention) {

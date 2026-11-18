@@ -155,8 +155,18 @@ impl App {
                         original_mentions: source
                             .mentions
                             .iter()
-                            .chain(source.named_mentions.iter().map(|mention| &mention.user_id))
-                            .chain(source.mention_links.iter().map(|mention| &mention.user_id))
+                            .chain(
+                                source
+                                    .named_mentions
+                                    .iter()
+                                    .filter_map(|mention| mention.target.user_id()),
+                            )
+                            .chain(
+                                source
+                                    .mention_links
+                                    .iter()
+                                    .filter_map(|mention| mention.target.user_id()),
+                            )
                             .cloned()
                             .collect::<std::collections::BTreeSet<_>>()
                             .into_iter()
@@ -597,9 +607,9 @@ mod tests {
                 let _ = app.update(Message::Thread("review".into()));
             }
             let key = app.draft_key(thread).unwrap();
-            let html = "<p>Hello <a href='https://matrix.to/#/@maya:example.org'>Maya Chen</a></p>";
+            let html = "<p>Hello <a href='https://matrix.to/#/@maya:example.org'>Maya Chen</a> in <a href='https://matrix.to/#/!old:example.org?via=route.example.org'>#Old room</a></p>";
             let prepared = Prepared {
-                source: "Hello Maya Chen".into(),
+                source: "Hello Maya Chen in #Old room".into(),
                 html: Some(html.into()),
                 document: interconnect::message_document::Document::parse(html)
                     .map(std::sync::Arc::new),
@@ -616,7 +626,7 @@ mod tests {
             let target = target(&app, thread);
             let event = target.event.clone();
             start(&mut app, target);
-            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 1);
+            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 2);
             let _ = app.update(Message::Edit(
                 key.clone(),
                 text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
@@ -644,6 +654,18 @@ mod tests {
                 panic!("editing should offer user completion");
             };
             let _ = app.update(accept);
+            let _ = app.update(Message::Edit(
+                key.clone(),
+                text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
+                    "and #gen".into(),
+                ))),
+            ));
+            let Some(text_editor::Binding::Custom(accept)) =
+                app.user_completion_binding(&key, generation, &press)
+            else {
+                panic!("editing should offer room completion");
+            };
+            let _ = app.update(accept);
             assert!(!app.drafts[&key].pending);
             let draft = &app.drafts[&key];
             let prepared = composition::prepare_with_bindings(
@@ -667,8 +689,21 @@ mod tests {
                     .as_ref()
                     .unwrap()
                     .text(&Default::default()),
-                "Hello Maya Chen and Jules "
+                "Hello Maya Chen in #Old room and Jules and #General "
             );
+            let rooms: Vec<_> = prepared
+                .document
+                .as_ref()
+                .unwrap()
+                .blocks
+                .iter()
+                .flat_map(|block| &block.runs)
+                .filter_map(|run| run.style.room_mention.as_ref())
+                .collect();
+            assert_eq!(rooms.len(), 2);
+            assert_eq!(rooms[0].room.as_str(), "!old:example.org");
+            assert_eq!(rooms[0].via[0].as_str(), "route.example.org");
+            assert_eq!(rooms[1].room.as_str(), "!demo-general:example.org");
             let _ = app.update(Message::Send(key.clone()));
             finish(&mut app, &key, Ok(Some(prepared)));
             assert!(app.drafts[&key].editing.is_none());
@@ -702,7 +737,7 @@ mod tests {
             // A second edit recovers both the old label and the newly inserted ID.
             let target = self::target(&app, thread);
             start(&mut app, target);
-            assert!(!app.drafts[&key].markdown.named_mentions.is_empty());
+            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 4);
             let _ = app.update(message(Event::Cancel(key.clone())));
             assert_eq!(app.drafts[&key].content.text(), "Unsent @alex:example.org");
         }

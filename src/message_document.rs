@@ -19,6 +19,7 @@ pub struct Style {
     pub link: Option<String>,
     /// Explicit Matrix user anchor; labels remain sender-provided text.
     pub mention: Option<matrix_sdk::ruma::OwnedUserId>,
+    pub room_mention: Option<crate::room_membership::Address>,
     pub spoilers: Vec<usize>,
 }
 
@@ -299,7 +300,7 @@ pub fn safe_link(value: &str) -> Option<String> {
         _ => None,
     }
 }
-/// Only explicit user permalinks are mentions; room/event/web links remain links.
+/// Only explicit user permalinks identify user mentions.
 pub(crate) fn user_mention(link: &str) -> Option<matrix_sdk::ruma::OwnedUserId> {
     use matrix_sdk::ruma::{MatrixToUri, MatrixUri, matrix_uri::MatrixId};
     let id = if link.starts_with("matrix:") {
@@ -311,6 +312,18 @@ pub(crate) fn user_mention(link: &str) -> Option<matrix_sdk::ruma::OwnedUserId> 
         MatrixId::User(id) => Some(id),
         _ => None,
     }
+}
+/// Room permalinks only; event links keep their original event destination.
+pub(crate) fn room_mention(link: &str) -> Option<crate::room_membership::Address> {
+    use matrix_sdk::ruma::{MatrixToUri, MatrixUri, matrix_uri::MatrixId};
+    let id = if link.starts_with("matrix:") {
+        MatrixUri::parse(link).ok()?.id().clone()
+    } else {
+        MatrixToUri::parse(link).ok()?.id().clone()
+    };
+    matches!(id, MatrixId::Room(_) | MatrixId::RoomAlias(_))
+        .then(|| crate::room_membership::Address::parse(link).ok())
+        .flatten()
 }
 #[derive(Default)]
 struct Builder {
@@ -443,6 +456,7 @@ impl Builder {
                 self.anchors += 1;
                 style.link = attr("href").and_then(|v| safe_link(&v));
                 style.mention = style.link.as_deref().and_then(user_mention);
+                style.room_mention = style.link.as_deref().and_then(room_mention);
             }
             "br" => return self.push(Inline::Text("\n".into()), style),
             "blockquote" => {
@@ -599,6 +613,33 @@ mod tests {
             .flat_map(|b| &b.runs)
             .filter_map(|r| r.style.link.as_deref())
             .collect()
+    }
+    #[test]
+    fn room_anchors_require_valid_room_permalinks_and_keep_routing() {
+        for link in [
+            "https://matrix.to/#/!opaque:example.org?via=route.example.org",
+            "https://matrix.to/#/%23general%3Aexample.org",
+            "matrix:roomid/opaque:example.org?via=route.example.org",
+            "matrix:r/general:example.org",
+        ] {
+            assert!(room_mention(link).is_some(), "{link}");
+        }
+        for link in [
+            "https://matrix.to.evil.org/#/!opaque:example.org",
+            "https://matrix.to/#/!opaque:example.org/$event",
+            "matrix:roomid/opaque:example.org/e/event",
+            "https://matrix.to/#/@maya:example.org",
+            "#general:example.org",
+        ] {
+            assert!(room_mention(link).is_none(), "{link}");
+        }
+        assert_eq!(
+            room_mention("https://matrix.to/#/!opaque:example.org?via=route.example.org")
+                .unwrap()
+                .via[0]
+                .as_str(),
+            "route.example.org"
+        );
     }
     #[test]
     fn bare_links_preserve_literal_text_and_trim_surrounding_punctuation() {

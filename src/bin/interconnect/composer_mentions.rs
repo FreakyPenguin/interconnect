@@ -122,7 +122,9 @@ mod tests {
             .enumerate()
             .map(|(i, range)| NamedMention {
                 range: range.clone(),
-                user_id: format!("@person{i}:example.org").parse().unwrap(),
+                target: interconnect::composition::MentionTarget::User {
+                    user_id: format!("@person{i}:example.org").parse().unwrap(),
+                },
             })
             .collect();
         draft
@@ -201,7 +203,11 @@ mod tests {
         assert_eq!(draft.content.text(), "Maya");
         assert_eq!(draft.markdown.named_mentions.len(), 1);
         assert_eq!(
-            draft.markdown.named_mentions[0].user_id.as_str(),
+            draft.markdown.named_mentions[0]
+                .target
+                .user_id()
+                .unwrap()
+                .as_str(),
             "@person1:example.org"
         );
         assert_eq!(draft.markdown.named_mentions[0].range, 0..4);

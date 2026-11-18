@@ -148,7 +148,7 @@ fn mention_regions(
     buffer: &iced::advanced::graphics::text::cosmic_text::Buffer,
     line_offsets: &[usize],
     mentions: &[NamedMention],
-) -> Vec<Rectangle> {
+) -> Vec<(usize, Rectangle)> {
     let mut regions = Vec::new();
     for line in buffer.layout_runs() {
         let Some(start) = line_offsets.get(line.line_i) else {
@@ -197,13 +197,13 @@ fn mention_regions(
             {
                 previous.width = previous.width.max(segment.x + segment.width - previous.x);
             } else {
-                if let Some((_, previous)) = current.take() {
+                if let Some(previous) = current.take() {
                     regions.push(previous);
                 }
                 current = Some((index, segment));
             }
         }
-        if let Some((_, previous)) = current {
+        if let Some(previous) = current {
             regions.push(previous);
         }
     }
@@ -448,7 +448,12 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
             self.content.with_editor(|editor| {
                 let regions = mention_regions(editor.buffer(), &state.line_offsets, self.mentions);
                 renderer.with_layer(clip, |renderer| {
-                    for region in regions {
+                    for (index, region) in regions {
+                        let accent = if self.mentions[index].target.room_id().is_some() {
+                            shell::ROOM_ACCENT
+                        } else {
+                            shell::ACCENT
+                        };
                         let bounds = region + (text_bounds.position() - Point::ORIGIN);
                         renderer.fill_quad(
                             renderer::Quad {
@@ -456,7 +461,11 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                                 border: iced::Border::default().rounded(4.0),
                                 ..Default::default()
                             },
-                            Color::from_rgba8(73, 121, 211, 0.12),
+                            if self.mentions[index].target.room_id().is_some() {
+                                accent.scale_alpha(0.12)
+                            } else {
+                                Color::from_rgba8(73, 121, 211, 0.12)
+                            },
                         );
                         renderer.fill_quad(
                             renderer::Quad {
@@ -466,7 +475,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                                 ),
                                 ..Default::default()
                             },
-                            shell::ACCENT.scale_alpha(0.65),
+                            accent.scale_alpha(0.65),
                         );
                     }
                 });
@@ -656,7 +665,9 @@ mod tests {
         let start = source.find(label).unwrap();
         NamedMention {
             range: start..start + label.len(),
-            user_id: "@maya:example.org".parse().unwrap(),
+            target: interconnect::composition::MentionTarget::User {
+                user_id: "@maya:example.org".parse().unwrap(),
+            },
         }
     }
     fn render(
@@ -769,7 +780,7 @@ mod tests {
                             line.line_top + line.line_height / 2.0,
                         );
                         assert!(
-                            regions.iter().any(|region| region.contains(center)),
+                            regions.iter().any(|(_, region)| region.contains(center)),
                             "mention background must cover its shaped glyph at {center:?}"
                         );
                     }

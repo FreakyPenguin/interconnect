@@ -15,8 +15,9 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   inline-image authoring, and formatted media captions. Excerpts use plain text.
 - User mention completion suggests up to six joined room members from a snapshot
   of at most 4096 users. Full display names insert as editable text with per-occurrence
-  identities and visual highlighting. Room-wide mention completion/styling is
-  unsupported.
+  identities and visual highlighting. Room link completion via `#` searches only
+  joined rooms in the current snapshot, with canonical aliases (not alternate
+  aliases or a server directory). Room-wide `@room` completion/styling is unsupported.
 - Custom emoji packs support management and uploads, but not standalone stickers,
   bulk import/export, or animation. Received emoji retain sender dimensions because
   the pinned SDK strips the emoticon marker.

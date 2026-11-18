@@ -356,7 +356,9 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
             crate::composition::Bindings {
                 named_mentions: vec![crate::composition::NamedMention {
                     range: 6..11,
-                    user_id: "@jules:example.org".parse().unwrap(),
+                    target: crate::composition::MentionTarget::User {
+                        user_id: "@jules:example.org".parse().unwrap(),
+                    },
                 }],
                 ..Default::default()
             },
@@ -679,7 +681,9 @@ async fn named_mentions_recover_their_offsets_in_authored_markdown() {
         Bindings {
             named_mentions: vec![NamedMention {
                 range: start..start + 9,
-                user_id: "@maya:example.org".parse().unwrap(),
+                target: crate::composition::MentionTarget::User {
+                    user_id: "@maya:example.org".parse().unwrap(),
+                },
             }],
             ..Default::default()
         },

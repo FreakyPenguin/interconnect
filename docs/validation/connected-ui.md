@@ -55,6 +55,31 @@ and stable layout after drawing. Desktop appearance and native system-opener
 behavior still require manual acceptance; do not send connected test messages without
 authorization.
 
+### Room links and completion
+
+In demo mode, type `#gen` in both a room composer and a thread reply. Check the
+joined-room suggestions, including alias details, then accept with Enter, Tab,
+and mouse. Acceptance inserts a teal `#General` label without sending or
+navigating. Search by canonical alias too (`#general:example.org`). Completion
+uses the existing room snapshot without member loads or network searches.
+
+Shorten a room label, delete it entirely, undo, and switch conversations. Check
+that each surviving label keeps its original room target in preview and after
+editing a sent demo message, in both composition modes. Check mixed user and
+room labels with the same visible text. Verify saved drafts retain both kinds
+of label after restarting the demo with a disposable draft store. Existing user
+draft bindings remain compatible. Room links must not introduce user IDs or a
+room-wide notification flag into `m.mentions`.
+
+In **Message formatting**, click the room ID and canonical alias links to open
+General inside the app. Dragging must select text without navigating. The
+unknown room link must open a prefilled Join dialog without submitting a join;
+Cancel must retain the conversation draft. Check narrow wrapping, RTL text,
+spoilers, and copying visible labels. Event permalinks remain ordinary links.
+Only joined rooms in the current room snapshot are offered; `@room` broadcast
+completion remains unsupported. Server-dependent joining is a separate,
+authorized connected check.
+
 ### User mention completion
 
 In demo mode, type `@ma` in a room composer and in a thread composer. Check the

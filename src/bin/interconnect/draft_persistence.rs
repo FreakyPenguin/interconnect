@@ -469,7 +469,9 @@ mod tests {
             .named_mentions
             .push(interconnect::composition::NamedMention {
                 range: start..start + 9,
-                user_id: "@maya:example.org".parse().unwrap(),
+                target: interconnect::composition::MentionTarget::User {
+                    user_id: "@maya:example.org".parse().unwrap(),
+                },
             });
         reply.content.move_to(iced::advanced::text::editor::Cursor {
             position: iced::advanced::text::editor::Position {
@@ -484,6 +486,23 @@ mod tests {
         reply.perform(iced::widget::text_editor::Action::Edit(
             iced::widget::text_editor::Edit::Delete,
         ));
+        let start = reply.content.text().len();
+        reply.perform(iced::widget::text_editor::Action::Move(
+            iced::widget::text_editor::Motion::DocumentEnd,
+        ));
+        reply.perform(iced::widget::text_editor::Action::Edit(
+            iced::widget::text_editor::Edit::Paste(Arc::new(" #Room".into())),
+        ));
+        reply
+            .markdown
+            .named_mentions
+            .push(interconnect::composition::NamedMention {
+                range: start + 1..start + 6,
+                target: interconnect::composition::MentionTarget::Room {
+                    room_id: "!room:example.org".parse().unwrap(),
+                    via: vec!["route.example.org".parse().unwrap()],
+                },
+            });
         first.drafts.insert(thread.clone(), reply);
         first.capture_persistent_drafts();
         let expected = first.draft_persistence.current.clone();
@@ -503,7 +522,9 @@ mod tests {
         );
         assert_eq!(
             restored.drafts[&thread].markdown.named_mentions[0]
-                .user_id
+                .target
+                .user_id()
+                .unwrap()
                 .as_str(),
             "@maya:example.org"
         );
@@ -511,6 +532,15 @@ mod tests {
             .range
             .clone();
         assert_eq!(&restored.drafts[&thread].content.text()[range], "Maya");
+        assert_eq!(restored.drafts[&thread].markdown.named_mentions.len(), 2);
+        assert_eq!(
+            restored.drafts[&thread].markdown.named_mentions[1]
+                .target
+                .room_id()
+                .unwrap()
+                .as_str(),
+            "!room:example.org"
+        );
         assert_eq!(*restored.draft_persistence.current, *expected);
     }
 

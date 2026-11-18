@@ -79,6 +79,7 @@ impl State {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open,
+    Link(interconnect::room_membership::Address),
     Join,
     Leave(String),
     Input(String),
@@ -99,6 +100,32 @@ fn message(event: Event) -> Message {
 impl App {
     pub(super) fn membership_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::Link(address) if self.context_menu_allowed() => {
+                if let Some(room) = self.model.rooms.iter().find(|room| {
+                    room.id == address.room.as_str()
+                        || room.canonical_alias.as_deref() == Some(address.room.as_str())
+                        || (self.demo.is_some()
+                            && super::user_completion::room_target(
+                                room,
+                                true,
+                                self.account_id.as_deref(),
+                            )
+                            .and_then(|target| target.room_id().cloned())
+                            .as_ref()
+                                == Some(&address.room))
+                }) {
+                    return self.update(Message::Room(room.id.clone()));
+                }
+                let task = self.membership_event(Event::Join);
+                if self.membership.open {
+                    self.membership.input = interconnect::composition::MentionTarget::Room {
+                        room_id: address.room,
+                        via: address.via,
+                    }
+                    .uri();
+                }
+                return task;
+            }
             Event::Open | Event::Join | Event::Leave(_) if self.context_menu_allowed() => {
                 self.membership.mode = match event {
                     Event::Join => Mode::Join,
@@ -394,7 +421,7 @@ impl App {
 mod tests {
     use super::*;
     use crate::tests::demo_app;
-    use interconnect::room_membership::Invitation;
+    use interconnect::room_membership::{Address, Invitation};
 
     fn app() -> App {
         let mut app = demo_app();
@@ -408,6 +435,30 @@ mod tests {
         app
     }
 
+    #[test]
+    fn room_links_open_known_ids_and_aliases_or_prefill_join_without_submitting() {
+        for address in ["!demo-general:example.org", "#general:example.org"] {
+            let mut app = app();
+            let key = app.draft_key(false).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("unsent");
+            let _ = app.update(message(Event::Link(Address::parse(address).unwrap())));
+            assert_eq!(app.selection.room.as_ref().unwrap().1, "general");
+            assert_eq!(app.drafts[&key].content.text().trim_end(), "unsent");
+            assert!(!app.membership.open);
+            assert_eq!(app.pending_ops, 0);
+        }
+        let mut app = app();
+        let selected = app.selection.room.clone();
+        let _ = app.update(message(Event::Link(
+            Address::parse("https://matrix.to/#/!unknown:example.org?via=route.example.org")
+                .unwrap(),
+        )));
+        assert!(app.membership.open);
+        assert!(app.membership.input.contains("via=route.example.org"));
+        assert_eq!(app.selection.room, selected);
+        assert_eq!(app.pending_ops, 0);
+    }
     #[test]
     fn join_validation_and_cancel_keep_the_original_draft_then_join_opens_the_result() {
         let mut app = app();

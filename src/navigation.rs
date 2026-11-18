@@ -18,6 +18,7 @@ pub enum Scope {
 pub struct RoomEntry {
     pub id: String,
     pub name: String,
+    pub canonical_alias: Option<String>,
     pub topic: String,
     /// Joined members, excluding invitations and departed users.
     pub member_count: u64,
@@ -250,6 +251,7 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<Snapshot> {
             rooms.push(RoomEntry {
                 id,
                 name,
+                canonical_alias: room.canonical_alias().map(|alias| alias.to_string()),
                 topic: room.topic().unwrap_or_default(),
                 member_count: room.joined_members_count(),
                 // Incomplete cached permissions must not hide the conversation.

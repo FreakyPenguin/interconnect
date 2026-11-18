@@ -1,13 +1,13 @@
-//! Recover explicit user anchors without guessing identities from display names.
-use crate::message_document::{Document, user_mention};
-use matrix_sdk::ruma::OwnedUserId;
+//! Recover explicit user and room anchors without guessing identities from display names.
+use super::MentionTarget;
+use crate::message_document::Document;
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MentionLink {
     /// Editable Markdown link; protected in both composition modes.
     pub token: String,
-    pub user_id: OwnedUserId,
+    pub target: MentionTarget,
     pub label: String,
 }
 /// Keep authored Markdown when its explicit links already represent the anchors.
@@ -28,6 +28,7 @@ pub(crate) fn recover_mentions(
         while let Some(run) = runs.next() {
             let start = canonical.len();
             let text = if run.style.mention.is_none()
+                && run.style.room_mention.is_none()
                 && let crate::message_document::Inline::Image {
                     source: Some(crate::message_document::ImageSource::Matrix(uri)),
                     alt,
@@ -42,17 +43,13 @@ pub(crate) fn recover_mentions(
                 run.content.text()
             };
             canonical.push_str(text);
-            if let Some(user) = &run.style.mention {
+            if let Some(user) = target(&run.style) {
                 while runs.peek().is_some_and(|next| {
-                    next.style.mention.as_ref() == Some(user) && next.style.link == run.style.link
+                    target(&next.style).as_ref() == Some(&user) && next.style.link == run.style.link
                 }) {
                     canonical.push_str(runs.next().unwrap().content.text());
                 }
-                anchors.push((
-                    start..canonical.len(),
-                    user.clone(),
-                    canonical[start..].to_owned(),
-                ));
+                anchors.push((start..canonical.len(), user, canonical[start..].to_owned()));
             }
         }
     }
@@ -62,11 +59,11 @@ pub(crate) fn recover_mentions(
     if canonical == body
         && anchors
             .iter()
-            .any(|(_, user, label)| label != user.as_str())
+            .any(|(_, user, label)| user.user_id().is_none_or(|id| label != id.as_str()))
     {
         let named = anchors
             .into_iter()
-            .map(|(range, user_id, _)| super::NamedMention { range, user_id })
+            .map(|(range, target, _)| super::NamedMention { range, target })
             .collect();
         return (body.into(), Vec::new(), named, true);
     }
@@ -89,8 +86,11 @@ pub(crate) fn recover_mentions(
                 }
                 Event::Text(text) if literal_depth == 0 => {
                     for user in &users {
-                        let protected = super::protect_user(&text, user.as_str(), '\0');
-                        let count = (text.len() - protected.len()) / (user.as_str().len() - 1);
+                        let Some(user_id) = user.user_id() else {
+                            continue;
+                        };
+                        let protected = super::protect_user(&text, user_id.as_str(), '\0');
+                        let count = (text.len() - protected.len()) / (user_id.as_str().len() - 1);
                         *literal_ids.entry(user.clone()).or_insert(0usize) += count;
                     }
                 }
@@ -102,12 +102,12 @@ pub(crate) fn recover_mentions(
     let represented = anchors.iter().all(|(_, user, label)| {
         if let Some(index) = remaining
             .iter()
-            .position(|candidate| &candidate.user_id == user && &candidate.label == label)
+            .position(|candidate| &candidate.target == user && &candidate.label == label)
         {
             remaining.remove(index);
             true
         } else {
-            if label != user.as_str() {
+            if user.user_id().is_none_or(|id| label != id.as_str()) {
                 return false;
             }
             let count = literal_ids.entry(user.clone()).or_default();
@@ -123,7 +123,7 @@ pub(crate) fn recover_mentions(
         candidates.retain(|candidate| {
             anchors
                 .iter()
-                .any(|(_, user, label)| &candidate.user_id == user && &candidate.label == label)
+                .any(|(_, user, label)| &candidate.target == user && &candidate.label == label)
         });
         let mut seen = std::collections::HashSet::new();
         candidates.retain(|candidate| seen.insert(candidate.clone()));
@@ -134,7 +134,7 @@ pub(crate) fn recover_mentions(
     }
     let named = anchors
         .into_iter()
-        .map(|(range, user_id, _)| super::NamedMention { range, user_id })
+        .map(|(range, target, _)| super::NamedMention { range, target })
         .collect();
     (canonical, Vec::new(), named, true)
 }
@@ -147,7 +147,7 @@ fn markdown_links(body: &str) -> Vec<MentionLink> {
             match event {
                 Event::Start(Tag::Link { dest_url, .. }) => {
                     current =
-                        user_mention(&dest_url).map(|user| (range.start, user, String::new()));
+                        parse_target(&dest_url).map(|user| (range.start, user, String::new()));
                 }
                 Event::Text(text) | Event::Code(text) => {
                     if let Some((_, _, label)) = &mut current {
@@ -160,10 +160,10 @@ fn markdown_links(body: &str) -> Vec<MentionLink> {
                     }
                 }
                 Event::End(TagEnd::Link) => {
-                    if let Some((start, user_id, label)) = current.take() {
+                    if let Some((start, target, label)) = current.take() {
                         candidates.push(MentionLink {
                             token: body[start..range.end].into(),
-                            user_id,
+                            target,
                             label,
                         });
                     }
@@ -184,9 +184,7 @@ pub(super) fn refresh_links(source: &str, original: &[MentionLink]) -> Vec<Menti
         .cloned()
         .collect();
     for candidate in markdown_links(source) {
-        if original
-            .iter()
-            .any(|link| link.user_id == candidate.user_id)
+        if original.iter().any(|link| link.target == candidate.target)
             && !links.contains(&candidate)
         {
             links.push(candidate);
@@ -201,7 +199,7 @@ pub(super) fn refresh_links(source: &str, original: &[MentionLink]) -> Vec<Menti
 fn markdown_ranges(
     body: &str,
     canonical: &str,
-    anchors: &[(std::ops::Range<usize>, OwnedUserId, String)],
+    anchors: &[(std::ops::Range<usize>, MentionTarget, String)],
     document: &Document,
 ) -> Option<Vec<super::NamedMention>> {
     if body.len() > 64 * 1024
@@ -260,8 +258,33 @@ fn markdown_ranges(
             let range = start..start + label.len();
             (body.get(range.clone()) == Some(label.as_str())).then(|| super::NamedMention {
                 range,
-                user_id: user_id.clone(),
+                target: user_id.clone(),
             })
         })
         .collect()
+}
+
+fn target(style: &crate::message_document::Style) -> Option<MentionTarget> {
+    style
+        .mention
+        .as_ref()
+        .map(|id| MentionTarget::User {
+            user_id: id.clone(),
+        })
+        .or_else(|| {
+            style.room_mention.as_ref().map(|room| MentionTarget::Room {
+                room_id: room.room.clone(),
+                via: room.via.clone(),
+            })
+        })
+}
+fn parse_target(link: &str) -> Option<MentionTarget> {
+    crate::message_document::user_mention(link)
+        .map(|user_id| MentionTarget::User { user_id })
+        .or_else(|| {
+            crate::message_document::room_mention(link).map(|room| MentionTarget::Room {
+                room_id: room.room,
+                via: room.via,
+            })
+        })
 }

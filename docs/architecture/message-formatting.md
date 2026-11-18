@@ -38,7 +38,16 @@ Existing modal, busy-operation, and lifecycle guards apply. Other links still us
 the system opener. No member lookup, subscription, or timer is added.
 
 Plain `@name`, `@room`, and bare Matrix URLs are not inferred to be mentions.
-Room/event links retain normal link styling.
+Explicit room ID/alias anchors use teal backgrounds and stronger text. Known
+room IDs and canonical aliases navigate inside the app; unfamiliar rooms prefill
+the existing Join dialog without submitting it. Event links retain normal link
+styling. `#` completion searches names, canonical aliases, and IDs from the joined
+room snapshot and inserts a stable room ID link with the account server as a
+routing hint. It does not fetch a room directory or load members. Room labels
+share the editable occurrence bindings and encrypted draft storage with user
+labels, including edit recovery and partial/whole deletion. Only user targets
+contribute to `m.mentions.user_ids`; room links never set `m.mentions.room`.
+Legacy user draft bindings retain their serialized `user_id` representation.
 
 ## Inline images and local embedded assets
 

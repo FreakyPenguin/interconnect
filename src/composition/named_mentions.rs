@@ -1,11 +1,51 @@
 //! Per-occurrence identities for editable, visible mention labels.
-use matrix_sdk::ruma::OwnedUserId;
+use matrix_sdk::ruma::{OwnedRoomOrAliasId, OwnedServerName, OwnedUserId};
 use std::ops::Range;
 
+#[derive(
+    Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum MentionTarget {
+    User {
+        user_id: OwnedUserId,
+    },
+    Room {
+        room_id: OwnedRoomOrAliasId,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        via: Vec<OwnedServerName>,
+    },
+}
+impl MentionTarget {
+    pub fn user_id(&self) -> Option<&OwnedUserId> {
+        match self {
+            Self::User { user_id } => Some(user_id),
+            Self::Room { .. } => None,
+        }
+    }
+    pub fn room_id(&self) -> Option<&OwnedRoomOrAliasId> {
+        match self {
+            Self::Room { room_id, .. } => Some(room_id),
+            Self::User { .. } => None,
+        }
+    }
+    pub fn uri(&self) -> String {
+        match self {
+            Self::User { user_id } => user_id.matrix_to_uri().to_string(),
+            Self::Room { room_id, via } => {
+                match <&matrix_sdk::ruma::RoomId>::try_from(&**room_id) {
+                    Ok(id) => id.matrix_to_uri_via(via.clone()).to_string(),
+                    Err(alias) => alias.matrix_to_uri().to_string(),
+                }
+            }
+        }
+    }
+}
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct NamedMention {
     pub range: Range<usize>,
-    pub user_id: OwnedUserId,
+    #[serde(flatten)]
+    pub target: MentionTarget,
 }
 impl NamedMention {
     pub fn valid(&self, source: &str) -> bool {
@@ -63,8 +103,34 @@ mod tests {
     fn mention(range: Range<usize>, user: &str) -> NamedMention {
         NamedMention {
             range,
-            user_id: user.parse().unwrap(),
+            target: MentionTarget::User {
+                user_id: user.parse().unwrap(),
+            },
         }
+    }
+    #[test]
+    fn persisted_targets_accept_legacy_users_and_roundtrip_room_routing() {
+        let legacy = r#"{"range":{"start":0,"end":4},"user_id":"@maya:example.org"}"#;
+        let user: NamedMention = serde_json::from_str(legacy).unwrap();
+        assert_eq!(user.target.user_id().unwrap().as_str(), "@maya:example.org");
+        let room = NamedMention {
+            range: 0..7,
+            target: MentionTarget::Room {
+                room_id: "!opaque:example.org".parse().unwrap(),
+                via: vec!["route.example.org".parse().unwrap()],
+            },
+        };
+        assert_eq!(
+            serde_json::from_str::<NamedMention>(&serde_json::to_string(&room).unwrap()).unwrap(),
+            room
+        );
+        assert!(room.target.uri().contains("via=route.example.org"));
+        assert!(serde_json::from_str::<NamedMention>(r#"{"range":{"start":0,"end":4},"user_id":"@maya:example.org","room_id":"!room:example.org"}"#).is_err());
+        let mut rooms = vec![room];
+        update_named_mentions(&mut rooms, "#Room", &[(5..7, 0)]);
+        assert_eq!(rooms[0].range, 0..5);
+        update_named_mentions(&mut rooms, "", &[(0..5, 0)]);
+        assert!(rooms.is_empty());
     }
     #[test]
     fn shortening_names_preserves_identity_but_whole_replacements_remove_it() {

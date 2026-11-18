@@ -11,7 +11,7 @@ mod mentions;
 mod named_mentions;
 pub use mentions::MentionLink;
 pub(crate) use mentions::recover_mentions;
-pub use named_mentions::{NamedMention, update_named_mentions};
+pub use named_mentions::{MentionTarget, NamedMention, update_named_mentions};
 
 #[derive(Clone, Debug, Default)]
 pub struct Bindings {
@@ -212,7 +212,7 @@ fn convert_with_choices(
         let marker = available.next().ok_or_else(|| TOO_COMPLEX.to_owned())?;
         let label = &source[mention.range.clone()];
         protected.replace_range(mention.range.clone(), &marker.to_string());
-        markers.push((marker, Choice::Named(&mention.user_id, label)));
+        markers.push((marker, Choice::Named(&mention.target, label)));
     }
     // Protect complete recovered anchors first; IDs inside their destinations
     // must never be mistaken for newly typed full-ID mentions.
@@ -410,7 +410,7 @@ enum Choice<'a> {
     Emoji(&'a crate::custom_emoji::Selection),
     User(&'a matrix_sdk::ruma::OwnedUserId),
     Link(&'a MentionLink),
-    Named(&'a matrix_sdk::ruma::OwnedUserId, &'a str),
+    Named(&'a MentionTarget, &'a str),
 }
 impl Choice<'_> {
     fn token(&self) -> &str {
@@ -442,12 +442,14 @@ fn selected_text<'a>(
                 events.push(Event::InlineHtml(
                     format!(
                         "<a href=\"{}\">{}</a>",
-                        escaped(&user.matrix_to_uri().to_string()),
+                        escaped(&user.uri()),
                         escaped(label).replace('\n', "<br>")
                     )
                     .into(),
                 ));
-                mentioned.insert((*user).clone());
+                if let Some(user) = user.user_id() {
+                    mentioned.insert(user.clone());
+                }
             } else {
                 events.push(Event::Text((*label).to_owned().into()));
             }
@@ -462,12 +464,14 @@ fn selected_text<'a>(
                 events.push(Event::InlineHtml(
                     format!(
                         "<a href=\"{}\">{}</a>",
-                        escaped(&link.user_id.matrix_to_uri().to_string()),
+                        escaped(&link.target.uri()),
                         escaped(&link.label).replace('\n', "<br>")
                     )
                     .into(),
                 ));
-                mentioned.insert(link.user_id.clone());
+                if let Some(user) = link.target.user_id() {
+                    mentioned.insert(user.clone());
+                }
             } else {
                 events.push(Event::Text(link.token.clone().into()));
             }
@@ -553,6 +557,59 @@ mod tests {
     use crate::message_document::{BlockKind, Inline};
     use std::collections::BTreeSet;
 
+    #[tokio::test]
+    async fn room_labels_roundtrip_edits_without_creating_notification_mentions() {
+        for format in [Format::Plain, Format::Markdown] {
+            let source = "Maya in #Design team";
+            let bindings = Bindings {
+                named_mentions: vec![
+                    NamedMention {
+                        range: 0..4,
+                        target: MentionTarget::User {
+                            user_id: "@maya:example.org".parse().unwrap(),
+                        },
+                    },
+                    NamedMention {
+                        range: 8..20,
+                        target: MentionTarget::Room {
+                            room_id: "!design:example.org".parse().unwrap(),
+                            via: vec!["route.example.org".parse().unwrap()],
+                        },
+                    },
+                ],
+                ..Default::default()
+            };
+            let prepared = prepare_with_bindings(source.into(), format, bindings.clone())
+                .await
+                .unwrap();
+            let wire = serde_json::to_value(prepared.message_content()).unwrap();
+            assert_eq!(
+                wire["m.mentions"]["user_ids"],
+                serde_json::json!(["@maya:example.org"])
+            );
+            assert!(wire["m.mentions"].get("room").is_none());
+            let document = prepared.document.unwrap();
+            let (body, links, names, _) = recover_mentions(source, &document, &[]);
+            assert_eq!(body, source);
+            assert!(links.is_empty());
+            assert_eq!(names, bindings.named_mentions);
+            let room = prepare_with_bindings(
+                "#Design team".into(),
+                format,
+                Bindings {
+                    named_mentions: vec![NamedMention {
+                        range: 0..12,
+                        target: bindings.named_mentions[1].target.clone(),
+                    }],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+            assert!(room.mentions.is_empty());
+            assert!(room.html.unwrap().contains("via=route.example.org"));
+        }
+    }
     #[tokio::test]
     async fn selected_users_emit_links_and_notification_metadata_in_both_modes() {
         let user: matrix_sdk::ruma::OwnedUserId = "@maya:example.org".parse().unwrap();

@@ -55,7 +55,12 @@ completion before the normal composer bindings. Deleting part of a name (such as
 a surname) keeps the mention linked to the same user. Mentions have a soft blue
 background and underline. Select the whole name and press Delete/Backspace to
 remove it completely; erasing its characters also removes the binding.
-Room-wide `@room` completion is not supported.
+Type `#` to find a joined room by name, canonical alias, or room ID. The same
+completion keys insert an editable `#Room name` label with a teal background and
+underline. Shortening the label keeps the room link; deleting it removes the
+binding. Room links work while editing messages too. Clicking a known room link
+in the timeline opens that room; other room links prefill the Join room dialog.
+These links do not notify everyone. Room-wide `@room` completion is not supported.
 
 To copy message text, select it in the timeline and press Ctrl+C / Command+C.
 Selections can span messages; formatted text copies its displayed text, image
