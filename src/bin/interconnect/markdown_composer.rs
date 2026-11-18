@@ -13,11 +13,21 @@ pub struct State {
     pub emoji: Vec<interconnect::custom_emoji::Selection>,
     pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
     pub mention_links: Vec<composition::MentionLink>,
+    pub named_mentions: Vec<composition::NamedMention>,
     request: u64,
     task: Option<iced::task::Handle>,
     preview: Option<Preview>,
 }
 impl State {
+    pub fn bindings(&self) -> composition::Bindings {
+        composition::Bindings {
+            emoji: self.emoji.clone(),
+            mentions: self.mentions.clone(),
+            mention_links: self.mention_links.clone(),
+            named_mentions: self.named_mentions.clone(),
+        }
+    }
+
     pub fn insert_emoji(
         &mut self,
         emoji: &interconnect::custom_emoji::Emoji,
@@ -154,9 +164,7 @@ impl App {
                 }
                 let request = state.request;
                 let format = state.format;
-                let emoji = state.emoji.clone();
-                let mentions = state.mentions.clone();
-                let mention_links = state.mention_links.clone();
+                let bindings = state.bindings();
                 state.preview = Some(Preview {
                     source: source.clone(),
                     format,
@@ -164,15 +172,9 @@ impl App {
                 });
                 let (task, handle) = Task::perform(
                     async move {
-                        composition::prepare_with_mention_links(
-                            source,
-                            format,
-                            emoji,
-                            mentions,
-                            mention_links,
-                        )
-                        .await
-                        .map(Arc::new)
+                        composition::prepare_with_bindings(source, format, bindings)
+                            .await
+                            .map(Arc::new)
                     },
                     move |result| {
                         Message::Markdown(Event::Prepared {
@@ -227,6 +229,8 @@ impl App {
                             self.demo.as_mut().unwrap().send_prepared(&key, prepared);
                             draft.markdown.emoji.clear();
                             draft.markdown.mentions.clear();
+                            draft.markdown.mention_links.clear();
+                            draft.markdown.named_mentions.clear();
                             draft.content = iced::widget::text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;

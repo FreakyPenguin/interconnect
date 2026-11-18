@@ -155,11 +155,9 @@ impl App {
                     };
                     draft.markdown.clear_preview();
                     draft.content.move_to(state.cursor);
-                    draft
-                        .content
-                        .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                            std::sync::Arc::new(glyph),
-                        )));
+                    draft.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+                        std::sync::Arc::new(glyph),
+                    )));
                     self.composer_picker = None;
                     return focus(&target);
                 }
@@ -363,7 +361,7 @@ mod tests {
         let old = target(&app, true);
         let draft = app.drafts.get_mut(&old.key).unwrap();
         draft.content = text_editor::Content::with_text("keep selected text");
-        draft.content.perform(text_editor::Action::SelectAll);
+        draft.perform(text_editor::Action::SelectAll);
         let cursor = draft.content.cursor();
         open(&mut app, &old);
         let _ = app.update(Message::Send(old.key.clone()));

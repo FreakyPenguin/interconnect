@@ -59,31 +59,45 @@ authorization.
 
 In demo mode, type `@ma` in a room composer and in a thread composer. Check the
 popup shows Maya's name and full ID. Use Up/Down, Enter, Tab, and mouse selection;
-accepting must insert the ID without sending. Escape and outside clicks dismiss
+accepting must insert the full display name without sending. The name should
+have a soft blue background and underline immediately in the composer. Delete only the
+surname and confirm the surviving first name remains a mention in preview and
+local demo Send. Repeat with duplicate names and Unicode/emoji display names. Escape and outside clicks dismiss
 completion without losing drafts or closing the thread. Type an email address or
 URL containing `@`; neither should open suggestions. Check IME, focus changes,
 rapid room/thread navigation, both composers, and narrow popup placement.
 
+Wrap a long name, scroll the composer, and try RTL/emoji labels: the decoration
+must follow the name and stay inside the text viewport without shifting text or
+caret positions. Select the entire name and press Delete/Backspace, then try
+character-by-character deletion. Both must remove the visual indication and
+binding; preview/send must not retain a deleted mention. Ordinary unbound names
+stay unhighlighted. Existing selection, word deletion, and whole-draft deletion
+must remain usable.
+
 Preview a chosen mention in both Markdown and Plain text modes: it must use the
-same mention styling and readable full ID as a received user mention. Demo Send
-is local; verify it renders the same way. Put a chosen ID in code or a Markdown
-link and verify it stays literal there. Deleting/modifying the ID must not
-produce a mention for its old prefix. Restore encrypted room/thread drafts in a
-dedicated test profile and verify selected identities survive restart.
+same mention styling and chosen name as a received user mention. Demo Send
+is local; verify it renders the same way. Put a chosen name in code or a Markdown
+link and verify it stays literal there. Replacing the entire name with unrelated
+text must remove the binding. Restore encrypted room/thread drafts in a
+dedicated test profile and verify selected identities and shortened labels survive restart.
 
 While editing a room message and a thread reply, add a user with completion and
 preview/save. Existing full-ID and display-name mentions must retain their labels
 and targets, including duplicate display names for different IDs. Repeat the edit,
-switch Plain/Markdown, and change a mention label without changing its target.
+switch Plain/Markdown, and shorten a mention label without changing its target.
 Plain text messages with literal Markdown delimiters around mentions must keep
 them literal when reopened. Cancel must restore the original unsent draft and its
 mention selections. For
 server-dependent acceptance, verify `m.new_content` keeps old mentions and adds
-the newly selected user, without sending any unrelated message.
+the newly selected user. Remove the last occurrence of one existing mention and
+save again: its user ID must leave `m.new_content.m.mentions` while surviving
+mentions remain. Do not send unrelated messages.
 
 Automated fixtures cover trigger boundaries, ranking/duplicate names, replacement
 at the caret, keyboard and stale-event handling, selection persistence, payload
-HTML/notification metadata, edit/save/cancel and repeat-edit preservation, literal
+HTML/notification metadata, composer raster/geometry and deletion checks,
+edit/save/cancel and repeat-edit preservation, literal
 contexts, and joined-member loading. Real
 homeserver notification delivery and native IME behavior require connected/native
 acceptance; do not send connected test messages without authorization.

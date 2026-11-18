@@ -77,7 +77,11 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
             let event = if content["m.relates_to"]["event_id"] == "$reply" {
                 "$edit-reply"
             } else if content["m.relates_to"]["event_id"] == "$mentions" {
-                "$edit-mentions"
+                if content["m.new_content"]["body"] == "Hello Jules" {
+                    "$edit-mentions-deleted"
+                } else {
+                    "$edit-mentions"
+                }
             } else {
                 "$edit-text"
             };
@@ -219,15 +223,17 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
         .edit_source
         .as_ref()
         .unwrap();
+    let mut bindings = source.bindings();
+    bindings
+        .mentions
+        .push("@jules:example.org".parse().unwrap());
     composer
         .clone()
-        .edit_message_with_mention_links(
+        .edit_message_with_bindings(
             "$mentions".into(),
             format!("{} and @jules:example.org", source.body),
             source.format,
-            source.emoji.clone(),
-            vec!["@jules:example.org".parse().unwrap()],
-            source.mention_links.clone(),
+            bindings,
         )
         .await
         .unwrap();
@@ -335,6 +341,51 @@ async fn edits_preserve_identity_type_thread_and_mentions_and_reject_ineligible_
                 break;
             }
             updates.next().await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    // Removing an explicitly represented user removes that ID while retaining
+    // another surviving mention and the pre-existing room-wide flag.
+    composer
+        .clone()
+        .edit_message_with_mention_tracking(
+            "$mentions".into(),
+            "Hello Jules".into(),
+            crate::composition::Format::Plain,
+            crate::composition::Bindings {
+                named_mentions: vec![crate::composition::NamedMention {
+                    range: 6..11,
+                    user_id: "@jules:example.org".parse().unwrap(),
+                }],
+                ..Default::default()
+            },
+            vec![
+                "@maya:example.org".parse().unwrap(),
+                "@jules:example.org".parse().unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let deleted = server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|request| request.url.path().contains("/send/m.room.message/"))
+                .filter_map(|request| serde_json::from_slice::<Value>(&request.body).ok())
+                .find(|content| content["m.new_content"]["body"] == "Hello Jules");
+            if let Some(content) = deleted {
+                assert_eq!(
+                    content["m.new_content"]["m.mentions"]["user_ids"],
+                    json!(["@jules:example.org"])
+                );
+                assert_eq!(content["m.new_content"]["m.mentions"]["room"], true);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
@@ -471,19 +522,14 @@ async fn display_name_mentions_survive_edits_duplicate_labels_mode_changes_and_r
         mentions: vec![],
     };
     let mut source = EditSource::from_prepared(&initial);
-    assert_eq!(source.mention_links.len(), 2);
-    assert!(source.body.starts_with("Maya says hi to [Maya]"));
+    assert_eq!(source.named_mentions.len(), 2);
+    assert_eq!(source.body, initial.source);
     for _ in 0..2 {
         for format in [Format::Markdown, Format::Plain] {
-            let prepared = composition::prepare_with_mention_links(
-                source.body.clone(),
-                format,
-                source.emoji.clone(),
-                source.mentions.clone(),
-                source.mention_links.clone(),
-            )
-            .await
-            .unwrap();
+            let prepared =
+                composition::prepare_with_bindings(source.body.clone(), format, source.bindings())
+                    .await
+                    .unwrap();
             assert_eq!(
                 prepared
                     .document
@@ -507,28 +553,25 @@ async fn display_name_mentions_survive_edits_duplicate_labels_mode_changes_and_r
                 "the first unmentioned Maya stays ordinary text"
             );
         }
-        let prepared = composition::prepare_with_mention_links(
-            source.body,
+        let prepared = composition::prepare_with_bindings(
+            source.body.clone(),
             source.format,
-            source.emoji,
-            source.mentions,
-            source.mention_links,
+            source.bindings(),
         )
         .await
         .unwrap();
         source = EditSource::from_prepared(&prepared);
     }
-    // Changing a label retains the original identity in either composer mode.
+    // Changing part of a visible label retains its original per-occurrence ID.
+    let edit = source.named_mentions[0].range.end - 1..source.named_mentions[0].range.end;
+    let mut changed = source.body.clone();
+    changed.replace_range(edit.clone(), "a Chen");
+    composition::update_named_mentions(&mut source.named_mentions, &changed, &[(edit, 6)]);
     for format in [Format::Markdown, Format::Plain] {
-        let prepared = composition::prepare_with_mention_links(
-            source.body.replace("[Maya]", "[Maya Chen]"),
-            format,
-            vec![],
-            vec![],
-            source.mention_links.clone(),
-        )
-        .await
-        .unwrap();
+        let prepared =
+            composition::prepare_with_bindings(changed.clone(), format, source.bindings())
+                .await
+                .unwrap();
         assert_eq!(prepared.mentions.len(), 2);
         assert!(
             prepared
@@ -588,15 +631,10 @@ async fn plain_mode_mentions_survive_literal_markdown_delimiters_when_reopened_f
     .await
     .unwrap();
     let source = EditSource::from_prepared(&original);
-    let prepared = composition::prepare_with_mention_links(
-        source.body,
-        source.format,
-        source.emoji,
-        source.mentions,
-        source.mention_links,
-    )
-    .await
-    .unwrap();
+    let prepared =
+        composition::prepare_with_bindings(source.body.clone(), source.format, source.bindings())
+            .await
+            .unwrap();
     assert_eq!(prepared.mentions, original.mentions);
     assert_eq!(
         prepared.document.unwrap().text(&Default::default()),
@@ -618,19 +656,44 @@ async fn named_mention_recovery_keeps_custom_emoji_bindings_in_the_same_edit() {
     let source = EditSource::from_prepared(&original);
     assert_eq!(source.emoji.len(), 1);
     assert!(source.body.contains(":wave:"));
-    let prepared = composition::prepare_with_mention_links(
-        source.body,
-        source.format,
-        source.emoji,
-        source.mentions,
-        source.mention_links,
-    )
-    .await
-    .unwrap();
+    let prepared =
+        composition::prepare_with_bindings(source.body.clone(), source.format, source.bindings())
+            .await
+            .unwrap();
     assert_eq!(prepared.mentions[0].as_str(), "@maya:example.org");
     assert!(prepared.html.unwrap().contains("mxc://example.org/wave"));
     assert_eq!(
         prepared.document.unwrap().text(&Default::default()),
         "Hi Wave Maya"
     );
+}
+
+#[tokio::test]
+async fn named_mentions_recover_their_offsets_in_authored_markdown() {
+    use crate::composition::{self, Bindings, Format, NamedMention};
+    let body = "**Hello** Maya Chen and Maya Chen";
+    let start = body.rfind("Maya Chen").unwrap();
+    let original = composition::prepare_with_bindings(
+        body.into(),
+        Format::Markdown,
+        Bindings {
+            named_mentions: vec![NamedMention {
+                range: start..start + 9,
+                user_id: "@maya:example.org".parse().unwrap(),
+            }],
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let source = EditSource::from_prepared(&original);
+    assert_eq!(source.body, body);
+    assert_eq!(source.format, Format::Markdown);
+    assert_eq!(source.named_mentions[0].range, start..start + 9);
+    let prepared =
+        composition::prepare_with_bindings(source.body.clone(), source.format, source.bindings())
+            .await
+            .unwrap();
+    assert_eq!(prepared.html, original.html);
+    assert_eq!(prepared.mentions, original.mentions);
 }

@@ -9,6 +9,8 @@ mod branding;
 mod composer;
 #[path = "interconnect/composer_editor.rs"]
 mod composer_editor;
+#[path = "interconnect/composer_mentions.rs"]
+mod composer_mentions;
 #[path = "interconnect/composer_picker.rs"]
 mod composer_picker;
 #[path = "interconnect/context_menu.rs"]
@@ -1431,7 +1433,7 @@ impl App {
                 {
                     let edit = matches!(action, text_editor::Action::Edit(_));
                     let refresh_completion = !matches!(action, text_editor::Action::Scroll { .. });
-                    draft.content.perform(action);
+                    draft.perform(action);
                     if edit {
                         draft.markdown.clear_preview();
                         self.typing_edited(&key);
@@ -1471,7 +1473,9 @@ impl App {
                                     &body,
                                     draft.markdown.format,
                                 ) || !draft.markdown.emoji.is_empty()
-                                    || !draft.markdown.mentions.is_empty())
+                                    || !draft.markdown.mentions.is_empty()
+                                    || !draft.markdown.mention_links.is_empty()
+                                    || !draft.markdown.named_mentions.is_empty())
                             {
                                 let format = draft.markdown.format;
                                 let account = self.account_id.clone();
@@ -1479,11 +1483,10 @@ impl App {
                                 draft.error = None;
                                 self.pending_ops += 1;
                                 return Task::perform(
-                                    interconnect::composition::prepare_with_mentions(
+                                    interconnect::composition::prepare_with_bindings(
                                         body,
                                         format,
-                                        draft.markdown.emoji.clone(),
-                                        draft.markdown.mentions.clone(),
+                                        draft.markdown.bindings(),
                                     ),
                                     move |result| {
                                         Message::Markdown(markdown_composer::Event::DemoSent {
@@ -1501,6 +1504,8 @@ impl App {
                             );
                             draft.markdown.emoji.clear();
                             draft.markdown.mentions.clear();
+                            draft.markdown.mention_links.clear();
+                            draft.markdown.named_mentions.clear();
                             draft.content = text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;
@@ -1516,8 +1521,7 @@ impl App {
                 {
                     let body = draft.content.text();
                     let format = draft.markdown.format;
-                    let emoji = draft.markdown.emoji.clone();
-                    let mentions = draft.markdown.mentions.clone();
+                    let bindings = draft.markdown.bindings();
                     let attachment = draft.attachment.clone();
                     let account = self.account_id.clone();
                     draft.pending = true;
@@ -1528,9 +1532,7 @@ impl App {
                             if let Some(attachment) = attachment {
                                 composer.send_attachment(attachment, body).await
                             } else {
-                                composer
-                                    .send_with_mentions(body, format, emoji, mentions)
-                                    .await
+                                composer.send_with_bindings(body, format, bindings).await
                             }
                         },
                         move |result| Message::Sent(key.clone(), account.clone(), result),
@@ -1562,6 +1564,8 @@ impl App {
                             draft.attachment = None;
                             draft.markdown.emoji.clear();
                             draft.markdown.mentions.clear();
+                            draft.markdown.mention_links.clear();
+                            draft.markdown.named_mentions.clear();
                             draft.content = text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;
@@ -3315,6 +3319,11 @@ impl App {
             let editor = composer_editor::view(
                 editor.into(),
                 &draft.content,
+                if draft.attachment.is_none() {
+                    &draft.markdown.named_mentions
+                } else {
+                    &[]
+                },
                 &key,
                 *generation,
                 composer_editor::Options {

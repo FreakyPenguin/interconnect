@@ -8,8 +8,18 @@ use std::{
 };
 
 mod mentions;
+mod named_mentions;
 pub use mentions::MentionLink;
 pub(crate) use mentions::recover_mentions;
+pub use named_mentions::{NamedMention, update_named_mentions};
+
+#[derive(Clone, Debug, Default)]
+pub struct Bindings {
+    pub emoji: Vec<crate::custom_emoji::Selection>,
+    pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    pub mention_links: Vec<MentionLink>,
+    pub named_mentions: Vec<NamedMention>,
+}
 
 const MAX_BYTES: usize = 64 * 1024;
 static CONVERSIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
@@ -95,10 +105,34 @@ pub async fn prepare_with_mentions(
 pub async fn prepare_with_mention_links(
     source: String,
     format: Format,
-    mut emoji: Vec<crate::custom_emoji::Selection>,
-    mut mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    emoji: Vec<crate::custom_emoji::Selection>,
+    mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
     mention_links: Vec<MentionLink>,
 ) -> Result<Prepared, String> {
+    prepare_with_bindings(
+        source,
+        format,
+        Bindings {
+            emoji,
+            mentions,
+            mention_links,
+            ..Default::default()
+        },
+    )
+    .await
+}
+pub async fn prepare_with_bindings(
+    source: String,
+    format: Format,
+    bindings: Bindings,
+) -> Result<Prepared, String> {
+    let Bindings {
+        mut emoji,
+        mut mentions,
+        mention_links,
+        mut named_mentions,
+    } = bindings;
+    named_mentions.retain(|mention| mention.valid(&source));
     emoji.retain(|choice| !choice.token.is_empty() && source.contains(&choice.token));
     mentions.retain(|user| source.contains(user.as_str()));
     mentions.sort();
@@ -110,6 +144,7 @@ pub async fn prepare_with_mention_links(
         && emoji.is_empty()
         && mentions.is_empty()
         && mention_links.is_empty()
+        && named_mentions.is_empty()
     {
         return Ok(Prepared::plain(source));
     }
@@ -122,7 +157,16 @@ pub async fn prepare_with_mention_links(
         .map_err(|_| "Formatting is unavailable".to_owned())?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        convert_with_choices(source, format, emoji, mentions, mention_links)
+        convert_with_choices(
+            source,
+            format,
+            Bindings {
+                emoji,
+                mentions,
+                mention_links,
+                named_mentions,
+            },
+        )
     })
     .await
     .map_err(|_| "Could not format message".to_owned())?
@@ -130,15 +174,23 @@ pub async fn prepare_with_mention_links(
 fn convert_with_choices(
     source: String,
     format: Format,
-    emoji: Vec<crate::custom_emoji::Selection>,
-    mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
-    mention_links: Vec<MentionLink>,
+    bindings: Bindings,
 ) -> Result<Prepared, String> {
+    let Bindings {
+        emoji,
+        mentions,
+        mention_links,
+        mut named_mentions,
+    } = bindings;
     if source.len() > MAX_BYTES {
         return Err(TOO_COMPLEX.into());
     }
     let mention_links = mentions::refresh_links(&source, &mention_links);
-    if emoji.len() > 256 || mentions.len() > 256 || mention_links.len() > 256 {
+    if emoji.len() > 256
+        || mentions.len() > 256
+        || mention_links.len() > 256
+        || named_mentions.len() > 256
+    {
         return Err(TOO_COMPLEX.into());
     }
     // Protect explicit choices before CommonMark sees underscores in shortcodes.
@@ -147,6 +199,21 @@ fn convert_with_choices(
     let mut markers = Vec::new();
     let mut protected = source.clone();
     let mut available = ('\u{e000}'..='\u{f8ff}').filter(|ch| !source.contains(*ch));
+    named_mentions.sort_by_key(|mention| mention.range.start);
+    let mut end = 0;
+    for mention in &named_mentions {
+        if !mention.valid(&source) || mention.range.start < end {
+            return Err(TOO_COMPLEX.into());
+        }
+        end = mention.range.end;
+    }
+    // Replace occurrences from the end so duplicate names retain separate IDs.
+    for mention in named_mentions.iter().rev() {
+        let marker = available.next().ok_or_else(|| TOO_COMPLEX.to_owned())?;
+        let label = &source[mention.range.clone()];
+        protected.replace_range(mention.range.clone(), &marker.to_string());
+        markers.push((marker, Choice::Named(&mention.user_id, label)));
+    }
     // Protect complete recovered anchors first; IDs inside their destinations
     // must never be mistaken for newly typed full-ID mentions.
     for link in &mention_links {
@@ -343,6 +410,7 @@ enum Choice<'a> {
     Emoji(&'a crate::custom_emoji::Selection),
     User(&'a matrix_sdk::ruma::OwnedUserId),
     Link(&'a MentionLink),
+    Named(&'a matrix_sdk::ruma::OwnedUserId, &'a str),
 }
 impl Choice<'_> {
     fn token(&self) -> &str {
@@ -350,6 +418,7 @@ impl Choice<'_> {
             Self::Emoji(choice) => &choice.token,
             Self::User(user) => user.as_str(),
             Self::Link(link) => &link.token,
+            Self::Named(_, label) => label,
         }
     }
 }
@@ -367,6 +436,26 @@ fn selected_text<'a>(
         };
         if offset > start {
             events.push(Event::Text(text[start..offset].to_owned().into()));
+        }
+        if let Choice::Named(user, label) = choice {
+            if allow_users {
+                events.push(Event::InlineHtml(
+                    format!(
+                        "<a href=\"{}\">{}</a>",
+                        escaped(&user.matrix_to_uri().to_string()),
+                        escaped(label).replace('\n', "<br>")
+                    )
+                    .into(),
+                ));
+                mentioned.insert((*user).clone());
+            } else {
+                events.push(Event::Text((*label).to_owned().into()));
+            }
+            start = offset + ch.len_utf8();
+            if events.len() > 4096 {
+                return;
+            }
+            continue;
         }
         if let Choice::Link(link) = choice {
             if allow_users {

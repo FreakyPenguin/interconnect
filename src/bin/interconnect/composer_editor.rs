@@ -1,5 +1,5 @@
 //! Native editor scrolling with a quiet scrollbar and an event-driven resize grip.
-use super::{DraftKey, Message, shell};
+use super::{DraftKey, Message, formatted, shell};
 use iced::{
     Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     advanced::{
@@ -8,6 +8,7 @@ use iced::{
     },
     widget::text_editor,
 };
+use interconnect::composition::NamedMention;
 
 pub(super) const MIN_HEIGHT: f32 = 56.0;
 pub(super) const MAX_HEIGHT: f32 = 320.0;
@@ -24,6 +25,7 @@ pub(super) struct Options {
 pub(super) fn view<'a>(
     editor: Element<'a, Message>,
     content: &'a text_editor::Content,
+    mentions: &'a [NamedMention],
     key: &DraftKey,
     generation: u64,
     options: Options,
@@ -31,6 +33,7 @@ pub(super) fn view<'a>(
     Element::new(Editor {
         editor,
         content,
+        mentions,
         key: key.clone(),
         generation,
         height: options.height.clamp(MIN_HEIGHT, options.max_height),
@@ -43,6 +46,7 @@ pub(super) fn view<'a>(
 struct Editor<'a> {
     editor: Element<'a, Message>,
     content: &'a text_editor::Content,
+    mentions: &'a [NamedMention],
     key: DraftKey,
     generation: u64,
     height: f32,
@@ -87,6 +91,7 @@ struct State {
     generation: u64,
     drag: Option<Drag>,
     metrics: Metrics,
+    line_offsets: Vec<usize>,
     last_height: Option<f32>,
     hovered: bool,
 }
@@ -137,6 +142,74 @@ impl Editor<'_> {
         }
     }
 }
+/// Native glyph clusters determine the decorations, including partial ligatures,
+/// wrapping, scroll offsets, emoji and disjoint visual segments in bidi text.
+fn mention_regions(
+    buffer: &iced::advanced::graphics::text::cosmic_text::Buffer,
+    line_offsets: &[usize],
+    mentions: &[NamedMention],
+) -> Vec<Rectangle> {
+    let mut regions = Vec::new();
+    for line in buffer.layout_runs() {
+        let Some(start) = line_offsets.get(line.line_i) else {
+            continue;
+        };
+        let mut segments = Vec::new();
+        for glyph in line.glyphs {
+            if glyph.w <= 0.0 {
+                continue;
+            }
+            let from = start + glyph.start;
+            let to = start + glyph.end;
+            let first = mentions.partition_point(|mention| mention.range.end <= from);
+            for (index, mention) in mentions
+                .iter()
+                .enumerate()
+                .skip(first)
+                .take_while(|(_, mention)| mention.range.start < to)
+            {
+                if mention.range.end <= from {
+                    continue;
+                }
+                let (left, width) = formatted::highlight_fraction(
+                    &line.text[glyph.start..glyph.end],
+                    from,
+                    &mention.range,
+                    glyph.level.is_rtl(),
+                );
+                if width > 0.0 {
+                    segments.push((
+                        index,
+                        Rectangle::new(
+                            Point::new(glyph.x + left * glyph.w, line.line_top),
+                            Size::new(width * glyph.w, line.line_height),
+                        ),
+                    ));
+                }
+            }
+        }
+        segments.sort_by(|(a, ar), (b, br)| a.cmp(b).then(ar.x.total_cmp(&br.x)));
+        let mut current: Option<(usize, Rectangle)> = None;
+        for (index, segment) in segments {
+            if let Some((previous_index, previous)) = current.as_mut()
+                && *previous_index == index
+                && segment.x <= previous.x + previous.width + 0.5
+            {
+                previous.width = previous.width.max(segment.x + segment.width - previous.x);
+            } else {
+                if let Some((_, previous)) = current.take() {
+                    regions.push(previous);
+                }
+                current = Some((index, segment));
+            }
+        }
+        if let Some((_, previous)) = current {
+            regions.push(previous);
+        }
+    }
+    regions
+}
+
 impl Widget<Message, Theme, Renderer> for Editor<'_> {
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<State>()
@@ -181,13 +254,23 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, &limits);
         let size = Size::new(node.size().width, node.size().height + self.grip_height);
-        tree.state.downcast_mut::<State>().metrics = self.content.with_editor(|editor| {
+        let (metrics, line_offsets) = self.content.with_editor(|editor| {
             let buffer = editor.buffer();
             let line = buffer.metrics().line_height;
             let scroll = buffer.scroll();
             let mut total = 0.0;
+            let mut source_offset = 0;
+            let mut line_offsets = Vec::with_capacity(if self.mentions.is_empty() {
+                0
+            } else {
+                buffer.lines.len()
+            });
             let mut offset = scroll.vertical;
             for (index, paragraph) in buffer.lines.iter().enumerate() {
+                if !self.mentions.is_empty() {
+                    line_offsets.push(source_offset);
+                    source_offset += paragraph.text().len() + paragraph.ending().as_str().len();
+                }
                 // Offscreen paragraphs are lazy; refine their extent when visited.
                 let height = paragraph.layout_opt().map_or(line, |rows| {
                     rows.iter()
@@ -199,16 +282,22 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                     offset += height;
                 }
             }
-            Metrics {
-                offset,
-                total,
-                visible: (size.height
-                    - self.grip_height
-                    - (self.padding.top + self.padding.bottom))
-                    .max(0.0),
-                line,
-            }
+            (
+                Metrics {
+                    offset,
+                    total,
+                    visible: (size.height
+                        - self.grip_height
+                        - (self.padding.top + self.padding.bottom))
+                        .max(0.0),
+                    line,
+                },
+                line_offsets,
+            )
         });
+        let state = tree.state.downcast_mut::<State>();
+        state.metrics = metrics;
+        state.line_offsets = line_offsets;
         layout::Node::with_children(size, vec![node.move_to(Point::new(0.0, self.grip_height))])
     }
     fn operate(
@@ -350,6 +439,39 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
         viewport: &Rectangle,
     ) {
         use iced::advanced::Renderer as _;
+        let native_layout = layout.children().next().unwrap();
+        let text_bounds = native_layout.bounds().shrink(self.padding);
+        if !self.mentions.is_empty()
+            && let Some(clip) = text_bounds.intersection(viewport)
+        {
+            let state = tree.state.downcast_ref::<State>();
+            self.content.with_editor(|editor| {
+                let regions = mention_regions(editor.buffer(), &state.line_offsets, self.mentions);
+                renderer.with_layer(clip, |renderer| {
+                    for region in regions {
+                        let bounds = region + (text_bounds.position() - Point::ORIGIN);
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds,
+                                border: iced::Border::default().rounded(4.0),
+                                ..Default::default()
+                            },
+                            Color::from_rgba8(73, 121, 211, 0.12),
+                        );
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: Rectangle::new(
+                                    Point::new(bounds.x, bounds.y + bounds.height - 1.5),
+                                    Size::new(bounds.width, 1.0),
+                                ),
+                                ..Default::default()
+                            },
+                            shell::ACCENT.scale_alpha(0.65),
+                        );
+                    }
+                });
+            });
+        }
         self.editor.as_widget().draw(
             &tree.children[0],
             renderer,
@@ -466,7 +588,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::advanced::Widget;
+    use iced::advanced::{Renderer as _, Widget};
 
     fn editor<'a>(content: &'a text_editor::Content) -> Editor<'a> {
         let key = DraftKey {
@@ -484,10 +606,12 @@ mod tests {
                 left: 12.0,
             })
             .cursor_blinking(false)
+            .style(shell::composer_editor_style)
             .on_action(move |action| Message::Edit(target.clone(), action));
         Editor {
             editor: native.into(),
             content,
+            mentions: &[],
             key,
             generation: 7,
             height: 56.0,
@@ -528,6 +652,178 @@ mod tests {
         ));
         messages
     }
+    fn mention(source: &str, label: &str) -> NamedMention {
+        let start = source.find(label).unwrap();
+        NamedMention {
+            range: start..start + label.len(),
+            user_id: "@maya:example.org".parse().unwrap(),
+        }
+    }
+    fn render(
+        editor: &Editor<'_>,
+        tree: &Tree,
+        node: &layout::Node,
+        renderer: &mut Renderer,
+        viewport: Rectangle,
+    ) -> tiny_skia::Pixmap {
+        renderer.reset(viewport);
+        editor.draw(
+            tree,
+            renderer,
+            &shell::theme(),
+            &renderer::Style {
+                text_color: shell::INK,
+            },
+            Layout::new(node),
+            mouse::Cursor::Unavailable,
+            &viewport,
+        );
+        let Renderer::Secondary(software) = renderer else {
+            panic!("software renderer");
+        };
+        let mut pixels =
+            tiny_skia::Pixmap::new(viewport.width as u32, viewport.height as u32).unwrap();
+        let mut mask = tiny_skia::Mask::new(viewport.width as u32, viewport.height as u32).unwrap();
+        software.draw(
+            &mut pixels.as_mut(),
+            &mut mask,
+            &iced::advanced::graphics::Viewport::with_physical_size(
+                Size::new(viewport.width as u32, viewport.height as u32),
+                1.0,
+            ),
+            &[viewport],
+            Color::WHITE,
+        );
+        pixels
+    }
+    #[test]
+    fn mention_background_is_visible_and_removing_binding_preserves_layout_and_text() {
+        let source = "Hi Maya Chen, welcome!";
+        let content = text_editor::Content::with_text(source);
+        let mentions = [mention(source, "Maya Chen")];
+        let mut view = editor(&content);
+        view.mentions = &mentions;
+        let mut renderer = crate::test_renderer(iced::Font::with_name("Inter"), iced::Pixels(14.0));
+        let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(300.0, 100.0));
+        let node = view.layout(&mut tree, &renderer, &limits);
+        let cursor = content.cursor();
+        let viewport = Rectangle::with_size(Size::new(300.0, 100.0));
+        let marked = render(&view, &tree, &node, &mut renderer, viewport);
+        view.mentions = &[];
+        view.diff(&mut tree);
+        let plain_node = view.layout(&mut tree, &renderer, &limits);
+        let plain = render(&view, &tree, &plain_node, &mut renderer, viewport);
+        assert_eq!(node.bounds(), plain_node.bounds());
+        assert_eq!(content.cursor(), cursor);
+        assert_eq!(content.text(), source);
+        // The software framebuffer is BGRA; its first channel contains blue.
+        let changed = marked
+            .pixels()
+            .iter()
+            .zip(plain.pixels())
+            .filter(|(marked, plain)| {
+                marked != plain && marked.red() > marked.blue().saturating_add(8)
+            })
+            .count();
+        assert!(
+            changed > 200,
+            "mention background and underline must be visible: {changed}"
+        );
+    }
+    #[test]
+    fn mention_regions_follow_wrapped_unicode_and_rtl_glyphs() {
+        let source = "Before Maya Chen after.\nלפני מיה אחרי.\n👋 Zoë returns.";
+        let content = text_editor::Content::with_text(source);
+        let mut mentions = [
+            mention(source, "Maya Chen"),
+            mention(source, "מיה"),
+            mention(source, "👋 Zoë"),
+        ];
+        mentions.sort_by_key(|mention| mention.range.start);
+        let mut view = editor(&content);
+        view.height = 200.0;
+        view.mentions = &mentions;
+        let renderer = crate::test_renderer(iced::Font::with_name("Inter"), iced::Pixels(14.0));
+        let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
+        let _node = view.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(130.0, 240.0)),
+        );
+        let offsets = &tree.state.downcast_ref::<State>().line_offsets;
+        content.with_editor(|editor| {
+            let regions = mention_regions(editor.buffer(), offsets, &mentions);
+            assert!(regions.len() >= 3);
+            for line in editor.buffer().layout_runs() {
+                for glyph in line.glyphs {
+                    let start = offsets[line.line_i] + glyph.start;
+                    let end = offsets[line.line_i] + glyph.end;
+                    if glyph.w > 0.0
+                        && mentions
+                            .iter()
+                            .any(|mention| mention.range.start <= start && mention.range.end >= end)
+                    {
+                        let center = Point::new(
+                            glyph.x + glyph.w / 2.0,
+                            line.line_top + line.line_height / 2.0,
+                        );
+                        assert!(
+                            regions.iter().any(|region| region.contains(center)),
+                            "mention background must cover its shaped glyph at {center:?}"
+                        );
+                    }
+                }
+            }
+        });
+    }
+    #[test]
+    fn scrolled_mention_uses_absolute_source_offsets_and_clips_to_the_editor() {
+        let source = format!(
+            "{}Maya Chen",
+            (0..30)
+                .map(|i| format!("Paragraph {i}\n"))
+                .collect::<String>()
+        );
+        let mentions = [mention(&source, "Maya Chen")];
+        let mut content = text_editor::Content::with_text(&source);
+        content.perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+        content.perform(text_editor::Action::Scroll {
+            lines: i32::MAX / 2,
+        });
+        let mut view = editor(&content);
+        view.mentions = &mentions;
+        let mut renderer = crate::test_renderer(iced::Font::with_name("Inter"), iced::Pixels(14.0));
+        let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
+        let node = view.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(300.0, 100.0)),
+        );
+        let offsets = &tree.state.downcast_ref::<State>().line_offsets;
+        content.with_editor(|editor| {
+            assert!(editor.buffer().scroll().line > 0);
+            assert!(!mention_regions(editor.buffer(), offsets, &mentions).is_empty());
+        });
+        let viewport = Rectangle::with_size(Size::new(300.0, 100.0));
+        let pixels = render(&view, &tree, &node, &mut renderer, viewport);
+        let text = Layout::new(&node)
+            .children()
+            .next()
+            .unwrap()
+            .bounds()
+            .shrink(view.padding);
+        for (index, pixel) in pixels.pixels().iter().enumerate() {
+            if pixel.red() > pixel.blue().saturating_add(20) && pixel.green() > 100 {
+                let point = Point::new((index % 300) as f32 + 0.5, (index / 300) as f32 + 0.5);
+                assert!(
+                    text.contains(point),
+                    "mention decoration must not paint outside the text viewport"
+                );
+            }
+        }
+    }
+
     #[test]
     fn resize_is_clamped_deduplicated_and_canceled_on_release_focus_loss_or_new_draft() {
         let content = text_editor::Content::new();

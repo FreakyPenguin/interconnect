@@ -282,11 +282,9 @@ impl App {
                 column: active.trigger.start,
             }),
         });
-        draft
-            .content
-            .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                std::sync::Arc::new(glyph),
-            )));
+        draft.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+            std::sync::Arc::new(glyph),
+        )));
         let edited_key = active.trigger.key.clone();
         let thread = edited_key.root.is_some();
         self.typing_edited(&edited_key);

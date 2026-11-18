@@ -106,8 +106,8 @@ Typing `@` at a token boundary opens a room-user popup in the focused room/threa
 composer. Names and full IDs distinguish duplicate display names. Matching is
 case-insensitive, with exact/prefix matches first and up to six visible choices.
 Up/Down changes selection; Enter/Tab or clicking accepts; Escape dismisses without
-closing a thread. Acceptance inserts the full ID plus a trailing space when at
-line end, preserving adjacent punctuation. It never sends the message. Email
+closing a thread. Acceptance inserts the full display name (or Matrix ID when unnamed) plus a
+trailing space at line end, preserving adjacent punctuation. It never sends the message. Email
 addresses, URLs, selections, attachments, hidden panes, and IME preedit do not
 open completion. `@room` has no special authoring behavior.
 
@@ -119,26 +119,36 @@ releases it. Request, account, conversation, generation, caret, and source check
 reject stale results and selections. Failed loads show an error; dismiss/reopen
 to retry. Demo suggestions stay local and never create an SDK client.
 
-Explicit choices bind full IDs in the draft (at most 256), persisted with its
-encrypted source. Old draft files default to no chosen mentions. Preview, Send,
-and edit preparation share the bounded worker: chosen IDs become Matrix user
-anchors in Markdown and Plain modes, and only anchors actually emitted add IDs
-to `m.mentions`. Code, raw HTML, existing links, and image alternatives stay
-literal. Manually typing an ID without choosing it does not create a mention;
-repeated occurrences of a chosen ID share its binding. Longer/modified IDs do
-not inherit a prefix's identity. Sent messages keep their full-ID plain fallback.
-Existing mention metadata is retained when editing, alongside newly selected IDs.
+Each choice binds a byte range of visible name text to a Matrix user ID (up to
+256 per draft), persisted with its encrypted source. Names are plain editable
+text: deleting a last name or editing part of a label preserves the surviving
+name's identity. Exact editor replacement ranges keep duplicate names separate;
+replacing/deleting the entire name removes its binding. Adjacent body text stays
+outside the label. Cursor-only changes do not parse or rewrite the draft.
 
-Editing also recovers display-name anchors received from other clients. Existing
-Markdown mention links keep their source. When a plain fallback cannot represent
-the HTML anchors, the edit draft uses canonical displayed text with explicit
-`[label](Matrix user link)` tokens in Plain mode. Per-token identity bindings keep
-labels (including duplicate names) linked in either composition mode; changing a
-label retains its target. Recovery uses HTML positions rather than guessing IDs
-from names. Arbitrary HTML formatting still follows the existing editing limits.
-These bindings belong to the temporary edit, and cancel/save restores the original
-unsent draft with its own selections. Conversion stays on bounded workers and
-refuses oversized content rather than silently dropping mention bindings.
+The composer paints a soft accent background and underline for each named range,
+using the native editor's glyph geometry before drawing text, selection and caret.
+Decorations follow wrapping, bidi, emoji, shortening, and scrolling, and clip to
+the text viewport. They change neither shaping nor source/clipboard text and add
+no timers. Selecting a whole name and pressing Delete/Backspace, or erasing it
+character by character, removes its decoration and identity binding completely.
+
+Preview, Send, and edit preparation share the bounded worker. Named occurrences
+become escaped Matrix user anchors in Markdown and Plain modes, and only emitted
+anchors add IDs to `m.mentions`. Code, raw HTML, existing links, and image
+alternatives remain literal. Manually typing/copying a name does not infer its
+identity. Plain message bodies contain the chosen/edited names. Old draft files
+and their explicit full-ID selections remain compatible.
+
+Editing recovers existing anchors by HTML position, preserving labels and targets
+without guessing identities from names. Authored Markdown links keep their source;
+plain/display-name fallbacks use canonical visible text with per-occurrence
+identities. Arbitrary HTML formatting still follows the existing editing limits.
+The temporary edit owns separate bindings: save/cancel restores the original
+unsent draft and its selections. Existing notification metadata is retained with
+newly selected IDs; deleting the last explicitly represented occurrence of a user
+also removes that user's metadata on Save. Unrepresented legacy mentions and the
+pre-existing room-wide flag are retained. Oversized conversions fail without silently dropping bindings.
 
 ## Custom emoji
 

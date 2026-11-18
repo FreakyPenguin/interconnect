@@ -9,8 +9,18 @@ pub struct EditSource {
     pub emoji: Vec<crate::custom_emoji::Selection>,
     pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
     pub mention_links: Vec<crate::composition::MentionLink>,
+    pub named_mentions: Vec<crate::composition::NamedMention>,
 }
 impl EditSource {
+    pub fn bindings(&self) -> crate::composition::Bindings {
+        crate::composition::Bindings {
+            emoji: self.emoji.clone(),
+            mentions: self.mentions.clone(),
+            mention_links: self.mention_links.clone(),
+            named_mentions: self.named_mentions.clone(),
+        }
+    }
+
     pub fn plain(body: String) -> Self {
         Self {
             body,
@@ -18,6 +28,7 @@ impl EditSource {
             emoji: Vec::new(),
             mentions: Vec::new(),
             mention_links: Vec::new(),
+            named_mentions: Vec::new(),
         }
     }
     pub fn from_prepared(prepared: &Prepared) -> Self {
@@ -121,10 +132,11 @@ impl EditSource {
                     .collect::<std::collections::BTreeSet<_>>()
                     .into_iter()
                     .collect();
-                let (body, links, normalized) =
+                let (body, links, named, normalized) =
                     crate::composition::recover_mentions(&source.body, &document, &source.emoji);
                 source.body = body;
                 source.mention_links = links;
+                source.named_mentions = named;
                 if normalized {
                     source.format = Format::Plain;
                 }
@@ -167,17 +179,47 @@ impl Composer {
         mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
         mention_links: Vec<crate::composition::MentionLink>,
     ) -> Result<(), String> {
+        self.edit_message_with_bindings(
+            event,
+            body,
+            format,
+            crate::composition::Bindings {
+                emoji,
+                mentions,
+                mention_links,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    pub async fn edit_message_with_bindings(
+        self,
+        event: String,
+        body: String,
+        format: crate::composition::Format,
+        bindings: crate::composition::Bindings,
+    ) -> Result<(), String> {
+        self.edit_message_with_mention_tracking(event, body, format, bindings, Vec::new())
+            .await
+    }
+    /// Track explicitly represented mentions so deleting their last occurrence
+    /// removes their notification metadata. Unrepresented legacy metadata stays.
+    pub async fn edit_message_with_mention_tracking(
+        self,
+        event: String,
+        body: String,
+        format: crate::composition::Format,
+        bindings: crate::composition::Bindings,
+        original_mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    ) -> Result<(), String> {
         use matrix_sdk::ruma::events::room::message::{
             MessageType, RoomMessageEventContentWithoutRelation,
         };
-        let prepared = crate::composition::prepare_with_mention_links(
-            body,
-            format,
-            emoji,
-            mentions,
-            mention_links,
-        )
-        .await?;
+        let prepared = crate::composition::prepare_with_bindings(body, format, bindings).await?;
+        let original_mentions: std::collections::BTreeSet<_> =
+            original_mentions.into_iter().collect();
+        let surviving_mentions: std::collections::BTreeSet<_> =
+            prepared.mentions.iter().cloned().collect();
         let update = async {
             let event: matrix_sdk::ruma::OwnedEventId = event
                 .parse()
@@ -210,6 +252,11 @@ impl Composer {
             }
             let mut replacement = RoomMessageEventContentWithoutRelation::new(msgtype);
             replacement.mentions = message.mentions().cloned();
+            if let Some(mentions) = &mut replacement.mentions {
+                mentions.user_ids.retain(|user| {
+                    !original_mentions.contains(user) || surviving_mentions.contains(user)
+                });
+            }
             if !prepared.mentions.is_empty() {
                 replacement = replacement.add_mentions(
                     matrix_sdk::ruma::events::Mentions::with_user_ids(prepared.mentions.clone()),

@@ -29,6 +29,8 @@ pub struct Entry {
     pub emoji: Vec<Selection>,
     #[serde(default)]
     pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    #[serde(default)]
+    pub named_mentions: Vec<crate::composition::NamedMention>,
 }
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -71,6 +73,18 @@ impl Snapshot {
                 "Invalid draft emoji"
             );
             ensure!(entry.mentions.len() <= 256, "Too many draft mentions");
+            ensure!(
+                entry.named_mentions.len() <= 256
+                    && entry
+                        .named_mentions
+                        .iter()
+                        .all(|mention| mention.valid(&entry.text))
+                    && entry
+                        .named_mentions
+                        .windows(2)
+                        .all(|pair| pair[0].range.end <= pair[1].range.start),
+                "Invalid named draft mentions"
+            );
             bytes = bytes.saturating_add(entry.text.len());
             ensure!(
                 bytes <= MAX_TEXT_BYTES,
@@ -263,6 +277,7 @@ mod tests {
                     format: Format::Plain,
                     emoji: vec![],
                     mentions: vec![],
+                    named_mentions: vec![],
                 },
                 Entry {
                     room: "!room:example.org".into(),
@@ -271,6 +286,7 @@ mod tests {
                     format: Format::Markdown,
                     emoji: vec![],
                     mentions: vec![],
+                    named_mentions: vec![],
                 },
             ],
         }

@@ -11,6 +11,7 @@ use interconnect::composition::{self, Prepared};
 pub struct State {
     event: String,
     request: u64,
+    original_mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
     pub(super) saved: Box<Draft>,
 }
 #[derive(Clone, Debug)]
@@ -151,6 +152,15 @@ impl App {
                     editing: Some(State {
                         event: target.event,
                         request: self.generation,
+                        original_mentions: source
+                            .mentions
+                            .iter()
+                            .chain(source.named_mentions.iter().map(|mention| &mention.user_id))
+                            .chain(source.mention_links.iter().map(|mention| &mention.user_id))
+                            .cloned()
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .into_iter()
+                            .collect(),
                         saved,
                     }),
                     ..Draft::default()
@@ -159,6 +169,7 @@ impl App {
                 draft.markdown.emoji = source.emoji;
                 draft.markdown.mentions = source.mentions;
                 draft.markdown.mention_links = source.mention_links;
+                draft.markdown.named_mentions = source.named_mentions;
                 draft
                     .content
                     .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
@@ -317,11 +328,10 @@ impl App {
         };
         let event = editing.event.clone();
         let request = editing.request;
+        let original_mentions = editing.original_mentions.clone();
         let source = draft.content.text();
         let format = draft.markdown.format;
-        let emoji = draft.markdown.emoji.clone();
-        let mentions = draft.markdown.mentions.clone();
-        let mention_links = draft.markdown.mention_links.clone();
+        let bindings = draft.markdown.bindings();
         let account = self.account_id.clone();
         let demo = self.demo.is_some();
         // A thread original may be projected from the room pane rather than
@@ -347,25 +357,18 @@ impl App {
         Task::perform(
             async move {
                 if demo {
-                    composition::prepare_with_mention_links(
-                        source,
-                        format,
-                        emoji,
-                        mentions,
-                        mention_links,
-                    )
-                    .await
-                    .map(Some)
+                    composition::prepare_with_bindings(source, format, bindings)
+                        .await
+                        .map(Some)
                 } else {
                     composer
                         .unwrap()
-                        .edit_message_with_mention_links(
+                        .edit_message_with_mention_tracking(
                             event,
                             source,
                             format,
-                            emoji,
-                            mentions,
-                            mention_links,
+                            bindings,
+                            original_mentions,
                         )
                         .await
                         .map(|()| None)
@@ -613,7 +616,7 @@ mod tests {
             let target = target(&app, thread);
             let event = target.event.clone();
             start(&mut app, target);
-            assert_eq!(app.drafts[&key].markdown.mention_links.len(), 1);
+            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 1);
             let _ = app.update(Message::Edit(
                 key.clone(),
                 text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
@@ -643,12 +646,10 @@ mod tests {
             let _ = app.update(accept);
             assert!(!app.drafts[&key].pending);
             let draft = &app.drafts[&key];
-            let prepared = composition::prepare_with_mention_links(
+            let prepared = composition::prepare_with_bindings(
                 draft.content.text(),
                 draft.markdown.format,
-                draft.markdown.emoji.clone(),
-                draft.markdown.mentions.clone(),
-                draft.markdown.mention_links.clone(),
+                draft.markdown.bindings(),
             )
             .await
             .unwrap();
@@ -666,7 +667,7 @@ mod tests {
                     .as_ref()
                     .unwrap()
                     .text(&Default::default()),
-                "Hello Maya Chen and @jules:example.org "
+                "Hello Maya Chen and Jules "
             );
             let _ = app.update(Message::Send(key.clone()));
             finish(&mut app, &key, Ok(Some(prepared)));
@@ -701,7 +702,7 @@ mod tests {
             // A second edit recovers both the old label and the newly inserted ID.
             let target = self::target(&app, thread);
             start(&mut app, target);
-            assert!(!app.drafts[&key].markdown.mention_links.is_empty());
+            assert!(!app.drafts[&key].markdown.named_mentions.is_empty());
             let _ = app.update(message(Event::Cancel(key.clone())));
             assert_eq!(app.drafts[&key].content.text(), "Unsent @alex:example.org");
         }

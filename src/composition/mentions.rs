@@ -10,24 +10,6 @@ pub struct MentionLink {
     pub user_id: OwnedUserId,
     pub label: String,
 }
-impl MentionLink {
-    fn new(user_id: OwnedUserId, label: String) -> Self {
-        let escaped: String = label
-            .chars()
-            .flat_map(|c| {
-                matches!(c, '\\' | '[' | ']' | '`' | '*' | '_')
-                    .then_some('\\')
-                    .into_iter()
-                    .chain(std::iter::once(c))
-            })
-            .collect();
-        Self {
-            token: format!("[{escaped}]({})", user_id.matrix_to_uri()),
-            user_id,
-            label,
-        }
-    }
-}
 /// Keep authored Markdown when its explicit links already represent the anchors.
 /// Otherwise use canonical visible text with unambiguous links. This handles
 /// duplicate labels and plain fallbacks that differ from the formatted message.
@@ -35,7 +17,7 @@ pub(crate) fn recover_mentions(
     body: &str,
     document: &Document,
     emoji: &[crate::custom_emoji::Selection],
-) -> (String, Vec<MentionLink>, bool) {
+) -> (String, Vec<MentionLink>, Vec<super::NamedMention>, bool) {
     let mut canonical = String::new();
     let mut anchors = Vec::new();
     for block in &document.blocks {
@@ -75,7 +57,18 @@ pub(crate) fn recover_mentions(
         }
     }
     if anchors.is_empty() {
-        return (body.into(), Vec::new(), false);
+        return (body.into(), Vec::new(), Vec::new(), false);
+    }
+    if canonical == body
+        && anchors
+            .iter()
+            .any(|(_, user, label)| label != user.as_str())
+    {
+        let named = anchors
+            .into_iter()
+            .map(|(range, user_id, _)| super::NamedMention { range, user_id })
+            .collect();
+        return (body.into(), Vec::new(), named, true);
     }
     let mut candidates = markdown_links(body);
     // A full ID inside Markdown code/HTML or another link cannot stand in for
@@ -134,22 +127,16 @@ pub(crate) fn recover_mentions(
         });
         let mut seen = std::collections::HashSet::new();
         candidates.retain(|candidate| seen.insert(candidate.clone()));
-        return (body.into(), candidates, false);
+        return (body.into(), candidates, Vec::new(), false);
     }
-    let mut source = String::new();
-    let mut links = Vec::new();
-    let mut copied = 0;
-    for (range, user, label) in anchors {
-        let link = MentionLink::new(user, label);
-        source.push_str(&canonical[copied..range.start]);
-        source.push_str(&link.token);
-        copied = range.end;
-        if !links.contains(&link) {
-            links.push(link);
-        }
+    if let Some(named) = markdown_ranges(body, &canonical, &anchors, document) {
+        return (body.into(), Vec::new(), named, false);
     }
-    source.push_str(&canonical[copied..]);
-    (source, links, true)
+    let named = anchors
+        .into_iter()
+        .map(|(range, user_id, _)| super::NamedMention { range, user_id })
+        .collect();
+    (canonical, Vec::new(), named, true)
 }
 
 fn markdown_links(body: &str) -> Vec<MentionLink> {
@@ -206,4 +193,75 @@ pub(super) fn refresh_links(source: &str, original: &[MentionLink]) -> Vec<Menti
         }
     }
     links
+}
+
+/// Recover offsets in our own Markdown source when its rendered text matches.
+/// Lists/images have synthetic visible text and deliberately use the canonical
+/// fallback rather than guessing between identical labels and list markers.
+fn markdown_ranges(
+    body: &str,
+    canonical: &str,
+    anchors: &[(std::ops::Range<usize>, OwnedUserId, String)],
+    document: &Document,
+) -> Option<Vec<super::NamedMention>> {
+    if body.len() > 64 * 1024
+        || document.blocks.iter().any(|block| {
+            block.list_depth > 0
+                || block
+                    .runs
+                    .iter()
+                    .any(|run| matches!(run.content, crate::message_document::Inline::Image { .. }))
+        })
+    {
+        return None;
+    }
+    let events: Vec<_> = Parser::new_ext(body, pulldown_cmark::Options::ENABLE_STRIKETHROUGH)
+        .into_offset_iter()
+        .take(2049)
+        .collect();
+    if events.len() > 2048 {
+        return None;
+    }
+    let mut html = super::BoundedHtml(Vec::new());
+    pulldown_cmark::html::write_html_io(
+        &mut html,
+        events.iter().map(|(event, _)| match event.clone() {
+            Event::SoftBreak => Event::HardBreak,
+            other => other,
+        }),
+    )
+    .ok()?;
+    let rendered = Document::parse(std::str::from_utf8(&html.0).ok()?)?;
+    if rendered.text(&Default::default()) != canonical {
+        return None;
+    }
+    let mut cursor = 0;
+    let mut mapped = Vec::new();
+    for (event, source) in &events {
+        let (Event::Text(text) | Event::Code(text)) = event else {
+            continue;
+        };
+        if text.is_empty() {
+            continue;
+        }
+        let start = cursor + canonical.get(cursor..)?.find(text.as_ref())?;
+        cursor = start + text.len();
+        if matches!(event, Event::Text(_)) && body.get(source.clone()) == Some(text.as_ref()) {
+            mapped.push((start..cursor, source.clone()));
+        }
+    }
+    anchors
+        .iter()
+        .map(|(range, user_id, label)| {
+            let (visible, source) = mapped
+                .iter()
+                .find(|(visible, _)| visible.start <= range.start && visible.end >= range.end)?;
+            let start = source.start + range.start - visible.start;
+            let range = start..start + label.len();
+            (body.get(range.clone()) == Some(label.as_str())).then(|| super::NamedMention {
+                range,
+                user_id: user_id.clone(),
+            })
+        })
+        .collect()
 }

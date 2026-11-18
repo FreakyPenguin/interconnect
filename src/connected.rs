@@ -502,8 +502,24 @@ impl Composer {
         emoji: Vec<crate::custom_emoji::Selection>,
         mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
     ) -> Result<(), String> {
-        let prepared =
-            crate::composition::prepare_with_mentions(body, format, emoji, mentions).await?;
+        self.send_with_bindings(
+            body,
+            format,
+            crate::composition::Bindings {
+                emoji,
+                mentions,
+                ..Default::default()
+            },
+        )
+        .await
+    }
+    pub async fn send_with_bindings(
+        self,
+        body: String,
+        format: crate::composition::Format,
+        bindings: crate::composition::Bindings,
+    ) -> Result<(), String> {
+        let prepared = crate::composition::prepare_with_bindings(body, format, bindings).await?;
         Box::pin(self.0.send(prepared.message_content().into()))
             .await
             .map(|_| ())

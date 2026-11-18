@@ -235,11 +235,9 @@ impl App {
                 // A slow clipboard owner must not overwrite intervening typing
                 // or move the user's selection back to an obsolete caret.
                 if draft.content.text() == paste.text && draft.content.cursor() == paste.cursor {
-                    draft
-                        .content
-                        .perform(iced::widget::text_editor::Action::Edit(
-                            iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
-                        ));
+                    draft.perform(iced::widget::text_editor::Action::Edit(
+                        iced::widget::text_editor::Edit::Paste(std::sync::Arc::new(text)),
+                    ));
                     draft.error = None;
                     self.typing_edited(&target.key);
                     self.refresh_emoji_completion(&target.key);

@@ -80,6 +80,7 @@ fn entry(key: &DraftKey, draft: &Draft) -> Option<Entry> {
             .filter(|user| text.contains(user.as_str()))
             .cloned()
             .collect(),
+        named_mentions: draft.markdown.named_mentions.clone(),
         text,
         format: draft.markdown.format,
     })
@@ -157,6 +158,7 @@ impl App {
                         draft.markdown.format = saved.format;
                         draft.markdown.emoji = saved.emoji.clone();
                         draft.markdown.mentions = saved.mentions.clone();
+                        draft.markdown.named_mentions = saved.named_mentions.clone();
                         draft
                     });
                 }
@@ -445,7 +447,7 @@ mod tests {
         };
         let mut reply = Draft {
             content: iced::widget::text_editor::Content::with_text(
-                "reply :leaf: @maya:example.org",
+                "reply :leaf: @maya:example.org and Maya Chen",
             ),
             ..Default::default()
         };
@@ -461,6 +463,27 @@ mod tests {
             .markdown
             .mentions
             .push("@maya:example.org".parse().unwrap());
+        let start = reply.content.text().find("Maya Chen").unwrap();
+        reply
+            .markdown
+            .named_mentions
+            .push(interconnect::composition::NamedMention {
+                range: start..start + 9,
+                user_id: "@maya:example.org".parse().unwrap(),
+            });
+        reply.content.move_to(iced::advanced::text::editor::Cursor {
+            position: iced::advanced::text::editor::Position {
+                line: 0,
+                column: start + 9,
+            },
+            selection: Some(iced::advanced::text::editor::Position {
+                line: 0,
+                column: start + 4,
+            }),
+        });
+        reply.perform(iced::widget::text_editor::Action::Edit(
+            iced::widget::text_editor::Edit::Delete,
+        ));
         first.drafts.insert(thread.clone(), reply);
         first.capture_persistent_drafts();
         let expected = first.draft_persistence.current.clone();
@@ -478,6 +501,16 @@ mod tests {
             restored.drafts[&thread].markdown.mentions[0].as_str(),
             "@maya:example.org"
         );
+        assert_eq!(
+            restored.drafts[&thread].markdown.named_mentions[0]
+                .user_id
+                .as_str(),
+            "@maya:example.org"
+        );
+        let range = restored.drafts[&thread].markdown.named_mentions[0]
+            .range
+            .clone();
+        assert_eq!(&restored.drafts[&thread].content.text()[range], "Maya");
         assert_eq!(*restored.draft_persistence.current, *expected);
     }
 

@@ -357,24 +357,34 @@ impl App {
             }
             Event::Loaded { .. } => unreachable!(),
         };
-        if !active.matches.iter().any(|person| person.user_id == user) {
+        let Some(person) = active.matches.iter().find(|person| person.user_id == user) else {
             return Task::none();
-        }
+        };
+        let label = person.name.split_whitespace().collect::<Vec<_>>().join(" ");
+        let label = if label.is_empty() {
+            user.clone()
+        } else {
+            label
+        };
         let trigger = active.trigger.clone();
         let draft = self.drafts.get_mut(&trigger.key).unwrap();
-        draft
-            .markdown
-            .mentions
-            .retain(|user| draft.content.text().contains(user.as_str()));
+        if draft.markdown.named_mentions.len() >= 256 {
+            return Task::none();
+        }
         let Ok(user_id) = user.parse() else {
             return Task::none();
         };
-        if !draft.markdown.mentions.contains(&user_id) {
-            if draft.markdown.mentions.len() >= 256 {
-                return Task::none();
-            }
-            draft.markdown.mentions.push(user_id);
-        }
+        let start = draft
+            .content
+            .text()
+            .split_inclusive('\n')
+            .take(trigger.line)
+            .map(str::len)
+            .sum::<usize>()
+            + trigger.start;
+        draft.markdown.named_mentions.retain(|mention| {
+            mention.range.end <= start || mention.range.start >= start + trigger.end - trigger.start
+        });
         draft.markdown.clear_preview();
         let spacing = if draft
             .content
@@ -395,11 +405,20 @@ impl App {
                 column: trigger.start,
             }),
         });
+        draft.perform(text_editor::Action::Edit(text_editor::Edit::Paste(
+            std::sync::Arc::new(format!("{label}{spacing}")),
+        )));
         draft
-            .content
-            .perform(text_editor::Action::Edit(text_editor::Edit::Paste(
-                std::sync::Arc::new(format!("{user}{spacing}")),
-            )));
+            .markdown
+            .named_mentions
+            .push(interconnect::composition::NamedMention {
+                range: start..start + label.len(),
+                user_id,
+            });
+        draft
+            .markdown
+            .named_mentions
+            .sort_by_key(|mention| mention.range.start);
         self.typing_edited(&trigger.key);
         self.user_completion.clear();
         self.user_completion.dismissed = None;
@@ -576,15 +595,15 @@ mod tests {
             assert_eq!(active.matches[0].user_id, "@maya:example.org");
             let trigger = active.trigger.clone();
             let _ = app.update(Message::UserCompletion(Event::Accept(trigger.clone())));
-            assert_eq!(app.drafts[&key].content.text(), "Hi @maya:example.org, end");
+            assert_eq!(app.drafts[&key].content.text(), "Hi Maya Chen, end");
             assert_eq!(
-                app.drafts[&key].markdown.mentions[0].as_str(),
+                app.drafts[&key].markdown.named_mentions[0].user_id.as_str(),
                 "@maya:example.org"
             );
             assert!(!app.drafts[&key].pending);
             assert!(!app.user_completion.is_active());
             let _ = app.update(Message::UserCompletion(Event::Accept(trigger)));
-            assert_eq!(app.drafts[&key].markdown.mentions.len(), 1);
+            assert_eq!(app.drafts[&key].markdown.named_mentions.len(), 1);
             assert_eq!(
                 if thread {
                     app.model.thread.as_ref().unwrap().rows.len()
@@ -631,6 +650,7 @@ mod tests {
             }));
             assert_eq!(app.drafts[&key].content.text(), before, "mode {mode}");
             assert!(app.drafts[&key].markdown.mentions.is_empty());
+            assert!(app.drafts[&key].markdown.named_mentions.is_empty());
         }
     }
     #[test]
