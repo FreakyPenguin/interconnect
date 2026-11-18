@@ -59,6 +59,8 @@ mod membership;
 mod message_delete;
 #[path = "interconnect/message_edit.rs"]
 mod message_edit;
+#[path = "interconnect/message_links.rs"]
+mod message_links;
 #[path = "interconnect/message_reply.rs"]
 mod message_reply;
 #[path = "interconnect/navigation_control.rs"]
@@ -1121,30 +1123,7 @@ impl App {
             );
         let mut action_task = Task::none();
         match message {
-            Message::OpenMessageLink(link) => {
-                if self.closing || self.stopped {
-                    return Task::none();
-                }
-                if let Some(link) = interconnect::message_document::safe_link(&link) {
-                    return Task::perform(
-                        async move {
-                            #[cfg(target_os = "macos")]
-                            let program = "open";
-                            #[cfg(not(target_os = "macos"))]
-                            let program = "xdg-open";
-                            let _ = tokio::process::Command::new(program)
-                                .arg(link)
-                                .stdin(std::process::Stdio::null())
-                                .stdout(std::process::Stdio::null())
-                                .stderr(std::process::Stdio::null())
-                                .kill_on_drop(true)
-                                .status()
-                                .await;
-                        },
-                        |_| Message::LinkOpened,
-                    );
-                }
-            }
+            Message::OpenMessageLink(link) => action_task = self.open_message_link(link),
             Message::LinkOpened => {}
 
             Message::CreateRoom(event) => action_task = self.create_room_event(event),

@@ -11,6 +11,7 @@ pub struct State {
     pub open: bool,
     mode: Mode,
     input: String,
+    link_event: Option<matrix_sdk::ruma::OwnedEventId>,
     generation: u64,
     pending: Option<(u64, u64)>,
     error: Option<String>,
@@ -66,6 +67,7 @@ impl Change {
 impl State {
     pub fn reset(&mut self) {
         self.open = false;
+        self.link_event = None;
         self.error = None;
         self.settling.clear();
     }
@@ -80,6 +82,10 @@ impl State {
 pub enum Event {
     Open,
     Link(interconnect::room_membership::Address),
+    MessageLink(
+        interconnect::room_membership::Address,
+        matrix_sdk::ruma::OwnedEventId,
+    ),
     Join,
     Leave(String),
     Input(String),
@@ -100,7 +106,12 @@ fn message(event: Event) -> Message {
 impl App {
     pub(super) fn membership_event(&mut self, event: Event) -> Task<Message> {
         match event {
-            Event::Link(address) if self.context_menu_allowed() => {
+            Event::Link(_) | Event::MessageLink(_, _) if self.context_menu_allowed() => {
+                let (address, event) = match event {
+                    Event::Link(address) => (address, None),
+                    Event::MessageLink(address, event) => (address, Some(event)),
+                    _ => unreachable!(),
+                };
                 if let Some(room) = self.model.rooms.iter().find(|room| {
                     room.id == address.room.as_str()
                         || room.canonical_alias.as_deref() == Some(address.room.as_str())
@@ -114,10 +125,24 @@ impl App {
                             .as_ref()
                                 == Some(&address.room))
                 }) {
-                    return self.update(Message::Room(room.id.clone()));
+                    let task = self.update(Message::Room(room.id.clone()));
+                    if let Some(event) = event {
+                        self.focus_link_event(event);
+                    }
+                    return task;
+                }
+                if event.is_none()
+                    && self
+                        .model
+                        .spaces
+                        .iter()
+                        .any(|space| space.id == address.room.as_str())
+                {
+                    return self.update(Message::Space(Scope::Space(address.room.to_string())));
                 }
                 let task = self.membership_event(Event::Join);
                 if self.membership.open {
+                    self.membership.link_event = event;
                     self.membership.input = interconnect::composition::MentionTarget::Room {
                         room_id: address.room,
                         via: address.via,
@@ -139,6 +164,7 @@ impl App {
                     _ => Mode::Invitations,
                 };
                 self.membership.input.clear();
+                self.membership.link_event = None;
                 self.context_menu = None;
                 self.stop_typing();
                 self.emoji_completion.clear();
@@ -157,6 +183,7 @@ impl App {
             }
             Event::Close => {
                 self.membership.open = false;
+                self.membership.link_event = None;
                 return iced::widget::operation::focus("room-composer");
             }
             Event::Input(value)
@@ -165,6 +192,7 @@ impl App {
                     && self.membership.pending.is_none() =>
             {
                 self.membership.input = value;
+                self.membership.link_event = None;
                 self.membership.error = None;
             }
             Event::Submit
@@ -350,7 +378,11 @@ impl App {
                                 self.shell.space = Scope::Space(joined.id);
                             } else {
                                 self.shell.space = Scope::All;
-                                return self.update(Message::Room(joined.id));
+                                let task = self.update(Message::Room(joined.id));
+                                if let Some(event) = self.membership.link_event.take() {
+                                    self.focus_link_event(event);
+                                }
+                                return task;
                             }
                         }
                     }

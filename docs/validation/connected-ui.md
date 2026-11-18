@@ -234,7 +234,8 @@ In **Message formatting**, click the room ID and canonical alias links to open
 General inside the app. Dragging must select text without navigating. The
 unknown room link must open a prefilled Join dialog without submitting a join;
 Cancel must retain the conversation draft. Check narrow wrapping, RTL text,
-spoilers, and copying visible labels. Event permalinks remain ordinary links.
+spoilers, and copying visible labels. Event permalinks open their target message
+inside Interconnect.
 Only joined rooms in the current room snapshot are offered. Server-dependent
 joining is a separate, authorized connected check.
 
@@ -424,6 +425,31 @@ Automated widget fixtures cover hit destinations, labeled/bare links, popup
 coordinate translation, ordinary-text menus, hidden spoilers, and edited-link
 revalidation. Native clipboard and visual acceptance require the manual checks
 above; these steps do not claim they have been run.
+
+### Opening Matrix permalinks
+
+Click labeled and bare matrix.to links in room/thread messages, pinned messages,
+and composer previews. User links should reuse an existing DM or offer the
+internal chat dialog; room IDs and known aliases should open the room. Joined
+space IDs should select the space without switching the open conversation.
+Event links should select the room and load/scroll to the exact event, including
+older messages and thread replies. Encoded IDs and `via` parameters must survive.
+`matrix:` links use the same internal navigation. Other web links retain their
+normal browser behavior; invalid matrix.to destinations report an in-app error.
+
+An unfamiliar room must open the Join dialog without joining automatically.
+After explicit Join, an event link must retain its destination. Cancel, edit the
+join address, switch accounts, and complete an old join after dismissal: no stale
+event should navigate the current conversation. Repeat with missing events,
+private/inaccessible rooms, encrypted history, narrow layouts, and both themes.
+Keep drafts in the source and destination conversations; navigating away and back
+must preserve those drafts and their saved reading positions. History loading
+must remain cancellable on navigation and quit, with no retry timer.
+
+Automated fixtures cover routing, encoded event IDs, control publication, draft
+preservation, join confirmation, cancellation, invalid links, host lookalikes,
+and modal/lifecycle guards. Connected history loading, native clipboard/browser
+integration, and visual scrolling still require the manual checks above.
 
 ### Copying message permalinks
 
