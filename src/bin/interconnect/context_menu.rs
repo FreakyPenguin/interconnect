@@ -245,19 +245,27 @@ impl App {
                 if !self.model.rooms.iter().any(|room| &room.id == id) {
                     return Vec::new();
                 }
-                vec![
+                let mut actions = vec![
                     ("Open room", dispatch(Message::Room(id.clone()))),
                     ("Mark as unread", Action::MarkUnread),
                     ("Move to section…", Action::Sections),
                     ("Copy room ID", Action::Copy(id.clone())),
-                    (
-                        "Leave room…",
-                        dispatch(Message::Membership(super::membership::Event::Leave(
-                            id.clone(),
-                        ))),
-                    ),
-                ]
+                ];
+                if let Ok(room) = matrix_sdk::ruma::RoomId::parse(id) {
+                    actions.push((
+                        "Copy room link",
+                        Action::Copy(room.matrix_to_uri().to_string()),
+                    ));
+                }
+                actions.push((
+                    "Leave room…",
+                    dispatch(Message::Membership(super::membership::Event::Leave(
+                        id.clone(),
+                    ))),
+                ));
+                actions
             }
+
             Target::Thread {
                 room,
                 generation,
@@ -986,6 +994,55 @@ mod tests {
             !app.context_actions(&local)
                 .iter()
                 .any(|(label, _)| *label == "Copy message URL")
+        );
+    }
+
+    #[test]
+    fn room_and_dm_links_use_the_room_id_and_preserve_conversation_state() {
+        let mut app = demo_app();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("unsent");
+        app.scroll_positions.insert(key.clone(), 75.0);
+        let selection = app.selection.clone();
+        for direct in [false, true] {
+            let id = if direct {
+                "!dm:example.org"
+            } else {
+                "!room:example.org"
+            };
+            std::sync::Arc::make_mut(&mut app.model.rooms).push(
+                interconnect::navigation::RoomEntry {
+                    id: id.into(),
+                    direct,
+                    canonical_alias: Some("#alias:example.org".into()),
+                    ..Default::default()
+                },
+            );
+            let target = Target::Room(id.into());
+            open(&mut app, &target);
+            let actions = app.context_actions(&target);
+            assert!(
+                actions
+                    .iter()
+                    .any(|(label, action)| matches!(action, Action::Copy(value)
+                if *label == "Copy room link" && value == &format!("https://matrix.to/#/{id}")))
+            );
+            choose(&mut app, &target, "Copy room link");
+            assert!(app.context_menu.is_none());
+            assert_eq!(app.selection, selection);
+            assert_eq!(app.drafts[&key].content.text(), "unsent");
+            assert_eq!(app.scroll_positions[&key], 75.0);
+            open(&mut app, &target);
+            std::sync::Arc::make_mut(&mut app.model.rooms).retain(|room| room.id != id);
+            app.validate_context_menu();
+            assert!(app.context_menu.is_none());
+            assert!(app.context_actions(&target).is_empty());
+        }
+        assert!(
+            !app.context_actions(&Target::Room("general".into()))
+                .iter()
+                .any(|(label, _)| *label == "Copy room link")
         );
     }
 

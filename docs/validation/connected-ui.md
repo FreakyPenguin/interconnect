@@ -475,6 +475,17 @@ preservation, join confirmation, cancellation, invalid links, host lookalikes,
 and modal/lifecycle guards. Connected history loading, native clipboard/browser
 integration, and visual scrolling still require the manual checks above.
 
+### Copying room and DM links
+
+With an authorized connected profile, right-click a room or DM in the sidebar
+and choose **Copy room link**. Paste into the composer and verify the matrix.to
+URL identifies that conversation's room ID, including when it has an alias.
+Copying must preserve the open conversation, drafts, and reading position.
+Synthetic demo IDs do not offer this action. Removing a room while its menu is
+open must invalidate the action. Automated fixtures cover both rooms and DMs,
+the copied destination, state preservation, and stale-room rejection; native
+clipboard acceptance remains a manual check.
+
 ### Copying message permalinks
 
 With an authorized connected profile, right-click a room message and choose
