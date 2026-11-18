@@ -16,6 +16,10 @@ pub enum Target {
     Section(String),
     Room(String),
     Message(reaction_picker::Target),
+    Link {
+        message: reaction_picker::Target,
+        url: String,
+    },
     Thread {
         room: String,
         generation: u64,
@@ -66,6 +70,31 @@ pub fn trigger<'a>(base: impl Into<Element<'a, Message>>, target: Target) -> Ele
         message(Event::Dismiss),
     )
 }
+struct LinkAt {
+    cursor: Point,
+    url: Option<String>,
+}
+impl iced::advanced::widget::Operation for LinkAt {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation)) {
+        operate(self);
+    }
+    fn custom(
+        &mut self,
+        _: Option<&iced::advanced::widget::Id>,
+        bounds: iced::Rectangle,
+        state: &mut dyn std::any::Any,
+    ) {
+        if bounds.contains(self.cursor)
+            && let Some(state) = state.downcast_ref::<super::selectable::State>()
+        {
+            self.url = state
+                .rich
+                .as_ref()
+                .and_then(|rich| rich.link_at(self.cursor - (bounds.position() - Point::ORIGIN)))
+                .map(str::to_owned);
+        }
+    }
+}
 impl App {
     pub(super) fn context_menu_allowed(&self) -> bool {
         if self.sign_out_open || self.membership.open || self.draft_persistence.close_requested {
@@ -102,20 +131,37 @@ impl App {
         let Some((_, room)) = &self.selection.room else {
             return body;
         };
-        trigger(
+        let target = reaction_picker::Target {
+            room: room.clone(),
+            thread,
+            generation,
+            event: event.clone(),
+        };
+        popover::context_trigger_with(
             body,
-            Target::Message(reaction_picker::Target {
-                room: room.clone(),
-                thread,
-                generation,
-                event: event.clone(),
-            }),
+            move |position, cursor, body, tree, layout, renderer| {
+                let mut hit = LinkAt { cursor, url: None };
+                body.operate(tree, layout, renderer, &mut hit);
+                let target = match hit.url {
+                    Some(url) => Target::Link {
+                        message: target.clone(),
+                        url,
+                    },
+                    None => Target::Message(target.clone()),
+                };
+                message(Event::Open(target, position))
+            },
+            message(Event::Dismiss),
         )
     }
+
     fn context_actions(&self, target: &Target) -> Vec<(&'static str, Action)> {
         if !self.context_menu_allowed()
             || ((self.bookmarks.open || self.global_search.open)
-                && matches!(target, Target::Message(_) | Target::Thread { .. }))
+                && matches!(
+                    target,
+                    Target::Message(_) | Target::Link { .. } | Target::Thread { .. }
+                ))
         {
             return Vec::new();
         }
@@ -233,6 +279,24 @@ impl App {
                     ),
                     ("Copy thread ID", Action::Copy(root.clone())),
                 ]
+            }
+            Target::Link { message, url } => {
+                let Some(row) = self.message_row(message) else {
+                    return Vec::new();
+                };
+                // Revalidate the destination after edits or other timeline updates.
+                if !row.formatted.as_ref().is_some_and(|document| {
+                    document
+                        .blocks
+                        .iter()
+                        .flat_map(|block| &block.runs)
+                        .any(|run| run.style.link.as_ref() == Some(url))
+                }) {
+                    return Vec::new();
+                }
+                let mut actions = self.context_actions(&Target::Message(message.clone()));
+                actions.insert(0, ("Copy link URL", Action::Copy(url.clone())));
+                actions
             }
             Target::Message(target) => {
                 let Some(row) = self.message_row(target) else {
@@ -723,6 +787,132 @@ mod tests {
     fn choose(app: &mut App, target: &Target, label: &str) {
         let _ = app.update(message(Event::Choose(target.clone(), label.into())));
     }
+    #[test]
+    fn right_click_copies_hit_destination_and_rejects_edited_or_stale_links() {
+        use iced::advanced::{Layout, Shell, layout, mouse, widget::Tree};
+        use iced::{Event as Input, Rectangle, Size, Vector};
+        let mut app = demo_app();
+        let _ = app.update(Message::Room("formatting".into()));
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let mut row = super::super::current_pane(&app.model.room, generation)
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.event_id.as_deref() == Some("format-links"))
+            .unwrap()
+            .clone();
+        for document in [
+            interconnect::message_document::Document::parse(concat!(
+                "<a href='https://example.org/first'>first</a> ",
+                "<a href='https://example.org/second?q=1&amp;x=2'>second</a>"
+            ))
+            .unwrap(),
+            interconnect::message_document::Document::plain_links(concat!(
+                "https://example.org/first ",
+                "https://example.org/second?q=1&x=2"
+            ))
+            .unwrap(),
+        ] {
+            row.formatted = Some(std::sync::Arc::new(document));
+            // Install the same document that the rendered row uses for action revalidation.
+            if let Some(pane) = &mut app.model.room {
+                std::sync::Arc::make_mut(&mut pane.rows)
+                    .iter_mut()
+                    .find(|r| r.event_id == row.event_id)
+                    .unwrap()
+                    .formatted = row.formatted.clone();
+            }
+            let mut view = app.message_context(
+                super::super::selectable::message_view(&row),
+                &row,
+                false,
+                generation,
+            );
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+            let mut tree = Tree::new(&view);
+            let size = Size::new(700.0, 200.0);
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, size),
+            );
+            let viewport = Rectangle::with_size(size);
+            let translation = Vector::new(0.0, -40.0);
+            let _ = view.as_widget_mut().overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                translation,
+            );
+            // Scan glyph positions to exercise both destinations and empty row space.
+            let mut found = Vec::new();
+            for x in (0..700).step_by(3) {
+                let cursor = Point::new(x as f32, 10.0);
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &Input::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+                    Layout::new(&node),
+                    mouse::Cursor::Available(cursor),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &viewport,
+                );
+                assert!(shell.is_event_captured());
+                if let [Message::ContextMenu(Event::Open(target, position))] = &messages[..] {
+                    assert_eq!(*position, cursor + translation);
+                    if !found.contains(target) {
+                        found.push(target.clone());
+                    }
+                } else {
+                    panic!("expected a single context menu event");
+                }
+            }
+            drop(view);
+            assert!(found.iter().any(|t| matches!(t, Target::Message(_))));
+            for url in [
+                "https://example.org/first",
+                "https://example.org/second?q=1&x=2",
+            ] {
+                let link = found
+                    .iter()
+                    .find(|t| matches!(t, Target::Link { url: hit, .. } if hit == url))
+                    .unwrap();
+                open(&mut app, link);
+                assert!(
+                    matches!(&app.context_actions(link)[0], ("Copy link URL", Action::Copy(value)) if value == url)
+                );
+                choose(&mut app, link, "Copy link URL");
+                assert!(app.context_menu.is_none());
+            }
+            let link = found
+                .iter()
+                .find(|t| matches!(t, Target::Link { .. }))
+                .unwrap();
+            let mut stale = link.clone();
+            if let Target::Link { message, .. } = &mut stale {
+                message.generation = message.generation.wrapping_add(1);
+            }
+            open(&mut app, &stale);
+            assert!(app.context_menu.is_none());
+            assert!(app.context_actions(&stale).is_empty());
+            open(&mut app, link);
+            if let Some(pane) = &mut app.model.room {
+                std::sync::Arc::make_mut(&mut pane.rows)
+                    .iter_mut()
+                    .find(|r| r.event_id == row.event_id)
+                    .unwrap()
+                    .formatted = None;
+            }
+            assert!(app.context_actions(link).is_empty());
+            app.validate_context_menu();
+            assert!(app.context_menu.is_none());
+        }
+    }
+
     #[test]
     fn room_moves_replace_membership_without_switching_conversation_or_disturbing_drafts() {
         let mut app = demo_app();

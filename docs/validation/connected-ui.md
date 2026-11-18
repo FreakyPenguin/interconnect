@@ -408,6 +408,23 @@ viewport bounds, and absence of scheduled idle redraws. Native macOS appearance,
 VoiceOver, hardware rendering, and connected-account acceptance still require
 the manual checks above; automated fixtures do not establish those behaviors.
 
+### Copying link destinations
+
+In demo **Message formatting**, right-click the labeled Matrix specification link
+and each bare URL. Choose **Copy link URL** and paste into the composer: the
+clipboard should contain the destination, including query parameters, rather
+than the visible label. Repeat in a thread, after scrolling, and with wrapped
+links in both themes. Right-click ordinary text to check the usual message menu.
+Hidden spoiler links must offer the destination only after revealing the spoiler.
+Escape/outside clicks must dismiss without opening the link or changing drafts
+and reading positions. Editing/removing a link or switching conversations must
+invalidate its open menu.
+
+Automated widget fixtures cover hit destinations, labeled/bare links, popup
+coordinate translation, ordinary-text menus, hidden spoilers, and edited-link
+revalidation. Native clipboard and visual acceptance require the manual checks
+above; these steps do not claim they have been run.
+
 ## Navigation and timelines
 
 - Rapidly switch rooms/threads, then paginate or send. Late results must not

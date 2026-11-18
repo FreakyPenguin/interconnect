@@ -36,6 +36,23 @@ pub fn context_trigger<'a, Message: Clone + 'a>(
     open: impl Fn(iced::Point) -> Message + 'a,
     dismiss: Message,
 ) -> Element<'a, Message> {
+    context_trigger_with(base, move |position, _, _, _, _, _| open(position), dismiss)
+}
+
+/// Resolve a context target against the child widget tree at the local cursor.
+pub fn context_trigger_with<'a, Message: Clone + 'a>(
+    base: impl Into<Element<'a, Message>>,
+    open: impl Fn(
+        iced::Point,
+        iced::Point,
+        &mut dyn Widget<Message, Theme, Renderer>,
+        &mut Tree,
+        Layout<'_>,
+        &Renderer,
+    ) -> Message
+    + 'a,
+    dismiss: Message,
+) -> Element<'a, Message> {
     Element::new(Popover {
         base: base.into(),
         anchor_id: None,
@@ -94,6 +111,16 @@ fn make_view<'a, Message: Clone + 'a>(
         on_context: None,
     })
 }
+type ContextHandler<'a, Message> = dyn Fn(
+        iced::Point,
+        iced::Point,
+        &mut dyn Widget<Message, Theme, Renderer>,
+        &mut Tree,
+        Layout<'_>,
+        &Renderer,
+    ) -> Message
+    + 'a;
+
 struct Popover<'a, Message> {
     base: Element<'a, Message>,
     anchor_id: Option<widget::Id>,
@@ -102,7 +129,7 @@ struct Popover<'a, Message> {
     modal: bool,
     edge: AnchorEdge,
     position: Option<iced::Point>,
-    on_context: Option<Box<dyn Fn(iced::Point) -> Message + 'a>>,
+    on_context: Option<Box<ContextHandler<'a, Message>>>,
 }
 #[derive(Default)]
 struct State {
@@ -177,6 +204,11 @@ impl<Message: Clone> Widget<Message, Theme, Renderer> for Popover<'_, Message> {
             // supplies the inverse translation into window coordinates.
             shell.publish(open(
                 position + tree.state.downcast_ref::<State>().translation,
+                position,
+                self.base.as_widget_mut(),
+                &mut tree.children[0],
+                layout,
+                renderer,
             ));
             shell.capture_event();
             return;

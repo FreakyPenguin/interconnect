@@ -505,6 +505,15 @@ impl State {
         }
         keys
     }
+    pub fn link_at(&self, point: Point) -> Option<&str> {
+        let run = self.run_at(point)?;
+        run.style
+            .spoilers
+            .iter()
+            .all(|id| self.revealed.contains(id))
+            .then_some(run.style.link.as_deref())
+            .flatten()
+    }
     pub fn interactive(&self, point: Point) -> bool {
         self.run_at(point).is_some_and(|run| {
             run.style.link.is_some()
@@ -1416,12 +1425,14 @@ mod tests {
         assert!(!state.text().contains("secret"));
         let region = state.blocks[0].paragraph.span_bounds(0)[0];
         let point = region.center();
+        assert_eq!(state.link_at(point), None);
         let mut messages = vec![];
         assert!(state.activate(point, &mut |m| messages.push(m)));
         assert!(messages.is_empty());
         assert_eq!(state.text(), "secret");
         state.layout(300.0);
         let point = state.blocks[0].paragraph.span_bounds(0)[0].center();
+        assert_eq!(state.link_at(point), Some("https://example.org/"));
         assert!(!state.activate(point, &mut |m| messages.push(m)));
         assert!(
             matches!(&messages[0], Message::OpenMessageLink(url) if url == "https://example.org/")
