@@ -873,13 +873,13 @@ mod tests {
     fn popup_escape_has_no_second_global_shortcut_to_close_the_thread() {
         use iced::advanced::subscription::{self, Event as RuntimeEvent};
         use iced::futures::{FutureExt, StreamExt};
-        fn has_global_escape(app: &App) -> bool {
+        fn has_global_escape(app: &App, status: iced::event::Status) -> bool {
             subscription::into_recipes(app.subscription())
                 .into_iter()
                 .any(|recipe| {
                     let input = RuntimeEvent::Interaction {
                         window: iced::window::Id::unique(),
-                        status: iced::event::Status::Captured,
+                        status,
                         event: iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                             key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
                             modified_key: iced::keyboard::Key::Named(
@@ -905,9 +905,10 @@ mod tests {
         }
         let mut app = crate::tests::demo_app();
         let _ = app.update(Message::Thread("review".into()));
-        assert!(has_global_escape(&app));
+        assert!(has_global_escape(&app, iced::event::Status::Ignored));
+        assert!(has_global_escape(&app, iced::event::Status::Captured));
         let _ = open(&mut app, true, "review");
-        assert!(!has_global_escape(&app));
+        assert!(!has_global_escape(&app, iced::event::Status::Ignored));
         let dismiss = app.reaction_picker.as_ref().unwrap().dismiss();
         let _ = app.update(dismiss);
         assert!(app.reaction_picker.is_none());

@@ -201,7 +201,7 @@ pub fn presence() -> interconnect::connected::PresenceUsers {
 }
 
 pub fn spaces() -> Vec<SpaceEntry> {
-    [
+    let mut spaces: Vec<_> = [
         ("studio-space", "Studio"),
         ("community-space", "Community"),
         ("home-space", "Personal"),
@@ -218,7 +218,33 @@ pub fn spaces() -> Vec<SpaceEntry> {
             .map(|r| r.id.into())
             .collect(),
     })
-    .collect()
+    .collect();
+    // Shared links let the original room examples remain directly available
+    // while demonstrating a three-level hierarchy and deduplication.
+    spaces[0].children.push("product-space".into());
+    spaces.extend(
+        [
+            (
+                "product-space",
+                "Product",
+                vec!["design-space", "engineering"],
+            ),
+            (
+                "design-space",
+                "Design",
+                vec!["studio", "long", "mobile-space"],
+            ),
+            ("mobile-space", "Mobile", vec!["images", "inline-images"]),
+        ]
+        .into_iter()
+        .map(|(id, name, children)| SpaceEntry {
+            id: id.into(),
+            name: name.into(),
+            avatar_url: None,
+            children: children.into_iter().map(String::from).collect(),
+        }),
+    );
+    spaces
 }
 #[derive(Default)]
 pub struct Demo {

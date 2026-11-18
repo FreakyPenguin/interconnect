@@ -77,11 +77,16 @@ in memory. Search/creation commands capture account and target identity; late
 results cannot navigate a replacement form/account. Temporary retention protects
 newly created entries from older navigation snapshots.
 
-Home precedes All and filters out child rooms of joined spaces while always
-including DMs. Element's `Spaces.allRoomsInHome` account preference can expand it
-to all rooms. Existing account-data events refresh the filter, and unread counts
-share it. Home/spaces affect the navigator without switching the open conversation;
-scope selection uses ordinary navigation persistence.
+The space breadcrumb bar replaces the rail. Peer menus retain the route used
+through shared parents, expose expandable branches, and bound traversal of cycles.
+Home is a virtual root: directly contained rooms have no joined-space link;
+including descendants yields all rooms. DMs obey the same rule. Each space also
+has direct/recursive filtering. These toggles, the selected route, and expanded
+branches use local navigation persistence; Element account settings are not
+written or used to override the toggle. Metadata events refresh membership and
+unread indicators without opening timelines. Browsing preserves the conversation,
+draft, and reading position. Focusable navigation controls and type-to-jump use
+input events and widget operations without periodic work.
 
 Custom sections use `RoomList.CustomSectionData` and
 `RoomList.OrderedCustomSections` in `im.vector.web.settings`, with room `m.tag`

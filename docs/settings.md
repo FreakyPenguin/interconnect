@@ -80,12 +80,29 @@ compare-and-swap guarantee.
 
 ## Home and room organization
 
-Home includes rooms outside joined spaces and all direct chats by default.
-It reads Element Web's `Spaces.allRoomsInHome` preference in
-`im.vector.web.settings`; true includes every room. All always includes every
-room. Selecting Home or a space changes the room list without switching the
-open conversation. Room tags/custom sections and the selected scope are restored
-from account/profile state; draft and scroll behavior is independent of scope.
+Home shows joined rooms outside joined spaces by default. The sidebar's
+**Include subspaces** icon button beside the room filter makes Home show every
+joined room, replacing the separate All rooms button. Within a space, off shows
+directly linked rooms; on also includes rooms from every descendant, without
+duplicates. DMs follow the same membership rule. Unknown or unjoined child spaces
+are not browsable.
+The hierarchy icon is highlighted when on and muted when off; its tooltip
+names the setting, current state, and shortcut. Ctrl+Shift+L (macOS:
+Command+Shift+L) toggles it directly without moving focus.
+
+The breadcrumb bar replaces the space rail. Its Home arrow and per-level menus
+support expandable branches; the account menu lives at the top right. Shared
+spaces retain the path used to reach them, and cycles cannot expand indefinitely.
+The sidebar contains room sections; space navigation stays in the breadcrumb menus.
+Selecting a space changes the room list without switching the open conversation.
+
+The selected location, path, expanded branches, and per-location subspace toggles
+are saved in the profile's local `navigation.json`. Older All rooms preferences
+restore as Home with Include subspaces on; an older Direct messages scope opens
+Home. Element Web's `Spaces.allRoomsInHome`
+no longer controls this desktop filter, and changing the toggle does not write
+Element settings. Room tags/custom sections still come from account state;
+draft and scroll behavior is independent of scope.
 
 ### Room sections
 

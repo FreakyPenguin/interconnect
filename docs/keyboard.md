@@ -13,18 +13,55 @@ sends from the composer on every platform, including macOS.
 | Ctrl+Shift+N / Command+Shift+N | Create a room. |
 | Ctrl+P / Command+P | Open the quick room switcher. |
 | Ctrl+K / Command+K | Focus the sidebar room filter. Enter opens the first matching room. |
+| Ctrl+L / Command+L | Focus the current space breadcrumb (Home at the root). |
+| Ctrl+Shift+L / Command+Shift+L | Toggle Include subspaces for the current space or Home, preserving focus and the room filter. |
+| F6 / Shift+F6 | Cycle forward/backward between the breadcrumb bar, sidebar, and conversation composer. Opens the sidebar if needed. |
 | Ctrl+F / Command+F | Search the open room's loaded messages. |
 | Ctrl+Shift+F / Command+Shift+F | Open account-wide message search. |
 | Ctrl+, / Command+, | Open Settings. |
 | Alt+Up / Alt+Down | Previous/next room in the visible, filtered room list; wraps at the ends. |
 | Alt+T | Open a thread on the latest non-thread room message and focus its composer. |
-| Tab / Shift+Tab | Move between focusable controls; full button traversal is incomplete. |
+| Tab / Shift+Tab | Move between focusable controls, including breadcrumb, account, Include subspaces, section, and room controls. Other views still have incomplete button traversal. |
 | Escape | Dismiss the active overlay or search/filter; otherwise close People or the thread pane and return focus to the room composer. |
 
 The room switcher and new-chat picker use Up/Down to select, Enter to open,
 and Escape to close. In room search, Enter steps to the previous match;
 the on-screen arrow buttons navigate both ways. In account-wide search, Enter
 submits the query; Escape returns to the conversation.
+
+### Space navigation
+
+The Home button returns to the root; the arrow beside it opens the complete
+space tree. Each breadcrumb opens the spaces at that level, including its peers.
+The account avatar is at the right of the bar. Long paths retain the current
+space and put earlier levels in an overflow menu; the root picker always exposes
+the whole hierarchy.
+
+With the bar focused, Left/Right moves between its controls; Home/End reaches
+the first/last control. Down opens a breadcrumb's dropdown; Enter or Space opens
+the focused control. In a space dropdown:
+
+| Key | Action |
+| --- | --- |
+| Up / Down | Move through visible spaces. |
+| Right | Expand a branch, then move to its first child. |
+| Left | Collapse a branch, or move to its visible parent. |
+| Home / End | Focus the first/last visible space. |
+| Type a name | Jump to a matching visible space. |
+| Enter / Space | Select the focused space and update the sidebar. |
+| Escape | Close the dropdown and return focus to its breadcrumb. |
+| Tab / Shift+Tab | Close the dropdown and move to the next/previous bar control. |
+
+Expanding or focusing a branch does not change the room filter. Choosing a space
+does not switch the open conversation or disturb its draft or reading position.
+Use F6 to reach the sidebar's **Include subspaces** icon button beside the room
+filter; Space or Enter toggles it. A highlighted button means on, and its tooltip
+names the current state.
+Ctrl+Shift+L (macOS: Command+Shift+L) toggles it directly, including while typing
+or with the sidebar hidden. Holding the shortcut toggles once per key press.
+The account menu supports Up/Down, Tab/Shift+Tab, Enter/Space, and Escape.
+Input-method composition, completion, and dialogs take precedence over space
+shortcuts. Space navigation and type-to-jump schedule no periodic work.
 
 ## Composition
 

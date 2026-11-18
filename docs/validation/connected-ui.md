@@ -22,7 +22,7 @@ establish native GPU, macOS, font, or window-manager behavior.
 
 | Area | Check |
 | --- | --- |
-| Navigation | Home precedes All with a house icon; spaces and Direct filter without changing the open conversation. |
+| Navigation | Home and visible breadcrumb separators precede the space trail; peer dropdowns, expandable branches, Include subspaces, and the top-right account menu preserve the open conversation. |
 | Sections | Favorites, Unread, custom sections, collapse/order, and room filter compose correctly. |
 | Timelines | Room/thread resize, history loading, newest/older positions, send status, retry, and Unicode emoji remain usable. |
 | Composition | Separate room/thread drafts, Plain/Markdown, preview, math, custom emoji completion, edit/cancel, and confirmed deletion. |
@@ -192,12 +192,46 @@ not establish native Keychain prompts or policy. CI lifecycle tests avoid Keycha
 
 ## Home navigation
 
-Compare the same account with Element Web. By default, Home includes joined
-rooms outside joined spaces and all DMs, including DMs belonging to a space.
-`Spaces.allRoomsInHome = true` in `im.vector.web.settings` makes Home include all
-rooms. All remains unfiltered. Check missing/updated space-child state, membership
-changes, and account-data updates. Switching scopes must preserve the open room,
-thread, draft, and reading position; restoring a profile must retain its scope.
+Home defaults to joined rooms outside joined spaces, including only DMs outside
+spaces. **Include subspaces** makes Home show all joined rooms. In a space, off
+shows only directly linked rooms; on includes all descendants once. Toggle a
+parent, visit a child and Home, then return: each location must retain its own
+setting. Element Web's `Spaces.allRoomsInHome` must not override the local toggle,
+and changing it must not write Element account settings.
+The Include subspaces control is an icon button to the right of Find a room,
+sharing the filter row. Check its highlighted on/muted off states, tooltip,
+mouse activation, and Space/Enter after focusing it with F6 or Tab. At minimum
+sidebar width, both the text field and button must remain usable.
+Check Ctrl+Shift+L (macOS: Command+Shift+L) from the composer, room filter,
+breadcrumb menus, and with the sidebar hidden. It must toggle once per key press,
+preserve focus, query, draft, and reading position, and yield to dialogs and IME
+composition. Holding the shortcut must not repeatedly flip the setting.
+
+Use the demo's Studio → Product → Design → Mobile hierarchy. Check Home's arrow,
+each breadcrumb's peer menu, expansion without navigation, deep selection,
+shared-child paths, cycles, missing/updated child links, and removed spaces.
+The sidebar shows room sections without a separate Spaces list; browse the
+hierarchy through the breadcrumb menus and Home's arrow.
+Breadcrumbs and dropdown rows show the space avatar, with an initial fallback
+while missing, loading, or failed. Cached avatar arrival and replacement must
+keep icon dimensions, row heights, focus, and the open conversation stable.
+At 640×480 and with long names/paths, the current breadcrumb, Home, and account
+avatar must remain usable; overflow/root menus must expose hidden ancestors.
+Check the [keyboard model](../keyboard.md#space-navigation), including one
+activation per key, focus restoration on Escape, F6 region changes, and IME/dialog
+precedence. Menus must fit the window and scroll without periodic redraws.
+
+Switching locations or toggling descendants must preserve the open room, thread,
+draft, and reading position. Restart a dedicated test profile and check the path,
+expanded branches and toggles restore. An older All rooms preference restores as
+recursive Home. SDK metadata changes must invalidate removed links and stale menu
+actions without changing the open conversation unnecessarily.
+
+Automated fixtures cover filtering, deduplication/cycles, path identity, preference
+compatibility, modal/IME guards, focusable button activation, menu dismissal,
+viewport bounds, and absence of scheduled idle redraws. Native macOS appearance,
+VoiceOver, hardware rendering, and connected-account acceptance still require
+the manual checks above; automated fixtures do not establish those behaviors.
 
 ## Navigation and timelines
 

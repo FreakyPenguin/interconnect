@@ -32,6 +32,7 @@ pub enum Event {
     EditSectionName(String),
     SaveSection,
     CancelSection,
+    AccountMove(usize, bool),
 }
 pub struct State {
     target: Target,
@@ -291,6 +292,7 @@ impl App {
             }
             Event::Open(target, position) => {
                 if !self.context_actions(&target).is_empty() {
+                    let account = target == Target::Account;
                     self.context_menu = Some(State {
                         target,
                         position,
@@ -301,10 +303,37 @@ impl App {
                     });
                     self.emoji_completion.clear();
                     self.user_completion.clear();
+                    if account {
+                        return iced::widget::operation::focus("account-action:0");
+                    }
                 }
             }
             Event::Dismiss => {
+                let account = self
+                    .context_menu
+                    .as_ref()
+                    .is_some_and(|state| state.target == Target::Account);
                 self.context_menu = None;
+                if account {
+                    return iced::widget::operation::focus(super::space_navigation::ACCOUNT);
+                }
+            }
+            Event::AccountMove(index, backwards) => {
+                if self
+                    .context_menu
+                    .as_ref()
+                    .is_some_and(|state| state.target == Target::Account)
+                {
+                    let count = self.context_actions(&Target::Account).len();
+                    if count > 0 {
+                        let next = if backwards {
+                            (index + count - 1) % count
+                        } else {
+                            (index + 1) % count
+                        };
+                        return iced::widget::operation::focus(format!("account-action:{next}"));
+                    }
+                }
             }
             Event::Back => {
                 if let Some(state) = &mut self.context_menu
@@ -550,17 +579,43 @@ impl App {
                 } else {
                     column![].spacing(2)
                 };
-                let mut items = actions.into_iter().fold(heading, |items, (label, _)| {
-                    items.push(
-                        button(text(label).size(13))
-                            .width(iced::Length::Fill)
-                            .padding([7, 10])
-                            .style(shell::quiet_button)
-                            .on_press_maybe((state.pending.is_none()).then(|| {
-                                message(Event::Choose(state.target.clone(), label.into()))
-                            })),
-                    )
-                });
+                let mut items =
+                    actions
+                        .into_iter()
+                        .enumerate()
+                        .fold(heading, |items, (index, (label, _))| {
+                            let action = message(Event::Choose(state.target.clone(), label.into()));
+                            let control = button(text(label).size(13))
+                                .width(iced::Length::Fill)
+                                .padding([7, 10])
+                                .style(shell::quiet_button)
+                                .on_press_maybe(state.pending.is_none().then(|| action.clone()));
+                            let control: Element<'_, Message> = if state.target == Target::Account {
+                                super::navigation_control::view(
+                                    control,
+                                    format!("account-action:{index}"),
+                                    action,
+                                    move |key, modifiers| {
+                                        use iced::keyboard::{Key, key::Named};
+                                        match key {
+                                            Key::Named(Named::ArrowUp) => {
+                                                Some(message(Event::AccountMove(index, true)))
+                                            }
+                                            Key::Named(Named::ArrowDown) => {
+                                                Some(message(Event::AccountMove(index, false)))
+                                            }
+                                            Key::Named(Named::Tab) => Some(message(
+                                                Event::AccountMove(index, modifiers.shift()),
+                                            )),
+                                            _ => None,
+                                        }
+                                    },
+                                )
+                            } else {
+                                control.into()
+                            };
+                            items.push(control)
+                        });
                 if state.pending.is_some() {
                     items = items.push(text("Saving…").size(12));
                 }
@@ -612,6 +667,18 @@ impl App {
                     .into(),
             )
         });
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|state| state.target == Target::Account)
+        {
+            return popover::view(
+                base,
+                Some("account-menu-button".into()),
+                popup,
+                message(Event::Dismiss),
+            );
+        }
         popover::at_position(
             base,
             self.context_menu.as_ref().map(|state| state.position),

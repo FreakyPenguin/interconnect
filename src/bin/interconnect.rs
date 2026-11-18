@@ -57,6 +57,8 @@ mod membership;
 mod message_delete;
 #[path = "interconnect/message_edit.rs"]
 mod message_edit;
+#[path = "interconnect/navigation_control.rs"]
+mod navigation_control;
 #[path = "interconnect/new_chat.rs"]
 mod new_chat;
 #[path = "interconnect/panel_resize.rs"]
@@ -97,6 +99,8 @@ mod shell;
 mod sign_out;
 #[path = "interconnect/single_line.rs"]
 mod single_line;
+#[path = "interconnect/space_navigation.rs"]
+mod space_navigation;
 #[path = "interconnect/suspended.rs"]
 mod suspended;
 #[path = "interconnect/thread_activity.rs"]
@@ -256,6 +260,7 @@ enum Message {
     EmojiCompletion(emoji_completion::Event),
     UserCompletion(user_completion::Event),
     Space(Scope),
+    SpaceNavigation(space_navigation::Event),
     Section(String),
     RoomSearch(room_search::Event),
     Search(String),
@@ -481,6 +486,39 @@ impl App {
         Task::batch([task, save])
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
+        if matches!(&message, Message::SpaceNavigation(event) if !matches!(event, space_navigation::Event::Dismiss))
+            && !self.space_navigation_allowed()
+        {
+            return Task::none();
+        }
+        if matches!(
+            &message,
+            Message::Space(_)
+                | Message::Room(_)
+                | Message::Thread(_)
+                | Message::CloseThread
+                | Message::ContextMenu(_)
+                | Message::QuickRoom(_)
+                | Message::NewChat(_)
+                | Message::CreateRoom(_)
+                | Message::Settings(_)
+                | Message::Verification(_)
+                | Message::Image(_)
+                | Message::Reaction(_)
+                | Message::ComposerEmoji(_)
+                | Message::GlobalSearch(global_search::Event::Open)
+                | Message::Bookmark(bookmarks::Event::Open)
+                | Message::RoomSearch(room_search::Event::Open)
+                | Message::SearchFocus
+                | Message::ToggleNavigation
+                | Message::WindowFocused(false)
+                | Message::WindowResized(_)
+                | Message::Close
+                | Message::Exit
+                | Message::Stopped(_)
+        ) {
+            self.shell.spaces.menu = None;
+        }
         if let Message::SignOut(event) = message {
             return self.sign_out_event(event);
         }
@@ -1292,9 +1330,24 @@ impl App {
                 up,
             } => return self.page_conversation(key, generation, up),
             Message::Space(space) if !self.closing && !self.stopped => {
+                if let Scope::Space(id) = &space
+                    && let Some(parent) = self.shell.spaces.path.last()
+                    && self
+                        .model
+                        .spaces
+                        .iter()
+                        .find(|s| &s.id == parent)
+                        .is_some_and(|s| s.children.contains(id))
+                    && !self.shell.spaces.path.contains(id)
+                {
+                    self.shell.spaces.path.push(id.clone());
+                }
                 self.shell.space = space;
+                self.shell.spaces.path = self.location_path();
+                self.shell.spaces.menu = None;
                 self.shell.query.clear();
             }
+            Message::SpaceNavigation(event) => action_task = self.space_navigation_event(event),
             Message::Section(section) => {
                 let section = self.section_key(&section);
                 if !self.shell.collapsed.remove(&section) {
@@ -1670,6 +1723,8 @@ impl App {
                         self.selection.thread = None;
                         self.preferences_ready = false;
                         self.pending_navigation = None;
+                        self.shell.spaces = space_navigation::State::default();
+                        self.shell.space = Scope::Home;
                     }
                     self.account_id = Some(account_id.clone());
                 }
@@ -1703,7 +1758,7 @@ impl App {
                     if let Scope::Space(id) = &self.shell.space
                         && !self.model.spaces.iter().any(|s| &s.id == id)
                     {
-                        self.shell.space = Scope::All;
+                        self.shell.space = Scope::Home;
                     }
                     if self
                         .selection
@@ -1828,6 +1883,7 @@ impl App {
         self.validate_composer_picker();
         self.validate_emoji_completion();
         self.validate_user_completion();
+        self.validate_space_navigation();
         if self.closing && self.pending_ops == 0 {
             if self.stopped {
                 return iced::exit();
@@ -1837,10 +1893,23 @@ impl App {
         if self.preferences_ready && self.pending_navigation.is_none() && self.demo.is_none() {
             let mut collapsed: Vec<_> = self.shell.collapsed.iter().cloned().collect();
             collapsed.sort();
+            let mut include_subspaces: Vec<_> = self
+                .shell
+                .spaces
+                .include_subspaces
+                .iter()
+                .cloned()
+                .collect();
+            include_subspaces.sort();
+            let mut expanded_spaces: Vec<_> = self.shell.spaces.expanded.iter().cloned().collect();
+            expanded_spaces.sort();
             self.selection.preferences = Some(Preferences {
                 scope: self.shell.space.clone(),
                 room: self.selection.room.as_ref().map(|(_, id)| id.clone()),
                 collapsed,
+                include_subspaces,
+                expanded_spaces,
+                space_path: self.shell.spaces.path.clone(),
                 ..Default::default()
             });
         }
@@ -2180,6 +2249,9 @@ impl App {
         {
             self.preferences_ready = true;
             self.shell.collapsed = saved.collapsed.iter().cloned().collect();
+            self.shell.spaces.include_subspaces = saved.include_subspaces.iter().cloned().collect();
+            self.shell.spaces.expanded = saved.expanded_spaces.iter().cloned().collect();
+            self.shell.spaces.path = saved.space_path.clone();
             self.pending_navigation = Some(saved.clone());
         }
         let saved = self.pending_navigation.as_ref()?;
@@ -2188,7 +2260,20 @@ impl App {
         {
             return None;
         }
+        self.shell.spaces.path = saved.space_path.clone();
         self.shell.space = saved.scope.clone();
+        if self.shell.space == Scope::All {
+            self.shell.space = Scope::Home;
+            self.shell
+                .spaces
+                .include_subspaces
+                .insert(space_navigation::scope_key(&Scope::Home));
+        } else if self.shell.space == Scope::Direct {
+            // The old rail's DM-only scope has no separate location in the
+            // breadcrumb UI; Home's Direct messages section is its entry point.
+            self.shell.space = Scope::Home;
+        }
+        self.shell.spaces.path = self.location_path();
         if let Some(id) = &saved.room
             && !self.model.rooms.iter().any(|r| &r.id == id)
         {
@@ -2279,18 +2364,37 @@ impl App {
                 || self.composing
                 || self.reaction_picker.is_some()
                 || self.composer_picker.is_some()
+                || self.shell.spaces.menu.is_some()
             {
                 Subscription::none()
             } else if self.emoji_completion.is_active() || self.user_completion.is_active() {
                 iced::event::listen_with(emoji_completion::shortcut)
             } else {
-                iced::event::listen_with(|event, _, _| {
+                iced::event::listen_with(|event, status, _| {
+                    // Navigation buttons publish Tab themselves. Text inputs
+                    // capture Escape to unfocus, but the shell must still clear
+                    // their room filter/search as it did before these controls.
+                    if status == iced::event::Status::Captured
+                        && matches!(
+                            &event,
+                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                                ..
+                            })
+                        )
+                    {
+                        return None;
+                    }
                     if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key,
                         modifiers,
+                        repeat,
                         ..
                     }) = event
                     {
+                        if repeat && space_navigation::is_toggle_shortcut(&key, modifiers) {
+                            return None;
+                        }
                         shell_shortcut(&key, modifiers)
                     } else {
                         None
@@ -2375,7 +2479,7 @@ impl App {
         if self.verification.open {
             layers = layers.push(self.verification_view());
         }
-        self.context_menu_view(layers)
+        self.context_menu_view(self.space_menu_view(layers))
     }
     fn refresh_demo(&mut self) {
         if self.demo.is_some() {
@@ -3541,7 +3645,22 @@ fn shell_shortcut(
     if room_picker::is_shortcut(key, modifiers) {
         return Some(Message::QuickRoom(room_picker::Event::Open));
     }
+    if space_navigation::is_toggle_shortcut(key, modifiers) {
+        return Some(Message::SpaceNavigation(
+            space_navigation::Event::ToggleSubspaces,
+        ));
+    }
     match key.as_ref() {
+        Key::Character("l" | "L")
+            if modifiers.command() && !modifiers.shift() && !modifiers.alt() =>
+        {
+            Some(Message::SpaceNavigation(
+                space_navigation::Event::FocusLocation,
+            ))
+        }
+        Key::Named(Named::F6) => Some(Message::SpaceNavigation(
+            space_navigation::Event::CycleRegion(modifiers.shift()),
+        )),
         Key::Character(",") if modifiers.command() => {
             Some(Message::Settings(settings::Event::Open))
         }
@@ -4629,7 +4748,13 @@ mod tests {
         assert!(app.selection.thread.is_none());
         assert!(app.shell.collapsed.contains("saved-section"));
         assert!(app.pending_navigation.is_none());
-        assert_eq!(app.selection.preferences, Some(prefs));
+        assert_eq!(
+            app.selection.preferences,
+            Some(Preferences {
+                space_path: vec!["home-space".into()],
+                ..prefs
+            })
+        );
     }
 
     #[test]
@@ -4680,7 +4805,7 @@ mod tests {
         assert!(app.selection.room.is_none() && app.selection.thread.is_none());
         state.spaces = Default::default();
         let _ = app.update(Message::State(Box::new(state)));
-        assert_eq!(app.shell.space, Scope::All);
+        assert_eq!(app.shell.space, Scope::Home);
     }
 
     #[test]
@@ -5356,6 +5481,79 @@ mod tests {
             ),
             Some(Message::Settings(settings::Event::Open))
         ));
+        for letter in ["l", "L"] {
+            let press = text_editor::KeyPress {
+                key: iced::keyboard::Key::Character(letter.into()),
+                modified_key: iced::keyboard::Key::Character(letter.into()),
+                physical_key: iced::keyboard::key::Physical::Code(iced::keyboard::key::Code::KeyL),
+                modifiers: iced::keyboard::Modifiers::COMMAND | iced::keyboard::Modifiers::SHIFT,
+                text: Some(letter.into()),
+                status: text_editor::Status::Focused { is_hovered: false },
+            };
+            assert!(matches!(
+                shell_shortcut(&press.key, press.modifiers),
+                Some(Message::SpaceNavigation(
+                    space_navigation::Event::ToggleSubspaces
+                ))
+            ));
+            assert!(
+                composer_binding(press.clone(), false, &key, Enter).is_none(),
+                "the shortcut must not type into the composer"
+            );
+            assert!(composer_binding(press.clone(), true, &key, Enter).is_none());
+            for modifiers in [
+                iced::keyboard::Modifiers::empty(),
+                iced::keyboard::Modifiers::SHIFT,
+                press.modifiers | iced::keyboard::Modifiers::ALT,
+            ] {
+                assert!(!space_navigation::is_toggle_shortcut(&press.key, modifiers));
+            }
+            assert!(matches!(
+                shell_shortcut(&press.key, iced::keyboard::Modifiers::COMMAND),
+                Some(Message::SpaceNavigation(
+                    space_navigation::Event::FocusLocation
+                ))
+            ));
+        }
+        // Exercise the actual subscription so held keys cannot flip a toggle
+        // repeatedly, while the composer still yields the initial shortcut.
+        fn dispatched(repeat: bool) -> Option<Message> {
+            use iced::advanced::subscription::{self, Event as RuntimeEvent};
+            use iced::futures::{FutureExt, StreamExt};
+            let app = demo_app();
+            subscription::into_recipes(app.subscription())
+                .into_iter()
+                .find_map(|recipe| {
+                    let input = RuntimeEvent::Interaction {
+                        window: iced::window::Id::unique(),
+                        status: iced::event::Status::Ignored,
+                        event: iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Character("L".into()),
+                            modified_key: iced::keyboard::Key::Character("L".into()),
+                            physical_key: iced::keyboard::key::Physical::Code(
+                                iced::keyboard::key::Code::KeyL,
+                            ),
+                            location: iced::keyboard::Location::Standard,
+                            modifiers: iced::keyboard::Modifiers::COMMAND
+                                | iced::keyboard::Modifiers::SHIFT,
+                            text: None,
+                            repeat,
+                        }),
+                    };
+                    recipe
+                        .stream(Box::pin(iced::futures::stream::iter([input])))
+                        .next()
+                        .now_or_never()
+                        .flatten()
+                })
+        }
+        assert!(matches!(
+            dispatched(false),
+            Some(Message::SpaceNavigation(
+                space_navigation::Event::ToggleSubspaces
+            ))
+        ));
+        assert!(dispatched(true).is_none());
     }
 
     #[test]

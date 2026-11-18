@@ -24,9 +24,10 @@ primary development platform and experimental Apple Silicon macOS builds.
 
 - Password and browser SSO sign-in, saved sessions, end-to-end encrypted messaging,
   device verification, and in-app sign-out.
-- Home for rooms outside spaces and all DMs, following Element's account preference,
-  plus spaces, custom room sections, favorites, unread indicators and ordering,
-  and quick room switching. Space filters preserve the open conversation.
+- Nested spaces with breadcrumb dropdowns and an expandable tree, Home for
+  space-less rooms, and a per-location toggle to include descendant rooms.
+  Custom sections, favorites, unread indicators, quick room switching, and
+  keyboard navigation preserve the open conversation while browsing spaces.
 - Resizable room and thread panes with history loading, send status, and retry.
 - Encrypted local room and thread text drafts, including composition mode and custom
   emoji selections, restored after restart. Reading positions remain per-session.

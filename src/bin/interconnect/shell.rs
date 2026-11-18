@@ -20,12 +20,13 @@ pub const ROOM_WIDE_ACCENT: Color = Color::from_rgb8(158, 91, 24);
 pub const ROOM_ACCENT: Color = Color::from_rgb8(30, 125, 119);
 pub const ACCENT: Color = Color::from_rgb8(66, 99, 157);
 pub(super) const SIDEBAR: Color = Color::from_rgb8(246, 247, 249);
-const RAIL: Color = Color::from_rgb8(237, 240, 244);
+pub(super) const RAIL: Color = Color::from_rgb8(237, 240, 244);
 pub(super) const LINE: Color = Color::from_rgb8(228, 232, 237);
 pub(super) const COMPACT_WIDTH: f32 = 800.0;
 const SELECTED: Color = Color::from_rgb8(226, 234, 247);
 
 pub struct State {
+    pub spaces: super::space_navigation::State,
     pub space: Scope,
     pub collapsed: HashSet<String>,
     pub query: String,
@@ -38,7 +39,8 @@ pub struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
-            space: Scope::All,
+            space: Scope::Home,
+            spaces: super::space_navigation::State::default(),
             collapsed: HashSet::new(),
             query: String::new(),
             navigation: true,
@@ -92,7 +94,7 @@ pub fn quiet_button(_: &Theme, status: button::Status) -> button::Style {
         ..Default::default()
     }
 }
-fn navigation_button(selected: bool, status: button::Status) -> button::Style {
+pub(super) fn navigation_button(selected: bool, status: button::Status) -> button::Style {
     button::Style {
         background: if selected {
             Some(SELECTED.into())
@@ -596,10 +598,9 @@ impl App {
         }
     }
     pub(super) fn navigation_width(&self, width: f32) -> f32 {
-        self.shell.navigation_width.clamp(
-            NAV_MIN,
-            (width - 64.0 - HANDLE - 320.0).clamp(NAV_MIN, NAV_MAX),
-        )
+        self.shell
+            .navigation_width
+            .clamp(NAV_MIN, (width - HANDLE - 320.0).clamp(NAV_MIN, NAV_MAX))
     }
     pub(super) fn side_panel_replaces_room(&self, width: f32) -> bool {
         let navigation = if self.navigation_visible(width) {
@@ -608,7 +609,7 @@ impl App {
             0.0
         };
         (self.selection.thread.is_some() || self.selection.members.is_some())
-            && width < 64.0 + navigation + ROOM_MIN + HANDLE + SIDE_MIN
+            && width < navigation + ROOM_MIN + HANDLE + SIDE_MIN
     }
     fn side_panel(&self) -> Element<'_, Message> {
         if self.selection.members.is_some() {
@@ -627,11 +628,11 @@ impl App {
         format!("{:?}/{section}", self.shell.space)
     }
     fn scope_members(&self, scope: &Scope) -> Option<HashSet<String>> {
-        if *scope == Scope::Home && self.model.all_rooms_in_home {
-            None
-        } else {
-            navigation::members(scope, &self.model.spaces)
-        }
+        navigation::location_members(
+            scope,
+            &self.model.spaces,
+            super::space_navigation::recursive(self, scope),
+        )
     }
     pub(super) fn visible_rooms(&self) -> Vec<String> {
         let members = self.scope_members(&self.shell.space);
@@ -640,7 +641,7 @@ impl App {
             .rooms
             .iter()
             .filter(|room| {
-                navigation::includes(&self.shell.space, &members, room)
+                navigation::location_includes(&self.shell.space, &members, room)
                     && room
                         .name
                         .to_lowercase()
@@ -681,13 +682,12 @@ impl App {
             } else {
                 320.0
             };
-            let max = (size.width - 64.0 - HANDLE - reserved).clamp(NAV_MIN, NAV_MAX);
+            let max = (size.width - HANDLE - reserved).clamp(NAV_MIN, NAV_MAX);
             // Retain both slots and their trees while collapsed. The conversation
             // keeps its identity and the hidden room filter cannot receive input.
             // Row::push discards zero-width children; from_vec preserves these
             // mounted slots while the suspended wrappers keep them inert.
             let mut body = widget::Row::from_vec(vec![
-                self.space_rail(size.width),
                 container(super::suspended::view(
                     self.room_navigation(),
                     !navigation_visible,
@@ -734,8 +734,8 @@ impl App {
                     } else {
                         0.0
                     };
-                    let max = (size.width - 64.0 - navigation - HANDLE - ROOM_MIN)
-                        .clamp(SIDE_MIN, SIDE_MAX);
+                    let max =
+                        (size.width - navigation - HANDLE - ROOM_MIN).clamp(SIDE_MIN, SIDE_MAX);
                     let width = preferred.clamp(SIDE_MIN, max);
                     body = body
                         .push(panel_resize::divider(target, width, max, enabled))
@@ -747,180 +747,11 @@ impl App {
             let status = self
                 .utility_banner()
                 .unwrap_or_else(|| container(widget::space().height(0)).into());
-            column![body, status].into()
+            column![self.space_bar(size.width), body, status].into()
         })
         .into()
     }
-    fn space_rail(&self, width: f32) -> Element<'_, Message> {
-        let account_name = self.account_label();
-        let account_image = self
-            .model
-            .account_avatar_url
-            .as_ref()
-            .and_then(|uri| self.model.avatars.get(uri));
-        let account = button(
-            container(avatar(account_name, account_image))
-                .center_x(40)
-                .center_y(40),
-        )
-        .padding(0)
-        .style(icon_button)
-        .on_press_maybe(
-            (self.context_menu_allowed() && self.emoji_management.is_none()).then_some(
-                Message::ContextMenu(super::context_menu::Event::Open(
-                    super::context_menu::Target::Account,
-                    iced::Point::new(60.0, 12.0),
-                )),
-            ),
-        );
-        let mut account = widget::stack![container(account).id("account-menu-button")];
-        if self.utilities_need_attention() {
-            account = account.push(
-                container(container(widget::space().width(6).height(6)).style(|_| {
-                    container::Style {
-                        background: Some(Color::from_rgb8(183, 133, 58).into()),
-                        border: Border::default().rounded(3),
-                        ..Default::default()
-                    }
-                }))
-                .align_right(Length::Fill)
-                .align_bottom(Length::Fill)
-                .padding(2),
-            );
-        }
-        let mut spaces = column![
-            container(super::tooltips::tooltip(
-                account,
-                format!("{account_name} · Account & settings"),
-                widget::tooltip::Position::Right
-            ))
-            .center_x(56)
-            .padding([8, 0])
-        ]
-        .spacing(10)
-        .align_x(Alignment::Center);
-        let mut entries = vec![
-            (Scope::Home, String::new(), "Home".to_owned(), None),
-            (Scope::All, "All".to_owned(), "All rooms".to_owned(), None),
-            (
-                Scope::Direct,
-                "DM".to_owned(),
-                "Direct messages".to_owned(),
-                None,
-            ),
-        ];
-        entries.extend(self.model.spaces.iter().map(|s| {
-            (
-                Scope::Space(s.id.clone()),
-                s.name
-                    .chars()
-                    .next()
-                    .unwrap_or('#')
-                    .to_uppercase()
-                    .collect(),
-                s.name.clone(),
-                s.avatar_url
-                    .as_ref()
-                    .and_then(|uri| self.model.avatars.get(uri)),
-            )
-        }));
-        let mut rail = column![].spacing(10).align_x(Alignment::Center);
-        for (scope, initial, name, image) in entries {
-            let selected = self.shell.space == scope;
-            let members = self.scope_members(&scope);
-            let unread = self
-                .model
-                .rooms
-                .iter()
-                .any(|room| room.unread && navigation::includes(&scope, &members, room));
-            let content: Element<'_, Message> = if let Some(kind) = match &scope {
-                Scope::Home => Some(Kind::Home),
-                Scope::All => Some(Kind::Grid),
-                Scope::Direct => Some(Kind::Direct),
-                Scope::Space(_) => None,
-            } {
-                sized(kind, 24.0)
-            } else if let Some(handle) = image {
-                widget::image(handle.clone())
-                    .width(32)
-                    .height(32)
-                    .content_fit(iced::ContentFit::Cover)
-                    .border_radius(6)
-                    .into()
-            } else {
-                text(initial).size(14).into()
-            };
-            let mut content = widget::stack![
-                container(content)
-                    .center_x(38)
-                    .center_y(38)
-                    .id(format!("space-rail-icon:{scope:?}"))
-            ];
-            if unread {
-                content = content.push(
-                    container(
-                        container(widget::space().width(8).height(8))
-                            .style(|_| container::Style {
-                                background: Some(ACCENT.into()),
-                                border: Border {
-                                    color: RAIL,
-                                    width: 1.0,
-                                    radius: 4.0.into(),
-                                },
-                                ..Default::default()
-                            })
-                            .id(format!("space-rail-unread:{scope:?}")),
-                    )
-                    .align_right(Length::Fill)
-                    .align_bottom(Length::Fill)
-                    .padding(2),
-                );
-            }
-            let mut control = button(content)
-                .padding(0)
-                .style(move |_, status| navigation_button(selected, status));
-            if !self.closing && !self.stopped {
-                control = control.on_press(Message::Space(scope));
-            }
-            rail = rail.push(super::tooltips::tooltip(
-                control,
-                if unread {
-                    format!("{name} · Unread messages")
-                } else {
-                    name
-                },
-                widget::tooltip::Position::Right,
-            ));
-        }
-        spaces = spaces.push(
-            scrollable(rail)
-                .direction(scrollbar())
-                .style(scroll_style)
-                .height(Length::Fill),
-        );
-        if self.demo.is_some() {
-            spaces = spaces.push(text("Demo").size(10).color(MUTED));
-        }
-        spaces = spaces.push(super::tooltips::tooltip(
-            button(container(icon(Kind::Sidebar)).center_x(36).center_y(36))
-                .padding(0)
-                .style(quiet_button)
-                .on_press(Message::ToggleNavigation),
-            if self.navigation_visible(width) {
-                "Hide room list"
-            } else {
-                "Show room list"
-            },
-            widget::tooltip::Position::Right,
-        ));
-        container(spaces)
-            .width(64)
-            .height(Length::Fill)
-            .padding([12, 4])
-            .style(|_| surface(RAIL))
-            .into()
-    }
-    fn room_navigation(&self) -> Element<'_, Message> {
+    pub(super) fn room_navigation(&self) -> Element<'_, Message> {
         let name = match &self.shell.space {
             Scope::Home => "Home",
             Scope::All => "All rooms",
@@ -965,34 +796,42 @@ impl App {
         }
         let mut rooms = column![
             super::tooltips::tooltip(
-                button(
-                    row![icon(Kind::Search), text("Search messages").size(13)]
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                )
-                .width(Length::Fill)
-                .padding([5, 10])
-                .style(move |_, status| navigation_button(self.global_search.open, status))
-                .on_press_maybe(
-                    (!self.closing && !self.stopped)
-                        .then_some(Message::GlobalSearch(super::global_search::Event::Open))
+                super::navigation_control::plain(
+                    button(
+                        row![icon(Kind::Search), text("Search messages").size(13)]
+                            .spacing(8)
+                            .align_y(Alignment::Center)
+                    )
+                    .width(Length::Fill)
+                    .padding([5, 10])
+                    .style(move |_, status| navigation_button(self.global_search.open, status))
+                    .on_press_maybe(
+                        (!self.closing && !self.stopped)
+                            .then_some(Message::GlobalSearch(super::global_search::Event::Open))
+                    ),
+                    "nav-message-search",
+                    Message::GlobalSearch(super::global_search::Event::Open)
                 ),
                 "Search all rooms · Ctrl+Shift+F / ⌘⇧F",
                 widget::tooltip::Position::Bottom,
             ),
-            button(saved_messages)
-                .width(Length::Fill)
-                .padding([5, 10])
-                .style(move |_, status| navigation_button(self.bookmarks.open, status))
-                .on_press_maybe(
-                    (!self.closing && !self.stopped)
-                        .then_some(Message::Bookmark(super::bookmarks::Event::Open))
-                ),
+            super::navigation_control::plain(
+                button(saved_messages)
+                    .width(Length::Fill)
+                    .padding([5, 10])
+                    .style(move |_, status| navigation_button(self.bookmarks.open, status))
+                    .on_press_maybe(
+                        (!self.closing && !self.stopped)
+                            .then_some(Message::Bookmark(super::bookmarks::Event::Open))
+                    ),
+                "nav-saved",
+                Message::Bookmark(super::bookmarks::Event::Open)
+            ),
             widget::rule::horizontal(1),
         ]
         .spacing(0);
         if !self.model.invitations.is_empty() {
-            rooms = rooms.push(
+            rooms = rooms.push(super::navigation_control::plain(
                 button(text(format!("Invitations · {}", self.model.invitations.len())).size(13))
                     .width(Length::Fill)
                     .padding([5, 10])
@@ -1001,7 +840,9 @@ impl App {
                         self.context_menu_allowed()
                             .then_some(Message::Membership(super::membership::Event::Open)),
                     ),
-            );
+                "nav-invitations",
+                Message::Membership(super::membership::Event::Open),
+            ));
         }
         let sections = &*self.model.sections;
         let visible = self.visible_rooms();
@@ -1013,36 +854,6 @@ impl App {
         }
         if let Some(error) = &self.section_reorder.error {
             rooms = rooms.push(text(error).size(12).color(MUTED));
-        }
-        if let Scope::Space(id) = &self.shell.space
-            && let Some(space) = self.model.spaces.iter().find(|s| &s.id == id)
-        {
-            let children: Vec<_> = self
-                .model
-                .spaces
-                .iter()
-                .filter(|s| space.children.contains(&s.id))
-                .collect();
-            if !children.is_empty() {
-                rooms = rooms.push(container(title("Spaces", 11).color(MUTED)).padding([4, 8]));
-                for child in children {
-                    rooms = rooms.push(
-                        button(
-                            row![
-                                sized(Kind::ChevronRight, 14.0),
-                                single_line::label(&child.name, 13)
-                            ]
-                            .spacing(6)
-                            .align_y(Alignment::Center),
-                        )
-                        .width(Length::Fill)
-                        .padding([2, 10])
-                        .height(26)
-                        .style(quiet_button)
-                        .on_press(Message::Space(Scope::Space(child.id.clone()))),
-                    );
-                }
-            }
         }
         let mut matches = 0;
         for section in sections {
@@ -1119,7 +930,12 @@ impl App {
                 style
             })
             .on_press(Message::Section(section.id.clone()));
-            let header = self.reorder_header(header.into(), &section.id);
+            let header = super::navigation_control::plain(
+                header,
+                format!("nav-section:{}", section.id),
+                Message::Section(section.id.clone()),
+            );
+            let header = self.reorder_header(header, &section.id);
             let header = container(header).id(format!("navigation-section:{}", section.id));
             rooms = rooms.push(
                 if interconnect::room_sections::reorder_tag(&section.id).is_some() {
@@ -1200,7 +1016,12 @@ impl App {
                     control = control.on_press(Message::Room(room.id.clone()));
                 }
                 rooms = rooms.push(super::context_menu::trigger(
-                    container(control).id(format!("navigation-room:{}", room.id)),
+                    container(super::navigation_control::plain(
+                        control,
+                        format!("navigation-room:{}:{}", section.id, room.id),
+                        Message::Room(room.id.clone()),
+                    ))
+                    .id(format!("navigation-room:{}", room.id)),
                     super::context_menu::Target::Room(room.id.clone()),
                 ));
             }
@@ -1219,8 +1040,15 @@ impl App {
         } else {
             "New chat (Ctrl+N)"
         };
-        let new_chat =
-            super::tooltips::tooltip(new_chat, shortcut, widget::tooltip::Position::Bottom);
+        let new_chat = super::tooltips::tooltip(
+            super::navigation_control::plain(
+                new_chat,
+                "nav-new-chat",
+                Message::NewChat(super::new_chat::Event::Open),
+            ),
+            shortcut,
+            widget::tooltip::Position::Bottom,
+        );
         let mut create_room = button(container(icon(Kind::RoomAdd)).center_x(28).center_y(28))
             .padding(2)
             .style(icon_button);
@@ -1233,8 +1061,25 @@ impl App {
         } else {
             "Create room (Ctrl+Shift+N)"
         };
-        let create_room =
-            super::tooltips::tooltip(create_room, shortcut, widget::tooltip::Position::Bottom);
+        let create_room = super::tooltips::tooltip(
+            super::navigation_control::plain(
+                create_room,
+                "nav-create-room",
+                Message::CreateRoom(super::create_room::Event::Open),
+            ),
+            shortcut,
+            widget::tooltip::Position::Bottom,
+        );
+        let manage_sections = Message::ContextMenu(super::context_menu::Event::Open(
+            super::context_menu::Target::Sections,
+            iced::Point::new(
+                self.window_width
+                    .map_or(self.shell.navigation_width, |width| {
+                        self.navigation_width(width)
+                    }),
+                90.0,
+            ),
+        ));
         container(
             column![
                 row![
@@ -1247,25 +1092,22 @@ impl App {
                     new_chat,
                     create_room,
                     super::tooltips::tooltip(
-                        button(container(icon(Kind::More)).center_x(28).center_y(28))
-                            .padding(2)
-                            .style(icon_button)
-                            .on_press(Message::ContextMenu(super::context_menu::Event::Open(
-                                super::context_menu::Target::Sections,
-                                iced::Point::new(
-                                    38.0 + self
-                                        .window_width
-                                        .map_or(self.shell.navigation_width, |width| self
-                                            .navigation_width(width)),
-                                    40.0
-                                )
-                            ))),
+                        super::navigation_control::plain(
+                            button(container(icon(Kind::More)).center_x(28).center_y(28))
+                                .padding(2)
+                                .style(icon_button)
+                                .on_press(manage_sections.clone()),
+                            "nav-manage-sections",
+                            manage_sections
+                        ),
                         "Manage sections",
                         widget::tooltip::Position::Bottom
                     ),
                 ]
                 .align_y(Alignment::Center),
-                search,
+                row![search.width(Length::Fill), self.subspaces_toggle()]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
                 scrollable(rooms.padding(iced::Padding {
                     right: 8.0,
                     ..Default::default()
@@ -1494,323 +1336,6 @@ mod avatar_tests {
 mod navigation_tests {
     use super::*;
     use iced::advanced::{layout, widget};
-
-    #[test]
-    fn home_rail_is_first_clickable_and_keeps_the_open_thread_drafts_and_position() {
-        use iced::advanced::{Shell, mouse};
-        use interconnect::navigation::{RoomEntry, SpaceEntry};
-        struct Probe(Vec<(String, iced::Rectangle)>);
-        impl widget::Operation for Probe {
-            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
-                f(self);
-            }
-            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
-                for scope in [Scope::Home, Scope::All, Scope::Direct] {
-                    let name = format!("space-rail-icon:{scope:?}");
-                    if id == Some(&widget::Id::from(name.clone())) {
-                        self.0.push((name, bounds));
-                    }
-                }
-            }
-        }
-        let mut app = crate::tests::demo_app();
-        let _ = app.update(Message::Thread("proposal".into()));
-        let selected = (app.selection.room.clone(), app.selection.thread.clone());
-        let key = app.draft_key(true).unwrap();
-        app.drafts.get_mut(&key).unwrap().content =
-            iced::widget::text_editor::Content::with_text("Unsent reply");
-        app.scroll_positions.insert(key.clone(), 84.0);
-        app.model.rooms = vec![
-            RoomEntry {
-                id: "studio".into(),
-                name: "Studio".into(),
-                favorite: true,
-                ..Default::default()
-            },
-            RoomEntry {
-                id: "maya".into(),
-                name: "Maya".into(),
-                direct: true,
-                ..Default::default()
-            },
-            RoomEntry {
-                id: "outside".into(),
-                name: "Outside".into(),
-                ..Default::default()
-            },
-            RoomEntry {
-                id: "nested".into(),
-                name: "Nested".into(),
-                ..Default::default()
-            },
-        ]
-        .into();
-        app.model.spaces = vec![
-            SpaceEntry {
-                id: "parent".into(),
-                children: vec!["child".into(), "studio".into(), "maya".into()],
-                ..Default::default()
-            },
-            SpaceEntry {
-                id: "child".into(),
-                children: vec!["nested".into()],
-                ..Default::default()
-            },
-        ]
-        .into();
-        let renderer = crate::test_renderer(Font::DEFAULT, iced::Pixels(13.0));
-        let messages = {
-            let mut view = app.space_rail(1280.0);
-            let mut tree = widget::Tree::new(&view);
-            let size = iced::Size::new(64.0, 480.0);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            let mut probe = Probe(Vec::new());
-            view.as_widget_mut().operate(
-                &mut tree,
-                layout::Layout::new(&node),
-                &renderer,
-                &mut probe,
-            );
-            assert_eq!(
-                probe
-                    .0
-                    .iter()
-                    .map(|(name, _)| name.as_str())
-                    .collect::<Vec<_>>(),
-                [
-                    "space-rail-icon:Home",
-                    "space-rail-icon:All",
-                    "space-rail-icon:Direct"
-                ]
-            );
-            assert!(probe.0.windows(2).all(|pair| pair[0].1.y < pair[1].1.y));
-            let point = probe.0[0].1.center();
-            let mut messages = Vec::new();
-            for event in [
-                mouse::Event::ButtonPressed(mouse::Button::Left),
-                mouse::Event::ButtonReleased(mouse::Button::Left),
-            ] {
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &iced::Event::Mouse(event),
-                    layout::Layout::new(&node),
-                    mouse::Cursor::Available(point),
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut Shell::new(&mut messages),
-                    &iced::Rectangle::with_size(size),
-                );
-            }
-            messages
-        };
-        assert!(matches!(messages.as_slice(), [Message::Space(Scope::Home)]));
-        for message in messages {
-            let _ = app.update(message);
-        }
-        assert_eq!(app.visible_rooms(), ["maya", "outside"]);
-        let shown: Vec<_> = sections(&app)
-            .into_iter()
-            .flat_map(|(_, rooms)| rooms)
-            .collect();
-        assert!(shown.contains(&"maya".into()) && shown.contains(&"outside".into()));
-        assert!(!shown.contains(&"studio".into()) && !shown.contains(&"nested".into()));
-        assert_eq!(
-            (app.selection.room.clone(), app.selection.thread.clone()),
-            selected
-        );
-        assert_eq!(app.drafts[&key].content.text().trim_end(), "Unsent reply");
-        assert_eq!(app.scroll_positions[&key], 84.0);
-        app.model.all_rooms_in_home = true;
-        assert_eq!(app.visible_rooms().len(), 4);
-        app.model.all_rooms_in_home = false;
-        std::sync::Arc::make_mut(&mut app.model.spaces).clear();
-        assert_eq!(app.visible_rooms().len(), 4);
-    }
-
-    #[test]
-    fn space_unread_dots_follow_room_snapshots_and_keep_space_buttons_clickable() {
-        use iced::advanced::{Shell, mouse};
-        use interconnect::navigation::SpaceEntry;
-
-        fn inspect(app: &App, click: Option<&Scope>) -> (Vec<Scope>, Vec<Message>) {
-            struct Probe {
-                scopes: Vec<Scope>,
-                icons: Vec<(Scope, iced::Rectangle)>,
-                dots: Vec<(Scope, iced::Rectangle)>,
-            }
-            impl widget::Operation for Probe {
-                fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
-                    f(self);
-                }
-                fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
-                    for scope in &self.scopes {
-                        if id == Some(&widget::Id::from(format!("space-rail-icon:{scope:?}"))) {
-                            self.icons.push((scope.clone(), bounds));
-                        }
-                        if id == Some(&widget::Id::from(format!("space-rail-unread:{scope:?}"))) {
-                            self.dots.push((scope.clone(), bounds));
-                        }
-                    }
-                }
-            }
-            let mut probe = Probe {
-                scopes: [Scope::Home, Scope::All, Scope::Direct]
-                    .into_iter()
-                    .chain(
-                        app.model
-                            .spaces
-                            .iter()
-                            .map(|space| Scope::Space(space.id.clone())),
-                    )
-                    .collect(),
-                icons: Vec::new(),
-                dots: Vec::new(),
-            };
-            let renderer = crate::test_renderer(Font::DEFAULT, iced::Pixels(13.0));
-            let mut view = app.space_rail(1280.0);
-            let mut tree = widget::Tree::new(&view);
-            let size = iced::Size::new(64.0, 720.0);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            view.as_widget_mut().operate(
-                &mut tree,
-                layout::Layout::new(&node),
-                &renderer,
-                &mut probe,
-            );
-            assert_eq!(probe.icons.len(), probe.scopes.len());
-            for (_, bounds) in &probe.icons {
-                assert_eq!(bounds.size(), iced::Size::new(38.0, 38.0));
-            }
-            for (scope, dot) in &probe.dots {
-                let icon = probe.icons.iter().find(|(id, _)| id == scope).unwrap().1;
-                assert_eq!(dot.size(), iced::Size::new(8.0, 8.0));
-                assert!(
-                    icon.contains(dot.position())
-                        && icon.contains(dot.position() + iced::Vector::new(8.0, 8.0))
-                );
-            }
-            let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    iced::time::Instant::now(),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-            assert!(messages.is_empty());
-            if let Some(scope) = click {
-                let point = probe
-                    .dots
-                    .iter()
-                    .find(|(id, _)| id == scope)
-                    .unwrap()
-                    .1
-                    .center();
-                for event in [
-                    mouse::Event::ButtonPressed(mouse::Button::Left),
-                    mouse::Event::ButtonReleased(mouse::Button::Left),
-                ] {
-                    view.as_widget_mut().update(
-                        &mut tree,
-                        &iced::Event::Mouse(event),
-                        layout::Layout::new(&node),
-                        mouse::Cursor::Available(point),
-                        &renderer,
-                        &mut iced::advanced::clipboard::Null,
-                        &mut Shell::new(&mut messages),
-                        &iced::Rectangle::with_size(size),
-                    );
-                }
-            }
-            (
-                probe.dots.into_iter().map(|(scope, _)| scope).collect(),
-                messages,
-            )
-        }
-
-        let mut app = crate::tests::demo_app();
-        let selection = app.selection.room.clone();
-        let key = app.draft_key(false).unwrap();
-        app.drafts.get_mut(&key).unwrap().content =
-            iced::widget::text_editor::Content::with_text("Unsent");
-        app.scroll_positions.insert(key.clone(), 51.0);
-        assert_eq!(
-            inspect(&app, None).0,
-            [Scope::All, Scope::Space("studio-space".into())]
-        );
-
-        let mut snapshot = app.model.clone();
-        for room in std::sync::Arc::make_mut(&mut snapshot.rooms) {
-            room.unread = room.id == "maya";
-            room.unread_count = 0;
-        }
-        snapshot.spaces = [
-            ("parent", vec!["child"]),
-            ("child", vec!["parent", "maya"]),
-            ("shared", vec!["maya"]),
-            ("empty", vec!["unknown"]),
-        ]
-        .into_iter()
-        .map(|(id, children)| SpaceEntry {
-            id: id.into(),
-            name: id.into(),
-            children: children.into_iter().map(String::from).collect(),
-            ..Default::default()
-        })
-        .collect::<Vec<_>>()
-        .into();
-        let _ = app.update(Message::State(Box::new(snapshot)));
-        // Rail indicators ignore the current room filter and optional Unread section.
-        app.shell.query = "no matching rooms".into();
-        app.settings.current.navigation.show_unread_section = false;
-        let parent = Scope::Space("parent".into());
-        let (dots, messages) = inspect(&app, Some(&parent));
-        assert_eq!(
-            dots,
-            [
-                Scope::Home,
-                Scope::All,
-                Scope::Direct,
-                parent.clone(),
-                Scope::Space("child".into()),
-                Scope::Space("shared".into())
-            ]
-        );
-        assert!(matches!(messages.as_slice(), [Message::Space(scope)] if scope == &parent));
-        for message in messages {
-            let _ = app.update(message);
-        }
-        assert_eq!(app.shell.space, parent);
-        assert_eq!(app.selection.room, selection);
-        assert_eq!(app.drafts[&key].content.text().trim_end(), "Unsent");
-        assert_eq!(app.scroll_positions[&key], 51.0);
-
-        let unread_snapshot = app.model.clone();
-        let mut snapshot = unread_snapshot.clone();
-        for room in std::sync::Arc::make_mut(&mut snapshot.rooms) {
-            room.unread = false;
-        }
-        let _ = app.update(Message::State(Box::new(snapshot)));
-        assert!(inspect(&app, None).0.is_empty());
-        // Dropping a room from the snapshot also clears every affected indicator.
-        let _ = app.update(Message::State(Box::new(unread_snapshot)));
-        assert!(!inspect(&app, None).0.is_empty());
-        let mut snapshot = app.model.clone();
-        snapshot.rooms = Default::default();
-        let _ = app.update(Message::State(Box::new(snapshot)));
-        assert!(inspect(&app, None).0.is_empty());
-    }
 
     fn sections(app: &App) -> Vec<(String, Vec<String>)> {
         struct Probe {
@@ -2261,9 +1786,9 @@ mod navigation_tests {
                 width >= COMPACT_WIDTH || (4..=6).contains(&step)
             );
             let left = if probe.navigation {
-                64.0 + app.navigation_width(width) + HANDLE
+                app.navigation_width(width) + HANDLE
             } else {
-                64.0
+                0.0
             };
             assert!((bounds.x - left).abs() < 0.1);
             assert!((bounds.width - (width - left)).abs() < 0.1);

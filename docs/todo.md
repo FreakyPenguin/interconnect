@@ -16,7 +16,6 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 - Room notification controls.
 - Unread catch-up divider.
 - Conversation back/forward history (after search, following links, etc.).
-- Keyboard shortcuts for jumping between spaces.
 - Search with filters
 - Allow matrix URIs to be (de)registered through settings
 

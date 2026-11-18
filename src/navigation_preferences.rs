@@ -19,14 +19,23 @@ pub struct Preferences {
     pub scope: Scope,
     pub room: Option<String>,
     pub collapsed: Vec<String>,
+    #[serde(default)]
+    pub include_subspaces: Vec<String>,
+    #[serde(default)]
+    pub space_path: Vec<String>,
+    #[serde(default)]
+    pub expanded_spaces: Vec<String>,
 }
 impl Default for Preferences {
     fn default() -> Self {
         Self {
             version: 1,
-            scope: Scope::All,
+            scope: Scope::Home,
             room: None,
             collapsed: Vec::new(),
+            include_subspaces: Vec::new(),
+            space_path: Vec::new(),
+            expanded_spaces: Vec::new(),
         }
     }
 }
@@ -134,6 +143,9 @@ mod tests {
             scope: Scope::Space("!space:example.org".into()),
             room: Some("!room:example.org".into()),
             collapsed: vec!["space/Rooms".into()],
+            include_subspaces: vec!["!space:example.org".into()],
+            space_path: vec!["!parent:example.org".into(), "!space:example.org".into()],
+            expanded_spaces: vec!["!parent:example.org".into()],
             ..Default::default()
         };
         prefs.save(directory.path()).unwrap();
@@ -166,6 +178,11 @@ mod tests {
             serde_json::from_str(r#"{"version":1,"scope":"All","room":null,"collapsed":[]}"#)
                 .unwrap();
         assert_eq!(old.scope, Scope::All);
+        assert!(
+            old.include_subspaces.is_empty()
+                && old.space_path.is_empty()
+                && old.expanded_spaces.is_empty()
+        );
     }
 
     #[tokio::test]

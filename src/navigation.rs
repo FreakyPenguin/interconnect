@@ -191,6 +191,109 @@ pub fn includes(scope: &Scope, members: &Option<HashSet<String>>, room: &RoomEnt
     }
 }
 
+/// Room membership for the desktop's current location. Home is the virtual
+/// parent of every space; its direct rooms have no joined-space child link.
+/// DMs follow the same rule as other rooms. Unknown children do not add rooms.
+pub fn location_members(
+    scope: &Scope,
+    spaces: &[SpaceEntry],
+    recursive: bool,
+) -> Option<HashSet<String>> {
+    match scope {
+        Scope::Home if recursive => None,
+        Scope::Space(id) if !recursive => Some(
+            spaces
+                .iter()
+                .find(|space| &space.id == id)
+                .into_iter()
+                .flat_map(|space| space.children.iter().cloned())
+                .collect(),
+        ),
+        _ => members(scope, spaces),
+    }
+}
+
+pub fn location_includes(
+    scope: &Scope,
+    members: &Option<HashSet<String>>,
+    room: &RoomEntry,
+) -> bool {
+    match scope {
+        Scope::Home => members.as_ref().is_none_or(|ids| !ids.contains(&room.id)),
+        _ => includes(scope, members, room),
+    }
+}
+
+/// Stable roots, including a representative for each otherwise unreachable
+/// cyclic component. Shared children remain available beneath each parent.
+pub fn space_roots(spaces: &[SpaceEntry]) -> Vec<String> {
+    let children: HashSet<_> = spaces.iter().flat_map(|s| s.children.iter()).collect();
+    let mut ordered: Vec<_> = spaces.iter().collect();
+    ordered.sort_by_cached_key(|s| (s.name.to_lowercase(), s.id.clone()));
+    let mut roots: Vec<_> = ordered
+        .iter()
+        .filter(|s| !children.contains(&s.id))
+        .map(|s| s.id.clone())
+        .collect();
+    let mut reachable = HashSet::new();
+    for root in &roots {
+        reachable.extend(members(&Scope::Space(root.clone()), spaces).unwrap_or_default());
+    }
+    for space in ordered {
+        if !reachable.contains(&space.id) {
+            roots.push(space.id.clone());
+            reachable.extend(members(&Scope::Space(space.id.clone()), spaces).unwrap_or_default());
+        }
+    }
+    roots
+}
+
+pub fn valid_space_path(spaces: &[SpaceEntry], path: &[String]) -> bool {
+    let mut seen = HashSet::new();
+    !path.is_empty()
+        && path.iter().enumerate().all(|(index, id)| {
+            seen.insert(id)
+                && spaces.iter().any(|space| &space.id == id)
+                && (index == 0
+                    || spaces
+                        .iter()
+                        .find(|space| space.id == path[index - 1])
+                        .is_some_and(|space| space.children.contains(id)))
+        })
+}
+
+/// Prefer the route the user followed. Fall back to a breadth-first route from
+/// a visible root after metadata changes or restoring older preferences.
+pub fn space_path(spaces: &[SpaceEntry], target: &str, preferred: &[String]) -> Vec<String> {
+    if let Some(index) = preferred.iter().position(|id| id == target)
+        && valid_space_path(spaces, &preferred[..=index])
+    {
+        return preferred[..=index].to_vec();
+    }
+    let mut pending: std::collections::VecDeque<_> =
+        space_roots(spaces).into_iter().map(|id| vec![id]).collect();
+    let mut visited = HashSet::new();
+    while let Some(path) = pending.pop_front() {
+        let id = path.last().unwrap();
+        if !visited.insert(id.clone()) {
+            continue;
+        }
+        if id == target {
+            return path;
+        }
+        if let Some(space) = spaces.iter().find(|s| &s.id == id) {
+            for child in &space.children {
+                if spaces.iter().any(|s| &s.id == child) && !visited.contains(child) {
+                    let mut next = path.clone();
+                    next.push(child.clone());
+                    pending.push_back(next);
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+
 pub struct Snapshot {
     pub rooms: Vec<RoomEntry>,
     pub spaces: Vec<SpaceEntry>,
@@ -332,6 +435,94 @@ fn direct_peer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn graph() -> Vec<SpaceEntry> {
+        [
+            ("a", vec!["b", "direct", "dm"]),
+            ("b", vec!["nested", "shared", "a"]),
+            ("c", vec!["shared", "b"]),
+            ("loop", vec!["loop", "unknown"]),
+        ]
+        .into_iter()
+        .map(|(id, children)| SpaceEntry {
+            id: id.into(),
+            name: id.into(),
+            children: children.into_iter().map(String::from).collect(),
+            ..Default::default()
+        })
+        .collect()
+    }
+
+    #[test]
+    fn location_filter_has_direct_recursive_and_strict_home_semantics() {
+        let spaces = graph();
+        let scope = Scope::Space("a".into());
+        let direct = location_members(&scope, &spaces, false);
+        let recursive = location_members(&scope, &spaces, true);
+        for (id, in_direct, in_recursive) in [
+            ("direct", true, true),
+            ("nested", false, true),
+            ("shared", false, true),
+            ("outside", false, false),
+        ] {
+            let room = RoomEntry {
+                id: id.into(),
+                ..Default::default()
+            };
+            assert_eq!(location_includes(&scope, &direct, &room), in_direct);
+            assert_eq!(location_includes(&scope, &recursive, &room), in_recursive);
+        }
+        let dm = RoomEntry {
+            id: "dm".into(),
+            direct: true,
+            ..Default::default()
+        };
+        assert!(!location_includes(
+            &Scope::Home,
+            &location_members(&Scope::Home, &spaces, false),
+            &dm
+        ));
+        assert!(location_includes(
+            &Scope::Home,
+            &location_members(&Scope::Home, &spaces, true),
+            &dm
+        ));
+        assert_eq!(
+            recursive
+                .unwrap()
+                .iter()
+                .filter(|id| id.as_str() == "shared")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn paths_keep_shared_parent_context_and_all_cycles_remain_reachable() {
+        let spaces = graph();
+        let roots = space_roots(&spaces);
+        assert!(roots.contains(&"c".into()));
+        assert!(roots.contains(&"loop".into()));
+        for space in &spaces {
+            let path = space_path(&spaces, &space.id, &[]);
+            assert!(valid_space_path(&spaces, &path));
+            assert_eq!(path.last(), Some(&space.id));
+        }
+        assert_eq!(
+            space_path(&spaces, "b", &["a".into(), "b".into()]),
+            ["a", "b"]
+        );
+        assert_eq!(
+            space_path(&spaces, "b", &["c".into(), "b".into()]),
+            ["c", "b"]
+        );
+        assert!(!valid_space_path(
+            &spaces,
+            &["a".into(), "b".into(), "a".into()]
+        ));
+        assert!(!valid_space_path(&spaces, &["c".into(), "unknown".into()]));
+        assert!(space_path(&spaces, "missing", &[]).is_empty());
+    }
     #[test]
     fn dm_presence_peer_uses_unambiguous_matrix_ids_and_excludes_self() {
         let own = matrix_sdk::ruma::user_id!("@me:example.org");

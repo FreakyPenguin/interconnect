@@ -10,13 +10,12 @@ use std::cell::Cell;
 pub(super) enum Kind {
     Search,
     People,
-    Grid,
     Home,
-    Direct,
     Plus,
     RoomAdd,
     More,
     Sidebar,
+    Subspaces,
     Pin,
     Unpin,
     Reply,
@@ -126,6 +125,20 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                         (19.0, 21.0),
                         (19.0, 9.0),
                     ]);
+                }
+                Subspaces => {
+                    line(&[(12.0, 8.0), (12.0, 12.0)]);
+                    line(&[(5.5, 16.0), (5.5, 12.0), (18.5, 12.0), (18.5, 16.0)]);
+                    for (x, y, width) in [(8.0, 3.0, 8.0), (2.0, 16.0, 7.0), (15.0, 16.0, 7.0)] {
+                        frame.stroke(
+                            &Path::rounded_rectangle(
+                                Point::new(x, y),
+                                Size::new(width, 5.0),
+                                1.0.into(),
+                            ),
+                            stroke,
+                        );
+                    }
                 }
                 Eye => {
                     frame.stroke(
@@ -239,21 +252,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                         frame.fill(&Path::circle(Point::new(x, 12.0), 1.3), style.text_color);
                     }
                 }
-                Grid => {
-                    for x in [3.0, 14.0] {
-                        for y in [3.0, 14.0] {
-                            frame.stroke(
-                                &Path::rounded_rectangle(
-                                    Point::new(x, y),
-                                    Size::new(7.0, 7.0),
-                                    1.5.into(),
-                                ),
-                                stroke,
-                            );
-                        }
-                    }
-                }
-                People | Direct => {
+                People => {
                     frame.stroke(&Path::circle(Point::new(9.0, 7.0), 3.0), stroke);
                     frame.stroke(&Path::circle(Point::new(18.0, 8.0), 2.5), stroke);
                     frame.stroke(
