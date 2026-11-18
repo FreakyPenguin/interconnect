@@ -5,18 +5,58 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use iced::futures::future::select_all;
 use matrix_sdk::{
     Client, Room, RoomState, deserialized_responses::RawAnySyncOrStrippedTimelineEvent,
     sync::Notification,
 };
 use serde::Deserialize;
+use std::{
+    pin::Pin,
+    sync::{Arc, Weak},
+};
 use tokio::sync::{mpsc, watch};
 
 use crate::connected::{Model, Selection};
 
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(any(target_os = "macos", test))]
+mod responses;
+
 const QUEUE_LIMIT: usize = 64;
 const SEEN_LIMIT: usize = 2048;
 const MAX_AGE_MS: u64 = 120_000;
+
+/// Conversation identity retained locally, never included in the OS payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Target {
+    pub room: String,
+    pub thread: Option<String>,
+}
+
+/// A click is valid only while its authenticated worker is alive.
+#[derive(Debug)]
+pub struct Activation {
+    pub target: Target,
+    session: Weak<()>,
+}
+impl Activation {
+    /// The caller retains the session lease; dropping it invalidates this click.
+    pub fn new(target: Target, session: &Arc<()>) -> Self {
+        Self {
+            target,
+            session: Arc::downgrade(session),
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        self.session.strong_count() > 0
+    }
+}
+
+type PendingResponse = Pin<Box<dyn Future<Output = (bool, Target)> + Send>>;
+type Response = Pin<Box<dyn Future<Output = bool> + Send>>;
 
 // Never derive Debug: event previews must not appear in diagnostics.
 struct Candidate {
@@ -215,10 +255,9 @@ impl Service {
     }
 
     pub(crate) async fn run(self) {
-        self.run_with(
-            authorize,
-            |title, body| async move { show(&title, &body).await },
-        )
+        self.run_with(authorize, |title, body| async move {
+            show(&title, &body, true).await
+        })
         .await;
     }
 
@@ -227,10 +266,28 @@ impl Service {
         A: FnMut() -> AF,
         AF: Future<Output = Result<(), String>>,
         S: FnMut(String, String) -> SF,
-        SF: Future<Output = Result<(), String>>,
+        SF: Future<Output = Result<Option<Response>, String>>,
     {
         let mut seen = Seen::default();
-        while let Some(candidate) = self.events.recv().await {
+        let session = Arc::new(());
+        let mut responses: Vec<PendingResponse> = Vec::new();
+        let mut shutdown = self.selection.clone();
+        'worker: loop {
+            let candidate = tokio::select! {
+                biased;
+                _ = shutdown.wait_for(|s| s.shutdown || s.sign_out != 0) => break,
+                ((clicked, target), index, _) = async { select_all(responses.iter_mut()).await }, if !responses.is_empty() => {
+                    drop(responses.remove(index));
+                    if clicked {
+                        self.state.send_modify(|state| state.notification_activation = Some(Arc::new(Activation::new(target, &session))));
+                    }
+                    continue;
+                }
+                candidate = self.events.recv() => {
+                    let Some(candidate) = candidate else { break };
+                    candidate
+                }
+            };
             // Record even suppressed events to avoid re-alerting after focus changes.
             if !seen.insert(&candidate)
                 || !candidate.eligible(&self.selection.borrow(), self.started, now_ms())
@@ -245,20 +302,44 @@ impl Service {
                 let preview = {
                     let selection = self.selection.borrow();
                     if !candidate.eligible(&selection, self.started, now_ms()) {
-                        return Ok(false);
+                        return Ok(None);
                     }
                     candidate.preview(selection.notifications.show_preview)
                 };
-                show(preview.0, preview.1).await.map(|()| true)
+                show(preview.0, preview.1).await
             };
-            let result = tokio::select! {
-                biased;
-                _ = shutdown.wait_for(|s| s.shutdown) => break,
-                result = delivery => result,
+            let result = {
+                tokio::pin!(delivery);
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.wait_for(|s| s.shutdown || s.sign_out != 0) => break 'worker,
+                        ((clicked, target), index, _) = async { select_all(responses.iter_mut()).await }, if !responses.is_empty() => {
+                            drop(responses.remove(index));
+                            if clicked {
+                                self.state.send_modify(|state| state.notification_activation = Some(Arc::new(Activation::new(target, &session))));
+                            }
+                        }
+                        result = &mut delivery => break result,
+                    }
+                }
             };
-            if matches!(result, Ok(false)) {
+            if matches!(result, Ok(None)) {
                 continue;
             }
+            let result = result.map(|response| {
+                if let Some(response) = response {
+                    // Bound retained OS handles; keep the newest alerts clickable.
+                    if responses.len() >= QUEUE_LIMIT {
+                        drop(responses.remove(0));
+                    }
+                    let target = Target {
+                        room: candidate.room.clone(),
+                        thread: candidate.thread.clone(),
+                    };
+                    responses.push(Box::pin(async move { (response.await, target) }));
+                }
+            });
             self.state.send_if_modified(|state| {
                 if state.notification_error == result.as_ref().err().cloned() {
                     false
@@ -268,6 +349,8 @@ impl Service {
                 }
             });
         }
+        drop(responses);
+        drop(session);
         // The connection owns shutdown; remain inert until it drops this worker.
         std::future::pending::<()>().await;
     }
@@ -276,51 +359,106 @@ impl Service {
 async fn authorize() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        notify_rust::check_bundle().map_err(|_| "Notifications require Interconnect.app. Run scripts/bundle-macos.sh and launch the bundle.".to_owned())?;
-        let granted = tokio::time::timeout(Duration::from_secs(60), notify_rust::request_auth())
-            .await
-            .map_err(|_| "Notification permission request timed out.".to_owned())?
-            .map_err(|_| "Could not request notification permission.".to_owned())?;
-        if !granted {
-            return Err(
-                "Allow Interconnect notifications in System Settings → Notifications.".into(),
-            );
-        }
+        macos::authorize().await?;
     }
     Ok(())
 }
 
-async fn show(title: &str, body: &str) -> Result<(), String> {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn show(title: &str, body: &str, observe: bool) -> Result<Option<Response>, String> {
+    #[cfg(target_os = "linux")]
     {
-        let mut notification = notify_rust::Notification::new();
-        notification
-            .summary(title)
-            .body(body)
-            .appname("Interconnect");
-        #[cfg(target_os = "linux")]
-        {
-            // Message text is untrusted plain text, not notification markup.
-            notification
-                .body(
-                    &body
-                        .replace('&', "&amp;")
-                        .replace('<', "&lt;")
-                        .replace('>', "&gt;"),
+        use iced::futures::StreamExt;
+        use std::collections::HashMap;
+        let deliver = async {
+            let connection = zbus::Connection::session().await?;
+            let proxy = zbus::Proxy::new_owned(
+                connection,
+                "org.freedesktop.Notifications",
+                "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications",
+            )
+            .await?;
+            // Activate a lazily started notification daemon before subscribing.
+            proxy.call_method("GetServerInformation", &()).await?;
+            // Subscribe before Notify: a fast click or dismissal cannot race
+            // registration. Proxy streams authenticate the service's sender.
+            let signals = if observe {
+                Some((
+                    proxy.receive_signal("ActionInvoked").await?,
+                    proxy.receive_signal("NotificationClosed").await?,
+                ))
+            } else {
+                None
+            };
+            let hints: HashMap<&str, zbus::Variant<'_>> = HashMap::from([
+                ("category", "im.received".into()),
+                ("desktop-entry", "interconnect".into()),
+            ]);
+            let body = body
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            let id: u32 = proxy
+                .call(
+                    "Notify",
+                    &(
+                        "Interconnect",
+                        0u32,
+                        "",
+                        title,
+                        body,
+                        if observe {
+                            vec!["default", "Open conversation"]
+                        } else {
+                            Vec::new()
+                        },
+                        hints,
+                        -1i32,
+                    ),
                 )
-                .hint(notify_rust::Hint::Category("im.received".into()))
-                .hint(notify_rust::Hint::DesktopEntry("interconnect".into()));
-        }
-        tokio::time::timeout(Duration::from_secs(10), notification.show_async()).await
+                .await?;
+            let Some((mut actions, mut closed)) = signals else {
+                return Ok(None);
+            };
+            Ok::<_, zbus::Error>(Some(Box::pin(async move {
+                // Retain the connection and signal subscriptions until response
+                // or cancellation. No blocking waiter or timer is needed.
+                let _proxy = proxy;
+                loop {
+                    tokio::select! {
+                        biased;
+                        action = actions.next() => {
+                            let Some(action) = action else { return false };
+                            if let Ok((notification, action)) = action.body().deserialize::<(u32, String)>()
+                                && notification == id
+                            {
+                                return action == "default";
+                            }
+                        }
+                        close = closed.next() => {
+                            let Some(close) = close else { return false };
+                            if let Ok((notification, _)) = close.body().deserialize::<(u32, u32)>()
+                                && notification == id
+                            {
+                                return false;
+                            }
+                        }
+                    }
+                }
+            }) as Response))
+        };
+        tokio::time::timeout(Duration::from_secs(10), deliver).await
             .map_err(|_| "Desktop notification service timed out.".to_owned())?
-            .map_err(|_| "Could not deliver a desktop notification. Check desktop notification permissions and the session D-Bus service on Linux.".to_owned())?;
-        // Dropping the handle does not withdraw the alert; no response polling,
-        // blocking action waiter, or background animation timer is installed.
-        Ok(())
+            .map_err(|_| "Could not deliver a desktop notification. Check desktop notification permissions and the session D-Bus service on Linux.".to_owned())
     }
+    #[cfg(target_os = "macos")]
+    {
+        macos::show(title, body, observe).await
+    }
+
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = (title, body);
+        let _ = (title, body, observe);
         Err("Desktop notifications are supported on Linux and macOS.".into())
     }
 }
@@ -328,7 +466,9 @@ async fn show(title: &str, body: &str) -> Result<(), String> {
 /// Explicit, account-independent native test, also available in demo mode.
 pub async fn test_notification() -> Result<(), String> {
     authorize().await?;
-    show("Interconnect", "Desktop notifications are working.").await
+    show("Interconnect", "Desktop notifications are working.", false)
+        .await
+        .map(|_| ())
 }
 
 #[cfg(test)]

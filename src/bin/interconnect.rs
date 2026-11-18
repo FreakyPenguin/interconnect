@@ -65,6 +65,8 @@ mod message_reply;
 mod navigation_control;
 #[path = "interconnect/new_chat.rs"]
 mod new_chat;
+#[path = "interconnect/notifications.rs"]
+mod notifications;
 #[path = "interconnect/panel_resize.rs"]
 mod panel_resize;
 #[path = "interconnect/people_picker.rs"]
@@ -223,6 +225,7 @@ struct App {
     room_search: room_search::State,
     room_picker: Option<room_picker::State>,
     pending_room_focus: Option<u64>,
+    pending_notification: Option<std::sync::Arc<interconnect::notifications::Activation>>,
     new_chat: Option<new_chat::State>,
     create_room: Option<create_room::State>,
     create_room_request: Option<u64>,
@@ -233,6 +236,7 @@ struct App {
 }
 #[derive(Clone, Debug)]
 enum Message {
+    Notification(interconnect::notifications::Target),
     ContextMenu(context_menu::Event),
     RoomSectionMoved(Option<String>, u64, Result<(), String>),
     RoomMarkedUnread(Option<String>, u64, Result<(), String>),
@@ -422,6 +426,7 @@ impl App {
             room_search: room_search::State::default(),
             room_picker: None,
             pending_room_focus: None,
+            pending_notification: None,
             new_chat: None,
             create_room: None,
             create_room_request: None,
@@ -497,7 +502,7 @@ impl App {
             self.capture_persistent_drafts();
         }
         let save = self.schedule_draft_save();
-        Task::batch([task, save])
+        Task::batch([task, self.activate_notification(), save])
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         if matches!(&message, Message::SpaceNavigation(event) if !matches!(event, space_navigation::Event::Dismiss))
@@ -1059,6 +1064,7 @@ impl App {
             Message::Bookmark(bookmarks::Event::Conversation(_))
                 | Message::GlobalSearch(global_search::Event::Conversation(..))
                 | Message::Room(_)
+                | Message::Notification(_)
                 | Message::Thread(_)
                 | Message::CloseThread
                 | Message::Members(
@@ -1849,6 +1855,15 @@ impl App {
                 {
                     self.emoji_management = None;
                 }
+                if let Some(activation) = &state.notification_activation
+                    && self
+                        .model
+                        .notification_activation
+                        .as_ref()
+                        .is_none_or(|previous| !std::sync::Arc::ptr_eq(previous, activation))
+                {
+                    self.pending_notification = Some(activation.clone());
+                }
                 self.model = *state;
                 self.restore_persistent_drafts();
                 if bookmarks_changed && self.bookmarks.open {
@@ -1901,6 +1916,9 @@ impl App {
                 self.model.status = "Stopping synchronization…".into();
             }
             Message::Exit => return self.update(Message::Close),
+            Message::Notification(target) if !self.closing && !self.stopped => {
+                self.open_notification(&target);
+            }
             Message::Room(id) if !self.closing && !self.stopped => {
                 self.select_room(id);
                 // The composer may appear later with the matching SDK pane.

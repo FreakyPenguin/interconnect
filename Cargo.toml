@@ -44,12 +44,15 @@ two-face = "0.5"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 secret-service = { version = "=5.2.0", features = ["rt-tokio-crypto-rust"] }
-notify-rust = { version = "=4.19.0", default-features = false, features = ["z-with-tokio"] }
+zbus = { version = "6.3", default-features = false, features = ["tokio", "service", "proxy"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
+block2 = "=0.6.2"
+objc2 = "=0.6.5"
+objc2-foundation = "=0.3.2"
+objc2-user-notifications = "=0.3.2"
 security-framework = { version = "=3.7.0", default-features = false }
 security-framework-sys = { version = "=2.17.0", default-features = false }
-notify-rust = { version = "=4.19.0", default-features = false, features = ["preview-macos-un"] }
 
 [dev-dependencies]
 iced_tiny_skia = { version = "=0.14.1", default-features = false }
@@ -57,7 +60,6 @@ tiny-skia = { version = "=0.11.4", default-features = false }
 wiremock = "0.6"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
-zbus = { version = "6.3", default-features = false, features = ["tokio", "service"] }
 # Secret Service uses zbus 5; isolated migration fixtures supply its connection.
 zbus-secret-service = { package = "zbus", version = "=5.19.0", default-features = false, features = ["tokio"] }
 

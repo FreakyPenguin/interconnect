@@ -11,7 +11,6 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 
 ## Navigation and notifications
 
-- Clickable notifications that open the relevant conversation.
 - Conversation back/forward history (after search, following links, etc.).
 - Search with filters
 - Allow matrix URIs to be (de)registered through settings

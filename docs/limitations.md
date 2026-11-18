@@ -3,8 +3,7 @@
 Interconnect supports one account per process and requires native sliding sync.
 Saved accounts require Linux Secret Service or macOS Keychain.
 
-- Recovery/key-backup UI, notification click navigation,
-  account switching, cross-platform account import, legacy sync, and calls are missing.
+- Recovery/key-backup UI, account switching, cross-platform account import, legacy sync, and calls are missing.
 - Room settings cover name/topic, account push-rule preferences, invitation/public
   access, and history visibility. Restricted/knock/custom access remains read-only;
   avatars, aliases, permission editing, encryption changes, bans, upgrades, timed

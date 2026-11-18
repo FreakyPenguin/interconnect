@@ -119,7 +119,7 @@ async fn pending_permission_rechecks_focus_and_worker_drop_cancels_delivery() {
             let delivered = delivered.clone();
             async move {
                 delivered.send((title, body)).await.unwrap();
-                Ok(())
+                Ok(None)
             }
         },
     ));
@@ -271,10 +271,15 @@ mod dbus {
         String,
         String,
         HashMap<String, zbus::zvariant::OwnedVariant>,
+        Vec<String>,
     );
     struct Desktop(Arc<Mutex<Vec<Call>>>);
     #[zbus::interface(name = "org.freedesktop.Notifications")]
     impl Desktop {
+        fn get_server_information(&self) -> (&str, &str, &str, &str) {
+            ("Fixture", "Interconnect", "1", "1.2")
+        }
+
         #[allow(clippy::too_many_arguments)] // freedesktop protocol signature
         fn notify(
             &self,
@@ -283,7 +288,7 @@ mod dbus {
             _app_icon: String,
             summary: String,
             body: String,
-            _actions: Vec<String>,
+            actions: Vec<String>,
             hints: HashMap<String, zbus::zvariant::OwnedVariant>,
             _expire_timeout: i32,
         ) -> zbus::fdo::Result<u32> {
@@ -291,7 +296,7 @@ mod dbus {
             self.0
                 .lock()
                 .unwrap()
-                .push((app_name, summary, body, hints));
+                .push((app_name, summary, body, hints, actions));
             if reject {
                 Err(zbus::fdo::Error::Failed(
                     "Simulated desktop rejection".into(),
@@ -300,6 +305,41 @@ mod dbus {
                 Ok(42)
             }
         }
+
+        async fn activate(
+            &self,
+            id: u32,
+            action: &str,
+            #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+        ) -> zbus::fdo::Result<()> {
+            Self::action_invoked(&emitter, id, action)
+                .await
+                .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))
+        }
+
+        async fn dismiss(
+            &self,
+            id: u32,
+            #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+        ) -> zbus::fdo::Result<()> {
+            Self::notification_closed(&emitter, id, 2)
+                .await
+                .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))
+        }
+
+        #[zbus(signal)]
+        async fn action_invoked(
+            emitter: &zbus::object_server::SignalEmitter<'_>,
+            id: u32,
+            action: &str,
+        ) -> zbus::Result<()>;
+
+        #[zbus(signal)]
+        async fn notification_closed(
+            emitter: &zbus::object_server::SignalEmitter<'_>,
+            id: u32,
+            reason: u32,
+        ) -> zbus::Result<()>;
     }
     struct Bus(Child);
     impl Drop for Bus {
@@ -313,12 +353,51 @@ mod dbus {
     async fn delivery_on_private_session_bus() {
         const CHILD: &str = "INTERCONNECT_NOTIFICATION_TEST_CHILD";
         if std::env::var_os(CHILD).is_some() {
-            show("Sample room", "<b>hello & goodbye</b>").await.unwrap();
+            let response = show("Sample room", "<b>hello & goodbye</b>", true)
+                .await
+                .unwrap()
+                .unwrap();
+            let clicked = tokio::spawn(response);
+            let connection = zbus::Connection::session().await.unwrap();
+            let proxy = zbus::Proxy::new(
+                &connection,
+                "org.freedesktop.Notifications",
+                "/org/freedesktop/Notifications",
+                "org.freedesktop.Notifications",
+            )
+            .await
+            .unwrap();
+            proxy
+                .call::<_, _, ()>("Activate", &(99u32, "default"))
+                .await
+                .unwrap();
+            proxy
+                .call::<_, _, ()>("Activate", &(42u32, "default"))
+                .await
+                .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_secs(2), clicked)
+                    .await
+                    .unwrap()
+                    .unwrap()
+            );
             test_notification().await.unwrap();
             assert!(
-                show("Rejected sample", "Account-free error check")
+                show("Rejected sample", "Account-free error check", true)
                     .await
                     .is_err()
+            );
+            let response = show("Dismissed sample", "No navigation", true)
+                .await
+                .unwrap()
+                .unwrap();
+            let dismissed = tokio::spawn(response);
+            proxy.call::<_, _, ()>("Dismiss", &42u32).await.unwrap();
+            assert!(
+                !tokio::time::timeout(Duration::from_secs(2), dismissed)
+                    .await
+                    .unwrap()
+                    .unwrap()
             );
             return;
         }
@@ -356,8 +435,9 @@ mod dbus {
         .unwrap();
         assert!(status.success());
         let calls = calls.lock().unwrap();
-        assert_eq!(calls.len(), 3);
+        assert_eq!(calls.len(), 4);
         assert_eq!(calls[0].0, "Interconnect");
+        assert_eq!(calls[0].4, ["default", "Open conversation"]);
         assert_eq!(calls[0].1, "Sample room");
         assert_eq!(calls[0].2, "&lt;b&gt;hello &amp; goodbye&lt;/b&gt;");
         assert_eq!(
@@ -365,6 +445,67 @@ mod dbus {
             "im.received"
         );
         assert_eq!(calls[1].2, "Desktop notifications are working.");
+        assert!(calls[1].4.is_empty(), "sample has no conversation action");
         assert_eq!(calls[2].1, "Rejected sample");
     }
+}
+
+#[tokio::test]
+async fn clicks_are_bounded_session_owned_and_independent_of_delivery() {
+    let (events, receiver) = mpsc::channel(QUEUE_LIMIT);
+    let (_control, selection) = watch::channel(Selection::default());
+    let (state, mut updates) = watch::channel(Model::default());
+    let service = Service {
+        events: receiver,
+        selection,
+        state,
+        started: 0,
+    };
+    let (delivered, mut handles) = mpsc::channel(QUEUE_LIMIT);
+    let task = tokio::spawn(service.run_with(
+        || async { Ok(()) },
+        move |_, _| {
+            let delivered = delivered.clone();
+            async move {
+                let (click, response) = tokio::sync::oneshot::channel();
+                delivered.send(click).await.unwrap();
+                Ok(Some(
+                    Box::pin(async move { response.await.unwrap_or(false) }) as Response,
+                ))
+            }
+        },
+    ));
+    let mut observers = Vec::new();
+    for index in 0..=QUEUE_LIMIT {
+        let mut candidate = parse(event()).unwrap();
+        candidate.id = format!("${index}");
+        candidate.timestamp = now_ms();
+        candidate.thread = Some("$thread".into());
+        events.send(candidate).await.ok().unwrap();
+        observers.push(handles.recv().await.unwrap());
+    }
+    // Evict the oldest observer, keeping delivery moving while nobody clicks.
+    observers[0].closed().await;
+    assert!(observers[0].is_closed());
+    observers.pop().unwrap().send(true).unwrap();
+    let activation = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            updates.changed().await.unwrap();
+            if let Some(activation) = updates.borrow().notification_activation.clone() {
+                break activation;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(activation.target.room, "!room:example.org");
+    assert_eq!(activation.target.thread.as_deref(), Some("$thread"));
+    assert!(activation.is_active());
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(
+        !activation.is_active(),
+        "queued UI clicks expire with the session"
+    );
+    assert!(observers.iter().all(|observer| observer.is_closed()));
 }
