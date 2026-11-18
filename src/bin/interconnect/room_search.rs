@@ -86,7 +86,8 @@ impl App {
             Event::Open
                 if self.selection.room.is_some()
                     && !self.bookmarks.open
-                    && !self.global_search.open =>
+                    && !self.global_search.open
+                    && !self.space_settings.is_open() =>
             {
                 self.stop_typing();
                 // At narrow widths the side pane occupies the room's place.

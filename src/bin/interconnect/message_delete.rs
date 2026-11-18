@@ -79,6 +79,7 @@ impl App {
             && !self.stopped
             && !self.bookmarks.open
             && !self.global_search.open
+            && !self.space_settings.is_open()
             && (self.demo.is_some() || self.model.authentication.is_none())
             && (target.thread
                 || !self
@@ -115,6 +116,7 @@ impl App {
             && self.emoji_management.is_none()
             && !self.bookmarks.open
             && !self.global_search.open
+            && !self.space_settings.is_open()
             && self.delete_eligible(&target)
             && !self
                 .deleting

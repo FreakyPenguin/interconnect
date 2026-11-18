@@ -45,6 +45,7 @@ impl App {
                         .as_ref()
                         .is_some_and(|(current, _)| *current == generation)
                     && !self.global_search.open
+                    && !self.space_settings.is_open()
                     && !self.bookmarks.open =>
             {
                 self.shell.thread_width = width.clamp(SIDE_MIN, SIDE_MAX);
@@ -52,6 +53,7 @@ impl App {
             Target::People(generation)
                 if self.selection.members == Some(generation)
                     && !self.global_search.open
+                    && !self.space_settings.is_open()
                     && !self.bookmarks.open =>
             {
                 self.shell.people_width = width.clamp(SIDE_MIN, SIDE_MAX);

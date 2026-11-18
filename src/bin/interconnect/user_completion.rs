@@ -255,6 +255,7 @@ impl App {
             && self.emoji_management.is_none()
             && !self.bookmarks.open
             && !self.global_search.open
+            && !self.space_settings.is_open()
             && !self.composing
             && self.window_focused
             && self.account_id == trigger.account

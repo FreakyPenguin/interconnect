@@ -21,6 +21,7 @@ impl App {
             && self.emoji_management.is_none()
             && !self.bookmarks.open
             && !self.global_search.open
+            && !self.space_settings.is_open()
             && self
                 .message_row(target)
                 .is_some_and(|row| row.kind == super::RowKind::Message && row.redactable)

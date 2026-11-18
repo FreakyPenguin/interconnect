@@ -134,6 +134,9 @@ mod utilities;
 #[path = "interconnect/verification.rs"]
 mod verification;
 
+#[path = "interconnect/space_settings.rs"]
+mod space_settings;
+
 use context_menu::space_management;
 use iced::{
     Element, Length, Subscription, Task,
@@ -221,6 +224,7 @@ struct App {
     emoji_completion: emoji_completion::State,
     user_completion: user_completion::State,
     topic_editor: Option<topic::State>,
+    space_settings: space_settings::State,
     room_settings: room_settings::State,
     members: members::State,
     membership: membership::State,
@@ -262,6 +266,7 @@ enum Message {
     Pin(pin_action::Event),
     TogglePins(u64),
     Topic(topic::Event),
+    SpaceSettings(space_settings::Event),
     RoomSettings(room_settings::Event),
     Members(members::Event),
     Membership(membership::Event),
@@ -427,6 +432,7 @@ impl App {
             emoji_completion: emoji_completion::State::default(),
             user_completion: user_completion::State::default(),
             topic_editor: None,
+            space_settings: space_settings::State::default(),
             room_settings: room_settings::State::default(),
             members: members::State::default(),
             membership: membership::State::default(),
@@ -515,6 +521,7 @@ impl App {
             self.capture_persistent_drafts();
         }
         let save = self.schedule_draft_save();
+        self.validate_space_settings();
         self.validate_space_management();
         Task::batch([task, self.activate_notification(), save])
     }
@@ -804,6 +811,14 @@ impl App {
         ) {
             let _ = self.reorder_event(section_reorder::Event::Cancel);
         }
+        if matches!(
+            message,
+            Message::Room(_)
+                | Message::GlobalSearch(global_search::Event::Open)
+                | Message::Bookmark(bookmarks::Event::Open)
+        ) {
+            self.space_settings.close();
+        }
         if self.context_menu.is_some() && matches!(message, Message::Escape) {
             self.context_menu = None;
             return Task::none();
@@ -1049,6 +1064,12 @@ impl App {
         if matches!(message, Message::Escape) && self.topic_editor.is_some() {
             return self.update(Message::Topic(topic::Event::Cancel));
         }
+        if self.space_settings.is_open()
+            && self.context_menu.is_none()
+            && matches!(message, Message::Escape)
+        {
+            return self.update(Message::SpaceSettings(space_settings::Event::Close));
+        }
         if matches!(message, Message::Escape) && self.global_search.open {
             return self.update(Message::GlobalSearch(global_search::Event::Close));
         }
@@ -1062,7 +1083,7 @@ impl App {
             self.pending_navigation = None;
         }
 
-        if (self.bookmarks.open || self.global_search.open)
+        if (self.bookmarks.open || self.global_search.open || self.space_settings.is_open())
             && matches!(
                 message,
                 Message::Edit(..)
@@ -1171,6 +1192,7 @@ impl App {
                 self.expanded_pins = (self.expanded_pins != Some(generation)).then_some(generation);
             }
             Message::Topic(event) => action_task = self.topic_event(event),
+            Message::SpaceSettings(event) => action_task = self.space_settings_event(event),
             Message::RoomSettings(event) => action_task = self.room_settings_event(event),
             Message::Members(event) => action_task = self.members_event(event),
             Message::RefreshPresence { room, members } => self.refresh_presence(room, members),
@@ -1577,6 +1599,7 @@ impl App {
                 && self.emoji_management.is_none()
                 && !self.bookmarks.open
                 && !self.global_search.open
+                && !self.space_settings.is_open()
                 && height.is_finite()
                 && self.draft_key(key.root.is_some()).as_ref() == Some(&key)
                 && (if key.root.is_some() {
@@ -1850,6 +1873,7 @@ impl App {
                     self.global_search.reset();
                 }
                 if state.authentication.is_some() || state.account_id != self.account_id {
+                    self.space_settings.reset();
                     self.room_settings.dismiss();
                     self.membership.reset();
                 } else {
@@ -2064,6 +2088,7 @@ impl App {
         self.validate_invite();
         self.validate_pin_error();
         self.validate_topic_editor();
+        self.validate_space_settings();
         self.validate_room_settings();
         self.validate_reaction_picker();
         self.validate_composer_picker();
@@ -2266,7 +2291,7 @@ impl App {
         custom_keys.extend(self.completion_emoji_images());
         custom_keys.extend(self.preview_emoji_images());
         let mut previews = 0;
-        if self.bookmarks.open || self.global_search.open {
+        if self.bookmarks.open || self.global_search.open || self.space_settings.is_open() {
             return;
         }
         for (index, (selected, snapshot)) in [
@@ -2398,7 +2423,7 @@ impl App {
             .unwrap_or(0.0)
     }
     fn restore_scroll(&mut self) -> Task<Message> {
-        if self.bookmarks.open || self.global_search.open {
+        if self.bookmarks.open || self.global_search.open || self.space_settings.is_open() {
             return Task::none();
         }
         let mut tasks = Vec::new();

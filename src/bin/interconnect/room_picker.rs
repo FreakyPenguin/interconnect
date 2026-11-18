@@ -338,6 +338,7 @@ impl App {
                 || self.room_search.open
                 || self.bookmarks.open
                 || self.global_search.open
+                || self.space_settings.is_open()
                 || self.selection.members.is_some()
                 || (self.demo.is_none() && self.model.authentication.is_some())
         }) {

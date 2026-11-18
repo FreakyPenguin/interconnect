@@ -745,3 +745,27 @@ Native/connected acceptance still requires a dedicated test profile:
   creating a space. If linking fails after creation, retry linking the same ID.
 - Cancel while pending and switch accounts; late results must not navigate or
   alter the new account. Confirm demo mode never accesses accounts or the network.
+
+### Space settings
+
+The gear beside a selected space's room-list heading opens a full-size settings
+panel. It edits name, topic, and invitation/public access without opening a space
+timeline or changing the selected conversation. Restricted/knock/custom access
+stays read-only. Loads are cancellable; writes retain their captured target until
+completion and check current permissions and the edited field's synced value.
+Matrix cannot make that check and the write atomic against another client.
+
+Automated tests cover permissions, conflicts, errors, stale load rejection,
+account/navigation dismissal, write bookkeeping after dismissal, draft/scroll
+preservation, hidden composer actions, and narrow/wide layout. Native connected
+acceptance remains manual:
+
+- Open a space's settings while a room has a draft and a scrolled timeline. Save
+  name, topic, and access independently; return to the unchanged conversation.
+- Change the same field or revoke permissions in another client before saving;
+  expect a reload/permission error. Verify special access rules are read-only.
+- Navigate to another space, another room, search, or saved messages while loading
+  and saving; late results must not replace the current view. Close/reopen and
+  switch accounts during writes; shutdown must still wait for admitted writes.
+- While this panel is visible, verify the hidden conversation does not send read
+  receipts, respond to composer shortcuts, or request visible-message media.

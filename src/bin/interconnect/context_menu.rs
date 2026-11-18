@@ -161,7 +161,7 @@ impl App {
 
     fn context_actions(&self, target: &Target) -> Vec<(&'static str, Action)> {
         if !self.context_menu_allowed()
-            || ((self.bookmarks.open || self.global_search.open)
+            || ((self.bookmarks.open || self.global_search.open || self.space_settings.is_open())
                 && matches!(
                     target,
                     Target::Message(_) | Target::Link { .. } | Target::Thread { .. }

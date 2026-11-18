@@ -172,6 +172,22 @@ impl Directory {
         result
     }
 
+    /// Resolve a joined space without opening a timeline or changing selection.
+    pub async fn space_management(
+        self,
+        id: String,
+    ) -> Result<crate::room_management::Management, String> {
+        let id = id
+            .parse::<matrix_sdk::ruma::OwnedRoomId>()
+            .map_err(|_| "Choose a valid space.")?;
+        let room = self
+            .0
+            .get_room(&id)
+            .filter(|r| r.is_space() && r.state() == matrix_sdk::RoomState::Joined)
+            .ok_or("The selected space is no longer available.")?;
+        Ok(crate::room_management::Management::new(room))
+    }
+
     pub async fn create_room(
         self,
         options: crate::room_creation::Options,

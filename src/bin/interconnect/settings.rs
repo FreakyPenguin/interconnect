@@ -116,6 +116,7 @@ impl App {
             && self.message_delete.is_none()
             && !self.bookmarks.open
             && !self.global_search.open
+            && !self.space_settings.is_open()
             && self.window_focused
             && self.emoji_management.is_none()
             && self.settings.draft.is_none()

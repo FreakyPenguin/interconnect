@@ -119,6 +119,7 @@ impl App {
             && self.emoji_management.is_none()
             && !self.bookmarks.open
             && !self.global_search.open
+            && !self.space_settings.is_open()
     }
 
     pub(super) fn direct_presence_peer(&self) -> Option<&str> {

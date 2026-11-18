@@ -120,6 +120,7 @@ impl App {
             && self.context_menu_allowed()
             && !self.bookmarks.open
             && !self.global_search.open
+            && !self.space_settings.is_open()
             && self
                 .message_row(target)
                 .is_some_and(|row| row.is_own && row.edit_source.is_some())

@@ -682,7 +682,8 @@ impl App {
         widget::responsive(move |size| {
             let navigation_visible = self.navigation_visible(size.width);
             let navigation_width = self.navigation_width(size.width);
-            let split = !self.global_search.open
+            let split = !self.space_settings.is_open()
+                && !self.global_search.open
                 && !self.bookmarks.open
                 && (self.selection.thread.is_some() || self.selection.members.is_some())
                 && !self.side_panel_replaces_room(size.width);
@@ -722,7 +723,9 @@ impl App {
             ])
             .width(Length::Fill)
             .height(Length::Fill);
-            if self.global_search.open {
+            if self.space_settings.is_open() {
+                body = body.push(container(self.space_settings_view()).width(Length::Fill));
+            } else if self.global_search.open {
                 body = body.push(container(self.global_search_view()).width(Length::Fill));
             } else if self.bookmarks.open {
                 body = body.push(container(self.bookmarks_view()).width(Length::Fill));
@@ -971,6 +974,7 @@ impl App {
             for room in entries {
                 let selected = !self.bookmarks.open
                     && !self.global_search.open
+                    && !self.space_settings.is_open()
                     && self
                         .selection
                         .room
@@ -1108,6 +1112,9 @@ impl App {
                     }))
                     .padding([4, 4])
                     .width(Length::Fill),
+                    if let Scope::Space(id) = &self.shell.space {
+                        Element::from(super::tooltips::icon_button(Kind::Settings, "Space settings", Some(Message::SpaceSettings(super::space_settings::Event::Open(id.clone())))))
+                    } else { Element::from(iced::widget::space().width(0)) },
                     new_chat,
                     create_room,
                     button(text("Subspace").size(11)).style(quiet_button).on_press_maybe(

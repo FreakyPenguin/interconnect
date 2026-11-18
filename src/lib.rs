@@ -19,6 +19,7 @@ pub mod navigation_preferences;
 pub mod notifications;
 pub mod people;
 pub mod room_creation;
+pub mod room_management;
 pub mod room_membership;
 pub mod room_sections;
 pub mod search;
