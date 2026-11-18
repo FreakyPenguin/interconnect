@@ -59,6 +59,8 @@ mod membership;
 mod message_delete;
 #[path = "interconnect/message_edit.rs"]
 mod message_edit;
+#[path = "interconnect/message_reply.rs"]
+mod message_reply;
 #[path = "interconnect/navigation_control.rs"]
 mod navigation_control;
 #[path = "interconnect/new_chat.rs"]
@@ -143,6 +145,7 @@ struct DraftKey {
 #[derive(Default)]
 struct Draft {
     editing: Option<message_edit::State>,
+    reply: Option<String>,
     composer_height: Option<f32>,
     markdown: markdown_composer::State,
     content: text_editor::Content,
@@ -330,6 +333,7 @@ enum Message {
     Exit,
     Markdown(markdown_composer::Event),
     Editing(message_edit::Event),
+    Replying(message_reply::Event),
     Deletion(message_delete::Event),
     Edit(DraftKey, text_editor::Action),
     DeleteWord(DraftKey, text_editor::Motion),
@@ -573,6 +577,7 @@ impl App {
                             | bookmarks::Event::Remove(_)
                             | bookmarks::Event::Conversation(_)
                     )
+                    | Message::Replying(_)
                     | Message::Editing(
                         message_edit::Event::Start(_)
                             | message_edit::Event::Latest(_)
@@ -676,6 +681,7 @@ impl App {
                     | Message::EmojiCompletion(_)
                     | Message::UserCompletion(_)
                     | Message::DeleteWord(..)
+                    | Message::Replying(_)
                     | Message::Editing(
                         message_edit::Event::Start(_)
                             | message_edit::Event::Latest(_)
@@ -981,6 +987,7 @@ impl App {
                             | invite::Event::Cancel
                     )
                     | Message::Edit(..)
+                    | Message::Replying(_)
                     | Message::Editing(
                         message_edit::Event::Start(_)
                             | message_edit::Event::Latest(_)
@@ -1025,6 +1032,7 @@ impl App {
             && matches!(
                 message,
                 Message::Edit(..)
+                    | Message::Replying(_)
                     | Message::Editing(
                         message_edit::Event::Start(_)
                             | message_edit::Event::Latest(_)
@@ -1074,6 +1082,7 @@ impl App {
                 | Message::Reaction(_)
                 | Message::Markdown(_)
                 | Message::Editing(_)
+                | Message::Replying(_)
                 | Message::Deletion(_)
                 | Message::Edit(..)
                 | Message::DeleteWord(..)
@@ -1504,6 +1513,13 @@ impl App {
                 if self.room_search.open {
                     return self.room_search_event(room_search::Event::Close);
                 }
+                if let Some(key) = self.draft_key(self.selection.thread.is_some())
+                    && self.drafts.get(&key).is_some_and(|draft| {
+                        draft.reply.is_some() && draft.editing.is_none() && !draft.pending
+                    })
+                {
+                    return self.update(Message::Replying(message_reply::Event::Cancel(key)));
+                }
                 if !self.shell.query.is_empty() {
                     self.shell.query.clear();
                 } else {
@@ -1519,6 +1535,7 @@ impl App {
 
             Message::Markdown(event) => action_task = self.markdown_event(event),
             Message::Editing(event) => action_task = self.message_edit_event(event),
+            Message::Replying(event) => action_task = self.message_reply_event(event),
             Message::Deletion(event) => action_task = self.delete_event(event),
             Message::Composing(active) => {
                 self.composing = active;
@@ -1630,6 +1647,10 @@ impl App {
                                 body,
                                 draft.attachment.take(),
                             );
+                            self.demo
+                                .as_mut()
+                                .unwrap()
+                                .set_sent_reply(&key, draft.reply.take());
                             draft.markdown.emoji.clear();
                             draft.markdown.mentions.clear();
                             draft.markdown.mention_links.clear();
@@ -1651,6 +1672,7 @@ impl App {
                     let format = draft.markdown.format;
                     let bindings = draft.markdown.bindings();
                     let attachment = draft.attachment.clone();
+                    let reply = draft.reply.clone();
                     let account = self.account_id.clone();
                     draft.pending = true;
                     draft.error = None;
@@ -1658,9 +1680,13 @@ impl App {
                     return Task::perform(
                         async move {
                             if let Some(attachment) = attachment {
-                                composer.send_attachment(attachment, body).await
+                                composer
+                                    .send_attachment_reply(attachment, body, reply)
+                                    .await
                             } else {
-                                composer.send_with_bindings(body, format, bindings).await
+                                composer
+                                    .send_reply_with_bindings(body, format, bindings, reply)
+                                    .await
                             }
                         },
                         move |result| Message::Sent(key.clone(), account.clone(), result),
@@ -1690,6 +1716,7 @@ impl App {
                     match result {
                         Ok(()) => {
                             draft.attachment = None;
+                            draft.reply = None;
                             draft.markdown.emoji.clear();
                             draft.markdown.mentions.clear();
                             draft.markdown.mention_links.clear();
@@ -2448,36 +2475,67 @@ impl App {
             } else if self.emoji_completion.is_active() || self.user_completion.is_active() {
                 iced::event::listen_with(emoji_completion::shortcut)
             } else {
-                iced::event::listen_with(|event, status, _| {
-                    // Navigation buttons publish Tab themselves. Text inputs
-                    // capture Escape to unfocus, but the shell must still clear
-                    // their room filter/search as it did before these controls.
-                    if status == iced::event::Status::Captured
-                        && matches!(
-                            &event,
-                            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
-                                ..
+                let reply_handles_escape = self.context_menu_allowed()
+                    && !self.room_search.open
+                    && self.shell.query.is_empty()
+                    && [false, true]
+                        .into_iter()
+                        .filter_map(|thread| self.draft_key(thread))
+                        .any(|key| {
+                            self.drafts.get(&key).is_some_and(|draft| {
+                                draft.reply.is_some() && draft.editing.is_none() && !draft.pending
                             })
-                        )
-                    {
-                        return None;
-                    }
-                    if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
-                        key,
-                        modifiers,
-                        repeat,
-                        ..
-                    }) = event
-                    {
-                        if repeat && space_navigation::is_toggle_shortcut(&key, modifiers) {
+                        });
+                iced::event::listen_with(|event, status, _| Some((event, status)))
+                    .with(reply_handles_escape)
+                    .filter_map(|(reply_handles_escape, (event, status))| {
+                        // A composer reply binding already published Cancel. Do not
+                        // also close its thread for the same captured Escape.
+                        if reply_handles_escape
+                            && status == iced::event::Status::Captured
+                            && matches!(
+                                &event,
+                                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                    key: iced::keyboard::Key::Named(
+                                        iced::keyboard::key::Named::Escape
+                                    ),
+                                    ..
+                                })
+                            )
+                        {
                             return None;
                         }
-                        shell_shortcut(&key, modifiers)
-                    } else {
-                        None
-                    }
-                })
+                        // Navigation buttons publish Tab themselves. Text inputs
+                        // capture Escape to unfocus, but the shell must still clear
+                        // their room filter/search as it did before these controls.
+                        if status == iced::event::Status::Captured
+                            && matches!(
+                                &event,
+                                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                    key: iced::keyboard::Key::Named(
+                                        iced::keyboard::key::Named::Tab
+                                    ),
+                                    ..
+                                })
+                            )
+                        {
+                            return None;
+                        }
+                        if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key,
+                            modifiers,
+                            repeat,
+                            ..
+                        }) = event
+                        {
+                            if repeat && space_navigation::is_toggle_shortcut(&key, modifiers) {
+                                return None;
+                            }
+                            shell_shortcut(&key, modifiers)
+                        } else {
+                            None
+                        }
+                    })
             },
             iced::window::close_requests().map(|_| Message::Close),
             iced::event::listen_with(|event, _, _| match event {
@@ -2848,6 +2906,7 @@ impl App {
                     ),
                     shell::MessageActions {
                         reply: None,
+                        ordinary_reply: self.reply_action(message, true, generation),
                         reaction: self.reaction_action(message, true, generation),
                         edit: self.message_edit_action(message, true, generation),
                         delete: self.delete_action(message, true, generation),
@@ -3161,6 +3220,12 @@ impl App {
                     self.settings.current.appearance.theme,
                 )
             };
+            let body: Element<'_, Message> =
+                if let Some(preview) = self.reply_context(message, thread) {
+                    column![preview, body].spacing(4).into()
+                } else {
+                    body
+                };
             let mut entry = if activity {
                 column![tooltips::tooltip(
                     body,
@@ -3322,6 +3387,7 @@ impl App {
                     ),
                     shell::MessageActions {
                         reply,
+                        ordinary_reply: self.reply_action(message, thread, *generation),
                         reaction: self.reaction_action(message, thread, *generation),
                         edit: self.message_edit_action(message, thread, *generation),
                         delete: self.delete_action(message, thread, *generation),
@@ -3461,7 +3527,11 @@ impl App {
             let composing = self.composing;
             let shortcut = self.settings.current.composer.send_shortcut;
             let editor_padding = iced::Padding {
-                top: if draft.editing.is_some() { 0.0 } else { 12.0 },
+                top: if draft.editing.is_some() || draft.reply.is_some() {
+                    0.0
+                } else {
+                    12.0
+                },
                 right: 18.0,
                 bottom: 8.0,
                 left: 12.0,
@@ -3497,6 +3567,7 @@ impl App {
                                 self.attachment_paste_binding(&send_key, *generation, &press)
                             })
                             .or_else(|| self.message_edit_binding(&send_key, &press))
+                            .or_else(|| self.reply_binding(&send_key, &press))
                             .or_else(|| {
                                 composer::page_binding(&press, composing, &send_key, *generation)
                             })
@@ -3512,6 +3583,7 @@ impl App {
                 } else {
                     0.0
                 }
+                + if draft.reply.is_some() { 48.0 } else { 0.0 }
                 + if draft.error.is_some() { 64.0 } else { 0.0 };
             let max_height = (size.height - reserved)
                 .clamp(composer_editor::MIN_HEIGHT, composer_editor::MAX_HEIGHT);
@@ -3533,7 +3605,7 @@ impl App {
                         && self.emoji_management.is_none()
                         && !draft.pending,
                     padding: editor_padding,
-                    grip_height: if draft.editing.is_some() {
+                    grip_height: if draft.editing.is_some() || draft.reply.is_some() {
                         4.0
                     } else {
                         composer_editor::GRIP_HEIGHT
@@ -3657,6 +3729,7 @@ impl App {
             };
             let edit_banner = self
                 .message_edit_banner(&key)
+                .or_else(|| self.reply_banner(&key))
                 .unwrap_or_else(|| container(iced::widget::space().height(0)).into());
             let composer = column![
                 edit_banner,

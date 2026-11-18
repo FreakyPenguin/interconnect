@@ -23,7 +23,7 @@ sends from the composer on every platform, including macOS.
 | Alt+Up / Alt+Down | Previous/next room in the visible, filtered room list; wraps at the ends. |
 | Alt+T | Open a thread on the latest non-thread room message and focus its composer. |
 | Tab / Shift+Tab | Move between focusable controls, including breadcrumb, account, Include subspaces, section, and room controls. Other views still have incomplete button traversal. |
-| Escape | Dismiss the active overlay or search/filter; otherwise close People or the thread pane and return focus to the room composer. |
+| Escape | Dismiss the active overlay or search/filter; cancel a pending reply in the composer; otherwise close People or the thread pane and return focus to the room composer. |
 
 The room switcher, space picker, and new-chat picker use Up/Down to select, Enter to open,
 and Escape to close. In room search, Enter steps to the previous match;

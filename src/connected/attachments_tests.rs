@@ -7,7 +7,7 @@ use wiremock::{
     matchers::{method, path, path_regex},
 };
 
-async fn sends_attachments(encrypted: bool) {
+async fn sends_attachments(encrypted: bool, reply: bool) {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/_matrix/client/versions"))
@@ -162,7 +162,11 @@ async fn sends_attachments(encrypted: bool) {
         let caption = if index == 0 { "" } else { "fixture caption" };
         let expected_body = if index == 0 { "fixture.png" } else { caption };
         Composer(RuntimeOwned::new(timeline.clone()))
-            .send_attachment(attachment.clone(), caption.into())
+            .send_attachment_reply(
+                attachment.clone(),
+                caption.into(),
+                reply.then(|| "$root".into()),
+            )
             .await
             .unwrap();
         // Watch the actual queued request, rather than treating admission as delivery.
@@ -182,6 +186,21 @@ async fn sends_attachments(encrypted: bool) {
                         assert!(content.get("body").is_none());
                     } else {
                         assert!(send.url.path().contains("/send/m.room.message/"));
+                        if reply {
+                            assert_eq!(
+                                content["m.relates_to"]["m.in_reply_to"]["event_id"],
+                                "$root"
+                            );
+                            if index == 0 {
+                                assert!(content["m.relates_to"].get("rel_type").is_none());
+                            } else {
+                                assert!(
+                                    !content["m.relates_to"]["is_falling_back"]
+                                        .as_bool()
+                                        .unwrap_or(false)
+                                );
+                            }
+                        }
                         assert_eq!(content["msgtype"], "m.image");
                         assert_eq!(content["body"], expected_body);
                         if index == 0 {
@@ -208,7 +227,9 @@ async fn sends_attachments(encrypted: bool) {
                         assert_eq!(content["info"]["thumbnail_info"]["w"], 512);
                         assert_eq!(content["info"]["thumbnail_info"]["h"], 256);
                         if index == 0 {
-                            assert!(content.get("m.relates_to").is_none());
+                            if !reply {
+                                assert!(content.get("m.relates_to").is_none());
+                            }
                         } else {
                             assert_eq!(content["m.relates_to"]["rel_type"], "m.thread");
                             assert_eq!(content["m.relates_to"]["event_id"], "$root");
@@ -350,10 +371,20 @@ async fn sends_attachments(encrypted: bool) {
 
 #[tokio::test]
 async fn room_and_thread_attachment_payloads_have_captions_metadata_and_correct_relations() {
-    sends_attachments(false).await;
+    sends_attachments(false, false).await;
 }
 
 #[tokio::test]
 async fn encrypted_room_and_thread_attachments_encrypt_media_and_events() {
-    sends_attachments(true).await;
+    sends_attachments(true, false).await;
+}
+
+#[tokio::test]
+async fn attachment_replies_keep_room_and_thread_reply_targets() {
+    sends_attachments(false, true).await;
+}
+
+#[tokio::test]
+async fn encrypted_attachment_replies_use_the_sdk_encryption_and_cache_path() {
+    sends_attachments(true, true).await;
 }

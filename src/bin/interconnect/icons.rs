@@ -20,6 +20,7 @@ pub(super) enum Kind {
     Pin,
     Unpin,
     Reply,
+    Thread,
     Edit,
     Delete,
     Bookmark,
@@ -238,6 +239,20 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                     let mid = if self.kind == ArrowUp { 11.0 } else { 13.0 };
                     line(&[(6.0, mid), (12.0, a), (18.0, mid)]);
                     line(&[(12.0, a), (12.0, b)]);
+                }
+                Thread => {
+                    line(&[
+                        (4.0, 4.0),
+                        (20.0, 4.0),
+                        (20.0, 16.0),
+                        (11.0, 16.0),
+                        (6.0, 21.0),
+                        (6.0, 16.0),
+                        (4.0, 16.0),
+                        (4.0, 4.0),
+                    ]);
+                    line(&[(8.0, 8.0), (16.0, 8.0)]);
+                    line(&[(8.0, 12.0), (14.0, 12.0)]);
                 }
                 Reply => {
                     line(&[(9.0, 5.0), (3.0, 11.0), (9.0, 17.0)]);

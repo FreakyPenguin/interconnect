@@ -4,7 +4,6 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 
 ## Messaging and media
 
-- Ordinary replies.
 - Multiple attachments per send.
 - Standalone stickers and animated custom emoji.
 - Better GIF handling (play button without opening fully).

@@ -3,7 +3,7 @@
 Interconnect supports one account per process and requires native sliding sync.
 Saved accounts require Linux Secret Service or macOS Keychain.
 
-- Recovery/key-backup UI, ordinary reply composition, notification click navigation,
+- Recovery/key-backup UI, notification click navigation,
   account switching, cross-platform account import, legacy sync, and calls are missing.
 - Room settings cover name/topic, account push-rule preferences, invitation/public
   access, and history visibility. Restricted/knock/custom access remains read-only;
@@ -11,6 +11,8 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   mutes and per-room notification sounds are not implemented.
 - Deletion requires a synced message-like event with an event ID. Cancelling unsent
   local echoes and redacting room-state/activity events are unsupported.
+- Reply previews use loaded timeline/embedded context; originals outside it show an
+  unavailable label. Fetching or jumping to a quoted original is not implemented.
 - Editing covers your text messages and emotes; media captions, notices, and
   arbitrary HTML round-tripping are unsupported.
 - Receipt labels show room readers, not thread-specific readers. Thread unread

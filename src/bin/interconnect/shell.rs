@@ -206,6 +206,7 @@ pub(super) fn composer_editor_style(
 #[derive(Default)]
 pub struct MessageActions<'a> {
     pub reply: Option<Message>,
+    pub ordinary_reply: Option<Message>,
     pub reaction: Option<Message>,
     pub edit: Option<Message>,
     pub delete: Option<Message>,
@@ -219,6 +220,7 @@ pub fn message_actions<'a>(
 ) -> Element<'a, Message> {
     let MessageActions {
         reply,
+        ordinary_reply,
         reaction,
         edit,
         delete,
@@ -226,7 +228,8 @@ pub fn message_actions<'a>(
         bookmark,
         popup,
     } = actions;
-    if reply.is_none()
+    if ordinary_reply.is_none()
+        && reply.is_none()
         && reaction.is_none()
         && edit.is_none()
         && delete.is_none()
@@ -255,10 +258,23 @@ pub fn message_actions<'a>(
             widget::tooltip::Position::Top,
         ));
     }
-    if let Some(reply) = reply {
+    if let Some(reply) = ordinary_reply {
         controls = controls.push(super::tooltips::tooltip(
             container(
                 button(container(icon(Kind::Reply)).center_x(28).center_y(20))
+                    .padding(0)
+                    .style(icon_button)
+                    .on_press(reply),
+            )
+            .id("reply-message"),
+            "Reply",
+            widget::tooltip::Position::Top,
+        ));
+    }
+    if let Some(reply) = reply {
+        controls = controls.push(super::tooltips::tooltip(
+            container(
+                button(container(icon(Kind::Thread)).center_x(28).center_y(20))
                     .padding(0)
                     .style(icon_button)
                     .on_press(reply),

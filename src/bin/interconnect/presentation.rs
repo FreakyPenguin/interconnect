@@ -180,6 +180,7 @@ mod tests {
             redactable: true,
             edit_source: None,
             edited: false,
+            reply: None,
             read_by: Vec::new(),
             timestamp_ms,
             thread_replies: 0,

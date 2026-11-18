@@ -25,7 +25,7 @@ establish native GPU, macOS, font, or window-manager behavior.
 | Navigation | Home and visible breadcrumb separators precede the space trail; peer dropdowns, expandable branches, Include subspaces, and the top-right account menu preserve the open conversation. |
 | Sections | Favorites, Unread, custom sections, collapse/order, and room filter compose correctly. |
 | Timelines | Room/thread resize, history loading, newest/older positions, send status, retry, and Unicode emoji remain usable. |
-| Composition | Separate room/thread drafts, Plain/Markdown, preview, math, custom emoji completion, edit/cancel, and confirmed deletion. |
+| Composition | Separate room/thread drafts, Plain/Markdown, preview, math, custom emoji completion, replies, edit/cancel, and confirmed deletion. |
 | Media | Inline dimensions, image viewer, explicit GIF playback, save/open, picker, paste, and drops into the intended pane. |
 | Discovery | Quick switcher, people/member list, topics, pins, invitations, join/create/leave, saved messages, and both searches. |
 | Dialogs | Settings, verification, and account actions preserve conversation/drafts; long content scrolls while actions stay reachable. |
@@ -34,6 +34,44 @@ establish native GPU, macOS, font, or window-manager behavior.
 Screenshots in the README use only demo data. Capture an ordinary conversation
 with a thread and a separate account-wide search view; keep window size and
 renderer consistent, and check the exported images for clipping or private data.
+
+### Ordinary replies
+
+Hover a synced message and choose **Reply**, or use **Reply** in its context menu.
+The curved arrow replies in the current conversation; the speech bubble still
+opens **Reply in thread**. Check both actions on your messages and other senders,
+and reply to a thread root or individual thread message from the thread pane.
+Check the sender/excerpt banner above the composer in Light/Dark, both renderers,
+and at 640×480. Long names, multiline text, emoji, and attachment filenames must
+fit without hiding Cancel or pushing Send out of reach.
+
+Start with an unsent draft and staged attachment. Choosing/replacing/cancelling a
+reply must retain text, cursor, formatting, mention bindings, and the attachment.
+Escape in that composer cancels its reply before closing the thread; completion
+popups still get Escape first. Switch rooms, change spaces, open/close the thread,
+and reopen an edit: reply intent belongs to each draft, and cancelling/saving an
+edit restores the original reply draft. In a dedicated connected test profile,
+restart with both a text reply draft and an empty reply draft; each must retain
+its reply target. Demo does not save drafts.
+
+Send local demo replies in Plain and Markdown, with mentions and attachments.
+A room reply must remain an ordinary timeline message without opening a thread;
+a reply from a thread stays in that thread. Successful queue admission clears
+reply intent; conversion/queue errors retain it and the draft for retry. While a
+send is pending, reply replacement and Cancel must be disabled. Quotes use the
+current original when loaded, reflecting edits and redactions, and show an
+unavailable label when neither loaded nor embedded context is available. No
+request or periodic timer is started just to resolve a missing quote.
+
+With authorized connected test sends, inspect `m.in_reply_to.event_id`, formatting,
+explicit mention metadata plus the replied-to sender, and attachment relations.
+Replies sent from the room composer have no `m.thread` relation, even when the
+original was reached through search and belongs to a thread; explicit replies
+sent from a thread composer have that
+thread root and `is_falling_back: false` (or omitted, its default). Confirm local echo, delivery/retry,
+encryption, and another client's display. The offline protocol tests cover text
+and attachment relations and reply-context projection; native desktop behavior
+and real-server interoperability require these manual checks.
 
 ### Icon controls
 

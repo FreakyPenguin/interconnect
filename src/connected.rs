@@ -20,6 +20,8 @@ mod deleting_tests;
 mod editing;
 #[cfg(test)]
 mod editing_tests;
+#[cfg(test)]
+mod replies_tests;
 pub mod room_settings;
 pub use editing::EditSource;
 mod receipts;
@@ -94,6 +96,7 @@ pub struct MessageRow {
     /// Editable source excludes presentation prefixes and reply fallbacks.
     pub edit_source: Option<EditSource>,
     pub edited: bool,
+    pub reply: Option<ReplyPreview>,
     pub read_by: Vec<String>,
     pub timestamp_ms: Option<i64>,
     pub thread_replies: u32,
@@ -104,6 +107,55 @@ pub struct MessageRow {
     pub formatted: Option<Arc<crate::message_document::Document>>,
     pub send_state: String,
     pub retry: Option<RetrySend>,
+}
+
+/// Bounded, plain reply context; unavailable events retain their identity.
+#[derive(Clone, Debug)]
+pub struct ReplyPreview {
+    pub event: String,
+    pub sender: Option<String>,
+    pub body: String,
+}
+impl ReplyPreview {
+    pub fn from_row(row: &MessageRow) -> Option<Self> {
+        Some(Self {
+            event: row.event_id.clone()?,
+            sender: Some(row.display_name.clone()),
+            body: reply_excerpt(&row.body),
+        })
+    }
+}
+fn reply_excerpt(body: &str) -> String {
+    body.chars()
+        .take(160)
+        .map(|ch| if ch.is_whitespace() { ' ' } else { ch })
+        .collect()
+}
+fn reply_preview(content: &TimelineItemContent) -> Option<ReplyPreview> {
+    let details = content.in_reply_to()?;
+    let mut preview = ReplyPreview {
+        event: details.event_id.to_string(),
+        sender: None,
+        body: "Original message unavailable".into(),
+    };
+    if let matrix_sdk_ui::timeline::TimelineDetails::Ready(event) = details.event {
+        preview.body = reply_excerpt(&crate::event_text::body(&event.content, &event.sender));
+        preview.sender = Some(match event.sender_profile {
+            matrix_sdk_ui::timeline::TimelineDetails::Ready(profile) => profile
+                .display_name
+                .filter(|name| !name.trim().is_empty())
+                .map(|name| {
+                    if profile.display_name_ambiguous {
+                        format!("{name} ({})", event.sender)
+                    } else {
+                        name
+                    }
+                })
+                .unwrap_or_else(|| event.sender.to_string()),
+            _ => event.sender.to_string(),
+        });
+    }
+    Some(preview)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -450,9 +502,39 @@ impl Composer {
         attachment: crate::attachment::Attachment,
         caption: String,
     ) -> Result<(), String> {
+        self.send_attachment_reply(attachment, caption, None).await
+    }
+
+    pub async fn send_attachment_reply(
+        self,
+        attachment: crate::attachment::Attachment,
+        caption: String,
+        reply: Option<String>,
+    ) -> Result<(), String> {
         use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
         use matrix_sdk_ui::timeline::{AttachmentConfig, AttachmentSource};
+        let reply = parse_reply(reply)?;
         let prepared = attachment.read().await?;
+        if let Some(event) = reply {
+            // Explicit room replies must not inherit the target's thread when
+            // it was reached through a focused room timeline or search.
+            let config = matrix_sdk::attachment::AttachmentConfig {
+                reply: Some(self.explicit_reply(event)),
+                info: Some(prepared.info),
+                thumbnail: prepared.thumbnail,
+                caption: (!caption.trim().is_empty())
+                    .then(|| TextMessageEventContent::plain(caption)),
+                ..Default::default()
+            };
+            return self
+                .0
+                .room()
+                .send_queue()
+                .send_attachment(prepared.filename, prepared.mime, prepared.bytes, config)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string());
+        }
         let config = AttachmentConfig {
             info: Some(prepared.info),
             thumbnail: prepared.thumbnail,
@@ -531,15 +613,62 @@ impl Composer {
         format: crate::composition::Format,
         bindings: crate::composition::Bindings,
     ) -> Result<(), String> {
+        self.send_reply_with_bindings(body, format, bindings, None)
+            .await
+    }
+    fn explicit_reply(
+        &self,
+        event_id: matrix_sdk::ruma::OwnedEventId,
+    ) -> matrix_sdk::room::reply::Reply {
+        use matrix_sdk::room::reply::{EnforceThread, Reply};
+        use matrix_sdk::ruma::events::room::message::{AddMentions, ReplyWithinThread};
+        Reply {
+            event_id,
+            enforce_thread: if self.0.is_threaded() {
+                EnforceThread::Threaded(ReplyWithinThread::Yes)
+            } else {
+                EnforceThread::Unthreaded
+            },
+            add_mentions: AddMentions::Yes,
+        }
+    }
+    pub async fn send_reply_with_bindings(
+        self,
+        body: String,
+        format: crate::composition::Format,
+        bindings: crate::composition::Bindings,
+        reply: Option<String>,
+    ) -> Result<(), String> {
+        let reply = parse_reply(reply)?;
         let prepared = crate::composition::prepare_with_bindings(body, format, bindings).await?;
         if prepared.room_mention {
             self.check_room_notification_permission().await?;
         }
-        Box::pin(self.0.send(prepared.message_content().into()))
+        let content = prepared.message_content();
+        let content = if let Some(event) = reply {
+            self.0
+                .room()
+                .make_reply_event(content.into(), self.explicit_reply(event))
+                .await
+                .map_err(|error| error.to_string())?
+        } else {
+            content
+        };
+        Box::pin(self.0.send(content.into()))
             .await
             .map(|_| ())
             .map_err(|error| error.to_string())
     }
+}
+
+fn parse_reply(reply: Option<String>) -> Result<Option<matrix_sdk::ruma::OwnedEventId>, String> {
+    reply
+        .map(|event| {
+            event
+                .parse()
+                .map_err(|_| "Invalid reply target.".to_owned())
+        })
+        .transpose()
 }
 
 fn can_react(content: &TimelineItemContent) -> bool {
@@ -1593,6 +1722,7 @@ async fn timeline_rows_cached(
                             _ => None,
                         }
                     } else { None },
+                    reply: reply_preview(content),
                     edited: matches!(content, TimelineItemContent::MsgLike(content) if matches!(&content.kind, matrix_sdk_ui::timeline::MsgLikeKind::Message(message) if message.is_edited())),
                     read_by: {
                         let mut users: Vec<_> = event

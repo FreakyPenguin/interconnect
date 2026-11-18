@@ -239,6 +239,14 @@ impl App {
                     return Vec::new();
                 };
                 let mut actions = vec![("Copy text", Action::Copy(row.body.clone()))];
+                if self.can_reply(target) {
+                    actions.push((
+                        "Reply",
+                        dispatch(Message::Replying(super::message_reply::Event::Start(
+                            target.clone(),
+                        ))),
+                    ));
+                }
                 if self.can_edit_message(target) {
                     actions.push((
                         "Edit message",

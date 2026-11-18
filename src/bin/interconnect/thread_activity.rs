@@ -167,6 +167,7 @@ mod tests {
             redactable: true,
             edit_source: None,
             edited: false,
+            reply: None,
             read_by: Vec::new(),
             timestamp_ms: Some(1),
             thread_replies: 0,

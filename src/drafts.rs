@@ -24,6 +24,8 @@ const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
 pub struct Entry {
     pub room: String,
     pub root: Option<String>,
+    #[serde(default)]
+    pub reply: Option<String>,
     pub text: String,
     pub format: Format,
     pub emoji: Vec<Selection>,
@@ -59,6 +61,13 @@ impl Snapshot {
                     .as_ref()
                     .is_none_or(|root| root.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()),
                 "Invalid draft thread"
+            );
+            ensure!(
+                entry
+                    .reply
+                    .as_ref()
+                    .is_none_or(|id| id.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()),
+                "Invalid draft reply"
             );
             ensure!(
                 keys.insert((&entry.room, &entry.root)),
@@ -273,6 +282,7 @@ mod tests {
                 Entry {
                     room: "!room:example.org".into(),
                     root: None,
+                    reply: Some("$original".into()),
                     text: "unfinished private fixture 🌱\nsecond line".into(),
                     format: Format::Plain,
                     emoji: vec![],
@@ -282,6 +292,7 @@ mod tests {
                 Entry {
                     room: "!room:example.org".into(),
                     root: Some("$thread".into()),
+                    reply: None,
                     text: "thread draft".into(),
                     format: Format::Markdown,
                     emoji: vec![],
@@ -292,11 +303,18 @@ mod tests {
         }
     }
     #[test]
+    fn invalid_reply_ids_are_rejected() {
+        let mut saved = snapshot();
+        saved.entries[0].reply = Some("invalid".into());
+        assert!(saved.validate().is_err());
+    }
+    #[test]
     fn old_drafts_default_to_no_mentions_and_new_mentions_are_bounded() {
         let old: Entry = serde_json::from_value(serde_json::json!({
             "room":"!room:example.org", "root":null, "text":"@maya:example.org", "format":"Plain", "emoji":[]
         })).unwrap();
         assert!(old.mentions.is_empty());
+        assert!(old.reply.is_none());
         let mut saved = Snapshot { entries: vec![old] };
         saved.entries[0].mentions = vec!["@maya:example.org".parse().unwrap(); 257];
         assert!(saved.validate().is_err());

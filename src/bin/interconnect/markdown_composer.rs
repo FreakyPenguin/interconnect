@@ -227,6 +227,10 @@ impl App {
                     match result {
                         Ok(prepared) => {
                             self.demo.as_mut().unwrap().send_prepared(&key, prepared);
+                            self.demo
+                                .as_mut()
+                                .unwrap()
+                                .set_sent_reply(&key, draft.reply.take());
                             draft.markdown.emoji.clear();
                             draft.markdown.mentions.clear();
                             draft.markdown.mention_links.clear();

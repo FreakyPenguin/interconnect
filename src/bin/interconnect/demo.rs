@@ -423,6 +423,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
         redactable: true,
         edit_source: None,
         edited: false,
+        reply: None,
         read_by: Vec::new(),
         timestamp_ms: Some(chrono::Local::now().timestamp_millis()),
         thread_replies: if id == "review" { 2 } else { 0 },
@@ -724,6 +725,30 @@ impl Demo {
             }
         }
         // Demo sends stay entirely in memory; never upload or read file contents.
+    }
+    pub fn set_sent_reply(&mut self, key: &DraftKey, event: Option<String>) {
+        let preview = event.and_then(|event| {
+            self.conversations
+                .get(key)?
+                .iter()
+                .find(|row| row.event_id.as_ref() == Some(&event))
+                .and_then(interconnect::connected::ReplyPreview::from_row)
+        });
+        for target in [
+            key.clone(),
+            DraftKey {
+                room: key.room.clone(),
+                root: None,
+            },
+        ] {
+            if let Some(row) = self
+                .conversations
+                .get_mut(&target)
+                .and_then(|rows| rows.last_mut())
+            {
+                row.reply = preview.clone();
+            }
+        }
     }
     pub fn send_prepared(&mut self, key: &DraftKey, prepared: interconnect::composition::Prepared) {
         self.send(key, prepared.source.clone());

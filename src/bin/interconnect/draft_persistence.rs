@@ -60,12 +60,13 @@ fn entry(key: &DraftKey, draft: &Draft) -> Option<Entry> {
         .as_ref()
         .map_or(draft, |edit| edit.saved.as_ref());
     let text = draft.content.text();
-    if text.is_empty() {
+    if text.is_empty() && draft.reply.is_none() {
         return None;
     }
     Some(Entry {
         room: key.room.clone(),
         root: key.root.clone(),
+        reply: draft.reply.clone(),
         emoji: draft
             .markdown
             .emoji
@@ -95,6 +96,7 @@ pub fn may_change(message: &Message) -> bool {
             | Message::Sent(..)
             | Message::Markdown(_)
             | Message::Editing(_)
+            | Message::Replying(_)
             | Message::ComposerEmoji(_)
             | Message::EmojiCompletion(_)
             | Message::UserCompletion(_)
@@ -152,6 +154,7 @@ impl App {
                     // one, wins over a snapshot from an earlier session.
                     self.drafts.entry(key).or_insert_with(|| {
                         let mut draft = Draft {
+                            reply: saved.reply.clone(),
                             content: iced::widget::text_editor::Content::with_text(&saved.text),
                             ..Default::default()
                         };
@@ -417,6 +420,64 @@ mod tests {
         let key = app.draft_key(false).unwrap();
         app.drafts.entry(key).or_default();
         app
+    }
+    #[tokio::test]
+    async fn reply_targets_survive_encrypted_restore_including_empty_composers() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut first = app(loaded(directory.path()).await);
+        let room = first.draft_key(false).unwrap();
+        first.drafts.get_mut(&room).unwrap().reply = Some("$original".into());
+        first.drafts.get_mut(&room).unwrap().content =
+            iced::widget::text_editor::Content::with_text("reply draft");
+        let thread = DraftKey {
+            room: room.room.clone(),
+            root: Some("$thread".into()),
+        };
+        first.drafts.insert(
+            thread.clone(),
+            Draft {
+                reply: Some("$thread-reply".into()),
+                ..Default::default()
+            },
+        );
+        let snapshot = Snapshot {
+            entries: first
+                .drafts
+                .iter()
+                .filter_map(|(key, draft)| entry(key, draft))
+                .collect(),
+        };
+        first
+            .draft_persistence
+            .store
+            .as_ref()
+            .unwrap()
+            .clone()
+            .save(Arc::new(snapshot))
+            .await
+            .unwrap();
+        let mut restored = app(loaded(directory.path()).await);
+        assert_eq!(restored.drafts[&room].reply.as_deref(), Some("$original"));
+        assert_eq!(restored.drafts[&room].content.text(), "reply draft");
+        assert_eq!(
+            restored.drafts[&thread].reply.as_deref(),
+            Some("$thread-reply")
+        );
+        assert!(restored.drafts[&thread].content.text().is_empty());
+        let _ = restored.update(Message::Escape);
+        assert!(restored.drafts[&room].reply.is_none());
+        assert!(
+            restored
+                .draft_persistence
+                .current
+                .entries
+                .iter()
+                .find(|entry| entry.root.is_none())
+                .unwrap()
+                .reply
+                .is_none(),
+            "Escape must also clear the persisted target"
+        );
     }
     fn type_text(app: &mut App, c: char) {
         let key = app.draft_key(false).unwrap();
