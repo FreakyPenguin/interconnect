@@ -35,6 +35,20 @@ Screenshots in the README use only demo data. Capture an ordinary conversation
 with a thread and a separate account-wide search view; keep window size and
 renderer consistent, and check the exported images for clipping or private data.
 
+### Received mentions
+
+In the demo's **Message formatting** room, inspect the user mentions at wide and
+narrow widths. Check soft accent backgrounds, stronger labels, emoji, long labels,
+and RTL text. Drag/copy across mentions and adjacent text; the clipboard should
+contain the displayed labels. Hover to inspect the destination. Hidden spoiler
+mentions must stay concealed until revealed. Plain `@maya`/`@room` remain literal.
+
+Automated fixtures cover Matrix user URI recognition, spoofed/unrelated links,
+label/style preservation, spoiler privacy, wrapping, hit testing, activation, and
+stable layout after drawing. Desktop appearance and native system-opener behavior
+still require manual acceptance; do not send connected test messages without
+authorization.
+
 ## Desktop login
 
 Use a dedicated test account/profile and a homeserver with native sliding sync.

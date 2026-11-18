@@ -189,6 +189,8 @@ impl State {
                     let base = Font {
                         weight: if style.bold {
                             font::Weight::Bold
+                        } else if style.mention.is_some() && !style.code {
+                            font::Weight::Semibold
                         } else {
                             font::Weight::Normal
                         },
@@ -591,7 +593,20 @@ impl State {
                     if style.code && !code {
                         quad(renderer, region, iced::Color::from_rgb8(241, 243, 246));
                     }
-                    if style.underline || style.link.is_some() {
+                    // Keep the background inside the shaped span so wrapping, bidi,
+                    // selection and hit testing all use exactly the same geometry.
+                    let mention = style.mention.is_some() && !style.code;
+                    if mention {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: region,
+                                border: iced::Border::default().rounded(4.0),
+                                ..renderer::Quad::default()
+                            },
+                            iced::Color::from_rgba8(73, 121, 211, 0.12),
+                        );
+                    }
+                    if style.underline || (style.link.is_some() && !mention) {
                         quad(
                             renderer,
                             Rectangle::new(
@@ -1103,6 +1118,54 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn mentions_wrap_select_and_activate_with_their_displayed_text() {
+        let link = "https://matrix.to/#/@maya:example.org";
+        let label = "Maya 👋 with a long display name";
+        let document = Arc::new(Document::parse(&format!(
+            "<p>Hello <a href='{link}'>{label}</a>!</p><p>قبل <a href='{link}'>مايا</a> אחרי</p>"
+        )).unwrap());
+        for width in [95.0, 300.0] {
+            let mut state = State::new(document.clone());
+            let size = state.layout(width).size();
+            assert_eq!(state.text(), format!("Hello {label}!\n\nقبل مايا אחרי"));
+            let mut points = Vec::new();
+            for block in &state.blocks {
+                for (index, run_index) in block.runs.iter().enumerate() {
+                    if block.block.runs[*run_index].style.mention.is_none() {
+                        continue;
+                    }
+                    for region in block.paragraph.span_bounds(index) {
+                        let point = region.center() + (block.bounds.position() - Point::ORIGIN);
+                        points.push(point);
+                    }
+                }
+            }
+            assert!(points.len() >= 2);
+            for point in points {
+                assert!(state.text().is_char_boundary(state.hit(point)));
+                let mut messages = Vec::new();
+                assert!(!state.activate(point, &mut |message| messages.push(message)));
+                assert!(
+                    matches!(&messages[..], [Message::OpenMessageLink(url)] if url == link),
+                    "width {width}, point {point:?}, run {:?}",
+                    state.run_at(point)
+                );
+            }
+            let mut renderer = crate::test_renderer(Font::with_name("Inter"), iced::Pixels(14.0));
+            let viewport = Rectangle::with_size(size);
+            renderer.reset(viewport);
+            state.draw(
+                &mut renderer,
+                Point::ORIGIN,
+                viewport,
+                Some(0..state.text().len()),
+                None,
+            );
+            assert_eq!(state.layout(width).size(), size);
+        }
+    }
+
     #[test]
     fn recreated_link_overlays_keep_their_shaped_destination() {
         let mut state = State::new(Arc::new(

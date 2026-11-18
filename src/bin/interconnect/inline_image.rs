@@ -225,38 +225,47 @@ impl Paragraph {
         }
     }
     pub fn span_bounds(&self, index: usize) -> Vec<Rectangle> {
-        match self {
-            Self::Text(p) => p.span_bounds(index),
-            Self::Embedded { buffer, .. } => buffer
-                .layout_runs()
-                .filter_map(|line| {
-                    let mut glyphs = line.glyphs.iter().filter(|g| g.metadata == index);
-                    let first = glyphs.next()?;
-                    let (left, right) = glyphs
-                        .fold((first.x, first.x + first.w), |(left, right), g| {
-                            (left.min(g.x), right.max(g.x + g.w))
-                        });
-                    Some(Rectangle::new(
-                        Point::new(left, line.line_top),
-                        Size::new(right - left, line.line_height),
-                    ))
+        let mut bounds = Vec::new();
+        for line in self.buffer().layout_runs() {
+            let mut regions: Vec<_> = line
+                .glyphs
+                .iter()
+                .filter(|glyph| glyph.metadata == index && glyph.w > 0.0)
+                .map(|glyph| {
+                    Rectangle::new(
+                        Point::new(glyph.x, line.line_top),
+                        Size::new(glyph.w, line.line_height),
+                    )
                 })
-                .collect(),
+                .collect();
+            // Logical spans can occupy separate visual segments in bidi text.
+            regions.sort_by(|a, b| a.x.total_cmp(&b.x));
+            let mut current: Option<Rectangle> = None;
+            for region in regions {
+                if let Some(previous) = current.as_mut()
+                    && region.x <= previous.x + previous.width + 0.5
+                {
+                    previous.width = (region.x + region.width - previous.x).max(previous.width);
+                } else {
+                    bounds.extend(current.take());
+                    current = Some(region);
+                }
+            }
+            bounds.extend(current);
         }
+        bounds
     }
     pub fn hit_span(&self, point: Point) -> Option<usize> {
-        match self {
-            Self::Text(p) => p.hit_span(point),
-            Self::Embedded { buffer, .. } => {
-                let line = buffer.layout_runs().find(|line| {
-                    point.y >= line.line_top && point.y < line.line_top + line.line_height
-                })?;
-                line.glyphs
-                    .iter()
-                    .find(|glyph| point.x >= glyph.x && point.x < glyph.x + glyph.w)
-                    .map(|glyph| glyph.metadata)
-            }
-        }
+        // Resolve the glyph under the pointer directly. Cursor affinity can
+        // otherwise select an adjacent span at wrapped lines or RTL boundaries.
+        let line = self
+            .buffer()
+            .layout_runs()
+            .find(|line| point.y >= line.line_top && point.y < line.line_top + line.line_height)?;
+        line.glyphs
+            .iter()
+            .find(|glyph| point.x >= glyph.x && point.x < glyph.x + glyph.w)
+            .map(|glyph| glyph.metadata)
     }
     pub fn draw(&self, renderer: &mut iced::Renderer, position: Point, clip: Rectangle) {
         use iced::advanced::{graphics::text::Renderer as _, text::Renderer as _};

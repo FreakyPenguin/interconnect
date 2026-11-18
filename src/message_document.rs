@@ -17,6 +17,8 @@ pub struct Style {
     pub strike: bool,
     pub code: bool,
     pub link: Option<String>,
+    /// Explicit Matrix user anchor; labels remain sender-provided text.
+    pub mention: Option<matrix_sdk::ruma::OwnedUserId>,
     pub spoilers: Vec<usize>,
 }
 
@@ -297,6 +299,19 @@ pub fn safe_link(value: &str) -> Option<String> {
         _ => None,
     }
 }
+/// Only explicit user permalinks are mentions; room/event/web links remain links.
+fn user_mention(link: &str) -> Option<matrix_sdk::ruma::OwnedUserId> {
+    use matrix_sdk::ruma::{MatrixToUri, MatrixUri, matrix_uri::MatrixId};
+    let id = if link.starts_with("matrix:") {
+        MatrixUri::parse(link).ok()?.id().clone()
+    } else {
+        MatrixToUri::parse(link).ok()?.id().clone()
+    };
+    match id {
+        MatrixId::User(id) => Some(id),
+        _ => None,
+    }
+}
 #[derive(Default)]
 struct Builder {
     blocks: Vec<Block>,
@@ -427,6 +442,7 @@ impl Builder {
             "a" => {
                 self.anchors += 1;
                 style.link = attr("href").and_then(|v| safe_link(&v));
+                style.mention = style.link.as_deref().and_then(user_mention);
             }
             "br" => return self.push(Inline::Text("\n".into()), style),
             "blockquote" => {
@@ -606,6 +622,75 @@ mod tests {
                 .is_none()
         );
     }
+    #[test]
+    fn explicit_user_mentions_preserve_labels_styles_and_spoiler_privacy() {
+        use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
+        let message = MessageType::Text(TextMessageEventContent::html(
+            "fallback",
+            "<p>Hello <a href='https://matrix.to/#/%40maya%3Aexample.org'><b>Maya 👋</b></a> and <a href='matrix:u/jules:example.org'>Jules</a>. <span data-mx-spoiler><a href='https://matrix.to/#/@secret:example.org'>Secret</a></span></p>",
+        ));
+        let doc = Document::from_message(&message, None).unwrap();
+        let mentions: Vec<_> = doc
+            .blocks
+            .iter()
+            .flat_map(|b| &b.runs)
+            .filter(|r| r.style.mention.is_some())
+            .collect();
+        assert_eq!(mentions.len(), 3);
+        assert_eq!(
+            mentions[0].style.mention.as_deref().unwrap().as_str(),
+            "@maya:example.org"
+        );
+        assert_eq!(mentions[0].content.text(), "Maya 👋");
+        assert!(mentions[0].style.bold);
+        assert_eq!(
+            mentions[1].style.mention.as_deref().unwrap().as_str(),
+            "@jules:example.org"
+        );
+        assert!(!doc.text(&BTreeSet::new()).contains("Secret"));
+        assert!(
+            doc.visible_blocks(&BTreeSet::new())
+                .iter()
+                .flat_map(|b| &b.runs)
+                .all(|r| r
+                    .style
+                    .mention
+                    .as_deref()
+                    .is_none_or(|id| id.as_str() != "@secret:example.org"))
+        );
+        assert!(doc.text(&BTreeSet::from([1])).contains("Secret"));
+        assert!(Arc::ptr_eq(
+            &doc,
+            &Document::from_message(&message, Some(&doc)).unwrap()
+        ));
+    }
+
+    #[test]
+    fn mention_appearance_requires_an_explicit_valid_user_anchor() {
+        for link in [
+            "https://matrix.to.evil.org/#/@maya:example.org",
+            "https://example.org/#/@maya:example.org",
+            "https://matrix.to/#/!room:example.org",
+            "https://matrix.to/#/%23room:example.org",
+            "https://matrix.to/#/!room:example.org/$event",
+            "https://matrix.to/#/not-a-user",
+            "matrix:r/room:example.org",
+            "javascript:alert(1)",
+        ] {
+            let doc = Document::parse(&format!("<a href='{link}'>@Maya</a>")).unwrap();
+            assert!(
+                doc.blocks
+                    .iter()
+                    .flat_map(|b| &b.runs)
+                    .all(|r| r.style.mention.is_none())
+            );
+        }
+        let doc =
+            Document::plain_links("@maya:example.org @room https://matrix.to/#/@maya:example.org")
+                .unwrap();
+        assert!(doc.blocks[0].runs.iter().all(|r| r.style.mention.is_none()));
+    }
+
     #[test]
     fn bare_links_in_html_keep_styles_anchors_code_and_spoilers() {
         let doc = Document::parse("<p><b>https://example.org/</b> <a href='https://destination.org/'>https://label.org/</a> <code>https://code.org/</code></p><pre>https://block.org/</pre><span data-mx-spoiler>https://hidden.org/</span>").unwrap();

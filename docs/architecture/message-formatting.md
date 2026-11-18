@@ -23,6 +23,20 @@ Text paragraphs. Copy uses the displayed document's canonical text. Hidden
 spoilers copy placeholders; reveal resets selection/layout and remains local to
 the widget. Room-list, pin, and notification excerpts use the plain SDK fallback.
 
+## Received user mentions
+
+Explicit HTML user anchors with validated `https://matrix.to/#/@…` (including
+percent-encoded IDs) or `matrix:u/…` destinations render with a soft accent
+background and stronger text, without the ordinary link underline. Sender labels
+and inline formatting remain intact; code keeps its code appearance. Wrapping,
+bidi, selection, copying, spoiler hiding, and hover/click use the existing shaped
+text and link pipeline. Activation opens the destination with the system opener.
+No member lookup, avatar download, subscription, or timer is added.
+
+Plain `@name`, `@room`, and bare Matrix URLs are not inferred to be mentions.
+Room/event links retain normal link styling. Mention completion, authoring, and
+in-app member navigation remain future work.
+
 ## Inline images and local embedded assets
 
 Incoming HTML images accept validated MXC sources only; HTTP, file, data, and
