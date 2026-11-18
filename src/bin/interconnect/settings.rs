@@ -109,7 +109,8 @@ impl App {
     pub(super) fn update_notification_context(&mut self) {
         self.refresh_presence_demand();
         self.selection.notifications = self.settings.current.notifications.clone();
-        self.selection.conversation_visible = !self.sign_out_open
+        self.selection.conversation_visible = !self.room_settings.is_open()
+            && !self.sign_out_open
             && !self.draft_persistence.close_requested
             && !self.membership.open
             && self.message_delete.is_none()

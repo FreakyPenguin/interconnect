@@ -134,6 +134,37 @@ from its menu. Unread stays first, Favorites next, and Low priority last. Order
 is account-wide, including sections hidden by the current filter. Moves preserve
 the open conversation, drafts, and reading position.
 
+## Room settings
+
+Open a conversation and click the **Room settings** sliders icon beside Members.
+The panel edits the name and topic, personal notification preference, who may join,
+and who may read history. Each setting has its own **Save** button. **Close** or
+Escape discards unsaved edits; **Reload** replaces edits with current synced state.
+Members & invitations opens the existing People panel; Leave room opens a separate
+confirmation before leaving. The room ID and encryption status are also shown.
+
+Notifications offer **Use account default**, **All messages**, **Mentions & keywords**,
+and **Mute room**. The effective account default is displayed. These use Matrix
+account push rules, so they follow the account across clients. Application-wide
+Settings still controls whether this device delivers desktop alerts and previews.
+Muting does not mark a room read or hide its unread badge. Notification sound and
+temporary timed mutes are not configurable here.
+
+Name, topic, access and history require room permissions and affect everyone.
+Access supports invitation-only and public rooms; restricted/space-based, knock,
+and custom access rules remain read-only. Public access does not publish a room
+in the server directory. History visibility does not grant old encryption keys.
+Encryption is informational; enabling encryption, changing avatars/aliases,
+power-level editing, bans and room upgrades remain outside this panel.
+
+Reads run on demand and cancel when the panel closes or the conversation changes.
+Writes finish against their captured room, serialize per room, and keep shutdown
+waiting for completion. Saves recheck membership, permissions and the edited
+field against current synced state; concurrent remote changes can still race a
+write because Matrix state events have no compare-and-swap. A timeout or push-rule
+error can leave a partially applied change: allow sync to catch up, then Reload
+before retrying. Demo edits stay in memory without account or network access.
+
 ## Emoji packs
 
 Settings → Emoji packs manages personal and permitted room packs. Enabling a

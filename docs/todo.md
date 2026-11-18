@@ -13,7 +13,6 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 ## Navigation and notifications
 
 - Clickable notifications that open the relevant conversation.
-- Room notification controls.
 - Unread catch-up divider.
 - Conversation back/forward history (after search, following links, etc.).
 - Search with filters
@@ -28,5 +27,5 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 
 ## Room and space management
 
-- Room settings, member removal, and member invite links.
+- Advanced room settings (avatars, aliases, permissions, encryption, upgrades), member removal, and member invite links.
 - Creating and managing spaces.

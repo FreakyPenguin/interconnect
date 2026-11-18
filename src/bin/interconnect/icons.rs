@@ -9,6 +9,7 @@ use std::cell::Cell;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
     Search,
+    Settings,
     People,
     Home,
     Plus,
@@ -125,6 +126,17 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                         (19.0, 21.0),
                         (19.0, 9.0),
                     ]);
+                }
+                Settings => {
+                    line(&[(3.0, 6.0), (6.0, 6.0)]);
+                    line(&[(10.0, 6.0), (21.0, 6.0)]);
+                    line(&[(3.0, 12.0), (14.0, 12.0)]);
+                    line(&[(18.0, 12.0), (21.0, 12.0)]);
+                    line(&[(3.0, 18.0), (6.0, 18.0)]);
+                    line(&[(10.0, 18.0), (21.0, 18.0)]);
+                    for (x, y) in [(8.0, 6.0), (16.0, 12.0), (8.0, 18.0)] {
+                        frame.stroke(&Path::circle(Point::new(x, y), 2.0), stroke);
+                    }
                 }
                 Subspaces => {
                     line(&[(12.0, 8.0), (12.0, 12.0)]);

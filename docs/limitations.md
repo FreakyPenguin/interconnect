@@ -5,6 +5,10 @@ Saved accounts require Linux Secret Service or macOS Keychain.
 
 - Recovery/key-backup UI, ordinary reply composition, notification click navigation,
   account switching, cross-platform account import, legacy sync, and calls are missing.
+- Room settings cover name/topic, account push-rule preferences, invitation/public
+  access, and history visibility. Restricted/knock/custom access remains read-only;
+  avatars, aliases, permission editing, encryption changes, bans, upgrades, timed
+  mutes and per-room notification sounds are not implemented.
 - Deletion requires a synced message-like event with an event ID. Cancelling unsent
   local echoes and redacting room-state/activity events are unsupported.
 - Editing covers your text messages and emotes; media captions, notices, and

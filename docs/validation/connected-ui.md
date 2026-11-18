@@ -35,6 +35,37 @@ Screenshots in the README use only demo data. Capture an ordinary conversation
 with a thread and a separate account-wide search view; keep window size and
 renderer consistent, and check the exported images for clipping or private data.
 
+### Room settings
+
+Open the sliders icon beside Members in Studio. Edit and save name/topic, switch
+notification preference through Default/All/Mentions/Mute, and change access and
+history. Close and reopen: saved demo settings remain per room, unsaved edits are
+discarded, and switching to another room shows its own settings. Check a room and
+thread draft and an older reading position survive. Release announcements is
+read-only for shared settings but permits personal notification changes. Check
+Members & invitations and cancellation of Leave room.
+
+Repeat in Light/Dark at 1400×900 and 640×480: content scrolls, actions stay reachable,
+long topics/IDs wrap or scroll within the panel, backdrop clicks do not reach the
+conversation, Tab stays within text inputs, and Escape closes the panel. A focused
+text field must not schedule caret timers; use the [idle procedure](idle-resources.md)
+for measured CPU/wakeup acceptance.
+
+Only with an authorized isolated connected account, check notification changes
+appear in another Matrix client, including returning to account defaults, and
+that this device follows the rule for incoming traffic. Do not send test messages
+without authorization. Verify permission denial, failed saves, Reload after sync,
+and navigation/close during a pending request. Confirm a restricted-access room
+cannot accidentally lose its space restrictions. Encryption status must match the
+room; history changes must not promise old decryption keys. Confirm Leave requires
+its separate confirmation and does not run from merely opening settings.
+
+Automated fixtures cover demo per-room saves/cancel, drafts/scroll preservation,
+modal guards, stale results, SDK permission/conflict/error handling, push-rule
+write/reset before sync, and the settings layout/idle redraw behavior. These do
+not establish connected homeserver, cross-client delivery, native desktop, macOS,
+or measured idle-resource acceptance.
+
 ### Light and dark themes
 
 In demo mode, open Settings → Appearance, select Dark, and Save. Check the

@@ -20,6 +20,7 @@ mod deleting_tests;
 mod editing;
 #[cfg(test)]
 mod editing_tests;
+pub mod room_settings;
 pub use editing::EditSource;
 mod receipts;
 pub use receipts::ReadTarget;

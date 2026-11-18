@@ -84,6 +84,7 @@ impl App {
             && self.create_room.is_none()
             && self.invite.is_none()
             && self.topic_editor.is_none()
+            && !self.room_settings.is_open()
             && self.message_delete.is_none()
             && self.attachment_picker.is_none()
             && self.clipboard_paste.is_none()

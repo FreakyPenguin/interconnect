@@ -87,6 +87,8 @@ mod receipts;
 mod room_picker;
 #[path = "interconnect/room_search.rs"]
 mod room_search;
+#[path = "interconnect/room_settings.rs"]
+mod room_settings;
 #[path = "interconnect/section_reorder.rs"]
 mod section_reorder;
 #[path = "interconnect/selectable.rs"]
@@ -206,6 +208,7 @@ struct App {
     emoji_completion: emoji_completion::State,
     user_completion: user_completion::State,
     topic_editor: Option<topic::State>,
+    room_settings: room_settings::State,
     members: members::State,
     membership: membership::State,
     invite: Option<invite::State>,
@@ -241,6 +244,7 @@ enum Message {
     Pin(pin_action::Event),
     TogglePins(u64),
     Topic(topic::Event),
+    RoomSettings(room_settings::Event),
     Members(members::Event),
     Membership(membership::Event),
     RefreshPresence {
@@ -402,6 +406,7 @@ impl App {
             emoji_completion: emoji_completion::State::default(),
             user_completion: user_completion::State::default(),
             topic_editor: None,
+            room_settings: room_settings::State::default(),
             members: members::State::default(),
             membership: membership::State::default(),
             invite: None,
@@ -521,6 +526,66 @@ impl App {
                 | Message::Stopped(_)
         ) {
             self.shell.spaces.menu = None;
+        }
+        if self.room_settings.is_open() {
+            if matches!(message, Message::Escape) {
+                return self.update(Message::RoomSettings(room_settings::Event::Close));
+            }
+            if matches!(
+                &message,
+                Message::Settings(settings::Event::Open)
+                    | Message::Verification(verification::Event::Open)
+                    | Message::ContextMenu(_)
+                    | Message::QuickRoom(_)
+                    | Message::NewChat(
+                        new_chat::Event::Open
+                            | new_chat::Event::OpenUser(_)
+                            | new_chat::Event::Mention(_)
+                            | new_chat::Event::Submit
+                    )
+                    | Message::CreateRoom(create_room::Event::Open | create_room::Event::Submit)
+                    | Message::Edit(..)
+                    | Message::Send(_)
+                    | Message::DeleteWord(..)
+                    | Message::ComposerEmoji(_)
+                    | Message::Topic(
+                        topic::Event::Open(..)
+                            | topic::Event::Save
+                            | topic::Event::Edit(_)
+                            | topic::Event::Cancel
+                    )
+                    | Message::Invite(invite::Event::Open | invite::Event::Submit)
+                    | Message::Attachment(
+                        attachments::Event::Pick(_)
+                            | attachments::Event::Drop(..)
+                            | attachments::Event::Paste(_)
+                    )
+                    | Message::Markdown(
+                        markdown_composer::Event::Mode(_) | markdown_composer::Event::Preview(_)
+                    )
+                    | Message::Focus(_)
+                    | Message::EmojiManagement(emoji_management::Event::Open)
+                    | Message::GlobalSearch(global_search::Event::Open)
+                    | Message::RoomSearch(room_search::Event::Open)
+                    | Message::Bookmark(
+                        bookmarks::Event::Open
+                            | bookmarks::Event::Set(..)
+                            | bookmarks::Event::Remove(_)
+                            | bookmarks::Event::Conversation(_)
+                    )
+                    | Message::Editing(
+                        message_edit::Event::Start(_)
+                            | message_edit::Event::Latest(_)
+                            | message_edit::Event::Cancel(_)
+                    )
+                    | Message::Reaction(
+                        reaction_picker::Event::Open(_) | reaction_picker::Event::Chip { .. }
+                    )
+                    | Message::EmojiCompletion(_)
+                    | Message::UserCompletion(_)
+            ) {
+                return Task::none();
+            }
         }
         if let Message::SignOut(event) = message {
             return self.sign_out_event(event);
@@ -1080,6 +1145,7 @@ impl App {
                 self.expanded_pins = (self.expanded_pins != Some(generation)).then_some(generation);
             }
             Message::Topic(event) => action_task = self.topic_event(event),
+            Message::RoomSettings(event) => action_task = self.room_settings_event(event),
             Message::Members(event) => action_task = self.members_event(event),
             Message::RefreshPresence { room, members } => self.refresh_presence(room, members),
             Message::Invite(event) => action_task = self.invite_event(event),
@@ -1692,6 +1758,7 @@ impl App {
                     self.global_search.reset();
                 }
                 if state.authentication.is_some() || state.account_id != self.account_id {
+                    self.room_settings.dismiss();
                     self.membership.reset();
                 } else {
                     self.membership.reconcile(&mut state);
@@ -1886,6 +1953,7 @@ impl App {
         self.validate_invite();
         self.validate_pin_error();
         self.validate_topic_editor();
+        self.validate_room_settings();
         self.validate_reaction_picker();
         self.validate_composer_picker();
         self.validate_emoji_completion();
@@ -2350,6 +2418,8 @@ impl App {
                     }) => Some(Message::Membership(membership::Event::Close)),
                     _ => None,
                 })
+            } else if self.room_settings.is_open() {
+                iced::event::listen_with(room_settings::shortcut)
             } else if self.message_delete.is_some() {
                 self.delete_subscription()
             } else if self.create_room.is_some() && !self.composing {
@@ -2463,6 +2533,9 @@ impl App {
             return self.membership_view();
         }
         let mut layers = iced::widget::stack![self.shell_view()];
+        if self.room_settings.is_open() {
+            layers = layers.push(self.room_settings_view());
+        }
         if self.create_room.is_some() {
             layers = layers.push(self.create_room_view());
         }
@@ -2869,7 +2942,8 @@ impl App {
             }
             header = header
                 .push(self.room_search_button())
-                .push(self.member_badge());
+                .push(self.member_badge())
+                .push(self.room_settings_button(selected_id));
         }
         if !thread && self.demo.is_some() && selected_id == "threads" {
             header = header.push(
