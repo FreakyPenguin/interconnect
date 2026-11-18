@@ -100,6 +100,7 @@ impl App {
                 if self.create_room.is_none() {
                     self.stop_typing();
                     self.emoji_completion.clear();
+                    self.user_completion.clear();
                     self.generation += 1;
                     let mut spaces = vec![Space {
                         id: None,

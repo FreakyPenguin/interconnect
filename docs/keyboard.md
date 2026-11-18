@@ -48,6 +48,12 @@ completion. Up/Down selects a suggestion, Enter or Tab inserts it, and Escape
 closes completion. Accepting a suggestion does not send the message. In the full
 emoji picker's search field, Enter chooses the first visible match.
 
+Type `@` at a word boundary to suggest joined room users by name or Matrix ID.
+Up/Down selects; Enter or Tab inserts the chosen full ID without sending; Escape
+dismisses. Clicking a suggestion also inserts it. These keys apply to user
+completion before the normal composer bindings. Room-wide `@room` completion is
+not supported.
+
 To copy message text, select it in the timeline and press Ctrl+C / Command+C.
 Selections can span messages; formatted text copies its displayed text, image
 alternatives, and LaTeX source. Hidden spoilers copy placeholders.

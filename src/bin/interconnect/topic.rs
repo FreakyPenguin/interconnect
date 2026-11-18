@@ -73,6 +73,7 @@ impl App {
                     error: None,
                 });
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 return iced::widget::operation::focus("room-topic");
             }
             Event::Edit(action) => {

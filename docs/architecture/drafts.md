@@ -2,8 +2,8 @@
 
 `src/drafts.rs` stores room/thread text drafts in `drafts.json` inside the locked
 account profile. Drafts include the literal source, plain/Markdown composition
-mode, and explicit custom emoji bindings. Attachment data and paths, scroll
-positions, and unfinished message edits are excluded. While editing a sent
+mode, explicit custom emoji bindings, and selected user mention IDs. Attachment
+data and paths, scroll positions, and unfinished message edits are excluded. While editing a sent
 message, the saved value remains the original unsent conversation draft.
 
 The file contains a versioned encrypted envelope using the SDK's StoreCipher.
@@ -17,8 +17,8 @@ Encryption, key derivation and file I/O run on blocking workers. Saves use a
 private temporary file, file sync, atomic replacement and directory sync.
 Opening a missing draft store creates no file. Invalid versions, keys,
 permissions and malformed data preserve the original file and report an error.
-Limits bound file size, total text, draft count and emoji selections. Diagnostics
-show draft counts, never draft text.
+Limits bound file size, total text, draft count, emoji selections, and user
+mention selections (256 each). Diagnostics show draft counts, never draft text.
 
 Successful sign-out removes the draft file before deleting its encryption keys.
 A failed remote sign-out retains drafts; local deletion failures can be retried

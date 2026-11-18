@@ -149,6 +149,7 @@ impl App {
                 self.context_menu = None;
                 self.pending_room_focus = None;
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 self.stop_typing();
                 // Defocus the underlying composer while the modal popup owns input.
                 return iced::widget::operation::focus("delete-confirmation");

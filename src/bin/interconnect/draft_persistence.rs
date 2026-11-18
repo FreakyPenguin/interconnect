@@ -73,6 +73,13 @@ fn entry(key: &DraftKey, draft: &Draft) -> Option<Entry> {
             .filter(|choice| text.contains(&choice.token))
             .cloned()
             .collect(),
+        mentions: draft
+            .markdown
+            .mentions
+            .iter()
+            .filter(|user| text.contains(user.as_str()))
+            .cloned()
+            .collect(),
         text,
         format: draft.markdown.format,
     })
@@ -89,6 +96,7 @@ pub fn may_change(message: &Message) -> bool {
             | Message::Editing(_)
             | Message::ComposerEmoji(_)
             | Message::EmojiCompletion(_)
+            | Message::UserCompletion(_)
             | Message::Attachment(_)
     )
 }
@@ -148,6 +156,7 @@ impl App {
                         };
                         draft.markdown.format = saved.format;
                         draft.markdown.emoji = saved.emoji.clone();
+                        draft.markdown.mentions = saved.mentions.clone();
                         draft
                     });
                 }
@@ -435,7 +444,9 @@ mod tests {
             root: Some("$root".into()),
         };
         let mut reply = Draft {
-            content: iced::widget::text_editor::Content::with_text("reply :leaf:"),
+            content: iced::widget::text_editor::Content::with_text(
+                "reply :leaf: @maya:example.org",
+            ),
             ..Default::default()
         };
         let emoji = interconnect::custom_emoji::Emoji {
@@ -446,6 +457,10 @@ mod tests {
             uri: "mxc://example.org/leaf".into(),
         };
         reply.markdown.insert_emoji(&emoji, "");
+        reply
+            .markdown
+            .mentions
+            .push("@maya:example.org".parse().unwrap());
         first.drafts.insert(thread.clone(), reply);
         first.capture_persistent_drafts();
         let expected = first.draft_persistence.current.clone();
@@ -459,6 +474,10 @@ mod tests {
         );
         assert_eq!(restored.drafts[&key].markdown.format, Format::Plain);
         assert_eq!(restored.drafts[&thread].markdown.emoji[0].emoji, emoji);
+        assert_eq!(
+            restored.drafts[&thread].markdown.mentions[0].as_str(),
+            "@maya:example.org"
+        );
         assert_eq!(*restored.draft_persistence.current, *expected);
     }
 

@@ -226,7 +226,8 @@ impl App {
             );
         }
         let (popup, dismiss) = self
-            .emoji_completion_popup(key, generation)
+            .user_completion_popup(key, generation)
+            .or_else(|| self.emoji_completion_popup(key, generation))
             .map_or((None, Message::Escape), |(popup, dismiss)| {
                 (Some(popup), dismiss)
             });

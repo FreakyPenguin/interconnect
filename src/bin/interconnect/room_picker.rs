@@ -165,6 +165,7 @@ impl App {
                 if self.room_picker.is_none() {
                     self.stop_typing();
                     self.emoji_completion.clear();
+                    self.user_completion.clear();
                     self.room_picker = Some(State {
                         thread: self.selection.thread.is_some(),
                         ..State::default()

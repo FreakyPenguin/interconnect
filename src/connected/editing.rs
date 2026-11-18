@@ -7,6 +7,8 @@ pub struct EditSource {
     pub body: String,
     pub format: Format,
     pub emoji: Vec<crate::custom_emoji::Selection>,
+    pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    pub mention_links: Vec<crate::composition::MentionLink>,
 }
 impl EditSource {
     pub fn plain(body: String) -> Self {
@@ -14,6 +16,8 @@ impl EditSource {
             body,
             format: Format::Plain,
             emoji: Vec::new(),
+            mentions: Vec::new(),
+            mention_links: Vec::new(),
         }
     }
     pub fn from_prepared(prepared: &Prepared) -> Self {
@@ -107,6 +111,24 @@ impl EditSource {
                     }
                 }
             }
+            if let Some(document) = crate::message_document::Document::parse(html) {
+                source.mentions = document
+                    .blocks
+                    .iter()
+                    .flat_map(|block| &block.runs)
+                    .filter_map(|run| run.style.mention.clone())
+                    .filter(|user| source.body.contains(user.as_str()))
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
+                let (body, links, normalized) =
+                    crate::composition::recover_mentions(&source.body, &document, &source.emoji);
+                source.body = body;
+                source.mention_links = links;
+                if normalized {
+                    source.format = Format::Plain;
+                }
+            }
         }
         source
     }
@@ -122,10 +144,40 @@ impl Composer {
         format: crate::composition::Format,
         emoji: Vec<crate::custom_emoji::Selection>,
     ) -> Result<(), String> {
+        self.edit_message_with_mentions(event, body, format, emoji, Vec::new())
+            .await
+    }
+    pub async fn edit_message_with_mentions(
+        self,
+        event: String,
+        body: String,
+        format: crate::composition::Format,
+        emoji: Vec<crate::custom_emoji::Selection>,
+        mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    ) -> Result<(), String> {
+        self.edit_message_with_mention_links(event, body, format, emoji, mentions, Vec::new())
+            .await
+    }
+    pub async fn edit_message_with_mention_links(
+        self,
+        event: String,
+        body: String,
+        format: crate::composition::Format,
+        emoji: Vec<crate::custom_emoji::Selection>,
+        mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+        mention_links: Vec<crate::composition::MentionLink>,
+    ) -> Result<(), String> {
         use matrix_sdk::ruma::events::room::message::{
             MessageType, RoomMessageEventContentWithoutRelation,
         };
-        let prepared = crate::composition::prepare_with_emoji(body, format, emoji).await?;
+        let prepared = crate::composition::prepare_with_mention_links(
+            body,
+            format,
+            emoji,
+            mentions,
+            mention_links,
+        )
+        .await?;
         let update = async {
             let event: matrix_sdk::ruma::OwnedEventId = event
                 .parse()
@@ -158,6 +210,11 @@ impl Composer {
             }
             let mut replacement = RoomMessageEventContentWithoutRelation::new(msgtype);
             replacement.mentions = message.mentions().cloned();
+            if !prepared.mentions.is_empty() {
+                replacement = replacement.add_mentions(
+                    matrix_sdk::ruma::events::Mentions::with_user_ids(prepared.mentions.clone()),
+                );
+            }
             Box::pin(self.0.edit(
                 &item.identifier(),
                 matrix_sdk::room::edit::EditedContent::RoomMessage(replacement),

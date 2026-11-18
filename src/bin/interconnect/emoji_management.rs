@@ -144,6 +144,7 @@ impl App {
                 self.reaction_picker = None;
                 self.composer_picker = None;
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 self.context_menu = None;
                 self.generation += 1;
                 self.emoji_management = Some(State {

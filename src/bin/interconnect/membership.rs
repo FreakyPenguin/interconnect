@@ -114,6 +114,7 @@ impl App {
                 self.context_menu = None;
                 self.stop_typing();
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 self.generation += 1;
                 self.membership.generation = self.generation;
                 self.membership.open = true;

@@ -206,6 +206,7 @@ impl App {
             .is_some_and(|active| !self.completion_trigger_valid(&active.trigger))
         {
             self.emoji_completion.clear();
+            self.user_completion.clear();
         }
     }
     fn completion_trigger_valid(&self, trigger: &Trigger) -> bool {
@@ -252,6 +253,7 @@ impl App {
             Event::Dismiss(trigger) => {
                 self.emoji_completion.dismissed = Some(trigger);
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 return Task::none();
             }
             Event::Accept(_) => active.matches[active.selected].key.clone(),
@@ -289,6 +291,7 @@ impl App {
         let thread = edited_key.root.is_some();
         self.typing_edited(&edited_key);
         self.emoji_completion.clear();
+        self.user_completion.clear();
         self.emoji_completion.dismissed = None;
         iced::widget::operation::focus(if thread {
             "thread-composer"

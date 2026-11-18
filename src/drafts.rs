@@ -27,6 +27,8 @@ pub struct Entry {
     pub text: String,
     pub format: Format,
     pub emoji: Vec<Selection>,
+    #[serde(default)]
+    pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
 }
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
@@ -68,6 +70,7 @@ impl Snapshot {
                         .all(|choice| !choice.token.is_empty() && choice.emoji.uri.is_valid()),
                 "Invalid draft emoji"
             );
+            ensure!(entry.mentions.len() <= 256, "Too many draft mentions");
             bytes = bytes.saturating_add(entry.text.len());
             ensure!(
                 bytes <= MAX_TEXT_BYTES,
@@ -259,6 +262,7 @@ mod tests {
                     text: "unfinished private fixture 🌱\nsecond line".into(),
                     format: Format::Plain,
                     emoji: vec![],
+                    mentions: vec![],
                 },
                 Entry {
                     room: "!room:example.org".into(),
@@ -266,9 +270,20 @@ mod tests {
                     text: "thread draft".into(),
                     format: Format::Markdown,
                     emoji: vec![],
+                    mentions: vec![],
                 },
             ],
         }
+    }
+    #[test]
+    fn old_drafts_default_to_no_mentions_and_new_mentions_are_bounded() {
+        let old: Entry = serde_json::from_value(serde_json::json!({
+            "room":"!room:example.org", "root":null, "text":"@maya:example.org", "format":"Plain", "emoji":[]
+        })).unwrap();
+        assert!(old.mentions.is_empty());
+        let mut saved = Snapshot { entries: vec![old] };
+        saved.entries[0].mentions = vec!["@maya:example.org".parse().unwrap(); 257];
+        assert!(saved.validate().is_err());
     }
     async fn open(path: &Path, account: &str) -> Result<Loaded, String> {
         Store::open(path.to_owned(), account.into(), "store".into(), keys()).await

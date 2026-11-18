@@ -107,6 +107,8 @@ mod tooltips;
 mod topic;
 #[path = "interconnect/typing.rs"]
 mod typing;
+#[path = "interconnect/user_completion.rs"]
+mod user_completion;
 #[path = "interconnect/utilities.rs"]
 mod utilities;
 #[path = "interconnect/verification.rs"]
@@ -194,6 +196,7 @@ struct App {
     emoji_management_writes: HashSet<u64>,
     emoji_catalog: std::sync::Arc<emoji_picker::Catalog>,
     emoji_completion: emoji_completion::State,
+    user_completion: user_completion::State,
     topic_editor: Option<topic::State>,
     members: members::State,
     membership: membership::State,
@@ -248,6 +251,7 @@ enum Message {
     EmojiManagement(emoji_management::Event),
     Attachment(attachments::Event),
     EmojiCompletion(emoji_completion::Event),
+    UserCompletion(user_completion::Event),
     Space(Scope),
     Section(String),
     RoomSearch(room_search::Event),
@@ -385,6 +389,7 @@ impl App {
             emoji_management_writes: HashSet::new(),
             emoji_catalog: std::sync::Arc::new(emoji_picker::unicode().clone()),
             emoji_completion: emoji_completion::State::default(),
+            user_completion: user_completion::State::default(),
             topic_editor: None,
             members: members::State::default(),
             membership: membership::State::default(),
@@ -559,6 +564,7 @@ impl App {
                         markdown_composer::Event::Mode(_) | markdown_composer::Event::Preview(_)
                     )
                     | Message::EmojiCompletion(_)
+                    | Message::UserCompletion(_)
                     | Message::DeleteWord(..)
                     | Message::Editing(
                         message_edit::Event::Start(_)
@@ -616,6 +622,7 @@ impl App {
                         | Message::ContextMenu(_)
                         | Message::ComposerEmoji(_)
                         | Message::EmojiCompletion(_)
+                        | Message::UserCompletion(_)
                         | Message::Reaction(_)
                         | Message::CreateRoom(_)
                         | Message::NewChat(_)
@@ -745,6 +752,7 @@ impl App {
                 self.reaction_picker = None;
                 self.composer_picker = None;
                 self.emoji_completion.clear();
+                self.user_completion.clear();
             }
             let task = self.settings_update(event);
             self.publish_notification_context();
@@ -772,6 +780,7 @@ impl App {
                 | Message::WindowFocused(false)
         ) {
             self.emoji_completion.clear();
+            self.user_completion.clear();
         }
         if matches!(message, Message::Escape)
             && let Some(state) = &self.composer_picker
@@ -782,6 +791,11 @@ impl App {
             && let Some(state) = &self.reaction_picker
         {
             return self.update(state.dismiss());
+        }
+        if matches!(message, Message::Escape)
+            && let Some(dismiss) = self.user_completion.dismiss()
+        {
+            return self.update(dismiss);
         }
         if matches!(message, Message::Escape)
             && let Some(dismiss) = self.emoji_completion.dismiss()
@@ -946,6 +960,7 @@ impl App {
             &message,
             Message::ComposerEmoji(_)
                 | Message::EmojiCompletion(_)
+                | Message::UserCompletion(_)
                 | Message::Reaction(_)
                 | Message::Markdown(_)
                 | Message::Editing(_)
@@ -1028,6 +1043,7 @@ impl App {
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
             Message::EmojiManagement(_) => unreachable!("handled before modal dispatch"),
             Message::EmojiCompletion(event) => action_task = self.emoji_completion_event(event),
+            Message::UserCompletion(event) => action_task = self.user_completion_event(event),
             Message::Image(event) => self.image_event(event),
             Message::Download(event) => action_task = self.download_event(event),
             Message::InlineImagesDemand {
@@ -1378,6 +1394,7 @@ impl App {
                 self.composing = active;
                 if !active && let Some(key) = self.emoji_completion.editing.clone() {
                     self.refresh_emoji_completion(&key);
+                    action_task = self.refresh_user_completion(&key);
                 }
             }
             Message::ResizeComposer {
@@ -1421,6 +1438,7 @@ impl App {
                     }
                     if refresh_completion {
                         self.refresh_emoji_completion(&key);
+                        action_task = self.refresh_user_completion(&key);
                     }
                 }
             }
@@ -1452,7 +1470,8 @@ impl App {
                                 && (interconnect::composition::needs_conversion(
                                     &body,
                                     draft.markdown.format,
-                                ) || !draft.markdown.emoji.is_empty())
+                                ) || !draft.markdown.emoji.is_empty()
+                                    || !draft.markdown.mentions.is_empty())
                             {
                                 let format = draft.markdown.format;
                                 let account = self.account_id.clone();
@@ -1460,10 +1479,11 @@ impl App {
                                 draft.error = None;
                                 self.pending_ops += 1;
                                 return Task::perform(
-                                    interconnect::composition::prepare_with_emoji(
+                                    interconnect::composition::prepare_with_mentions(
                                         body,
                                         format,
                                         draft.markdown.emoji.clone(),
+                                        draft.markdown.mentions.clone(),
                                     ),
                                     move |result| {
                                         Message::Markdown(markdown_composer::Event::DemoSent {
@@ -1480,6 +1500,7 @@ impl App {
                                 draft.attachment.take(),
                             );
                             draft.markdown.emoji.clear();
+                            draft.markdown.mentions.clear();
                             draft.content = text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;
@@ -1496,6 +1517,7 @@ impl App {
                     let body = draft.content.text();
                     let format = draft.markdown.format;
                     let emoji = draft.markdown.emoji.clone();
+                    let mentions = draft.markdown.mentions.clone();
                     let attachment = draft.attachment.clone();
                     let account = self.account_id.clone();
                     draft.pending = true;
@@ -1506,7 +1528,9 @@ impl App {
                             if let Some(attachment) = attachment {
                                 composer.send_attachment(attachment, body).await
                             } else {
-                                composer.send_with_emoji(body, format, emoji).await
+                                composer
+                                    .send_with_mentions(body, format, emoji, mentions)
+                                    .await
                             }
                         },
                         move |result| Message::Sent(key.clone(), account.clone(), result),
@@ -1537,6 +1561,7 @@ impl App {
                         Ok(()) => {
                             draft.attachment = None;
                             draft.markdown.emoji.clear();
+                            draft.markdown.mentions.clear();
                             draft.content = text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;
@@ -1793,6 +1818,7 @@ impl App {
         self.validate_reaction_picker();
         self.validate_composer_picker();
         self.validate_emoji_completion();
+        self.validate_user_completion();
         if self.closing && self.pending_ops == 0 {
             if self.stopped {
                 return iced::exit();
@@ -2246,7 +2272,7 @@ impl App {
                 || self.composer_picker.is_some()
             {
                 Subscription::none()
-            } else if self.emoji_completion.is_active() {
+            } else if self.emoji_completion.is_active() || self.user_completion.is_active() {
                 iced::event::listen_with(emoji_completion::shortcut)
             } else {
                 iced::event::listen_with(|event, _, _| {
@@ -3260,7 +3286,10 @@ impl App {
                 editor = editor
                     .on_action(move |action| Message::Edit(edit_key.clone(), action))
                     .key_binding(move |press| {
-                        self.emoji_completion_binding(&send_key, *generation, &press)
+                        self.user_completion_binding(&send_key, *generation, &press)
+                            .or_else(|| {
+                                self.emoji_completion_binding(&send_key, *generation, &press)
+                            })
                             .or_else(|| {
                                 self.attachment_paste_binding(&send_key, *generation, &press)
                             })

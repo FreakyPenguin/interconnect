@@ -92,6 +92,31 @@ impl Directory {
             ..Default::default()
         })
     }
+    /// Fetch only when mention completion opens; cancellation drops the request.
+    pub async fn mention_members(self, room: String) -> Result<Vec<Person>, String> {
+        let room: matrix_sdk::ruma::OwnedRoomId =
+            room.parse().map_err(|_| "Invalid room".to_owned())?;
+        let room = self
+            .0
+            .get_room(&room)
+            .ok_or_else(|| "Room is unavailable".to_owned())?;
+        let members = tokio::time::timeout(
+            Duration::from_secs(30),
+            room.members(matrix_sdk::RoomMemberships::JOIN),
+        )
+        .await
+        .map_err(|_| "Loading room members timed out".to_owned())?
+        .map_err(|_| "Could not load room members".to_owned())?;
+        Ok(members
+            .into_iter()
+            .take(4096)
+            .map(|member| Person {
+                user_id: member.user_id().to_string(),
+                name: member.name().to_owned(),
+                avatar_url: None,
+            })
+            .collect())
+    }
     pub async fn join_room(self, input: String) -> Result<crate::room_membership::Joined, String> {
         let result = crate::room_membership::join(&self.0, &input).await;
         let _ = self.1.send(());
@@ -242,6 +267,75 @@ mod tests {
         client
     }
 
+    #[tokio::test]
+    async fn mention_members_loads_on_demand_and_returns_only_joined_users() {
+        let server = MockServer::start().await;
+        let client = direct_fixture(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/v3/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "next_batch":"one", "rooms":{"join":{"!room:example.org":{
+                    "state":{"events":[]}, "timeline":{"events":[],"limited":false}
+                }}}
+            })))
+            .mount(&server)
+            .await;
+        client
+            .sync_once(matrix_sdk::config::SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        // Classic sync assumes a full roster; reproduce native sliding sync's lazy state.
+        client
+            .get_room(matrix_sdk::ruma::room_id!("!room:example.org"))
+            .unwrap()
+            .mark_members_missing();
+        let member = |user: &str, membership: &str| {
+            json!({
+                "room_id":"!room:example.org", "type":"m.room.member", "state_key":user, "sender":user, "event_id":format!("${user}"), "origin_server_ts":1,
+                "content":{"membership":membership,"displayname":user,"avatar_url":"mxc://example.org/avatar"}
+            })
+        };
+        Mock::given(method("GET")).and(path("/_matrix/client/v3/rooms/!room:example.org/members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[
+                member("@test:example.org", "join"), member("@maya:example.org", "join"), member("@invite:example.org", "invite"), member("@left:example.org", "leave")
+            ]}))).expect(1).mount(&server).await;
+        let directory = Directory::new(client);
+        assert!(
+            !server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|request| request.url.path().ends_with("/members"))
+        );
+        let people = directory
+            .clone()
+            .mention_members("!room:example.org".into())
+            .await
+            .unwrap();
+        assert_eq!(people.len(), 2);
+        assert!(
+            people
+                .iter()
+                .any(|person| person.user_id == "@maya:example.org")
+        );
+        assert!(people.iter().all(|person| person.avatar_url.is_none()));
+        assert!(
+            directory
+                .mention_members("!missing:example.org".into())
+                .await
+                .is_err()
+        );
+        assert!(
+            !server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|request| request.url.path().contains("/send/")
+                    || request.url.path().ends_with("/createRoom"))
+        );
+    }
     #[tokio::test]
     async fn marking_unopened_room_unread_writes_only_flag_and_reports_errors() {
         let server = MockServer::start().await;

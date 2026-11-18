@@ -38,8 +38,7 @@ Existing modal, busy-operation, and lifecycle guards apply. Other links still us
 the system opener. No member lookup, subscription, or timer is added.
 
 Plain `@name`, `@room`, and bare Matrix URLs are not inferred to be mentions.
-Room/event links retain normal link styling. Mention completion and authoring
-remain future work.
+Room/event links retain normal link styling.
 
 ## Inline images and local embedded assets
 
@@ -100,6 +99,46 @@ The original source is the Matrix `body`; generated HTML is `formatted_body` wit
 `org.matrix.custom.html`. The SDK owns queue admission, encryption, relations,
 local echoes, and retries. No full tables, syntax highlighting, WYSIWYG editing,
 inline-image authoring, or formatted media captions are implemented.
+
+## User mention composition
+
+Typing `@` at a token boundary opens a room-user popup in the focused room/thread
+composer. Names and full IDs distinguish duplicate display names. Matching is
+case-insensitive, with exact/prefix matches first and up to six visible choices.
+Up/Down changes selection; Enter/Tab or clicking accepts; Escape dismisses without
+closing a thread. Acceptance inserts the full ID plus a trailing space when at
+line end, preserving adjacent punctuation. It never sends the message. Email
+addresses, URLs, selections, attachments, hidden panes, and IME preedit do not
+open completion. `@room` has no special authoring behavior.
+
+The account's existing directory handle loads joined members on demand, with a
+30-second deadline and at most 4096 projected people. There is no directory-wide
+search, avatar download, member subscription, or polling timer. Each completion
+session retains its member snapshot; closing/navigation cancels the load and
+releases it. Request, account, conversation, generation, caret, and source checks
+reject stale results and selections. Failed loads show an error; dismiss/reopen
+to retry. Demo suggestions stay local and never create an SDK client.
+
+Explicit choices bind full IDs in the draft (at most 256), persisted with its
+encrypted source. Old draft files default to no chosen mentions. Preview, Send,
+and edit preparation share the bounded worker: chosen IDs become Matrix user
+anchors in Markdown and Plain modes, and only anchors actually emitted add IDs
+to `m.mentions`. Code, raw HTML, existing links, and image alternatives stay
+literal. Manually typing an ID without choosing it does not create a mention;
+repeated occurrences of a chosen ID share its binding. Longer/modified IDs do
+not inherit a prefix's identity. Sent messages keep their full-ID plain fallback.
+Existing mention metadata is retained when editing, alongside newly selected IDs.
+
+Editing also recovers display-name anchors received from other clients. Existing
+Markdown mention links keep their source. When a plain fallback cannot represent
+the HTML anchors, the edit draft uses canonical displayed text with explicit
+`[label](Matrix user link)` tokens in Plain mode. Per-token identity bindings keep
+labels (including duplicate names) linked in either composition mode; changing a
+label retains its target. Recovery uses HTML positions rather than guessing IDs
+from names. Arbitrary HTML formatting still follows the existing editing limits.
+These bindings belong to the temporary edit, and cancel/save restores the original
+unsent draft with its own selections. Conversion stays on bounded workers and
+refuses oversized content rather than silently dropping mention bindings.
 
 ## Custom emoji
 

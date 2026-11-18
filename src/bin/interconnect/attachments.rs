@@ -86,6 +86,7 @@ impl App {
             {
                 self.attachment_picker = Some(target.clone());
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 return Task::perform(
                     async move {
                         let result = match rfd::AsyncFileDialog::new()
@@ -111,6 +112,7 @@ impl App {
             {
                 self.attachment_picker = Some(target.clone());
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 return Task::perform(Attachment::from_path(path), move |result| {
                     Message::Attachment(Event::Picked(target.clone(), result.map(Some)))
                 });
@@ -137,6 +139,7 @@ impl App {
                     cursor: draft.content.cursor(),
                 });
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 return Task::perform(clipboard::read(), move |result| {
                     Message::Attachment(Event::Pasted(target.clone(), result))
                 });
@@ -163,7 +166,9 @@ impl App {
                         ))
                     });
                 }
+                let key = target.key.clone();
                 self.finish_paste(target, result);
+                return self.refresh_user_completion(&key);
             }
             Event::Picked(target, result) if self.attachment_picker.as_ref() == Some(&target) => {
                 self.attachment_picker = None;

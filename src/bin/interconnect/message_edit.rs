@@ -54,6 +54,7 @@ impl App {
         }
         if restored {
             self.emoji_completion.clear();
+            self.user_completion.clear();
         }
     }
     pub(super) fn validate_redacted_edits(&mut self) {
@@ -156,11 +157,14 @@ impl App {
                 };
                 draft.markdown.format = source.format;
                 draft.markdown.emoji = source.emoji;
+                draft.markdown.mentions = source.mentions;
+                draft.markdown.mention_links = source.mention_links;
                 draft
                     .content
                     .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
                 self.drafts.insert(key.clone(), draft);
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 self.composer_picker = None;
                 return focus(&key);
             }
@@ -218,6 +222,7 @@ impl App {
                 {
                     *draft = *editing.saved;
                     self.emoji_completion.clear();
+                    self.user_completion.clear();
                     return focus(&key);
                 }
             }
@@ -315,6 +320,8 @@ impl App {
         let source = draft.content.text();
         let format = draft.markdown.format;
         let emoji = draft.markdown.emoji.clone();
+        let mentions = draft.markdown.mentions.clone();
+        let mention_links = draft.markdown.mention_links.clone();
         let account = self.account_id.clone();
         let demo = self.demo.is_some();
         // A thread original may be projected from the room pane rather than
@@ -340,13 +347,26 @@ impl App {
         Task::perform(
             async move {
                 if demo {
-                    composition::prepare_with_emoji(source, format, emoji)
-                        .await
-                        .map(Some)
+                    composition::prepare_with_mention_links(
+                        source,
+                        format,
+                        emoji,
+                        mentions,
+                        mention_links,
+                    )
+                    .await
+                    .map(Some)
                 } else {
                     composer
                         .unwrap()
-                        .edit_message(event, source, format, emoji)
+                        .edit_message_with_mention_links(
+                            event,
+                            source,
+                            format,
+                            emoji,
+                            mentions,
+                            mention_links,
+                        )
                         .await
                         .map(|()| None)
                 }
@@ -564,6 +584,129 @@ mod tests {
         assert!(app.drafts[&key].editing.is_some());
         assert!(app.message_edit_binding(&key, &press).is_none());
     }
+    #[tokio::test]
+    async fn completion_while_editing_preserves_named_mentions_and_restores_unsent_drafts() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+        for thread in [false, true] {
+            let mut app = demo_app();
+            let _ = app.update(Message::WindowFocused(true));
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let key = app.draft_key(thread).unwrap();
+            let html = "<p>Hello <a href='https://matrix.to/#/@maya:example.org'>Maya Chen</a></p>";
+            let prepared = Prepared {
+                source: "Hello Maya Chen".into(),
+                html: Some(html.into()),
+                document: interconnect::message_document::Document::parse(html)
+                    .map(std::sync::Arc::new),
+                mentions: vec!["@maya:example.org".parse().unwrap()],
+            };
+            app.demo.as_mut().unwrap().send_prepared(&key, prepared);
+            app.refresh_demo();
+            let draft = app.drafts.get_mut(&key).unwrap();
+            draft.content = text_editor::Content::with_text("Unsent @alex:example.org");
+            draft
+                .markdown
+                .mentions
+                .push("@alex:example.org".parse().unwrap());
+            let target = target(&app, thread);
+            let event = target.event.clone();
+            start(&mut app, target);
+            assert_eq!(app.drafts[&key].markdown.mention_links.len(), 1);
+            let _ = app.update(Message::Edit(
+                key.clone(),
+                text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
+                    " and @ju".into(),
+                ))),
+            ));
+            let generation = if thread {
+                app.selection.thread.as_ref().unwrap().0
+            } else {
+                app.selection.room.as_ref().unwrap().0
+            };
+            let press = text_editor::KeyPress {
+                key: Key::Named(Named::Tab),
+                modified_key: Key::Named(Named::Tab),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                modifiers: Modifiers::empty(),
+                text: None,
+                status: text_editor::Status::Focused { is_hovered: false },
+            };
+            let Some(text_editor::Binding::Custom(accept)) =
+                app.user_completion_binding(&key, generation, &press)
+            else {
+                panic!("editing should offer user completion");
+            };
+            let _ = app.update(accept);
+            assert!(!app.drafts[&key].pending);
+            let draft = &app.drafts[&key];
+            let prepared = composition::prepare_with_mention_links(
+                draft.content.text(),
+                draft.markdown.format,
+                draft.markdown.emoji.clone(),
+                draft.markdown.mentions.clone(),
+                draft.markdown.mention_links.clone(),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                prepared
+                    .mentions
+                    .iter()
+                    .map(|id| id.as_str())
+                    .collect::<Vec<_>>(),
+                ["@jules:example.org", "@maya:example.org"]
+            );
+            assert_eq!(
+                prepared
+                    .document
+                    .as_ref()
+                    .unwrap()
+                    .text(&Default::default()),
+                "Hello Maya Chen and @jules:example.org "
+            );
+            let _ = app.update(Message::Send(key.clone()));
+            finish(&mut app, &key, Ok(Some(prepared)));
+            assert!(app.drafts[&key].editing.is_none());
+            assert_eq!(app.drafts[&key].content.text(), "Unsent @alex:example.org");
+            assert_eq!(
+                app.drafts[&key].markdown.mentions[0].as_str(),
+                "@alex:example.org"
+            );
+            let pane = if thread {
+                &app.model.thread
+            } else {
+                &app.model.room
+            };
+            let row = pane
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|row| row.event_id.as_ref() == Some(&event))
+                .unwrap();
+            assert!(row.edited);
+            let document = row.formatted.as_ref().unwrap();
+            let users: Vec<_> = document
+                .blocks
+                .iter()
+                .flat_map(|block| &block.runs)
+                .filter_map(|run| run.style.mention.as_deref())
+                .map(|id| id.as_str())
+                .collect();
+            assert_eq!(users, ["@maya:example.org", "@jules:example.org"]);
+            // A second edit recovers both the old label and the newly inserted ID.
+            let target = self::target(&app, thread);
+            start(&mut app, target);
+            assert!(!app.drafts[&key].markdown.mention_links.is_empty());
+            let _ = app.update(message(Event::Cancel(key.clone())));
+            assert_eq!(app.drafts[&key].content.text(), "Unsent @alex:example.org");
+        }
+    }
+
     #[tokio::test]
     async fn plain_text_and_custom_emoji_keep_their_authoring_mode_and_identity() {
         let mut app = demo_app();

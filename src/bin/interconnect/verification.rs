@@ -51,6 +51,7 @@ impl App {
                 self.reaction_picker = None;
                 self.composer_picker = None;
                 self.emoji_completion.clear();
+                self.user_completion.clear();
                 self.verification.open = true;
                 self.verification.error = None;
                 if self.demo.is_some() {

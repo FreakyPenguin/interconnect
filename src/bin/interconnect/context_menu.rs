@@ -294,6 +294,7 @@ impl App {
                         error: None,
                     });
                     self.emoji_completion.clear();
+                    self.user_completion.clear();
                 }
             }
             Event::Dismiss => {

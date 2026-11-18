@@ -246,6 +246,7 @@ impl App {
                 if self.new_chat.is_none() {
                     self.stop_typing();
                     self.emoji_completion.clear();
+                    self.user_completion.clear();
                     self.generation += 1;
                     self.new_chat = Some(State {
                         request: self.generation,

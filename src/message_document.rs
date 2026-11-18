@@ -300,7 +300,7 @@ pub fn safe_link(value: &str) -> Option<String> {
     }
 }
 /// Only explicit user permalinks are mentions; room/event/web links remain links.
-fn user_mention(link: &str) -> Option<matrix_sdk::ruma::OwnedUserId> {
+pub(crate) fn user_mention(link: &str) -> Option<matrix_sdk::ruma::OwnedUserId> {
     use matrix_sdk::ruma::{MatrixToUri, MatrixUri, matrix_uri::MatrixId};
     let id = if link.starts_with("matrix:") {
         MatrixUri::parse(link).ok()?.id().clone()

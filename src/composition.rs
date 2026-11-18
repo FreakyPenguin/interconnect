@@ -7,6 +7,10 @@ use std::{
     sync::Arc,
 };
 
+mod mentions;
+pub use mentions::MentionLink;
+pub(crate) use mentions::recover_mentions;
+
 const MAX_BYTES: usize = 64 * 1024;
 static CONVERSIONS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 const TOO_COMPLEX: &str =
@@ -23,6 +27,7 @@ pub struct Prepared {
     pub source: String,
     pub html: Option<String>,
     pub document: Option<Arc<Document>>,
+    pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
 }
 impl std::fmt::Debug for Prepared {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -37,6 +42,7 @@ impl Prepared {
             source,
             html: None,
             document: None,
+            mentions: Vec::new(),
         }
     }
     pub fn text_content(&self) -> TextMessageEventContent {
@@ -46,9 +52,16 @@ impl Prepared {
         }
     }
     pub fn message_content(&self) -> RoomMessageEventContent {
-        RoomMessageEventContent::new(matrix_sdk::ruma::events::room::message::MessageType::Text(
-            self.text_content(),
-        ))
+        let content = RoomMessageEventContent::new(
+            matrix_sdk::ruma::events::room::message::MessageType::Text(self.text_content()),
+        );
+        if self.mentions.is_empty() {
+            content
+        } else {
+            content.add_mentions(matrix_sdk::ruma::events::Mentions::with_user_ids(
+                self.mentions.clone(),
+            ))
+        }
     }
 }
 /// A conservative fast path, never a Markdown parser. All possible syntax and
@@ -67,13 +80,37 @@ pub async fn prepare(source: String, format: Format) -> Result<Prepared, String>
 pub async fn prepare_with_emoji(
     source: String,
     format: Format,
+    emoji: Vec<crate::custom_emoji::Selection>,
+) -> Result<Prepared, String> {
+    prepare_with_mentions(source, format, emoji, Vec::new()).await
+}
+pub async fn prepare_with_mentions(
+    source: String,
+    format: Format,
+    emoji: Vec<crate::custom_emoji::Selection>,
+    mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+) -> Result<Prepared, String> {
+    prepare_with_mention_links(source, format, emoji, mentions, Vec::new()).await
+}
+pub async fn prepare_with_mention_links(
+    source: String,
+    format: Format,
     mut emoji: Vec<crate::custom_emoji::Selection>,
+    mut mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    mention_links: Vec<MentionLink>,
 ) -> Result<Prepared, String> {
     emoji.retain(|choice| !choice.token.is_empty() && source.contains(&choice.token));
+    mentions.retain(|user| source.contains(user.as_str()));
+    mentions.sort();
+    mentions.dedup();
     if source.trim().is_empty() {
         return Err("Message is empty".into());
     }
-    if !needs_conversion(&source, format) && emoji.is_empty() {
+    if !needs_conversion(&source, format)
+        && emoji.is_empty()
+        && mentions.is_empty()
+        && mention_links.is_empty()
+    {
         return Ok(Prepared::plain(source));
     }
     if source.len() > MAX_BYTES {
@@ -85,20 +122,23 @@ pub async fn prepare_with_emoji(
         .map_err(|_| "Formatting is unavailable".to_owned())?;
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        convert_with_emoji(source, format, emoji)
+        convert_with_choices(source, format, emoji, mentions, mention_links)
     })
     .await
     .map_err(|_| "Could not format message".to_owned())?
 }
-fn convert_with_emoji(
+fn convert_with_choices(
     source: String,
     format: Format,
     emoji: Vec<crate::custom_emoji::Selection>,
+    mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    mention_links: Vec<MentionLink>,
 ) -> Result<Prepared, String> {
     if source.len() > MAX_BYTES {
         return Err(TOO_COMPLEX.into());
     }
-    if emoji.len() > 256 {
+    let mention_links = mentions::refresh_links(&source, &mention_links);
+    if emoji.len() > 256 || mentions.len() > 256 || mention_links.len() > 256 {
         return Err(TOO_COMPLEX.into());
     }
     // Protect explicit choices before CommonMark sees underscores in shortcodes.
@@ -107,18 +147,34 @@ fn convert_with_emoji(
     let mut markers = Vec::new();
     let mut protected = source.clone();
     let mut available = ('\u{e000}'..='\u{f8ff}').filter(|ch| !source.contains(*ch));
+    // Protect complete recovered anchors first; IDs inside their destinations
+    // must never be mistaken for newly typed full-ID mentions.
+    for link in &mention_links {
+        let marker = available.next().ok_or_else(|| TOO_COMPLEX.to_owned())?;
+        protected = protected.replace(&link.token, &marker.to_string());
+        markers.push((marker, Choice::Link(link)));
+    }
     for choice in &emoji {
         if choice.token.is_empty() || !choice.emoji.uri.is_valid() {
             continue;
         }
         let marker = available.next().ok_or_else(|| TOO_COMPLEX.to_owned())?;
         protected = protected.replace(&choice.token, &marker.to_string());
-        markers.push((marker, choice));
+        markers.push((marker, Choice::Emoji(choice)));
     }
+    // Longest IDs first prevent a shorter selected ID from consuming a prefix.
+    let mut users: Vec<_> = mentions.iter().collect();
+    users.sort_by_key(|user| std::cmp::Reverse(user.as_str().len()));
+    for user in users {
+        let marker = available.next().ok_or_else(|| TOO_COMPLEX.to_owned())?;
+        protected = protect_user(&protected, user.as_str(), marker);
+        markers.push((marker, Choice::User(user)));
+    }
+    let mut mentioned = std::collections::BTreeSet::new();
     let restore = |text: &str| {
         let mut text = text.to_owned();
         for (marker, choice) in &markers {
-            text = text.replace(*marker, &choice.token);
+            text = text.replace(*marker, choice.token());
         }
         text
     };
@@ -169,8 +225,14 @@ fn convert_with_emoji(
                 code = false;
                 Event::End(TagEnd::CodeBlock)
             }
-            Event::Text(ref text) if !code && image_depth == 0 && !emoji.is_empty() => {
-                emoji_text(text, &markers, &mut events);
+            Event::Text(ref text) if !code && image_depth == 0 && !markers.is_empty() => {
+                selected_text(
+                    text,
+                    &markers,
+                    &mut events,
+                    &mut mentioned,
+                    links.is_empty(),
+                );
                 if events.len() > 4096 {
                     return Err(TOO_COMPLEX.into());
                 }
@@ -240,6 +302,7 @@ fn convert_with_emoji(
         source,
         html: Some(html),
         document: Some(Arc::new(document)),
+        mentions: mentioned.into_iter().collect(),
     })
 }
 fn escaped(text: &str) -> String {
@@ -249,10 +312,53 @@ fn escaped(text: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
 }
-fn emoji_text<'a>(
+fn protect_user(source: &str, user: &str, marker: char) -> String {
+    let mut output = String::new();
+    let mut copied = 0;
+    for (start, _) in source.match_indices(user) {
+        let end = start + user.len();
+        let before = source[..start].chars().next_back();
+        let after = &source[end..];
+        let boundary = before.is_none_or(|c| {
+            c.is_whitespace() || matches!(c, '(' | '[' | '{' | '\'' | '"' | '`' | '*' | '~')
+        }) && (after.chars().next().is_none_or(|c| {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    ',' | ';' | '!' | '?' | ')' | ']' | '}' | '`' | '*' | '~' | '\'' | '"'
+                )
+        }) || after
+            .strip_prefix('.')
+            .is_some_and(|tail| tail.is_empty() || tail.starts_with(char::is_whitespace)));
+        if boundary {
+            output.push_str(&source[copied..start]);
+            output.push(marker);
+            copied = end;
+        }
+    }
+    output.push_str(&source[copied..]);
+    output
+}
+enum Choice<'a> {
+    Emoji(&'a crate::custom_emoji::Selection),
+    User(&'a matrix_sdk::ruma::OwnedUserId),
+    Link(&'a MentionLink),
+}
+impl Choice<'_> {
+    fn token(&self) -> &str {
+        match self {
+            Self::Emoji(choice) => &choice.token,
+            Self::User(user) => user.as_str(),
+            Self::Link(link) => &link.token,
+        }
+    }
+}
+fn selected_text<'a>(
     text: &str,
-    choices: &[(char, &crate::custom_emoji::Selection)],
+    choices: &[(char, Choice<'_>)],
     events: &mut Vec<Event<'a>>,
+    mentioned: &mut std::collections::BTreeSet<matrix_sdk::ruma::OwnedUserId>,
+    allow_users: bool,
 ) {
     let mut start = 0;
     for (offset, ch) in text.char_indices() {
@@ -262,6 +368,53 @@ fn emoji_text<'a>(
         if offset > start {
             events.push(Event::Text(text[start..offset].to_owned().into()));
         }
+        if let Choice::Link(link) = choice {
+            if allow_users {
+                events.push(Event::InlineHtml(
+                    format!(
+                        "<a href=\"{}\">{}</a>",
+                        escaped(&link.user_id.matrix_to_uri().to_string()),
+                        escaped(&link.label).replace('\n', "<br>")
+                    )
+                    .into(),
+                ));
+                mentioned.insert(link.user_id.clone());
+            } else {
+                events.push(Event::Text(link.token.clone().into()));
+            }
+            start = offset + ch.len_utf8();
+            if events.len() > 4096 {
+                return;
+            }
+            continue;
+        }
+        if let Choice::User(user) = choice {
+            if !allow_users {
+                events.push(Event::Text(user.as_str().to_owned().into()));
+                start = offset + ch.len_utf8();
+                if events.len() > 4096 {
+                    return;
+                }
+                continue;
+            }
+            events.push(Event::InlineHtml(
+                format!(
+                    "<a href=\"{}\">{}</a>",
+                    escaped(&user.matrix_to_uri().to_string()),
+                    escaped(user.as_str())
+                )
+                .into(),
+            ));
+            mentioned.insert((*user).clone());
+            start = offset + ch.len_utf8();
+            if events.len() > 4096 {
+                return;
+            }
+            continue;
+        }
+        let Choice::Emoji(choice) = choice else {
+            unreachable!()
+        };
         let emoji = &choice.emoji;
         events.push(Event::InlineHtml(
             format!(
@@ -311,6 +464,75 @@ mod tests {
     use crate::message_document::{BlockKind, Inline};
     use std::collections::BTreeSet;
 
+    #[tokio::test]
+    async fn selected_users_emit_links_and_notification_metadata_in_both_modes() {
+        let user: matrix_sdk::ruma::OwnedUserId = "@maya:example.org".parse().unwrap();
+        for format in [Format::Plain, Format::Markdown] {
+            let prepared = prepare_with_mentions(
+                "Hi \"@maya:example.org\" and @maya:example.org! @room @other:example.org".into(),
+                format,
+                vec![],
+                vec![user.clone(), user.clone()],
+            )
+            .await
+            .unwrap();
+            assert_eq!(prepared.mentions, vec![user.clone()]);
+            let wire = serde_json::to_value(prepared.message_content()).unwrap();
+            assert_eq!(
+                wire["m.mentions"]["user_ids"],
+                serde_json::json!(["@maya:example.org"])
+            );
+            assert!(wire["m.mentions"].get("room").is_none());
+            assert_eq!(
+                wire["formatted_body"]
+                    .as_str()
+                    .unwrap()
+                    .matches("<a href=")
+                    .count(),
+                2
+            );
+            assert_eq!(
+                prepared.document.unwrap().text(&Default::default()),
+                prepared.source
+            );
+        }
+        assert!(
+            prepare("@maya:example.org".into(), Format::Plain)
+                .await
+                .unwrap()
+                .mentions
+                .is_empty()
+        );
+    }
+    #[tokio::test]
+    async fn mention_choices_stay_literal_in_code_html_links_and_image_alternatives() {
+        let user: matrix_sdk::ruma::OwnedUserId = "@maya:example.org".parse().unwrap();
+        for source in [
+            "`@maya:example.org`",
+            "```\n@maya:example.org\n```",
+            "[else](https://example.org/@maya:example.org)",
+            "[@maya:example.org](https://example.org)",
+            "![alt @maya:example.org](https://example.org/image)",
+            "<span title=\"@maya:example.org\">literal</span>",
+        ] {
+            let prepared =
+                prepare_with_mentions(source.into(), Format::Markdown, vec![], vec![user.clone()])
+                    .await
+                    .unwrap();
+            assert!(prepared.mentions.is_empty(), "{source}");
+            assert!(!prepared.html.unwrap().contains("matrix.to"), "{source}");
+        }
+        let prepared = prepare_with_mentions(
+            "@maya:example.org.evil @maya:example.orgsuffix x@maya:example.org".into(),
+            Format::Plain,
+            vec![],
+            vec![user],
+        )
+        .await
+        .unwrap();
+        assert!(prepared.mentions.is_empty());
+        assert!(prepared.html.unwrap().contains("@maya:example.orgsuffix"));
+    }
     fn choice(shortcode: &str) -> crate::custom_emoji::Selection {
         crate::custom_emoji::Selection {
             token: format!(":{shortcode}:"),

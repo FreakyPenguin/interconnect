@@ -11,6 +11,8 @@ use std::sync::Arc;
 pub struct State {
     pub format: Format,
     pub emoji: Vec<interconnect::custom_emoji::Selection>,
+    pub mentions: Vec<matrix_sdk::ruma::OwnedUserId>,
+    pub mention_links: Vec<composition::MentionLink>,
     request: u64,
     task: Option<iced::task::Handle>,
     preview: Option<Preview>,
@@ -153,6 +155,8 @@ impl App {
                 let request = state.request;
                 let format = state.format;
                 let emoji = state.emoji.clone();
+                let mentions = state.mentions.clone();
+                let mention_links = state.mention_links.clone();
                 state.preview = Some(Preview {
                     source: source.clone(),
                     format,
@@ -160,9 +164,15 @@ impl App {
                 });
                 let (task, handle) = Task::perform(
                     async move {
-                        composition::prepare_with_emoji(source, format, emoji)
-                            .await
-                            .map(Arc::new)
+                        composition::prepare_with_mention_links(
+                            source,
+                            format,
+                            emoji,
+                            mentions,
+                            mention_links,
+                        )
+                        .await
+                        .map(Arc::new)
                     },
                     move |result| {
                         Message::Markdown(Event::Prepared {
@@ -216,6 +226,7 @@ impl App {
                         Ok(prepared) => {
                             self.demo.as_mut().unwrap().send_prepared(&key, prepared);
                             draft.markdown.emoji.clear();
+                            draft.markdown.mentions.clear();
                             draft.content = iced::widget::text_editor::Content::new();
                             draft.markdown.clear_preview();
                             draft.error = None;
