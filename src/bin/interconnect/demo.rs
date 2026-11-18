@@ -546,6 +546,11 @@ impl Demo {
         }
         match key.room.as_str() {
             "empty" | "loading" | "error" => vec![],
+            "general" => vec![
+                message("hello", "Maya Chen", "A fresh space for ideas, questions, and the occasional good link."),
+                message("hello2", "Jamie Davis", "Glad to be here. What are we working on today?"),
+                message("$preview-message", "Alex Rivera", "This is the destination of the semantic message link in Message formatting."),
+            ],
             "images" => {
                 let mut sample = message("sample-image", "Maya Chen", "A static image preview, entirely in memory.");
                 sample.image = Some(attachment(false));
@@ -596,6 +601,8 @@ impl Demo {
                     row
                 },
                 formatted("format-room-links", "<p>Continue in <a href='https://matrix.to/#/!demo-general:example.org?via=example.org'>#General</a> or use its <a href='https://matrix.to/#/%23general%3Aexample.org'>#general alias</a>.</p><p>An unfamiliar room: <a href='matrix:roomid/unknown:example.org?via=example.org'>#Another room</a>. قبل <a href='https://matrix.to/#/!demo-general:example.org'>#General</a> אחרי. <span data-mx-spoiler><a href='https://matrix.to/#/!demo-general:example.org'>#Hidden room</a></span></p>"),
+                root("matrix-link-previews", "Maya Chen", "Matrix destinations: https://matrix.to/#/!demo-general:example.org/$preview-message https://matrix.to/#/%23general%3Aexample.org https://matrix.to/#/@maya:example.org", 1),
+                formatted("matrix-link-preview-reply", "<p>A linked message: <a href='https://matrix.to/#/!demo-general:example.org/$preview-message'><b>read </b>the original</a>. A hidden destination: <span data-mx-spoiler><a href='https://matrix.to/#/!demo-general:example.org/$preview-message'>secret message</a></span></p>"),
                 formatted("format-links", "<p><a href='https://spec.matrix.org/'>Matrix specification</a> — hover to inspect the destination; drag to select.</p><p>The ending is <span data-mx-spoiler>hidden <b>until revealed</b></span>. Select and copy before and after revealing.</p>"),
                 root("bare-links", "Alex Rivera", "Bare links: https://example.org/docs?q=café&lang=en, (https://en.wikipedia.org/wiki/Matrix_(protocol)).\nTry www.matrix.org too; drag to select without opening.", 1),
                 reply("bare-link-reply", "bare-links", "Maya Chen", "Thread links also work: https://spec.matrix.org/"),

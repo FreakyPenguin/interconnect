@@ -20,6 +20,7 @@ pub type LocalImages = Arc<HashMap<u64, iced::widget::image::Handle>>;
 pub struct Assets {
     pub remote: Snapshot<Key>,
     pub local: LocalImages,
+    pub links: super::link_preview::Metadata,
 }
 impl Assets {
     pub fn handle<'a>(

@@ -47,6 +47,8 @@ mod images;
 mod inline_image;
 #[path = "interconnect/invite.rs"]
 mod invite;
+#[path = "interconnect/link_preview.rs"]
+mod link_preview;
 #[path = "interconnect/login.rs"]
 mod login;
 #[path = "interconnect/markdown_composer.rs"]
@@ -2125,6 +2127,19 @@ impl App {
         inline_image::Assets {
             remote: self.model.images.clone(),
             local: self.local_inline.clone(),
+            links: link_preview::Metadata {
+                rooms: self.model.rooms.clone(),
+                spaces: self.model.spaces.clone(),
+                members: self
+                    .model
+                    .members
+                    .as_ref()
+                    .map(|members| members.rows.clone())
+                    .unwrap_or_default(),
+                rows: [self.model.room.as_ref(), self.model.thread.as_ref()]
+                    .map(|pane| pane.map(|pane| pane.rows.clone()).unwrap_or_default()),
+                demo: self.demo.is_some(),
+            },
         }
     }
     fn refresh_media_demand(&mut self) {

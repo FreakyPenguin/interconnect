@@ -426,6 +426,30 @@ coordinate translation, ordinary-text menus, hidden spoilers, and edited-link
 revalidation. Native clipboard and visual acceptance require the manual checks
 above; these steps do not claim they have been run.
 
+### Semantic Matrix link pills
+
+In demo **Message formatting**, inspect the Matrix destinations examples. Message
+links render as **Message in General**, room links as **#General**, and raw user
+links as **@Maya Chen** when that display name is already available. Each pill
+has a small initial avatar. Unknown users/rooms fall back to their full Matrix
+IDs; no profile, room, avatar, or message fetch is triggered by rendering a link.
+Existing authored user/room mention labels remain intact. Ordinary web links and
+URLs inside code remain literal. Split bold/italic message-link labels produce
+one pill, and hidden spoilers conceal the destination until revealed.
+
+Check both themes, room/thread messages, pinned messages, composer previews,
+RTL/emoji names, long names, and narrow widths. Pills should wrap as single units
+and clip inside the text viewport. Hover and **Copy link URL** must expose the
+original URL; clicking keeps internal navigation. Drag selection must not open a
+link. Text copy retains the original URL or authored anchor text even when a pill
+shows a shorter summary. Metadata/name changes must refresh summaries without
+changing canonical copy offsets, drafts, or saved conversation reading positions.
+
+Automated fixtures cover local-name/ID resolution, invalid/host-lookalike URLs,
+source-copy offsets, atomic hit testing, split anchors, spoiler/code exclusion,
+metadata refresh, stable repeated layouts, and light/dark rendering. Native
+appearance and measured idle-resource acceptance require manual validation.
+
 ### Opening Matrix permalinks
 
 Click labeled and bare matrix.to links in room/thread messages, pinned messages,

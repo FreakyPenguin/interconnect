@@ -1,6 +1,6 @@
 //! Native formatted text. A single paragraph layout supplies drawing, hit-testing,
 //! decorations and selection geometry; the editor stores only logical positions.
-use super::{Message, emoji, inline_image, shell};
+use super::{Message, emoji, inline_image, link_preview, shell};
 use iced::advanced::{
     Renderer as _, layout, renderer,
     text::{self, Paragraph as _, Renderer as _},
@@ -9,7 +9,12 @@ use iced::{Font, Point, Rectangle, Size, Vector, font};
 use interconnect::message_document::{
     self as document, Block, BlockKind, Document, ImageSource, Inline,
 };
-use std::{cell::RefCell, collections::BTreeSet, ops::Range, sync::Arc};
+use std::{
+    cell::RefCell,
+    collections::{BTreeSet, HashMap},
+    ops::Range,
+    sync::Arc,
+};
 use unicode_segmentation::UnicodeSegmentation;
 
 type Paragraph = iced::advanced::graphics::text::Paragraph;
@@ -18,6 +23,7 @@ struct LaidBlock {
     paragraph: inline_image::Paragraph,
     offsets: Vec<Offset>,
     images: Vec<LaidImage>,
+    links: Vec<LaidLink>,
     bounds: Rectangle,
     range: Range<usize>,
     block: Block,
@@ -30,7 +36,7 @@ struct LaidBlock {
 struct Offset {
     shaped: Range<usize>,
     canonical: Range<usize>,
-    image: bool,
+    atomic: bool,
 }
 #[derive(Debug)]
 struct LaidImage {
@@ -40,6 +46,13 @@ struct LaidImage {
     canonical: Range<usize>,
     placeholder: Paragraph,
 }
+#[derive(Debug)]
+struct LaidLink {
+    chip: link_preview::Chip,
+    bounds: Rectangle,
+    run: usize,
+    canonical: Range<usize>,
+}
 impl LaidBlock {
     fn canonical(&self, offset: usize) -> usize {
         for mapping in &self.offsets {
@@ -47,7 +60,7 @@ impl LaidBlock {
                 if offset <= mapping.shaped.start {
                     return mapping.canonical.start;
                 }
-                return if mapping.image {
+                return if mapping.atomic {
                     mapping.canonical.end
                 } else {
                     mapping.canonical.start + offset - mapping.shaped.start
@@ -65,6 +78,8 @@ pub struct State {
     width: Option<f32>,
     mode: interconnect::settings::ThemeMode,
     image_metrics: Vec<inline_image::Metrics>,
+    link_metadata: Option<link_preview::Metadata>,
+    summaries: HashMap<String, link_preview::Summary>,
     pub assets: inline_image::Assets,
     pub pressed: Option<Point>,
     pub focused: bool,
@@ -81,6 +96,8 @@ impl State {
             width: None,
             mode: interconnect::settings::ThemeMode::Light,
             image_metrics: Vec::new(),
+            link_metadata: None,
+            summaries: HashMap::new(),
             assets: inline_image::Assets::default(),
             pressed: None,
             focused: false,
@@ -99,6 +116,30 @@ impl State {
         }
     }
     pub fn layout(&mut self, width: f32) -> layout::Node {
+        if self
+            .link_metadata
+            .as_ref()
+            .is_none_or(|metadata| !metadata.same(&self.assets.links))
+        {
+            let summaries: HashMap<_, _> = self
+                .document
+                .blocks
+                .iter()
+                .flat_map(|block| &block.runs)
+                .filter_map(|run| run.style.link.as_ref())
+                .filter_map(|link| {
+                    self.assets
+                        .links
+                        .summary(link)
+                        .map(|summary| (link.clone(), summary))
+                })
+                .collect();
+            if self.summaries != summaries {
+                self.width = None;
+            }
+            self.summaries = summaries;
+            self.link_metadata = Some(self.assets.links.clone());
+        }
         let active_theme = super::appearance::theme(self.mode);
         let theme = &active_theme;
         let mut image_metrics = Vec::new();
@@ -141,7 +182,31 @@ impl State {
             self.image_metrics = image_metrics;
             self.blocks.clear();
             let mut image_index = 0;
-            let visible = self.document.visible_blocks(&self.revealed);
+            let mut visible = self.document.visible_blocks(&self.revealed);
+            // A styled anchor can contain several text runs. Its summary is one
+            // object, while its canonical copy text remains the entire anchor label.
+            for block in &mut visible {
+                let mut merged: Vec<document::Run> = Vec::new();
+                for run in std::mem::take(&mut block.runs) {
+                    let summary = run
+                        .style
+                        .link
+                        .as_ref()
+                        .and_then(|link| self.summaries.get(link));
+                    if summary.is_some_and(|summary| summary.replaces(&run))
+                        && let Some(previous) = merged.last_mut()
+                        && previous.style.link == run.style.link
+                        && previous.style.spoilers == run.style.spoilers
+                        && summary.is_some_and(|summary| summary.replaces(previous))
+                        && let Inline::Text(text) = &mut previous.content
+                    {
+                        text.push_str(run.content.text());
+                    } else {
+                        merged.push(run);
+                    }
+                }
+                block.runs = merged;
+            }
             let mut y = 0.0;
             for (block, range) in visible.iter().zip(document::block_ranges(&visible)) {
                 let inset =
@@ -170,19 +235,45 @@ impl State {
                 let mut objects = Vec::new();
                 let mut object_runs = Vec::new();
                 let mut offsets = Vec::new();
+                let mut chips = HashMap::new();
                 let mut shaped_offset = 0;
                 let mut canonical_offset = 0;
                 for (i, run) in block.runs.iter().enumerate() {
                     let text_len = run.content.text().len();
                     let image = matches!(run.content, Inline::Image { .. });
-                    let shaped_len = if image { "\u{fffc}".len() } else { text_len };
+                    let chip = run
+                        .style
+                        .link
+                        .as_ref()
+                        .and_then(|link| self.summaries.get(link))
+                        .filter(|summary| summary.replaces(run))
+                        .filter(|_| {
+                            run.style
+                                .spoilers
+                                .iter()
+                                .all(|id| self.revealed.contains(id))
+                        })
+                        .map(|summary| link_preview::Chip::new(summary, paragraph_width));
+                    let atomic = image || chip.is_some();
+                    let shaped_len = if atomic { "\u{fffc}".len() } else { text_len };
                     offsets.push(Offset {
                         shaped: shaped_offset..shaped_offset + shaped_len,
                         canonical: canonical_offset..canonical_offset + text_len,
-                        image,
+                        atomic,
                     });
                     shaped_offset += shaped_len;
                     canonical_offset += text_len;
+                    if let Some(chip) = chip {
+                        objects.push(inline_image::Object {
+                            span: spans.len(),
+                            metrics: chip.metrics,
+                        });
+                        object_runs.push(i);
+                        chips.insert(i, chip);
+                        spans.push(text::Span::new("\u{fffc}"));
+                        runs.push(i);
+                        continue;
+                    }
                     if image {
                         let metrics = self.image_metrics[image_index];
                         image_index += 1;
@@ -283,6 +374,7 @@ impl State {
                 let paragraph =
                     inline_image::Paragraph::with_spans(&spans, paragraph_width, size, &objects);
                 let mut images = Vec::new();
+                let mut links = Vec::new();
                 for (object, run_index) in objects.iter().zip(object_runs) {
                     for line in paragraph.buffer().layout_runs() {
                         if let Some(glyph) = line
@@ -290,6 +382,22 @@ impl State {
                             .iter()
                             .find(|glyph| glyph.metadata == object.span)
                         {
+                            if let Some(chip) = chips.remove(&run_index) {
+                                links.push(LaidLink {
+                                    bounds: Rectangle::new(
+                                        Point::new(
+                                            glyph.x,
+                                            line.line_y - object.metrics.size.height
+                                                + object.metrics.descent,
+                                        ),
+                                        object.metrics.size,
+                                    ),
+                                    chip,
+                                    run: run_index,
+                                    canonical: offsets[run_index].canonical.clone(),
+                                });
+                                continue;
+                            }
                             let Inline::Image { source, .. } = &block.runs[run_index].content
                             else {
                                 continue;
@@ -337,6 +445,7 @@ impl State {
                     paragraph,
                     offsets,
                     images,
+                    links,
                     bounds: Rectangle::new(
                         Point::new(x, y + padding),
                         Size::new((width - x - padding).max(1.0), height),
@@ -375,24 +484,31 @@ impl State {
             return block.range.start;
         }
         let image_point = Point::ORIGIN + (point - block.bounds.position());
-        if let Some(image) = block
+        let object = block
             .images
             .iter()
-            .find(|image| image.bounds.contains(image_point))
-        {
+            .map(|image| (image.bounds, image.run, &image.canonical))
+            .chain(
+                block
+                    .links
+                    .iter()
+                    .map(|link| (link.bounds, link.run, &link.canonical)),
+            )
+            .find(|(bounds, _, _)| bounds.contains(image_point));
+        if let Some((bounds, run, canonical)) = object {
             let rtl = block
                 .paragraph
                 .buffer()
                 .layout_runs()
                 .flat_map(|line| line.glyphs)
-                .find(|g| block.runs.get(g.metadata) == Some(&image.run))
+                .find(|g| block.runs.get(g.metadata) == Some(&run))
                 .is_some_and(|g| g.level.is_rtl());
-            let after = image_point.x >= image.bounds.center_x();
+            let after = image_point.x >= bounds.center_x();
             return block.range.start
                 + if after != rtl {
-                    image.canonical.end
+                    canonical.end
                 } else {
-                    image.canonical.start
+                    canonical.start
                 };
         }
         let local = point - block.bounds.position();
@@ -475,6 +591,13 @@ impl State {
                 .images
                 .iter()
                 .any(|image| image.run == run && image.bounds.contains(local))
+        {
+            return None;
+        }
+        if block
+            .links
+            .iter()
+            .any(|link| link.run == run && !link.bounds.contains(local))
         {
             return None;
         }
@@ -641,7 +764,9 @@ impl State {
                 let Some(run) = block.block.runs.get(*run_index) else {
                     continue;
                 };
-                if matches!(run.content, Inline::Image { .. }) {
+                if matches!(run.content, Inline::Image { .. })
+                    || block.links.iter().any(|link| link.run == *run_index)
+                {
                     continue;
                 }
                 let style = &run.style;
@@ -704,6 +829,7 @@ impl State {
                 for glyph in line.glyphs {
                     if block.runs.get(glyph.metadata).is_some_and(|run| {
                         matches!(block.block.runs[*run].content, Inline::Image { .. })
+                            || block.links.iter().any(|link| link.run == *run)
                     }) {
                         continue;
                     }
@@ -749,6 +875,19 @@ impl State {
                 viewport,
                 shell::palette(theme).ink,
             );
+            for link in &block.links {
+                let selected = selection.iter().chain(&highlights).any(|range| {
+                    block.range.start + link.canonical.start < range.end
+                        && block.range.start + link.canonical.end > range.start
+                });
+                link.chip.draw(
+                    renderer,
+                    link.bounds + (bounds.position() - Point::ORIGIN),
+                    viewport,
+                    theme,
+                    selected,
+                );
+            }
             for image in &block.images {
                 let image_bounds = image.bounds + (bounds.position() - Point::ORIGIN);
                 if !image_bounds.intersects(&viewport) {
@@ -880,6 +1019,138 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matrix_link_chips_preserve_source_copy_hit_targets_spoilers_and_metadata_updates() {
+        let event = "https://matrix.to/#/!design:example.org/$message?via=example.org";
+        let room = "https://matrix.to/#/%23design%3Aexample.org";
+        let user = "https://matrix.to/#/@maya:example.org";
+        let document = Arc::new(Document::parse(&format!(
+            "<p>Read <a href='{event}'><b>the </b>message</a> please.</p><p><a href='{room}'>{room}</a> and <a href='{user}'>{user}</a></p><p><span data-mx-spoiler><a href='{event}'>secret</a></span></p><pre><code>{event}</code></pre>"
+        )).unwrap());
+        for width in [100.0, 320.0] {
+            let mut state = State::new(document.clone());
+            state.assets.links.rooms = Arc::new(vec![interconnect::navigation::RoomEntry {
+                id: "!design:example.org".into(),
+                name: "Design notes".into(),
+                canonical_alias: Some("#design:example.org".into()),
+                ..Default::default()
+            }]);
+            let canonical = state.text();
+            let first = state.layout(width).bounds();
+            assert_eq!(
+                state
+                    .blocks
+                    .iter()
+                    .map(|block| block.links.len())
+                    .sum::<usize>(),
+                3
+            );
+            assert!(state.blocks[2].links.is_empty());
+            assert!(state.blocks[3].links.is_empty());
+            for block in &state.blocks {
+                for link in &block.links {
+                    assert!(link.bounds.width <= width);
+                    let point = link.bounds.center() + (block.bounds.position() - Point::ORIGIN);
+                    let target = state.link_at(point).unwrap();
+                    assert!([event, room, user].contains(&target));
+                    let hit = state.hit(point);
+                    assert!(
+                        hit == block.range.start + link.canonical.start
+                            || hit == block.range.start + link.canonical.end
+                    );
+                }
+            }
+            let chip = &state.blocks[0].links[0];
+            let point = chip.bounds.center() + (state.blocks[0].bounds.position() - Point::ORIGIN);
+            let mut messages = Vec::new();
+            assert!(!state.activate(point, &mut |message| messages.push(message)));
+            assert!(matches!(&messages[..], [Message::OpenMessageLink(url)] if url == event));
+            let buffer = state.blocks[0].paragraph.buffer() as *const _;
+            assert_eq!(state.layout(width).bounds(), first);
+            assert_eq!(
+                state.blocks[0].paragraph.buffer() as *const _,
+                buffer,
+                "unchanged metadata does not reshape"
+            );
+            assert_eq!(state.text(), canonical);
+            Arc::make_mut(&mut state.assets.links.rooms)[0].name = "Renamed café 👩🏽‍💻 العربية".into();
+            state.layout(width);
+            assert_eq!(
+                state.summaries[event].label,
+                "Message in Renamed café 👩🏽‍💻 العربية"
+            );
+            assert_eq!(state.text(), canonical);
+            state.set_theme(interconnect::settings::ThemeMode::Dark);
+            let size = Size::new(width, state.layout(width).bounds().height.ceil());
+            let mut renderer = crate::test_renderer(Font::with_name("Inter"), iced::Pixels(14.0));
+            renderer.reset(Rectangle::with_size(size));
+            state.draw(
+                &mut renderer,
+                Point::ORIGIN,
+                Rectangle::with_size(size),
+                Some(0..canonical.len()),
+                None,
+            );
+            assert_eq!(
+                state.layout(width).bounds().height.ceil(),
+                size.height,
+                "draw keeps layout stable"
+            );
+            if let Ok(path) = std::env::var("INTERCONNECT_LINK_PREVIEW")
+                && width == 320.0
+            {
+                renderer.reset(Rectangle::with_size(size));
+                state.draw(
+                    &mut renderer,
+                    Point::ORIGIN,
+                    Rectangle::with_size(size),
+                    None,
+                    None,
+                );
+                let iced::Renderer::Secondary(software) = &mut renderer else {
+                    panic!("software renderer");
+                };
+                let mut pixels = tiny_skia::Pixmap::new(width as u32, size.height as u32).unwrap();
+                let mut mask = tiny_skia::Mask::new(width as u32, size.height as u32).unwrap();
+                software.draw(
+                    &mut pixels.as_mut(),
+                    &mut mask,
+                    &iced::advanced::graphics::Viewport::with_physical_size(
+                        Size::new(width as u32, size.height as u32),
+                        1.0,
+                    ),
+                    &[Rectangle::with_size(size)],
+                    iced::Color::from_rgb8(24, 26, 28),
+                );
+                let rgba: Vec<u8> = pixels
+                    .data()
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .flat_map(|p| [p[2], p[1], p[0], p[3]])
+                    .collect();
+                image::save_buffer(
+                    path,
+                    &rgba,
+                    width as u32,
+                    size.height as u32,
+                    image::ColorType::Rgba8,
+                )
+                .unwrap();
+            }
+            let spoiler = &state.blocks[2];
+            let point = spoiler.paragraph.span_bounds(0)[0].center()
+                + (spoiler.bounds.position() - Point::ORIGIN);
+            assert!(state.link_at(point).is_none());
+            assert!(state.activate(point, &mut |_| panic!("revealing must not navigate")));
+            state.layout(width);
+            assert_eq!(state.blocks[2].links.len(), 1);
+            let chip = &state.blocks[2].links[0];
+            let point = chip.bounds.center() + (state.blocks[2].bounds.position() - Point::ORIGIN);
+            assert_eq!(state.link_at(point), Some(event));
+        }
+    }
 
     #[test]
     fn syntax_colors_preserve_unicode_copy_offsets_wrapping_and_theme_cache() {

@@ -333,10 +333,7 @@ impl App {
             Some(Ok(prepared)) => selectable::preview_view(
                 &prepared.source,
                 prepared.document.as_ref(),
-                super::inline_image::Assets {
-                    remote: self.model.images.clone(),
-                    local: self.local_inline.clone(),
-                },
+                self.inline_assets(),
                 self.settings.current.appearance.theme,
             ),
         };
