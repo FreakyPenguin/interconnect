@@ -425,6 +425,20 @@ coordinate translation, ordinary-text menus, hidden spoilers, and edited-link
 revalidation. Native clipboard and visual acceptance require the manual checks
 above; these steps do not claim they have been run.
 
+### Copying message permalinks
+
+With an authorized connected profile, right-click a room message and choose
+**Copy message URL**. Paste into the composer and confirm the matrix.to URL
+identifies that room and event. Repeat on a thread original and a thread reply:
+the reply link must identify the reply event. Check opening the link in another
+Matrix client with access to the room, including an encrypted conversation.
+Copying must preserve drafts and reading positions. Pending messages without a
+server event ID and synthetic demo IDs do not offer this action.
+
+Automated fixtures cover room/reply destinations, URL escaping, invalid IDs, and
+stale conversation generations. Native clipboard and cross-client navigation
+require the manual checks above; those checks have not been established here.
+
 ## Navigation and timelines
 
 - Rapidly switch rooms/threads, then paginate or send. Late results must not

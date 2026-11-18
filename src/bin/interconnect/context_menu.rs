@@ -303,6 +303,15 @@ impl App {
                     return Vec::new();
                 };
                 let mut actions = vec![("Copy text", Action::Copy(row.body.clone()))];
+                if let (Ok(room), Ok(event)) = (
+                    matrix_sdk::ruma::RoomId::parse(&target.room),
+                    matrix_sdk::ruma::EventId::parse(&target.event),
+                ) {
+                    actions.push((
+                        "Copy message URL",
+                        Action::Copy(room.matrix_to_event_uri(event).to_string()),
+                    ));
+                }
                 if self.can_reply(target) {
                     actions.push((
                         "Reply",
@@ -911,6 +920,73 @@ mod tests {
             app.validate_context_menu();
             assert!(app.context_menu.is_none());
         }
+    }
+
+    #[test]
+    fn message_urls_identify_room_events_and_thread_replies_and_reject_stale_targets() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Thread("review".into()));
+        let synthetic = target(&app, false, "review");
+        assert!(!app.context_actions(&synthetic).is_empty());
+        assert!(
+            !app.context_actions(&synthetic)
+                .iter()
+                .any(|(label, _)| *label == "Copy message URL")
+        );
+        app.selection.room.as_mut().unwrap().1 = "!room:example.org".into();
+        for (thread, old_event, event) in [
+            (false, "review", "$root:example.org"),
+            (true, "review-reply-1", "$reply/with+symbols"),
+        ] {
+            let pane = if thread {
+                &mut app.model.thread
+            } else {
+                &mut app.model.room
+            };
+            std::sync::Arc::make_mut(&mut pane.as_mut().unwrap().rows)
+                .iter_mut()
+                .find(|row| row.event_id.as_deref() == Some(old_event))
+                .unwrap()
+                .event_id = Some(event.into());
+            let message = target(&app, thread, event);
+            open(&mut app, &message);
+            let actions = app.context_actions(&message);
+            let url = actions
+                .iter()
+                .find_map(|(label, action)| match action {
+                    Action::Copy(value) if *label == "Copy message URL" => Some(value),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(url.starts_with("https://matrix.to/#/"));
+            let parsed = matrix_sdk::ruma::MatrixToUri::parse(url).unwrap();
+            assert_eq!(
+                parsed.id(),
+                &matrix_sdk::ruma::matrix_uri::MatrixId::Event(
+                    matrix_sdk::ruma::RoomOrAliasId::parse("!room:example.org").unwrap(),
+                    matrix_sdk::ruma::EventId::parse(event).unwrap(),
+                )
+            );
+            choose(&mut app, &message, "Copy message URL");
+            assert!(app.context_menu.is_none());
+            let mut stale = message.clone();
+            if let Target::Message(target) = &mut stale {
+                target.generation += 1;
+            }
+            assert!(app.context_actions(&stale).is_empty());
+        }
+        std::sync::Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows)
+            .iter_mut()
+            .find(|row| row.event_id.as_deref() == Some("$root:example.org"))
+            .unwrap()
+            .event_id = Some("local-only".into());
+        let local = target(&app, false, "local-only");
+        assert!(!app.context_actions(&local).is_empty());
+        assert!(
+            !app.context_actions(&local)
+                .iter()
+                .any(|(label, _)| *label == "Copy message URL")
+        );
     }
 
     #[test]
