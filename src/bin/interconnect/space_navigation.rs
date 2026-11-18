@@ -240,13 +240,13 @@ impl App {
         let length = self.location_path().len();
         let width = self.window_width.unwrap_or(1280.0);
         let start = first_crumb(length, width);
-        [HOME.into(), ROOTS.into()]
+        ["space-sidebar".into(), HOME.into(), ROOTS.into()]
             .into_iter()
             .chain(
                 (start.saturating_sub(usize::from(start > 0 && width >= 500.0))..length)
                     .map(crumb_id),
             )
-            .chain(["space-sidebar".into(), ACCOUNT.into()])
+            .chain([ACCOUNT.into()])
             .collect()
     }
     fn child_spaces(&self, parent: &[String]) -> Vec<String> {
@@ -755,6 +755,15 @@ impl App {
             Message::ToggleNavigation,
             enabled,
         );
+        let toggle = super::tooltips::tooltip(
+            toggle,
+            if self.navigation_visible(width) {
+                "Hide room sidebar"
+            } else {
+                "Show room sidebar"
+            },
+            iced::widget::tooltip::Position::Bottom,
+        );
         let demo: Element<'_, Message> = if self.demo.is_some() {
             text("Demo").size(10).style(shell::muted_text).into()
         } else {
@@ -762,11 +771,10 @@ impl App {
         };
         container(
             row![
-                // Lay out the fixed account/sidebar controls first, then give
-                // the breadcrumb trail the remaining width as icons arrive.
+                toggle,
+                // Give the breadcrumb trail the width between the fixed controls.
                 container(trail).width(Length::Fill).clip(true),
                 demo,
-                toggle,
                 account
             ]
             .spacing(6)
@@ -1220,11 +1228,22 @@ mod tests {
     fn breadcrumb_bar_fits_narrow_windows_has_home_and_account_and_no_idle_timer() {
         #[derive(Default)]
         struct Probe {
+            toggle: Option<iced::Rectangle>,
             home: Option<iced::Rectangle>,
             account: Option<iced::Rectangle>,
             crumbs: Vec<iced::Rectangle>,
         }
         impl widget::Operation for Probe {
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _state: &mut dyn widget::operation::Focusable,
+            ) {
+                if id == Some(&"space-sidebar".into()) {
+                    self.toggle = Some(bounds);
+                }
+            }
             fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
                 visit(self);
             }
@@ -1264,7 +1283,9 @@ mod tests {
             );
             let home = probe.home.unwrap();
             let account = probe.account.unwrap();
-            assert!(home.width >= 20.0 && home.x < 30.0);
+            let toggle = probe.toggle.unwrap();
+            assert!(toggle.width >= 20.0 && toggle.x < 30.0);
+            assert!(home.width >= 20.0 && home.x >= toggle.x + toggle.width);
             assert!(
                 account.width >= 30.0 && account.x > home.x,
                 "account squeezed at {width}: {account:?}; crumbs: {:?}",

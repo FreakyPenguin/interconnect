@@ -39,6 +39,7 @@ and focuses its breadcrumb without switching the open room or thread. Escape
 cancels and returns to the composer. Tab refocuses search. Ctrl+P switches to
 room search; Ctrl+Shift+P switches back to space search.
 
+The room sidebar toggle is the leftmost control, before Home.
 The Home button returns to the root; the arrow beside it opens the complete
 space tree. Each breadcrumb opens the spaces at that level, including its peers.
 The account avatar is at the right of the bar. Long paths retain the current

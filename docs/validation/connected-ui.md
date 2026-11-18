@@ -326,6 +326,13 @@ not establish native Keychain prompts or policy. CI lifecycle tests avoid Keycha
 
 ## Home navigation
 
+Check that the room sidebar toggle is the leftmost navigation control, before
+Home, with the sidebar both visible and hidden. Hover it to check the tooltip
+reads **Hide room sidebar** when visible and **Show room sidebar** when hidden.
+Keyboard traversal through the bar must follow the same order; activating the
+toggle must preserve the open
+conversation, draft, and reading position.
+
 Home defaults to joined rooms outside joined spaces, including only DMs outside
 spaces. **Include subspaces** makes Home show all joined rooms. In a space, off
 shows only directly linked rooms; on includes all descendants once. Toggle a
