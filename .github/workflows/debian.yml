@@ -61,16 +61,12 @@ jobs:
           "$CARGO_HOME/bin/rustup" show active-toolchain
           "$CARGO_HOME/bin/rustc" --version --verbose
 
-      - name: Cache Cargo downloads
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+      - name: Cache compiled Rust dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          path: |
-            /opt/cargo/registry/index
-            /opt/cargo/registry/cache
-            /opt/cargo/git/db
-          key: debian-stable-cargo-downloads-${{ hashFiles('Cargo.lock') }}
-          restore-keys: |
-            debian-stable-cargo-downloads-
+          # Keep native build environments and profiles in separate caches.
+          key: debian-stable-release
+          cache-bin: false
 
       - name: Build release client
         run: cargo build --locked --release --bin interconnect
