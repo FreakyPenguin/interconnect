@@ -25,6 +25,14 @@ pub(super) enum Kind {
     Bookmark,
     BookmarkFilled,
     Close,
+    Check,
+    ChevronLeft,
+    ArrowLeft,
+    Refresh,
+    Download,
+    OpenExternal,
+    Play,
+    Stop,
     ChevronDown,
     ChevronUp,
     ChevronRight,
@@ -168,10 +176,56 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                     line(&[(5.0, 12.0), (19.0, 12.0)]);
                     line(&[(12.0, 5.0), (12.0, 19.0)]);
                 }
+                Check => line(&[(5.0, 12.0), (10.0, 17.0), (20.0, 7.0)]),
                 Close => {
                     line(&[(6.0, 6.0), (18.0, 18.0)]);
                     line(&[(18.0, 6.0), (6.0, 18.0)]);
                 }
+                ChevronLeft => line(&[(15.0, 6.0), (9.0, 12.0), (15.0, 18.0)]),
+                ArrowLeft => {
+                    line(&[(10.0, 5.0), (3.0, 12.0), (10.0, 19.0)]);
+                    line(&[(3.0, 12.0), (21.0, 12.0)]);
+                }
+                Refresh => {
+                    line(&[(21.0, 4.0), (21.0, 10.0), (15.0, 10.0)]);
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(Point::new(21.0, 10.0));
+                            p.bezier_curve_to(
+                                Point::new(18.0, -1.0),
+                                Point::new(3.0, 2.0),
+                                Point::new(3.0, 12.0),
+                            );
+                            p.bezier_curve_to(
+                                Point::new(3.0, 22.0),
+                                Point::new(18.0, 25.0),
+                                Point::new(21.0, 15.0),
+                            );
+                        }),
+                        stroke,
+                    );
+                }
+                Download => {
+                    line(&[(12.0, 3.0), (12.0, 15.0)]);
+                    line(&[(7.0, 10.0), (12.0, 15.0), (17.0, 10.0)]);
+                    line(&[(4.0, 16.0), (4.0, 21.0), (20.0, 21.0), (20.0, 16.0)]);
+                }
+                OpenExternal => {
+                    line(&[(14.0, 3.0), (21.0, 3.0), (21.0, 10.0)]);
+                    line(&[(21.0, 3.0), (10.0, 14.0)]);
+                    line(&[
+                        (10.0, 4.0),
+                        (4.0, 4.0),
+                        (4.0, 20.0),
+                        (20.0, 20.0),
+                        (20.0, 14.0),
+                    ]);
+                }
+                Play => line(&[(7.0, 3.0), (21.0, 12.0), (7.0, 21.0), (7.0, 3.0)]),
+                Stop => frame.stroke(
+                    &Path::rectangle(Point::new(5.0, 5.0), Size::new(14.0, 14.0)),
+                    stroke,
+                ),
                 ChevronDown => line(&[(6.0, 9.0), (12.0, 15.0), (18.0, 9.0)]),
                 ChevronUp => line(&[(6.0, 15.0), (12.0, 9.0), (18.0, 15.0)]),
                 ChevronRight => line(&[(9.0, 6.0), (15.0, 12.0), (9.0, 18.0)]),

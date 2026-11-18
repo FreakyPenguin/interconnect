@@ -305,7 +305,11 @@ impl App {
                     container(
                         column![
                             text("Could not load this image").size(14),
-                            button("Retry").on_press(Message::Image(Event::Retry))
+                            super::tooltips::icon_button(
+                                super::icons::Kind::Refresh,
+                                "Retry loading image",
+                                Some(Message::Image(Event::Retry))
+                            )
                         ]
                         .spacing(12),
                     )
@@ -325,18 +329,11 @@ impl App {
                     iced::widget::tooltip::Position::Bottom,
                 ))
                 .width(Length::Fill),
-                container(
-                    button(
-                        row![
-                            super::icons::icon(super::icons::Kind::Close),
-                            text("Close").size(13)
-                        ]
-                        .spacing(5)
-                        .align_y(iced::Alignment::Center)
-                    )
-                    .on_press(Message::Image(Event::Close))
-                    .style(shell::quiet_button)
-                )
+                container(super::tooltips::icon_button(
+                    super::icons::Kind::Close,
+                    "Close image viewer",
+                    Some(Message::Image(Event::Close))
+                ))
                 .id("image-viewer-close")
             ]
             .spacing(12)
@@ -351,13 +348,19 @@ impl App {
                     Ok(_) => {
                         let playing = view.playback.is_some();
                         row![
-                            button(if playing { "Stop GIF" } else { "Play GIF" })
-                                .style(shell::quiet_button)
-                                .on_press(Message::Image(if playing {
+                            super::tooltips::icon_button(
+                                if playing {
+                                    super::icons::Kind::Stop
+                                } else {
+                                    super::icons::Kind::Play
+                                },
+                                if playing { "Stop GIF" } else { "Play GIF" },
+                                Some(Message::Image(if playing {
                                     Event::Stop
                                 } else {
                                     Event::Play
                                 })),
+                            ),
                             text(match self.settings.current.media.gif_playback {
                                 GifPlayback::Once =>
                                     "One loop · click image to play or stop".to_owned(),
@@ -763,7 +766,8 @@ mod tests {
         let close = bounds.0.unwrap();
         assert!(close.x >= 0.0 && close.x + close.width <= size.width);
         assert!(close.y >= 0.0 && close.y + close.height <= size.height);
-        assert!(close.width >= 50.0);
+        // Icon controls retain a usable target without reserving a text label.
+        assert!(close.width >= 32.0 && close.height >= 32.0);
         assert_eq!(app.image_subscription().units(), 0);
     }
 

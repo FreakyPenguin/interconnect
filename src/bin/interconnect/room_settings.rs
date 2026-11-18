@@ -512,13 +512,17 @@ impl App {
                     .direction(shell::scrollbar())
                     .style(shell::scroll_style),
                 row![
-                    button("Reload")
-                        .style(shell::quiet_button)
-                        .on_press_maybe((!busy).then_some(message(Event::Reload))),
+                    super::tooltips::icon_button(
+                        super::icons::Kind::Refresh,
+                        "Reload room settings",
+                        (!busy).then_some(message(Event::Reload))
+                    ),
                     iced::widget::space().width(Length::Fill),
-                    button("Close")
-                        .style(shell::quiet_button)
-                        .on_press(message(Event::Close))
+                    super::tooltips::icon_button(
+                        super::icons::Kind::Close,
+                        "Close room settings",
+                        Some(message(Event::Close))
+                    )
                 ]
                 .spacing(8)
             ]
@@ -555,9 +559,11 @@ fn setting<'a>(
         text(label).size(12).style(shell::muted_text),
         row![
             container(control).width(Length::Fill),
-            button("Save")
-                .style(shell::quiet_button)
-                .on_press_maybe(changed.then_some(message(Event::Save(field))))
+            super::tooltips::icon_button(
+                super::icons::Kind::Check,
+                "Save",
+                changed.then_some(message(Event::Save(field)))
+            )
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center)

@@ -497,9 +497,11 @@ impl App {
         let state = &self.global_search;
         let heading = row![
             shell::title("Search messages", 20).width(Length::Fill),
-            button(text("Back").size(13))
-                .style(shell::quiet_button)
-                .on_press(message(Event::Close))
+            super::tooltips::icon_button(
+                super::icons::Kind::ArrowLeft,
+                "Back to conversation",
+                Some(message(Event::Close))
+            )
         ]
         .align_y(iced::Alignment::Center);
         let input = text_input("Search across all rooms…", &state.query)
@@ -510,13 +512,18 @@ impl App {
             .size(13)
             .padding([7, 10])
             .style(shell::search_style);
-        let search = button(text("Search").size(13))
+        let search = button(super::icons::icon(super::icons::Kind::Search))
             .padding([7, 14])
             .style(shell::primary_button)
             .on_press_maybe(
                 (!state.query.trim().is_empty() && !self.closing && !self.stopped)
                     .then_some(message(Event::Submit)),
             );
+        let search = super::tooltips::tooltip(
+            search,
+            "Search messages",
+            iced::widget::tooltip::Position::Top,
+        );
         let coverage = if self.demo.is_some() {
             "Search all demo conversations. Results stay on this device."
         } else {

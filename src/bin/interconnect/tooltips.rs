@@ -34,3 +34,19 @@ pub(super) fn tooltip<'a, Message: 'a>(
         ..Default::default()
     })
 }
+
+/// Compact, static icon control with the action name available on hover.
+pub(super) fn icon_button<'a, Message: Clone + 'a>(
+    kind: super::icons::Kind,
+    label: &'a str,
+    on_press: Option<Message>,
+) -> iced_tooltip::Tooltip<'a, Message> {
+    tooltip(
+        iced::widget::button(super::icons::icon(kind))
+            .padding(7)
+            .style(super::shell::icon_button)
+            .on_press_maybe(on_press),
+        label,
+        iced_tooltip::Position::Top,
+    )
+}

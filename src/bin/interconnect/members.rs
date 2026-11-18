@@ -160,9 +160,11 @@ impl App {
                 container(
                     column![
                         text(error).size(13),
-                        button(text("Retry").size(12))
-                            .style(shell::quiet_button)
-                            .on_press(message(Event::Retry))
+                        super::tooltips::icon_button(
+                            super::icons::Kind::Refresh,
+                            "Retry loading members",
+                            Some(message(Event::Retry))
+                        )
                     ]
                     .spacing(8),
                 )
@@ -293,8 +295,12 @@ impl App {
                 .members
                 .page
                 .min(filtered.saturating_sub(1) / PAGE_SIZE);
-            let mut previous = button(text("Previous").size(12)).style(shell::quiet_button);
-            let mut next = button(text("Next").size(12)).style(shell::quiet_button);
+            let mut previous = button(super::icons::icon(super::icons::Kind::ChevronLeft))
+                .padding(7)
+                .style(shell::icon_button);
+            let mut next = button(super::icons::icon(super::icons::Kind::ChevronRight))
+                .padding(7)
+                .style(shell::icon_button);
             if page > 0 {
                 previous = previous.on_press(message(Event::Page(page - 1)));
             }
@@ -304,9 +310,17 @@ impl App {
             content = content.push(
                 container(
                     row![
-                        previous,
+                        super::tooltips::tooltip(
+                            previous,
+                            "Previous page",
+                            iced::widget::tooltip::Position::Top
+                        ),
                         text(format!("{} / {}", page + 1, filtered.div_ceil(PAGE_SIZE))).size(12),
-                        next
+                        super::tooltips::tooltip(
+                            next,
+                            "Next page",
+                            iced::widget::tooltip::Position::Top
+                        )
                     ]
                     .spacing(12)
                     .align_y(iced::Alignment::Center),

@@ -282,7 +282,9 @@ impl App {
             if preview {
                 card = card.push(self.image_preview(message, thread, generation));
             } else {
-                let mut view = button(text("View image").size(12)).style(shell::quiet_button);
+                let mut view = button(icons::icon(icons::Kind::Eye))
+                    .padding(7)
+                    .style(shell::icon_button);
                 if !self.closing && !self.stopped {
                     view = view.on_press(Message::Image(super::images::Event::Open {
                         thread,
@@ -290,7 +292,11 @@ impl App {
                         row: message.key.clone(),
                     }));
                 }
-                card = card.push(view);
+                card = card.push(super::tooltips::tooltip(
+                    view,
+                    "View image",
+                    iced::widget::tooltip::Position::Top,
+                ));
             }
         }
         card = card
@@ -327,16 +333,30 @@ impl App {
             row: message.key.clone(),
             attachment,
         };
-        let mut open = button(text("Open externally").size(12)).style(shell::quiet_button);
-        let mut save = button(text("Save as…").size(12)).style(shell::quiet_button);
+        let mut open = button(icons::icon(icons::Kind::OpenExternal))
+            .padding(7)
+            .style(shell::icon_button);
+        let mut save = button(icons::icon(icons::Kind::Download))
+            .padding(7)
+            .style(shell::icon_button);
         if self.downloads.pending.is_none() && self.download_valid(&target) {
             open = open.on_press(Message::Download(Event::Start(target.clone(), false)));
             save = save.on_press(Message::Download(Event::Start(target.clone(), true)));
         }
         let mut content = column![
             row![
-                container(open).id(format!("attachment-open:{}", message.key)),
-                container(save).id(format!("attachment-save:{}", message.key))
+                container(super::tooltips::tooltip(
+                    open,
+                    "Open externally",
+                    iced::widget::tooltip::Position::Top
+                ))
+                .id(format!("attachment-open:{}", message.key)),
+                container(super::tooltips::tooltip(
+                    save,
+                    "Save as…",
+                    iced::widget::tooltip::Position::Top
+                ))
+                .id(format!("attachment-save:{}", message.key))
             ]
             .spacing(6)
         ]

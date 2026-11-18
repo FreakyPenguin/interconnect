@@ -418,14 +418,12 @@ impl App {
                         .on_press(message(Event::Conversation(entry.pointer.clone()))),
                 );
             }
-            actions = actions.push(
-                button(text("Remove bookmark").size(12))
-                    .style(shell::quiet_button)
-                    .on_press_maybe(
-                        self.bookmarks_available()
-                            .then(|| message(Event::Remove(entry.pointer.clone()))),
-                    ),
-            );
+            actions = actions.push(super::tooltips::icon_button(
+                super::icons::Kind::BookmarkFilled,
+                "Remove bookmark",
+                self.bookmarks_available()
+                    .then(|| message(Event::Remove(entry.pointer.clone()))),
+            ));
             let mut content: iced::widget::Column<'_, Message> =
                 column![super::single_line::label(name, 14).font(iced::Font {
                     weight: iced::font::Weight::Semibold,
@@ -458,18 +456,18 @@ impl App {
             );
         }
         if self.bookmarks.start() > 0 {
-            entries = entries.push(
-                button("Previous page")
-                    .style(shell::quiet_button)
-                    .on_press(message(Event::Previous)),
-            );
+            entries = entries.push(super::tooltips::icon_button(
+                super::icons::Kind::ChevronLeft,
+                "Previous page",
+                Some(message(Event::Previous)),
+            ));
         }
         if self.model.bookmarks.entries.len() > self.bookmarks.limit.max(20) {
-            entries = entries.push(
-                button("Next page")
-                    .style(shell::quiet_button)
-                    .on_press(message(Event::More)),
-            );
+            entries = entries.push(super::tooltips::icon_button(
+                super::icons::Kind::ChevronRight,
+                "Next page",
+                Some(message(Event::More)),
+            ));
         }
         column![
             self.room_column(
@@ -479,14 +477,16 @@ impl App {
                             weight: iced::font::Weight::Semibold,
                             ..iced::Font::with_name("Inter")
                         }),
-                        button(text("Refresh").size(13))
-                            .padding([7, 10])
-                            .style(shell::quiet_button)
-                            .on_press(message(Event::Refresh)),
-                        button(text("Back").size(13))
-                            .padding([7, 10])
-                            .style(shell::quiet_button)
-                            .on_press(message(Event::Close))
+                        super::tooltips::icon_button(
+                            super::icons::Kind::Refresh,
+                            "Refresh saved messages",
+                            Some(message(Event::Refresh))
+                        ),
+                        super::tooltips::icon_button(
+                            super::icons::Kind::ArrowLeft,
+                            "Back to conversation",
+                            Some(message(Event::Close))
+                        )
                     ]
                     .spacing(8)
                     .align_y(iced::Alignment::Center)

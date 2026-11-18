@@ -267,10 +267,11 @@ impl App {
             input,
             row![
                 send,
-                button(text("Close").size(13))
-                    .padding([7, 10])
-                    .style(shell::quiet_button)
-                    .on_press(message(Event::Cancel))
+                super::tooltips::icon_button(
+                    super::icons::Kind::Close,
+                    "Close invitations",
+                    Some(message(Event::Cancel))
+                )
             ]
             .spacing(8)
         ]

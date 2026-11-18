@@ -35,6 +35,25 @@ Screenshots in the README use only demo data. Capture an ordinary conversation
 with a thread and a separate account-wide search view; keep window size and
 renderer consistent, and check the exported images for clipping or private data.
 
+### Icon controls
+
+In Light and Dark, check search and saved-message headers, saved-message removal,
+member/emoji pagination, room-settings save/reload/close, invitation dismissal, and
+attachment/image-viewer controls. Familiar actions use static outline icons;
+hover each to verify its action tooltip. Check hover and disabled colors, and
+that each control remains easy to target at 1400×900 and 640×480. Search submission,
+back/close, page boundaries, retry, attachment open/save, and GIF play/stop must
+preserve their previous behavior. GIF playback must still stop explicitly;
+icons themselves must not animate or schedule timers.
+
+Keep room/thread drafts and an older reading position while opening and closing
+these surfaces. Room-settings rows use a checkmark with a Save tooltip; verify
+it enables only for a changed, writable field and saves that field. Application
+Settings Save/Cancel, membership decisions, verification choices,
+and other actions that need explanatory wording retain text labels. These are
+manual acceptance steps; automated widget tests do not establish native desktop
+appearance or measured idle-resource acceptance.
+
 ### Room settings
 
 Open the sliders icon beside Members in Studio. Edit and save name/topic, switch

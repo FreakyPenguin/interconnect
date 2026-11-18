@@ -399,8 +399,12 @@ pub fn view<'a, Message: Clone + 'static>(
     }))
     .spacing(3)
     .wrap();
-    let mut previous = button(text("‹").size(16)).style(shell::quiet_button);
-    let mut next = button(text("›").size(16)).style(shell::quiet_button);
+    let mut previous = button(super::icons::icon(super::icons::Kind::ChevronLeft))
+        .padding(7)
+        .style(shell::icon_button);
+    let mut next = button(super::icons::icon(super::icons::Kind::ChevronRight))
+        .padding(7)
+        .style(shell::icon_button);
     if enabled && state.page > 0 {
         previous = previous.on_press(on_event(Event::Page(false)));
     }
@@ -411,9 +415,11 @@ pub fn view<'a, Message: Clone + 'static>(
         row![
             text("Emoji").size(14),
             iced::widget::space().width(Length::Fill),
-            button(super::icons::icon(super::icons::Kind::Close))
-                .style(shell::quiet_button)
-                .on_press(on_event(Event::Close))
+            super::tooltips::icon_button(
+                super::icons::Kind::Close,
+                "Close emoji picker",
+                Some(on_event(Event::Close))
+            )
         ]
         .align_y(iced::Alignment::Center),
         search,
@@ -442,7 +448,11 @@ pub fn view<'a, Message: Clone + 'static>(
         )
         .push(
             row![
-                previous,
+                super::tooltips::tooltip(
+                    previous,
+                    "Previous page",
+                    iced::widget::tooltip::Position::Top
+                ),
                 text(format!(
                     "{} / {}",
                     (state.page + 1).min(state.pages()),
@@ -450,7 +460,7 @@ pub fn view<'a, Message: Clone + 'static>(
                 ))
                 .size(11)
                 .style(shell::muted_text),
-                next
+                super::tooltips::tooltip(next, "Next page", iced::widget::tooltip::Position::Top)
             ]
             .spacing(8)
             .align_y(iced::Alignment::Center),
