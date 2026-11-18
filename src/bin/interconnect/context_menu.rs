@@ -8,6 +8,8 @@ use iced::{
 use interconnect::connected::MessageRow;
 #[path = "section_management.rs"]
 mod section_management;
+#[path = "space_management.rs"]
+pub(super) mod space_management;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
@@ -52,6 +54,7 @@ enum Action {
     RemoveSection,
     Sections,
     MarkUnread,
+    RemoveFromSpace,
     Copy(String),
     Dispatch(Box<Message>),
 }
@@ -256,6 +259,9 @@ impl App {
                         "Copy room link",
                         Action::Copy(room.matrix_to_uri().to_string()),
                     ));
+                }
+                if self.removable_space(id).is_some() {
+                    actions.push(("Remove room from space", Action::RemoveFromSpace));
                 }
                 actions.push((
                     "Leave room…",
@@ -504,6 +510,7 @@ impl App {
                             self.open_section_form(action)
                         }
                         Action::MarkUnread => self.mark_room_unread(target),
+                        Action::RemoveFromSpace => self.remove_room_from_selected_space(target),
                         Action::Sections => {
                             self.context_menu.as_mut().unwrap().sections = true;
                             Task::none()
@@ -707,7 +714,12 @@ impl App {
                             items.push(control)
                         });
                 if state.pending.is_some() {
-                    items = items.push(text("Saving…").size(12));
+                    let removing = self
+                        .space_management
+                        .as_ref()
+                        .is_some_and(|removal| state.pending == Some(removal.request));
+                    items =
+                        items.push(text(if removing { "Removing…" } else { "Saving…" }).size(12));
                 }
                 if let Some(error) = &state.error {
                     items = items.push(text(error).size(12));

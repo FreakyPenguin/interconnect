@@ -1,7 +1,7 @@
 //! Account navigation is a projection of SDK metadata, independent of open timelines.
 use matrix_sdk::{
     Client,
-    ruma::events::{SyncStateEvent, space::child::SpaceChildEventContent},
+    ruma::events::{StateEventType, SyncStateEvent, space::child::SpaceChildEventContent},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -148,6 +148,8 @@ pub fn sections_from_settings(settings: &serde_json::Value) -> Vec<SectionEntry>
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SpaceEntry {
+    /// Permission to change this space’s direct child links; unknown permissions deny.
+    pub can_manage_rooms: bool,
     pub id: String,
     pub name: String,
     pub avatar_url: Option<matrix_sdk::ruma::OwnedMxcUri>,
@@ -342,6 +344,9 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<Snapshot> {
             children.sort();
             children.dedup();
             spaces.push(SpaceEntry {
+                can_manage_rooms: room.power_levels().await.ok().is_some_and(|levels| {
+                    levels.user_can_send_state(room.own_user_id(), StateEventType::SpaceChild)
+                }),
                 id,
                 name,
                 avatar_url: room.avatar_url(),

@@ -24,6 +24,7 @@ pub mod room_sections;
 pub mod search;
 pub mod session;
 pub mod settings;
+pub mod space_management;
 pub mod sso;
 pub mod syntax;
 pub mod verification;

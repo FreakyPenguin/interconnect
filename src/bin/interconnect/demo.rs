@@ -212,6 +212,7 @@ pub fn spaces() -> Vec<SpaceEntry> {
         id: id.into(),
         name: name.into(),
         avatar_url: None,
+        can_manage_rooms: true,
         children: ROOMS
             .iter()
             .filter(|r| r.space == index + 1)
@@ -241,6 +242,7 @@ pub fn spaces() -> Vec<SpaceEntry> {
             id: id.into(),
             name: name.into(),
             avatar_url: None,
+            can_manage_rooms: true,
             children: children.into_iter().map(String::from).collect(),
         }),
     );

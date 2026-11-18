@@ -134,6 +134,7 @@ mod utilities;
 #[path = "interconnect/verification.rs"]
 mod verification;
 
+use context_menu::space_management;
 use iced::{
     Element, Length, Subscription, Task,
     futures::SinkExt,
@@ -233,6 +234,7 @@ struct App {
     pending_notification: Option<std::sync::Arc<interconnect::notifications::Activation>>,
     new_chat: Option<new_chat::State>,
     create_room: Option<create_room::State>,
+    space_management: Option<space_management::State>,
     create_room_request: Option<u64>,
     pending_created_space: Option<(String, String)>,
     direct_request: Option<u64>,
@@ -255,6 +257,7 @@ enum Message {
     QuickRoom(room_picker::Event),
     NewChat(new_chat::Event),
     CreateRoom(create_room::Event),
+    SpaceManagement(space_management::Event),
     Pin(pin_action::Event),
     TogglePins(u64),
     Topic(topic::Event),
@@ -436,6 +439,7 @@ impl App {
             pending_notification: None,
             new_chat: None,
             create_room: None,
+            space_management: None,
             create_room_request: None,
             pending_created_space: None,
             direct_request: None,
@@ -509,9 +513,13 @@ impl App {
             self.capture_persistent_drafts();
         }
         let save = self.schedule_draft_save();
+        self.validate_space_management();
         Task::batch([task, self.activate_notification(), save])
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
+        if let Message::SpaceManagement(event @ space_management::Event::Completed(..)) = message {
+            return self.space_management_event(event);
+        }
         if matches!(&message, Message::SpaceNavigation(event) if !matches!(event, space_navigation::Event::Dismiss))
             && !self.space_navigation_allowed()
         {
@@ -1129,6 +1137,7 @@ impl App {
             Message::LinkOpened => {}
 
             Message::CreateRoom(event) => action_task = self.create_room_event(event),
+            Message::SpaceManagement(event) => action_task = self.space_management_event(event),
             Message::Bookmark(event) => action_task = self.bookmark_event(event),
             Message::GlobalSearch(event) => action_task = self.global_search_event(event),
             Message::NewChat(event) => action_task = self.new_chat_event(event),

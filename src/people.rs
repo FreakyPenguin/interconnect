@@ -190,6 +190,13 @@ impl Directory {
         let _ = self.1.send(());
         result
     }
+    /// Unlink a direct child without leaving either room or editing child-side state.
+    pub async fn remove_room_from_space(self, space: String, room: String) -> Result<(), String> {
+        let result = crate::space_management::remove_room(&self.0, &space, &room).await;
+        let _ = self.1.send(());
+        result
+    }
+
     /// Account-owned handle supports unopened rooms; serialize explicit moves until server ACK.
     pub async fn move_room_to_section(
         self,

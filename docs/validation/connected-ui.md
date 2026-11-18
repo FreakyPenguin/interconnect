@@ -35,6 +35,39 @@ Screenshots in the README use only demo data. Capture an ordinary conversation
 with a thread and a separate account-wide search view; keep window size and
 renderer consistent, and check the exported images for clipping or private data.
 
+### Remove a room from a space
+
+Select a writable space, right-click a room in the left navigator, and choose
+**Remove room from space**. The action is available only for direct room links;
+rooms shown solely through subspaces cannot be removed from the selected parent.
+It is absent in Home, All rooms, Direct messages, and spaces without
+`m.space.child` permission. There is no separate navigator action or selection mode.
+
+In demo, remove **Design studio** from **Studio**, then from **Design**: it stays
+outside Home while one link remains and appears in Home after the last link is
+removed. Check that shared and nested links remain independent and the open
+room/thread, draft and scroll position survive. Demo changes are local and reset
+on restart. Check Light and Dark and the minimum window size.
+
+In an authorized connected test space, verify that removing a room writes empty
+`via` in the space's `m.space.child`, preserves room membership, sends no messages,
+and leaves the child's `m.space.parent` metadata intact. The navigator follows
+synced state, so acknowledged removals may take a moment to disappear. Room
+visibility in Home is based on remaining links from joined spaces; DMs always
+appear there (and the all-rooms-in-Home preference still applies).
+
+Exercise permission/link changes after opening the menu, offline/server errors,
+and retry. Errors stay in the room menu; success dismisses it. Dismissing the menu,
+changing space/account, permission loss, disconnect, or closing cancels remaining
+work and rejects late results. Already accepted removals may still apply after
+cancellation; inspect the room list before retrying. No polling or animation
+timers are added.
+
+Offline automated tests cover protocol payloads, permission checks, missing links,
+server rejection, menu availability and retry, cancellation, stale results, Home
+visibility, and draft/scroll preservation. Native rendering and real-server sync
+behavior require the manual checks above; they are not established by those tests.
+
 ### Multiple attachments
 
 In demo mode, select several files in one picker, paste a native file list, and
