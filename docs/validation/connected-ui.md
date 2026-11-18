@@ -731,3 +731,17 @@ Automated fixtures cover preview button versus surrounding-image clicks,
 on-demand loading, pending-load cancellation on focus loss, frame deadlines,
 stale ticks, source replacement, viewport departure, and room navigation. Native
 appearance, connected delivery, and measured CPU/wakeups require manual validation.
+
+### Subspace creation
+
+Automated coverage checks typed, unencrypted creation, canonical parent metadata,
+parent permission checks, partial link recovery, and unchanged conversation selection.
+Native/connected acceptance still requires a dedicated test profile:
+
+- Select a writable space and choose **Subspace** in the room-list header.
+- Create private and public subspaces; verify each appears under its parent and
+  the open conversation, draft, and scroll position stay intact.
+- Deny parent child-link permissions before submitting; creation must fail before
+  creating a space. If linking fails after creation, retry linking the same ID.
+- Cancel while pending and switch accounts; late results must not navigate or
+  alter the new account. Confirm demo mode never accesses accounts or the network.

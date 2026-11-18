@@ -9,7 +9,8 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   avatars, aliases, permission editing, encryption changes, bans, upgrades, timed
   mutes and per-room notification sounds are not implemented.
 - Space management supports adding joined rooms to writable spaces and removing
-  direct room links. Creating/editing spaces, managing subspaces, and managing
+  direct room links. Subspaces can be created inside writable spaces. Creating
+  root spaces, editing spaces, and managing
   unjoined children are not implemented. Link changes leave room membership
   and child-side parent metadata intact.
 - Deletion requires a synced message-like event with an event ID. Cancelling unsent

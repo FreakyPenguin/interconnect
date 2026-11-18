@@ -37,6 +37,7 @@ pub struct State {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open,
+    OpenSubspace,
     Close,
     Ignore,
     Focus(bool),
@@ -81,7 +82,13 @@ pub fn shortcut(
 impl App {
     pub(super) fn create_room_event(&mut self, event: Event) -> Task<Message> {
         match event {
-            Event::Open => {
+            Event::Open | Event::OpenSubspace => {
+                let subspace = matches!(event, Event::OpenSubspace);
+                if subspace
+                    && !matches!(&self.shell.space, Scope::Space(id) if self.model.spaces.iter().any(|s| &s.id == id && s.can_manage_rooms))
+                {
+                    return Task::none();
+                }
                 if self.closing
                     || self.stopped
                     || self.new_chat.is_some()
@@ -121,6 +128,8 @@ impl App {
                         account: self.account_id.clone(),
                         thread: self.selection.thread.is_some(),
                         options: Options {
+                            subspace,
+                            encrypted: !subspace,
                             space,
                             ..Default::default()
                         },
@@ -162,7 +171,7 @@ impl App {
                 let account = state.account.clone();
                 let mut validation = state.options.clone();
                 if self.demo.is_some() {
-                    validation.space = None;
+                    validation.space = validation.subspace.then(|| "!demo:example.org".into());
                 }
                 if let Err(error) = validation.validate() {
                     state.error = Some(error);
@@ -179,6 +188,7 @@ impl App {
                 }
                 if self.demo.is_some() {
                     let mut created = state.created.clone().unwrap_or_else(|| Created {
+                        subspace: state.options.subspace,
                         room: interconnect::navigation::RoomEntry {
                             id: format!("demo-room:{request}"),
                             name: state.options.name.trim().into(),
@@ -248,7 +258,25 @@ impl App {
                     .is_some_and(|s| s.request == request && s.account == account);
                 match *result {
                     Ok(created) => {
-                        if !self.model.rooms.iter().any(|r| r.id == created.room.id) {
+                        if created.subspace {
+                            let entry = interconnect::navigation::SpaceEntry {
+                                id: created.room.id.clone(),
+                                name: created.room.name.clone(),
+                                can_manage_rooms: true,
+                                avatar_url: None,
+                                children: vec![],
+                            };
+                            if !self.model.spaces.iter().any(|s| s.id == entry.id) {
+                                std::sync::Arc::make_mut(&mut self.model.spaces)
+                                    .push(entry.clone());
+                                if self.demo.is_none() {
+                                    self.pending_created_subspace = Some(entry);
+                                }
+                            }
+                        }
+                        if !created.subspace
+                            && !self.model.rooms.iter().any(|r| r.id == created.room.id)
+                        {
                             std::sync::Arc::make_mut(&mut self.model.rooms)
                                 .push(created.room.clone());
                             if self.demo.is_none() {
@@ -288,6 +316,9 @@ impl App {
                 if let Some(created) = self.create_room.as_mut().and_then(|s| s.created.take()) {
                     self.create_room = None;
                     self.pending_navigation = None;
+                    if created.subspace {
+                        return Task::none();
+                    }
                     let task = self.update(Message::Room(created.room.id));
                     return task.chain(iced::widget::operation::focus("room-composer"));
                 }
@@ -308,7 +339,10 @@ impl App {
                     match edit {
                         Event::Name(value) => state.options.name = value,
                         Event::Topic(value) => state.options.topic = value,
-                        Event::Space(id) if state.spaces.iter().any(|s| s.id == id) => {
+                        Event::Space(id)
+                            if !state.options.subspace
+                                && state.spaces.iter().any(|s| s.id == id) =>
+                        {
                             state.options.space = id
                         }
                         Event::Visibility(value) => {
@@ -317,7 +351,9 @@ impl App {
                                 state.options.listed = false;
                             }
                         }
-                        Event::Encrypted(value) => state.options.encrypted = value,
+                        Event::Encrypted(value) if !state.options.subspace => {
+                            state.options.encrypted = value
+                        }
                         Event::History(value) => state.options.history = value,
                         Event::Listed(value) => state.options.listed = value,
                         _ => {}
@@ -358,7 +394,7 @@ impl App {
             topic = topic.on_input(|v| message(Event::Topic(v)));
         }
         let selected = state.spaces.iter().find(|s| s.id == options.space).cloned();
-        let space: Element<'_, Message> = if editable {
+        let space: Element<'_, Message> = if editable && !options.subspace {
             pick_list(state.spaces.clone(), selected, |s| {
                 message(Event::Space(s.id))
             })
@@ -408,7 +444,14 @@ impl App {
             }
         }
         let mut content = column![
-            shell::title("Create a room", 22),
+            shell::title(
+                if options.subspace {
+                    "Create a subspace"
+                } else {
+                    "Create a room"
+                },
+                22
+            ),
             text("Name").size(12).style(shell::muted_text),
             name,
             text("Topic").size(12).style(shell::muted_text),
@@ -421,14 +464,19 @@ impl App {
             text("Room type").size(12).style(shell::muted_text),
             visibility,
             listed,
-            encrypted,
-            text("Encryption cannot be disabled after creation.")
-                .size(11)
-                .style(shell::muted_text),
-            text("Message history").size(12).style(shell::muted_text),
-            history,
         ]
         .spacing(8);
+        if !options.subspace {
+            content = content
+                .push(encrypted)
+                .push(
+                    text("Encryption cannot be disabled after creation.")
+                        .size(11)
+                        .style(shell::muted_text),
+                )
+                .push(text("Message history").size(12).style(shell::muted_text))
+                .push(history);
+        }
         if options.encrypted {
             content = content.push(
                 text("Older encrypted messages also require the corresponding encryption keys.")
@@ -455,11 +503,19 @@ impl App {
             .on_press(message(Event::Close));
         let mut submit = button(
             text(if busy {
-                "Creating room…"
+                if options.subspace {
+                    "Creating subspace…"
+                } else {
+                    "Creating room…"
+                }
             } else if state.created.is_some() {
                 "Retry adding to space"
             } else {
-                "Create room"
+                if options.subspace {
+                    "Create subspace"
+                } else {
+                    "Create room"
+                }
             })
             .size(13),
         )
@@ -471,10 +527,17 @@ impl App {
         let mut actions = row![iced::widget::space().width(Length::Fill), close].spacing(8);
         if state.created.is_some() && !busy {
             actions = actions.push(
-                button(text("Open room").size(13))
-                    .padding([7, 14])
-                    .style(shell::quiet_button)
-                    .on_press(message(Event::OpenCreated)),
+                button(
+                    text(if options.subspace {
+                        "Done"
+                    } else {
+                        "Open room"
+                    })
+                    .size(13),
+                )
+                .padding([7, 14])
+                .style(shell::quiet_button)
+                .on_press(message(Event::OpenCreated)),
             );
         }
         actions = actions.push(submit);
@@ -565,6 +628,7 @@ mod tests {
     }
     fn created(id: &str, error: Option<&str>) -> Created {
         Created {
+            subspace: false,
             room: interconnect::navigation::RoomEntry {
                 id: id.into(),
                 name: "New room".into(),
@@ -573,6 +637,36 @@ mod tests {
             space: Some("studio-space".into()),
             link_error: error.map(str::to_owned),
         }
+    }
+    #[test]
+    fn subspace_creation_preserves_conversation_and_links_only_in_space_tree() {
+        let mut app = demo_app();
+        let selection = app.selection.clone();
+        let scope = app.shell.space.clone();
+        let _ = app.update(message(Event::OpenSubspace));
+        let state = app.create_room.as_ref().unwrap();
+        assert!(state.options.subspace);
+        assert!(!state.options.encrypted);
+        let id = format!("demo-room:{}", state.request);
+        let _ = app.update(message(Event::Name("Nested".into())));
+        let _ = app.update(message(Event::Submit));
+        assert!(app.create_room.is_none());
+        assert_eq!(app.selection, selection);
+        assert_eq!(app.shell.space, scope);
+        assert!(app.model.spaces.iter().any(|s| s.id == id));
+        assert!(!app.model.rooms.iter().any(|r| r.id == id));
+        assert!(
+            app.model
+                .spaces
+                .iter()
+                .find(|s| s.id == "studio-space")
+                .unwrap()
+                .children
+                .contains(&id)
+        );
+        app.shell.space = Scope::Home;
+        let _ = app.update(message(Event::OpenSubspace));
+        assert!(app.create_room.is_none());
     }
     #[test]
     fn dismissal_and_quit_cancel_creation_and_release_pending_operation() {
@@ -897,6 +991,7 @@ mod layout_tests {
             request,
             app.account_id.clone(),
             Box::new(Ok(Created {
+                subspace: false,
                 room: interconnect::navigation::RoomEntry {
                     id: "!new:example.org".into(),
                     name: "Room".into(),

@@ -236,6 +236,7 @@ struct App {
     create_room: Option<create_room::State>,
     space_management: Option<space_management::State>,
     create_room_request: Option<u64>,
+    pending_created_subspace: Option<interconnect::navigation::SpaceEntry>,
     pending_created_space: Option<(String, String)>,
     direct_request: Option<u64>,
     creation_cancel: Option<tokio_util::sync::CancellationToken>,
@@ -441,6 +442,7 @@ impl App {
             create_room: None,
             space_management: None,
             create_room_request: None,
+            pending_created_subspace: None,
             pending_created_space: None,
             direct_request: None,
             creation_cancel: None,
@@ -569,7 +571,11 @@ impl App {
                             | new_chat::Event::Mention(_)
                             | new_chat::Event::Submit
                     )
-                    | Message::CreateRoom(create_room::Event::Open | create_room::Event::Submit)
+                    | Message::CreateRoom(
+                        create_room::Event::Open
+                            | create_room::Event::OpenSubspace
+                            | create_room::Event::Submit
+                    )
                     | Message::Edit(..)
                     | Message::Send(_)
                     | Message::DeleteWord(..)
@@ -659,7 +665,11 @@ impl App {
                             | new_chat::Event::Mention(_)
                             | new_chat::Event::Submit
                     )
-                    | Message::CreateRoom(create_room::Event::Open | create_room::Event::Submit)
+                    | Message::CreateRoom(
+                        create_room::Event::Open
+                            | create_room::Event::OpenSubspace
+                            | create_room::Event::Submit
+                    )
                     | Message::Settings(settings::Event::Open)
                     | Message::Verification(verification::Event::Open)
                     | Message::Send(_)
@@ -690,7 +700,9 @@ impl App {
                     | Message::ComposerEmoji(_)
                     | Message::Image(images::Event::Open { .. })
                     | Message::NewChat(new_chat::Event::Open)
-                    | Message::CreateRoom(create_room::Event::Open)
+                    | Message::CreateRoom(
+                        create_room::Event::Open | create_room::Event::OpenSubspace
+                    )
                     | Message::Topic(topic::Event::Open(..))
                     | Message::Invite(invite::Event::Open)
                     | Message::Pin(pin_action::Event::Set(..))
@@ -1831,6 +1843,7 @@ impl App {
                 {
                     self.new_chat = None;
                     self.create_room = None;
+                    self.pending_created_subspace = None;
                     self.pending_created_space = None;
                     self.pending_created_room = None;
                     self.bookmarks.reset();
@@ -1847,6 +1860,13 @@ impl App {
                         self.pending_created_room = None;
                     } else {
                         std::sync::Arc::make_mut(&mut state.rooms).push(room.clone());
+                    }
+                }
+                if let Some(space) = &self.pending_created_subspace {
+                    if state.spaces.iter().any(|s| s.id == space.id) {
+                        self.pending_created_subspace = None;
+                    } else {
+                        std::sync::Arc::make_mut(&mut state.spaces).push(space.clone());
                     }
                 }
                 if let Some((room, parent)) = &self.pending_created_space {

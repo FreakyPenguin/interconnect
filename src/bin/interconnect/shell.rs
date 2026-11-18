@@ -1110,6 +1110,9 @@ impl App {
                     .width(Length::Fill),
                     new_chat,
                     create_room,
+                    button(text("Subspace").size(11)).style(quiet_button).on_press_maybe(
+                        matches!(&self.shell.space, Scope::Space(id) if self.model.spaces.iter().any(|s| &s.id == id && s.can_manage_rooms))
+                            .then_some(Message::CreateRoom(super::create_room::Event::OpenSubspace))),
                     super::tooltips::tooltip(
                         super::navigation_control::plain(
                             button(container(icon(Kind::More)).center_x(28).center_y(28))

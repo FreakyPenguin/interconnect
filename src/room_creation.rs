@@ -6,7 +6,7 @@ use matrix_sdk::{
         OwnedRoomId,
         api::client::room::{
             Visibility as DirectoryVisibility,
-            create_room::v3::{Request, RoomPreset},
+            create_room::v3::{CreationContent, Request, RoomPreset},
         },
         events::{
             InitialStateEvent, StateEventType,
@@ -53,6 +53,7 @@ impl std::fmt::Display for History {
 }
 #[derive(Clone, Debug)]
 pub struct Options {
+    pub subspace: bool,
     pub name: String,
     pub topic: String,
     pub space: Option<String>,
@@ -64,6 +65,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
+            subspace: false,
             name: String::new(),
             topic: String::new(),
             space: None,
@@ -81,6 +83,9 @@ impl Options {
         }
         if self.name.len() > 255 {
             return Err("Keep the room name within 255 bytes.".into());
+        }
+        if self.subspace && (self.space.is_none() || self.encrypted) {
+            return Err("A subspace requires a parent space and cannot be encrypted.".into());
         }
         if self.listed && self.visibility != Visibility::Public {
             return Err("Only public rooms can be listed in the directory.".into());
@@ -101,6 +106,12 @@ impl Options {
     }
     fn request(&self, via: matrix_sdk::ruma::OwnedServerName) -> Request {
         let mut request = Request::new();
+        if self.subspace {
+            let mut content = CreationContent::new();
+            content.room_type = Some(matrix_sdk::ruma::room::RoomType::Space);
+            request.creation_content =
+                Some(matrix_sdk::ruma::serde::Raw::new(&content).expect("creation content"));
+        }
         request.name = Some(self.name.trim().to_owned());
         request.topic = (!self.topic.trim().is_empty()).then(|| self.topic.trim().to_owned());
         request.preset = Some(match self.visibility {
@@ -148,6 +159,7 @@ impl Options {
 }
 #[derive(Clone, Debug)]
 pub struct Created {
+    pub subspace: bool,
     pub room: RoomEntry,
     pub space: Option<String>,
     pub link_error: Option<String>,
@@ -194,6 +206,7 @@ pub(crate) async fn create(client: &Client, options: Options) -> Result<Created,
     }
     let room = send_create(client, options.request(user.server_name().to_owned())).await?;
     let created = Created {
+        subspace: options.subspace,
         room: RoomEntry {
             id: room.to_string(),
             name: options.name.trim().to_owned(),
@@ -259,6 +272,39 @@ mod tests {
         let request = options.request("example.org".parse().unwrap());
         json!({"name":request.name,"topic":request.topic,"preset":request.preset,"visibility":request.visibility,
             "initial_state":request.initial_state,"is_direct":request.is_direct,"invite":request.invite})
+    }
+    #[test]
+    fn subspaces_are_typed_unencrypted_and_require_a_parent() {
+        let options = Options {
+            subspace: true,
+            encrypted: false,
+            space: Some("!parent:example.org".into()),
+            ..named()
+        };
+        options.validate().unwrap();
+        let request = options.request("example.org".parse().unwrap());
+        let content: Value =
+            serde_json::from_str(request.creation_content.unwrap().json().get()).unwrap();
+        assert_eq!(content["type"], "m.space");
+        let body = request_body(&options);
+        assert!(state(&body, "m.room.encryption").is_none());
+        assert_eq!(state(&body, "m.space.parent").unwrap()["canonical"], true);
+        assert!(
+            Options {
+                space: None,
+                ..options.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            Options {
+                encrypted: true,
+                ..options
+            }
+            .validate()
+            .is_err()
+        );
     }
     #[test]
     fn defaults_and_every_history_policy_have_explicit_request_semantics() {
