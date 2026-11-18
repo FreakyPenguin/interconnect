@@ -168,31 +168,41 @@ write because Matrix state events have no compare-and-swap. A timeout or push-ru
 error can leave a partially applied change: allow sync to catch up, then Reload
 before retrying. Demo edits stay in memory without account or network access.
 
-## Finding rooms in a space
+## Finding rooms to join
 
-Select a space and click the compass **Browse space rooms** icon in the sidebar
-action toolbar or in Space settings. Empty room lists also offer **Browse space
-rooms**. The browser requests the space hierarchy, including visible descendant
-rooms and subspaces that you have not joined. Your current conversation stays open.
+Click the compass **Find rooms to join** action in the sidebar toolbar, Space
+settings, or an empty room list. It is also available from Home, All rooms, and
+Direct messages. The browser has two tabs:
 
-Search filters the loaded names, topics, aliases, and room IDs. **Load more rooms**
-requests the next server page; results are deduplicated and shown 50 per page,
-with a 1,000-room loaded limit. There is no automatic scan or polling. The server
-decides which rooms are visible, so a hidden room may require a direct invitation.
+- **Current space** shows visible descendant rooms and subspaces, including those
+  you have not joined. Search filters loaded names, topics, aliases, and room IDs.
+  This tab is disabled when no space is selected.
+- **Homeserver** shows your connected homeserver's public room directory. Type a
+  search and press Enter or click Search to query the server. Editing the input
+  alone leaves the previous search results in place; Reload and Load more use the
+  last submitted search. An empty submitted search lists public rooms.
+
+Each tab preserves its own query, loaded results, page, and continuation. Switching
+tabs cancels pending reads. **Load more rooms** explicitly requests the next server
+page; results are deduplicated and shown 50 per page, with up to 1,000 loaded rooms
+per tab. There is no automatic scan or polling. Directory access and room visibility
+are controlled by the server; errors appear in the relevant tab.
 
 Each result shows its topic, member count, and access rule. **Join** joins a public
 room, or attempts to join a restricted room when the server allows it. An existing
 invitation also enables Join. Invitation-only and knock-only rooms otherwise need
 an invitation; requesting entry by knocking is not implemented. Joining preserves
-the selected space, conversation, draft, and reading position. **Open** explicitly
-opens a joined conversation or changes the selected space for a joined subspace.
-Nested rooms may require **Include subspaces** to appear in the sidebar.
+the selected space, conversation, draft, and reading position. Joining a directory
+room does not add it to the selected space. **Open** explicitly opens a joined
+conversation or changes the selected space for a joined subspace. Nested rooms
+may require **Include subspaces** to appear in the sidebar.
 
-The browser keeps server routing hints from child links when joining, including
-rooms with opaque IDs. Closing it cancels pending hierarchy reads; admitted joins
-finish for their captured account and room. Errors retain loaded results for retry.
-After an ambiguous timeout, allow sync to catch up and check membership before
-retrying. Demo mode uses sample rooms and simulated joins without network access.
+The browser retains space child-link routing hints, and homeserver directory
+results include routing hints for opaque room IDs. Closing the browser cancels
+reads; admitted joins finish for their captured account and room. After an
+ambiguous timeout, allow sync to catch up and check membership before retrying.
+Demo mode uses sample rooms, search results, and simulated joins without network
+or saved-account access.
 
 ## Spaces and member management
 

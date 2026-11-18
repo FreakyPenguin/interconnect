@@ -1,4 +1,4 @@
-//! Explicit, paginated space discovery. No timelines, account writes, or polling.
+//! Explicit, paginated space and homeserver room discovery. No timelines, account writes, or polling.
 use matrix_sdk::{
     Client, RoomState,
     ruma::{
@@ -13,6 +13,7 @@ pub const PAGE_SIZE: usize = 50;
 #[derive(Clone, Debug)]
 pub struct Entry {
     pub id: String,
+    pub via: Vec<OwnedServerName>,
     pub name: String,
     pub topic: String,
     pub alias: Option<String>,
@@ -49,7 +50,10 @@ impl Entry {
             .id
             .parse::<OwnedRoomId>()
             .map_err(|_| "Invalid room ID.")?;
-        let mut via = routes.get(&self.id).cloned().unwrap_or_default();
+        let mut via = routes
+            .get(&self.id)
+            .cloned()
+            .unwrap_or_else(|| self.via.clone());
         if via.is_empty() {
             if let Some(server) = id.server_name() {
                 via.push(server.to_owned());
@@ -141,6 +145,7 @@ pub(crate) async fn load(
             continue;
         }
         entries.push(Entry {
+            via: vec![],
             id: summary.room_id.to_string(),
             name: summary
                 .name
@@ -156,6 +161,72 @@ pub(crate) async fn load(
     Ok(Page {
         entries,
         links,
+        next: response.next_batch,
+    })
+}
+
+/// Query only the connected homeserver's public directory. The default Matrix
+/// network and absent `server` parameter avoid external directory lookups.
+pub(crate) async fn homeserver(
+    client: &Client,
+    query: String,
+    from: Option<String>,
+) -> Result<Page, String> {
+    use matrix_sdk::ruma::api::client::directory::get_public_rooms_filtered::v3::Request;
+    let user = client
+        .user_id()
+        .ok_or("Sign in before browsing the room directory.")?;
+    if query.len() > 1024 {
+        return Err("Keep directory searches within 1,024 bytes.".into());
+    }
+    if from.as_ref().is_some_and(|t| t.len() > 4096) {
+        return Err("The directory pagination token is invalid. Reload the directory.".into());
+    }
+    let mut request = Request::new();
+    request.limit = Some(matrix_sdk::ruma::uint!(50));
+    request.since = from;
+    request.filter.generic_search_term =
+        (!query.trim().is_empty()).then(|| query.trim().to_owned());
+    let response = tokio::time::timeout(Duration::from_secs(30), client.send(request)).await
+        .map_err(|_| "Loading the homeserver directory timed out. Try again.".to_owned())?
+        .map_err(|_| "Could not load the homeserver directory. Check your connection; the server may restrict directory access.".to_owned())?;
+    if response.chunk.len() > 1000 {
+        return Err("The server returned too many rooms in one page.".into());
+    }
+    let entries = response
+        .chunk
+        .into_iter()
+        .map(|room| {
+            let mut via = vec![user.server_name().to_owned()];
+            for server in room
+                .canonical_alias
+                .as_ref()
+                .map(|a| a.server_name())
+                .into_iter()
+                .chain(room.room_id.server_name())
+            {
+                if !via.iter().any(|v| v == server) {
+                    via.push(server.to_owned());
+                }
+            }
+            Entry {
+                id: room.room_id.to_string(),
+                via,
+                name: room
+                    .name
+                    .filter(|n| !n.trim().is_empty())
+                    .unwrap_or_else(|| room.room_id.to_string()),
+                topic: room.topic.unwrap_or_default(),
+                alias: room.canonical_alias.map(|a| a.to_string()),
+                space: room.room_type == Some(RoomType::Space),
+                members: room.num_joined_members.into(),
+                access: room.join_rule.into(),
+            }
+        })
+        .collect();
+    Ok(Page {
+        entries,
+        links: vec![],
         next: response.next_batch,
     })
 }
@@ -312,9 +383,95 @@ mod tests {
                 .contains("Could not load")
         );
     }
+    #[tokio::test]
+    async fn homeserver_directory_filters_and_paginates_without_remote_server_override() {
+        let server = MockServer::start().await;
+        let client = fixture(&server).await;
+        let endpoint = "/_matrix/client/v3/publicRooms";
+        let mut room = summary("!opaque", false);
+        room.as_object_mut().unwrap().remove("children_state");
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .and(query_param_is_missing("server"))
+            .and(wiremock::matchers::body_json(json!({"limit":50})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[room]})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let first = homeserver(&client, String::new(), None).await.unwrap();
+        assert_eq!(first.entries.len(), 1);
+        assert!(first.links.is_empty());
+        let address = crate::room_membership::Address::parse(
+            &first.entries[0].address(&HashMap::new()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(address.room.as_str(), "!opaque");
+        assert_eq!(address.via[0].as_str(), "example.org");
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .and(query_param_is_missing("server"))
+            .and(wiremock::matchers::body_json(
+                json!({"limit":50,"filter":{"generic_search_term":"music"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({"chunk":[summary("!music:example.org",false)],"next_batch":"music-next"}),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let filtered = homeserver(&client, " music ".into(), None).await.unwrap();
+        assert_eq!(filtered.entries[0].id, "!music:example.org");
+        Mock::given(method("POST"))
+            .and(path(endpoint))
+            .and(query_param_is_missing("server"))
+            .and(wiremock::matchers::body_json(
+                json!({"limit":50,"filter":{"generic_search_term":"music"},"since":"music-next"}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"chunk":[summary("!music-space:example.org",true)]})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let next = homeserver(&client, "music".into(), filtered.next)
+            .await
+            .unwrap();
+        assert!(next.entries[0].space);
+        assert!(next.next.is_none());
+    }
+    #[tokio::test]
+    async fn directory_errors_and_invalid_searches_remain_explicit() {
+        let server = MockServer::start().await;
+        let client = fixture(&server).await;
+        let before = server.received_requests().await.unwrap().len();
+        assert!(homeserver(&client, "x".repeat(1025), None).await.is_err());
+        assert!(
+            homeserver(&client, String::new(), Some("x".repeat(4097)))
+                .await
+                .is_err()
+        );
+        assert_eq!(server.received_requests().await.unwrap().len(), before);
+        Mock::given(method("POST"))
+            .and(path("/_matrix/client/v3/publicRooms"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({"errcode":"M_FORBIDDEN","error":"No directory"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(
+            homeserver(&client, String::new(), None)
+                .await
+                .unwrap_err()
+                .contains("restrict directory access")
+        );
+    }
     #[test]
     fn join_rules_and_routing_fallbacks_preserve_room_identity() {
         let mut entry = Entry {
+            via: vec![],
             id: "!opaque".into(),
             name: "Room".into(),
             topic: String::new(),

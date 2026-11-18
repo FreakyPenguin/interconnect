@@ -41,6 +41,7 @@ impl State {
 }
 struct Panel {
     space: bool,
+    scope: Scope,
     members: member_management::State,
     directory: Option<space_directory::State>,
     id: String,
@@ -58,6 +59,7 @@ struct Panel {
 pub enum Event {
     Open(String),
     Browse(String),
+    FindRooms,
     Directory(space_directory::Event),
     OpenMembers(String),
     Members(member_management::Event),
@@ -89,7 +91,10 @@ impl App {
                 || self.stopped
                 || p.account != self.account_id
                 || (self.demo.is_none() && self.model.authentication.is_some())
-                || if p.space {
+                || if p.directory.is_some() {
+                    self.shell.space != p.scope
+                        || (p.space && !self.model.spaces.iter().any(|s| s.id == p.id))
+                } else if p.space {
                     self.shell.space != Scope::Space(p.id.clone())
                         || !self.model.spaces.iter().any(|s| s.id == p.id)
                 } else {
@@ -107,14 +112,23 @@ impl App {
         let opening_space = matches!(&event, Event::Open(_) | Event::Browse(_));
         let browse = matches!(&event, Event::Browse(_));
         match event {
+            Event::FindRooms => {
+                let id = match &self.shell.space {
+                    Scope::Space(id) => id.clone(),
+                    _ => String::new(),
+                };
+                return self.space_settings_event(Event::Browse(id));
+            }
             Event::Directory(event) => return self.space_directory_event(event),
             Event::Members(event) => return self.member_management_event(event),
             Event::Open(id) | Event::Browse(id) | Event::OpenMembers(id) => {
-                let space = opening_space;
+                let space = opening_space && !id.is_empty();
                 if !self.context_menu_allowed()
                     || if space {
                         self.shell.space != Scope::Space(id.clone())
                             || !self.model.spaces.iter().any(|s| s.id == id)
+                    } else if browse {
+                        matches!(self.shell.space, Scope::Space(_))
                     } else {
                         self.selection
                             .room
@@ -135,8 +149,9 @@ impl App {
                 self.generation += 1;
                 self.space_settings.panel = Some(Panel {
                     space,
+                    scope: self.shell.space.clone(),
                     members: member_management::State::default(),
-                    directory: browse.then(space_directory::State::default),
+                    directory: browse.then(|| space_directory::State::new(space)),
                     id,
                     account: self.account_id.clone(),
                     request: self.generation,
@@ -396,7 +411,7 @@ impl App {
                 if panel.space {
                     iced::Element::from(icon_button(
                         Kind::Compass,
-                        "Browse space rooms",
+                        "Find rooms to join",
                         Some(message(Event::Browse(panel.id.clone()))),
                     ))
                 } else {

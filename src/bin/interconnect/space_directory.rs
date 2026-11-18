@@ -1,4 +1,4 @@
-//! Space hierarchy browser hosted in the shared content panel.
+//! Tabbed space and homeserver room discovery in the shared content panel.
 use super::{App, Event as PanelEvent, MAX_PENDING_OPERATIONS, Message, message};
 use crate::{
     icons::{self, Kind},
@@ -18,8 +18,57 @@ use matrix_sdk::ruma::OwnedServerName;
 use std::collections::{HashMap, HashSet};
 
 const MAX_ROOMS: usize = 1000;
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Tab {
+    #[default]
+    Space,
+    Homeserver,
+}
 #[derive(Default)]
 pub(super) struct State {
+    tab: Tab,
+    space: Listing,
+    homeserver: Listing,
+}
+impl State {
+    pub(super) fn new(space: bool) -> Self {
+        Self {
+            tab: if space { Tab::Space } else { Tab::Homeserver },
+            ..Default::default()
+        }
+    }
+    fn filtered(&self) -> Vec<&Entry> {
+        if self.tab == Tab::Space {
+            self.space.filtered()
+        } else {
+            self.homeserver.rows.iter().collect()
+        }
+    }
+}
+impl std::ops::Deref for State {
+    type Target = Listing;
+    fn deref(&self) -> &Listing {
+        match self.tab {
+            Tab::Space => &self.space,
+            Tab::Homeserver => &self.homeserver,
+        }
+    }
+}
+impl std::ops::DerefMut for State {
+    fn deref_mut(&mut self) -> &mut Listing {
+        match self.tab {
+            Tab::Space => &mut self.space,
+            Tab::Homeserver => &mut self.homeserver,
+        }
+    }
+}
+#[derive(Default)]
+pub(super) struct Listing {
+    initialized: bool,
+    loaded: bool,
+    submitted: String,
+    error: Option<String>,
+    success: bool,
     rows: Vec<Entry>,
     routes: HashMap<String, Vec<OwnedServerName>>,
     parents: HashMap<String, Vec<String>>,
@@ -32,6 +81,8 @@ pub(super) struct State {
 }
 #[derive(Clone, Debug)]
 pub enum Event {
+    Tab(Tab),
+    Submit,
     Reload,
     More,
     Search(String),
@@ -50,7 +101,7 @@ pub enum Event {
 fn event(event: Event) -> Message {
     message(PanelEvent::Directory(event))
 }
-impl State {
+impl Listing {
     fn filtered(&self) -> Vec<&Entry> {
         let query = self.query.to_lowercase();
         self.rows
@@ -112,7 +163,7 @@ impl State {
         }
         if truncated || (self.rows.len() == MAX_ROOMS && self.next.is_some()) {
             self.next = None;
-            return Some("Showing the first 1,000 rooms. This space exceeds the browser’s loaded-room limit.".into());
+            return Some("Showing the first 1,000 rooms. This directory exceeds the browser’s loaded-room limit.".into());
         }
         None
     }
@@ -195,6 +246,53 @@ impl App {
         };
         let session = panel.request;
         match incoming {
+            Event::Tab(tab) => {
+                if state.tab == tab || (tab == Tab::Space && panel.id.is_empty()) {
+                    return Task::none();
+                }
+                if state.loading.is_some() {
+                    state.initialized = state.loaded;
+                }
+                state.load = None;
+                state.loading = None;
+                state.error = panel.error.take();
+                state.success = panel.success;
+                state.tab = tab;
+                panel.error = state.error.take();
+                panel.success = state.success;
+                panel.pending = false;
+                self.generation += 1;
+                panel.request = self.generation;
+                let task = if !state.initialized {
+                    self.space_directory_event(Event::Reload)
+                } else {
+                    reset_scroll()
+                };
+                return Task::batch([task, iced::widget::operation::focus("space-room-filter")]);
+            }
+            Event::Submit => {
+                if state.tab != Tab::Homeserver || self.composing || self.closing || self.stopped {
+                    return Task::none();
+                }
+                let submitted = state.query.trim().to_owned();
+                if submitted.len() > 1024 {
+                    panel.error = Some("Keep directory searches within 1,024 bytes.".into());
+                    return Task::none();
+                }
+                state.load = None;
+                state.loading = None;
+                panel.pending = false;
+                // A continuation always belongs to the last submitted query.
+                state.submitted = submitted;
+                state.loaded = false;
+                state.rows.clear();
+                state.routes.clear();
+                state.parents.clear();
+                state.seen.clear();
+                state.page = 0;
+                state.next = None;
+                return self.space_directory_event(Event::Reload);
+            }
             Event::Reload | Event::More => {
                 if state.loading.is_some() || self.closing || self.stopped {
                     return Task::none();
@@ -210,11 +308,16 @@ impl App {
                 self.generation += 1;
                 let operation = self.generation;
                 state.loading = Some(operation);
+                state.initialized = true;
                 panel.pending = true;
                 panel.error = None;
                 panel.success = false;
                 if self.demo.is_some() {
-                    let page = demo(&panel.id);
+                    let page = if state.tab == Tab::Space {
+                        demo(&panel.id)
+                    } else {
+                        demo_homeserver(&state.submitted)
+                    };
                     return self.space_directory_event(Event::Loaded(
                         session,
                         operation,
@@ -225,16 +328,25 @@ impl App {
                 if let Some(directory) = self.model.people_directory.clone() {
                     let id = panel.id.clone();
                     let completed_from = from.clone();
-                    let (task, handle) =
-                        Task::perform(directory.space_rooms(id, from), move |result| {
+                    let tab = state.tab;
+                    let query = state.submitted.clone();
+                    let (task, handle) = Task::perform(
+                        async move {
+                            match tab {
+                                Tab::Space => directory.space_rooms(id, from).await,
+                                Tab::Homeserver => directory.homeserver_rooms(query, from).await,
+                            }
+                        },
+                        move |result| {
                             event(Event::Loaded(
                                 session,
                                 operation,
                                 completed_from.clone(),
                                 Box::new(result),
                             ))
-                        })
-                        .abortable();
+                        },
+                    )
+                    .abortable();
                     state.load = Some(handle.abort_on_drop());
                     return task;
                 }
@@ -250,7 +362,10 @@ impl App {
                 state.load = None;
                 panel.pending = false;
                 match *result {
-                    Ok(page) => panel.error = state.merge(page, from),
+                    Ok(page) => {
+                        panel.error = state.merge(page, from);
+                        state.loaded = true;
+                    }
                     Err(error) => panel.error = Some(error),
                 }
             }
@@ -355,12 +470,46 @@ impl App {
             .iter()
             .find(|s| s.id == panel.id)
             .map_or("Space", |s| s.name.as_str());
-        let mut content = column![row![icons::icon(Kind::Compass), shell::title("Space rooms", 22), iced::widget::space().width(Length::Fill),
-            icon_button(Kind::Refresh, "Reload space rooms", state.loading.is_none().then_some(event(Event::Reload))),
-            icon_button(Kind::Close, "Close space rooms", Some(message(PanelEvent::Close)))].spacing(8).align_y(iced::Alignment::Center),
-            shell::title(name, 16), text("Browse rooms and subspaces visible to your account. Joining keeps your current conversation open.").size(12).style(shell::muted_text),
-            text_input("Find a room or subspace…", &state.query).cursor_blinking(false).padding(10).style(shell::search_style).on_input(|q| event(Event::Search(q))),
-            text(format!("{} loaded · Search filters loaded rooms", state.rows.len())).size(12).style(shell::muted_text)].spacing(14);
+        let mut search = text_input(
+            if state.tab == Tab::Space {
+                "Find a room or subspace…"
+            } else {
+                "Search homeserver rooms…"
+            },
+            &state.query,
+        )
+        .id("space-room-filter")
+        .cursor_blinking(false)
+        .padding(10)
+        .style(shell::search_style)
+        .on_input(|q| event(Event::Search(q)));
+        if state.tab == Tab::Homeserver {
+            search = search.on_submit(event(Event::Submit));
+        }
+        let search_action: Element<'_, Message> = if state.tab == Tab::Homeserver {
+            icon_button(
+                Kind::Search,
+                "Search homeserver directory",
+                (!self.composing).then_some(event(Event::Submit)),
+            )
+            .into()
+        } else {
+            iced::widget::space().width(0).into()
+        };
+        let mut content = column![row![icons::icon(Kind::Compass), shell::title("Find rooms to join", 22), iced::widget::space().width(Length::Fill),
+            icon_button(Kind::Refresh, "Reload rooms", state.loading.is_none().then_some(event(Event::Reload))),
+            icon_button(Kind::Close, "Close room browser", Some(message(PanelEvent::Close)))].spacing(8).align_y(iced::Alignment::Center),
+            row![
+                button(row![icons::icon(Kind::Space), text("Current space").size(13)].spacing(6)).padding([8, 12]).style(move |theme, status| if state.tab == Tab::Space { shell::primary_button(theme, status) } else { shell::quiet_button(theme, status) })
+                    .on_press_maybe((!panel.id.is_empty()).then_some(event(Event::Tab(Tab::Space)))),
+                button(row![icons::icon(Kind::Home), text("Homeserver").size(13)].spacing(6)).padding([8, 12]).style(move |theme, status| if state.tab == Tab::Homeserver { shell::primary_button(theme, status) } else { shell::quiet_button(theme, status) })
+                    .on_press(event(Event::Tab(Tab::Homeserver)))
+            ].spacing(8),
+            shell::title(if state.tab == Tab::Space { name } else { "Homeserver directory" }, 16),
+            text(if state.tab == Tab::Space { "Browse rooms and subspaces visible in this space." } else { "Public rooms listed by your connected homeserver. Press Enter or click Search to search. Joining does not add rooms to the current space." }).size(12).style(shell::muted_text),
+            row![search, search_action].spacing(8).align_y(iced::Alignment::Center),
+            text(if state.tab == Tab::Space { format!("{} loaded · Search filters loaded rooms", state.rows.len()) }
+                else { format!("{} loaded · Results for {} · Joining keeps your conversation open", state.rows.len(), if state.submitted.is_empty() { "all public rooms".into() } else { format!("“{}”", state.submitted) }) }).size(12).style(shell::muted_text)].spacing(14);
         let rows = state.filtered();
         let page = state.page.min(rows.len().saturating_sub(1) / PAGE_SIZE);
         for room in rows.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
@@ -416,7 +565,7 @@ impl App {
                 text(&room.id).size(11).style(shell::muted_text),
                 text(format!(
                     "{} · {} members · {}{}",
-                    if room.space { "Subspace" } else { "Room" },
+                    if room.space { "Space" } else { "Room" },
                     room.members,
                     room.access_label(),
                     if joined {
@@ -439,10 +588,14 @@ impl App {
             }
             content = content.push(entry).push(rule::horizontal(1));
         }
-        if rows.is_empty() && state.loading.is_none() {
+        if rows.is_empty() && state.loading.is_none() && panel.error.is_none() {
             content = content.push(
                 text(if state.rows.is_empty() {
-                    "No visible rooms were returned for this space."
+                    if state.tab == Tab::Space {
+                        "No visible rooms were returned for this space."
+                    } else {
+                        "No public rooms matched this directory search."
+                    }
                 } else {
                     "No matching loaded rooms. Load more rooms to search further."
                 })
@@ -476,7 +629,14 @@ impl App {
             );
         }
         if state.loading.is_some() {
-            content = content.push(text("Loading space rooms…").size(13));
+            content = content.push(
+                text(if state.tab == Tab::Space {
+                    "Loading space rooms…"
+                } else {
+                    "Loading homeserver rooms…"
+                })
+                .size(13),
+            );
         }
         if panel.success {
             content = content.push(
@@ -538,6 +698,7 @@ fn demo(space: &str) -> Page {
     ]
     .into_iter()
     .map(|(id, name, topic, subspace, access)| Entry {
+        via: vec![],
         id: id.into(),
         name: name.into(),
         topic: topic.into(),
@@ -560,6 +721,22 @@ fn demo(space: &str) -> Page {
         links,
         next: None,
     }
+}
+
+fn demo_homeserver(query: &str) -> Page {
+    let mut page = demo("");
+    page.links.clear();
+    for room in &mut page.entries {
+        room.id = room.id.replace("demo-", "directory-");
+        room.via = vec!["example.org".parse().unwrap()];
+    }
+    let query = query.to_lowercase();
+    page.entries.retain(|r| {
+        r.name.to_lowercase().contains(&query)
+            || r.topic.to_lowercase().contains(&query)
+            || r.id.contains(&query)
+    });
+    page
 }
 
 #[cfg(test)]
@@ -639,6 +816,213 @@ mod tests {
             "!demo-lounge:example.org"
         );
         assert!(!app.space_settings.is_open());
+    }
+    #[test]
+    fn tabs_keep_independent_queries_pages_and_directory_joins_do_not_link_to_space() {
+        let mut app = demo_app();
+        open(&mut app);
+        let selected = app.selection.room.clone();
+        let children = app
+            .model
+            .spaces
+            .iter()
+            .find(|s| s.id == "studio-space")
+            .unwrap()
+            .children
+            .clone();
+        let _ = app.update(event(Event::Search("ideas".into())));
+        let space_ids = state(&app)
+            .filtered()
+            .iter()
+            .map(|r| r.id.clone())
+            .collect::<Vec<_>>();
+        let _ = app.update(event(Event::Tab(Tab::Homeserver)));
+        assert_eq!(state(&app).tab, Tab::Homeserver);
+        assert_eq!(state(&app).rows.len(), 4);
+        assert!(state(&app).parents.is_empty());
+        let _ = app.update(event(Event::Search("lounge".into())));
+        assert_eq!(
+            state(&app).filtered().len(),
+            4,
+            "typing must wait for explicit server search"
+        );
+        let _ = app.update(event(Event::Submit));
+        assert_eq!(state(&app).submitted, "lounge");
+        assert_eq!(state(&app).rows.len(), 1);
+        let room = state(&app).rows[0].id.clone();
+        assert_eq!(room, "!directory-lounge:example.org");
+        let _ = app.update(event(Event::Join(room.clone())));
+        assert!(app.model.rooms.iter().any(|r| r.id == room));
+        assert_eq!(
+            app.model
+                .spaces
+                .iter()
+                .find(|s| s.id == "studio-space")
+                .unwrap()
+                .children,
+            children
+        );
+        assert_eq!(app.selection.room, selected);
+        app.space_settings
+            .panel
+            .as_mut()
+            .unwrap()
+            .directory
+            .as_mut()
+            .unwrap()
+            .next = Some("next".into());
+        let _ = app.update(event(Event::Search("projects".into())));
+        let _ = app.update(event(Event::More));
+        assert_eq!(state(&app).submitted, "lounge");
+        assert_eq!(state(&app).query, "projects");
+        assert!(state(&app).rows.iter().all(|r| r.id == room));
+        let _ = app.update(event(Event::Tab(Tab::Space)));
+        assert_eq!(state(&app).query, "ideas");
+        assert_eq!(
+            state(&app)
+                .filtered()
+                .iter()
+                .map(|r| r.id.clone())
+                .collect::<Vec<_>>(),
+            space_ids
+        );
+        let _ = app.update(event(Event::Tab(Tab::Homeserver)));
+        assert_eq!(state(&app).query, "projects");
+        assert_eq!(state(&app).submitted, "lounge");
+        assert_eq!(state(&app).rows[0].id, room);
+        assert_eq!(app.pending_ops, 0);
+    }
+    #[test]
+    fn find_rooms_is_available_without_a_selected_space_or_conversation() {
+        for scope in [Scope::Home, Scope::All, Scope::Direct] {
+            let mut app = demo_app();
+            let _ = app.update(Message::Space(scope.clone()));
+            app.selection.room = None;
+            let _ = app.update(message(PanelEvent::FindRooms));
+            assert!(app.space_settings.is_open());
+            assert!(app.space_settings.panel.as_ref().unwrap().id.is_empty());
+            assert_eq!(state(&app).tab, Tab::Homeserver);
+            let _ = app.update(event(Event::Tab(Tab::Space)));
+            assert_eq!(state(&app).tab, Tab::Homeserver);
+            assert_eq!(app.shell.space, scope);
+            assert!(app.selection.room.is_none());
+        }
+    }
+    #[test]
+    fn cancelling_load_more_on_tab_switch_preserves_loaded_pages_and_continuation() {
+        let mut app = demo_app();
+        open(&mut app);
+        {
+            let state = app
+                .space_settings
+                .panel
+                .as_mut()
+                .unwrap()
+                .directory
+                .as_mut()
+                .unwrap();
+            state.rows = (0..80)
+                .map(|i| {
+                    let mut e = entry();
+                    e.id = format!("!cached{i}:example.org");
+                    e
+                })
+                .collect();
+            state.page = 1;
+            state.next = Some("continuation".into());
+            state.loading = Some(999);
+        }
+        let _ = app.update(event(Event::Tab(Tab::Homeserver)));
+        let _ = app.update(event(Event::Tab(Tab::Space)));
+        assert_eq!(state(&app).rows.len(), 80);
+        assert_eq!(state(&app).page, 1);
+        assert_eq!(state(&app).next.as_deref(), Some("continuation"));
+        assert!(state(&app).loading.is_none());
+    }
+    #[test]
+    fn switching_tabs_and_submitting_new_queries_reject_stale_responses() {
+        let mut app = demo_app();
+        let old_session = open(&mut app);
+        app.demo = None;
+        app.model.authentication = None;
+        {
+            let state = app
+                .space_settings
+                .panel
+                .as_mut()
+                .unwrap()
+                .directory
+                .as_mut()
+                .unwrap();
+            state.loading = Some(100);
+        }
+        let _ = app.update(event(Event::Tab(Tab::Homeserver)));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .directory
+                .as_ref()
+                .unwrap()
+                .space
+                .loading
+                .is_none()
+        );
+        let _ = app.update(event(Event::Loaded(
+            old_session,
+            100,
+            None,
+            Box::new(Ok(demo("studio-space"))),
+        )));
+        assert!(state(&app).rows.is_empty());
+        let session = app.space_settings.panel.as_ref().unwrap().request;
+        app.space_settings
+            .panel
+            .as_mut()
+            .unwrap()
+            .directory
+            .as_mut()
+            .unwrap()
+            .loading = Some(101);
+        let _ = app.update(event(Event::Search("new query".into())));
+        let _ = app.update(event(Event::Submit));
+        assert_eq!(state(&app).submitted, "new query");
+        let _ = app.update(event(Event::Loaded(
+            session,
+            101,
+            None,
+            Box::new(Ok(demo("studio-space"))),
+        )));
+        assert!(state(&app).rows.is_empty());
+    }
+    #[test]
+    fn joins_finish_after_tab_changes_without_overwriting_the_new_tab_status() {
+        let mut app = demo_app();
+        let session = open(&mut app);
+        let entry = entry();
+        app.generation += 1;
+        let operation = app.generation;
+        app.pending_ops = 1;
+        app.space_settings
+            .writes
+            .insert(operation, (app.account_id.clone(), entry.id.clone()));
+        let _ = app.update(event(Event::Tab(Tab::Homeserver)));
+        let _ = app.update(event(Event::Joined {
+            panel: session,
+            operation,
+            entry: Box::new(entry.clone()),
+            parents: vec![],
+            result: Ok(Joined {
+                id: entry.id.clone(),
+                name: entry.name,
+                space: false,
+            }),
+        }));
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.model.rooms.iter().any(|r| r.id == entry.id));
+        assert_eq!(state(&app).tab, Tab::Homeserver);
+        assert!(!app.space_settings.panel.as_ref().unwrap().success);
     }
     #[test]
     fn pagination_deduplicates_routes_and_limits_rendering_and_repeated_tokens() {
@@ -830,40 +1214,45 @@ mod tests {
         let mut app = demo_app();
         open(&mut app);
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-        for width in [320.0, 640.0, 1280.0] {
-            let size = iced::Size::new(width, 480.0);
-            let mut view = app.space_directory_view();
-            let mut tree = widget::Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            assert_eq!(node.size(), size);
-            view.as_widget_mut().operate(
-                &mut tree,
-                layout::Layout::new(&node),
-                &renderer,
-                &mut widget::operation::focusable::focus::<()>("space-room-filter".into()),
-            );
-            let now = iced::time::Instant::now();
-            for millis in [0, 750, 1250] {
-                let mut messages = vec![];
-                let mut shell = Shell::new(&mut messages);
-                view.as_widget_mut().update(
+        for tab in [Tab::Space, Tab::Homeserver] {
+            let _ = app.update(event(Event::Tab(tab)));
+            for width in [320.0, 640.0, 1280.0] {
+                let size = iced::Size::new(width, 480.0);
+                let mut view = app.space_directory_view();
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
                     &mut tree,
-                    &iced::Event::Window(iced::window::Event::RedrawRequested(
-                        now + std::time::Duration::from_millis(millis),
-                    )),
-                    layout::Layout::new(&node),
-                    mouse::Cursor::Unavailable,
                     &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut shell,
-                    &iced::Rectangle::with_size(size),
+                    &layout::Limits::new(size, size),
                 );
-                if millis > 0 {
-                    assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+                assert_eq!(node.size(), size);
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut widget::operation::focusable::focus::<()>("space-room-filter".into()),
+                );
+                let now = iced::time::Instant::now();
+                for millis in [0, 750, 1250] {
+                    let mut messages = vec![];
+                    let mut shell = Shell::new(&mut messages);
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &iced::Event::Window(iced::window::Event::RedrawRequested(
+                            now + std::time::Duration::from_millis(millis),
+                        )),
+                        layout::Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut shell,
+                        &iced::Rectangle::with_size(size),
+                    );
+                    if millis > 0 {
+                        assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+                    }
+                    assert!(messages.is_empty());
                 }
-                assert!(messages.is_empty());
             }
         }
     }

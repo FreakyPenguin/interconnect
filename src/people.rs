@@ -157,6 +157,14 @@ impl Directory {
         crate::space_directory::load(&self.0, space, from).await
     }
 
+    pub async fn homeserver_rooms(
+        self,
+        query: String,
+        from: Option<String>,
+    ) -> Result<crate::space_directory::Page, String> {
+        crate::space_directory::homeserver(&self.0, query, from).await
+    }
+
     pub async fn join_room(self, input: String) -> Result<crate::room_membership::Joined, String> {
         let result = crate::room_membership::join(&self.0, &input).await;
         let _ = self.1.send(());

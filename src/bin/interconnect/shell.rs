@@ -1040,20 +1040,19 @@ impl App {
         if matches == 0 {
             rooms = rooms
                 .push(container(text("No rooms found").size(13).style(muted_text)).padding(12));
-            if let Scope::Space(id) = &self.shell.space {
-                rooms = rooms.push(
-                    button(
-                        row![icon(Kind::Compass), text("Browse space rooms").size(13)]
-                            .spacing(8)
-                            .align_y(Alignment::Center),
-                    )
-                    .style(quiet_button)
-                    .on_press(Message::SpaceSettings(
-                        super::space_settings::Event::Browse(id.clone()),
-                    )),
-                );
-            }
+            rooms = rooms.push(
+                button(
+                    row![icon(Kind::Compass), text("Find rooms to join").size(13)]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                )
+                .style(quiet_button)
+                .on_press(Message::SpaceSettings(
+                    super::space_settings::Event::FindRooms,
+                )),
+            );
         }
+
         let mut new_chat = button(container(icon(Kind::Plus)).center_x(28).center_y(28))
             .padding(2)
             .style(icon_button);
@@ -1111,9 +1110,7 @@ impl App {
                     if let Scope::Space(id) = &self.shell.space {
                         Element::from(super::tooltips::icon_button(Kind::Settings, "Space settings", Some(Message::SpaceSettings(super::space_settings::Event::Open(id.clone())))))
                     } else { Element::from(iced::widget::space().width(0)) },
-                    if let Scope::Space(id) = &self.shell.space {
-                        Element::from(super::tooltips::icon_button(Kind::Compass, "Browse space rooms", Some(Message::SpaceSettings(super::space_settings::Event::Browse(id.clone())))))
-                    } else { Element::from(iced::widget::space().width(0)) },
+                    super::tooltips::icon_button(Kind::Compass, "Find rooms to join", Some(Message::SpaceSettings(super::space_settings::Event::FindRooms))),
                     new_chat,
                     create_room,
                     super::tooltips::icon_button(Kind::SpaceAdd, "Create subspace",

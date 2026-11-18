@@ -819,8 +819,9 @@ removal, invitation revocation, and role changes.
 
 ### Discovering and joining space rooms
 
-The compass in a space's sidebar toolbar or Space settings opens **Space rooms**.
-Empty room lists also expose a labeled entry point. Automated tests cover hierarchy
+The compass in the sidebar toolbar or Space settings opens **Find rooms to join**.
+Empty room lists also expose a labeled entry point. **Current space** and
+**Homeserver** tabs cover the selected hierarchy and the connected public directory. Automated tests cover hierarchy
 pagination and child routing, access rules, error handling, duplicate room/token
 handling, loaded limits, search/paging, stale-result/account rejection, join
 bookkeeping and queued navigation snapshots, unchanged drafts/selection/scroll,
@@ -850,3 +851,28 @@ Connected/native acceptance remains manual, using a dedicated test profile:
   empty/error/loading states, pagination, retained scrollbar positions on join,
   and Escape restoring the conversation. Confirm demo discovery and joins use
   sample data without saved-account or network access.
+
+### Homeserver directory tab
+
+Automated coverage verifies local-homeserver requests without a remote `server`
+override, explicit server searches, continuation tokens paired with the submitted
+query, opaque-ID routing, directory errors, independent tab caches, stale-response
+rejection, and joins completing after a tab change. Both tabs receive narrow/wide
+layout and focused-input idle redraw checks. Native/live-server acceptance remains
+manual:
+
+- Open **Find rooms to join** from a space, Home, All rooms, and Direct messages,
+  including without an open conversation. Current space must be disabled when no
+  space is selected; otherwise preserve the selected space and conversation.
+- In Homeserver, submit an empty search and a name/topic search. Typing alone must
+  not query the server. Verify Enter and the search icon work, Reload/Load more
+  retain the last submitted query, and a new search clears old results/tokens.
+- Switch tabs during initial loads, searches, refreshes, and Load more. Cancel the
+  abandoned read, preserve each tab's loaded pages/query/continuation, and reject
+  stale results. Directory denial/errors must remain explicit and recoverable.
+- Join from Homeserver and verify it does not add a link to the selected space.
+  Switch tabs or close while joining; membership still applies to the captured
+  account, without replacing another tab's status or navigating the conversation.
+- Confirm opaque IDs can join using directory routing hints. Check the 1,000-room
+  per-tab cap, duplicate tokens/results, both themes, and widths down to 320 px.
+  Demo browsing and searching must stay independent of accounts and network.

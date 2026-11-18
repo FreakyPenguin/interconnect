@@ -12,8 +12,10 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   direct room links. Subspaces can be created inside writable spaces. Creating
   root spaces and editing links to existing subspaces or unjoined children are not
   implemented. A paginated hierarchy browser can discover and join visible rooms
-  and subspaces. Its search covers loaded results (up to 1,000); knocking and
-  hidden-room discovery are not supported. Space settings cover name, topic, and invitation/public access;
+  and subspaces, with a second tab for the connected homeserver's public directory.
+  Space search covers loaded results; directory searches run on explicit submission.
+  Each tab retains up to 1,000 loaded rooms. Other-server directory lookup, knocking,
+  and hidden-room discovery are not supported. Space settings cover name, topic, and invitation/public access;
   special access rules remain read-only. Link changes leave room membership
   and child-side parent metadata intact.
 - Rooms and spaces share member search, pending invitations, invites, removal,
