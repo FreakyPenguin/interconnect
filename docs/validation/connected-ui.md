@@ -816,3 +816,37 @@ layout; native appearance and tooltip placement still need a demo-mode check at
 wide/narrow sizes in both themes. Verify every icon's tooltip names its action,
 disabled controls stay disabled during requests, and confirmation still precedes
 removal, invitation revocation, and role changes.
+
+### Discovering and joining space rooms
+
+The compass in a space's sidebar toolbar or Space settings opens **Space rooms**.
+Empty room lists also expose a labeled entry point. Automated tests cover hierarchy
+pagination and child routing, access rules, error handling, duplicate room/token
+handling, loaded limits, search/paging, stale-result/account rejection, join
+bookkeeping and queued navigation snapshots, unchanged drafts/selection/scroll,
+and narrow/wide layout with focused-search idle redraw checks.
+
+Connected/native acceptance remains manual, using a dedicated test profile:
+
+- Open a space with unjoined rooms and nested subspaces. Check names, topics,
+  member counts and access labels, and compare results to another client's space
+  browser. Root metadata must not appear as its own child.
+- Search names/topics/aliases/IDs. Load more explicitly; prior results must stay
+  visible, duplicates must not appear, and filtered counts must describe loaded
+  results. Exercise a repeated/invalid continuation token and a failed page.
+- Join a public room, accept a listed invitation, and test restricted access with
+  eligible/ineligible accounts. Invitation-only/knock-only rooms without an invite
+  must not offer an enabled Join; knocking remains unsupported.
+- Verify remote-server rooms and opaque room IDs use child-link routing hints.
+  Joining must not send messages, switch the current conversation or space, or
+  discard a draft/reading position. Explicit Open may navigate; Include subspaces
+  controls whether nested joined rooms appear in the sidebar.
+- Close the browser, change space/account, and quit during reads and joins. Reads
+  cancel; stale results must not replace new panels or mutate another account.
+  Admitted joins finish for their captured room, release pending bookkeeping once,
+  and remain in navigation until sync confirms them. After an ambiguous error,
+  allow sync to catch up before retrying.
+- At 320/640/1280-pixel widths in both themes, check action tooltips, wrapping,
+  empty/error/loading states, pagination, retained scrollbar positions on join,
+  and Escape restoring the conversation. Confirm demo discovery and joins use
+  sample data without saved-account or network access.

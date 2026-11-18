@@ -65,6 +65,16 @@ impl Change {
     }
 }
 impl State {
+    pub(super) fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+    pub(super) fn record_joined(&mut self, joined: Joined, model: &mut Model, retain: bool) {
+        let change = Change::Joined(joined);
+        change.apply(model);
+        if retain {
+            self.settling.push(change);
+        }
+    }
     pub fn reset(&mut self) {
         self.open = false;
         self.link_event = None;

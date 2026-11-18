@@ -10,8 +10,10 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   mutes and per-room notification sounds are not implemented.
 - Space management supports adding joined rooms to writable spaces and removing
   direct room links. Subspaces can be created inside writable spaces. Creating
-  root spaces and managing existing subspace links or unjoined children are not
-  implemented. Space settings cover name, topic, and invitation/public access;
+  root spaces and editing links to existing subspaces or unjoined children are not
+  implemented. A paginated hierarchy browser can discover and join visible rooms
+  and subspaces. Its search covers loaded results (up to 1,000); knocking and
+  hidden-room discovery are not supported. Space settings cover name, topic, and invitation/public access;
   special access rules remain read-only. Link changes leave room membership
   and child-side parent metadata intact.
 - Rooms and spaces share member search, pending invitations, invites, removal,

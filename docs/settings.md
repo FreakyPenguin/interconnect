@@ -168,6 +168,32 @@ write because Matrix state events have no compare-and-swap. A timeout or push-ru
 error can leave a partially applied change: allow sync to catch up, then Reload
 before retrying. Demo edits stay in memory without account or network access.
 
+## Finding rooms in a space
+
+Select a space and click the compass **Browse space rooms** icon in the sidebar
+action toolbar or in Space settings. Empty room lists also offer **Browse space
+rooms**. The browser requests the space hierarchy, including visible descendant
+rooms and subspaces that you have not joined. Your current conversation stays open.
+
+Search filters the loaded names, topics, aliases, and room IDs. **Load more rooms**
+requests the next server page; results are deduplicated and shown 50 per page,
+with a 1,000-room loaded limit. There is no automatic scan or polling. The server
+decides which rooms are visible, so a hidden room may require a direct invitation.
+
+Each result shows its topic, member count, and access rule. **Join** joins a public
+room, or attempts to join a restricted room when the server allows it. An existing
+invitation also enables Join. Invitation-only and knock-only rooms otherwise need
+an invitation; requesting entry by knocking is not implemented. Joining preserves
+the selected space, conversation, draft, and reading position. **Open** explicitly
+opens a joined conversation or changes the selected space for a joined subspace.
+Nested rooms may require **Include subspaces** to appear in the sidebar.
+
+The browser keeps server routing hints from child links when joining, including
+rooms with opaque IDs. Closing it cancels pending hierarchy reads; admitted joins
+finish for their captured account and room. Errors retain loaded results for retry.
+After an ambiguous timeout, allow sync to catch up and check membership before
+retrying. Demo mode uses sample rooms and simulated joins without network access.
+
 ## Spaces and member management
 
 Select a writable space and choose the **Create subspace** globe-plus icon beside

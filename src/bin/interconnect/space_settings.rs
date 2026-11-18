@@ -1,6 +1,8 @@
 //! Full-size space settings and shared member management without changing conversations.
 #[path = "member_management.rs"]
 mod member_management;
+#[path = "space_directory.rs"]
+mod space_directory;
 
 use super::{
     App, MAX_PENDING_OPERATIONS, Message,
@@ -40,6 +42,7 @@ impl State {
 struct Panel {
     space: bool,
     members: member_management::State,
+    directory: Option<space_directory::State>,
     id: String,
     account: Option<String>,
     request: u64,
@@ -54,6 +57,8 @@ struct Panel {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open(String),
+    Browse(String),
+    Directory(space_directory::Event),
     OpenMembers(String),
     Members(member_management::Event),
     Close,
@@ -99,10 +104,12 @@ impl App {
         }
     }
     pub(super) fn space_settings_event(&mut self, event: Event) -> Task<Message> {
-        let opening_space = matches!(&event, Event::Open(_));
+        let opening_space = matches!(&event, Event::Open(_) | Event::Browse(_));
+        let browse = matches!(&event, Event::Browse(_));
         match event {
+            Event::Directory(event) => return self.space_directory_event(event),
             Event::Members(event) => return self.member_management_event(event),
-            Event::Open(id) | Event::OpenMembers(id) => {
+            Event::Open(id) | Event::Browse(id) | Event::OpenMembers(id) => {
                 let space = opening_space;
                 if !self.context_menu_allowed()
                     || if space {
@@ -129,6 +136,7 @@ impl App {
                 self.space_settings.panel = Some(Panel {
                     space,
                     members: member_management::State::default(),
+                    directory: browse.then(space_directory::State::default),
                     id,
                     account: self.account_id.clone(),
                     request: self.generation,
@@ -140,7 +148,12 @@ impl App {
                     error: None,
                     success: false,
                 });
-                return self.space_settings_event(Event::Reload);
+                let task = self.space_settings_event(Event::Reload);
+                return if browse {
+                    Task::batch([task, iced::widget::operation::focus("space-room-filter")])
+                } else {
+                    task
+                };
             }
             Event::Close => {
                 self.close_space_settings();
@@ -153,6 +166,14 @@ impl App {
                 });
             }
             Event::Reload => {
+                if self
+                    .space_settings
+                    .panel
+                    .as_ref()
+                    .is_some_and(|p| p.directory.is_some())
+                {
+                    return self.space_directory_event(space_directory::Event::Reload);
+                }
                 let Some(panel) = &mut self.space_settings.panel else {
                     return Task::none();
                 };
@@ -353,6 +374,9 @@ impl App {
     }
     pub(super) fn space_settings_view(&self) -> Element<'_, Message> {
         let panel = self.space_settings.panel.as_ref().unwrap();
+        if panel.directory.is_some() {
+            return self.space_directory_view();
+        }
         let mut body = column![
             row![
                 icons::icon(if panel.space {
@@ -369,6 +393,15 @@ impl App {
                     22
                 ),
                 iced::widget::space().width(Length::Fill),
+                if panel.space {
+                    iced::Element::from(icon_button(
+                        Kind::Compass,
+                        "Browse space rooms",
+                        Some(message(Event::Browse(panel.id.clone()))),
+                    ))
+                } else {
+                    iced::Element::from(iced::widget::space().width(0))
+                },
                 icon_button(
                     Kind::Refresh,
                     if panel.space {

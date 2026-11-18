@@ -9,10 +9,12 @@ use std::cell::Cell;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Kind {
     Search,
+    Compass,
     Settings,
     People,
     Home,
     Plus,
+    Room,
     RoomAdd,
     Space,
     SpaceAdd,
@@ -309,6 +311,16 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                         frame.stroke(&path, stroke);
                     }
                 }
+                Compass => {
+                    line(&[
+                        (16.0, 8.0),
+                        (14.0, 14.0),
+                        (8.0, 16.0),
+                        (10.0, 10.0),
+                        (16.0, 8.0),
+                    ]);
+                    frame.stroke(&Path::circle(Point::new(12.0, 12.0), 9.0), stroke);
+                }
                 Search => {
                     line(&[(16.0, 16.0), (21.0, 21.0)]);
                     frame.stroke(&Path::circle(Point::new(10.5, 10.5), 6.5), stroke);
@@ -367,13 +379,29 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                         stroke,
                     );
                 }
-                RoomAdd => {
+                Room | RoomAdd => {
                     line(&[(8.0, 3.0), (5.0, 21.0)]);
-                    line(&[(16.0, 3.0), (14.5, 12.0)]);
+                    line(&[
+                        (16.0, 3.0),
+                        if self.kind == RoomAdd {
+                            (14.5, 12.0)
+                        } else {
+                            (13.0, 21.0)
+                        },
+                    ]);
                     line(&[(3.0, 9.0), (20.0, 9.0)]);
-                    line(&[(2.0, 15.0), (10.0, 15.0)]);
-                    line(&[(17.0, 14.0), (17.0, 22.0)]);
-                    line(&[(13.0, 18.0), (21.0, 18.0)]);
+                    line(&[
+                        (2.0, 15.0),
+                        if self.kind == RoomAdd {
+                            (10.0, 15.0)
+                        } else {
+                            (20.0, 15.0)
+                        },
+                    ]);
+                    if self.kind == RoomAdd {
+                        line(&[(17.0, 14.0), (17.0, 22.0)]);
+                        line(&[(13.0, 18.0), (21.0, 18.0)]);
+                    }
                 }
                 More => {
                     for x in [5.0, 12.0, 19.0] {
