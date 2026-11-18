@@ -1,7 +1,7 @@
 //! Toggleable reaction chips, shared by room messages and thread originals/replies.
 use super::{Message, emoji, shell};
 use iced::{
-    Border, Color, Element,
+    Border, Element,
     widget::{button, container, image, row, text},
 };
 use interconnect::connected::Reaction;
@@ -47,26 +47,30 @@ pub fn view<'a>(
             button(label)
                 .padding([3, 8])
                 .on_press_maybe(on_toggle(reaction))
-                .style(move |_, status| button::Style {
+                .style(move |theme, status| button::Style {
                     background: Some(
                         if is_own {
-                            Color::from_rgb8(226, 234, 247)
+                            shell::palette(theme).selected
                         } else if matches!(
                             status,
                             button::Status::Hovered | button::Status::Pressed
                         ) {
-                            Color::from_rgb8(237, 240, 244)
+                            shell::palette(theme).rail
                         } else {
-                            Color::from_rgb8(246, 247, 249)
+                            shell::palette(theme).sidebar
                         }
                         .into(),
                     ),
-                    text_color: if is_own { shell::ACCENT } else { shell::INK },
+                    text_color: if is_own {
+                        shell::palette(theme).accent
+                    } else {
+                        shell::palette(theme).ink
+                    },
                     border: Border {
                         color: if is_own {
-                            shell::ACCENT.scale_alpha(0.45)
+                            shell::palette(theme).accent.scale_alpha(0.45)
                         } else {
-                            Color::from_rgb8(228, 232, 237)
+                            shell::palette(theme).line
                         },
                         width: 1.0,
                         radius: 7.0.into(),

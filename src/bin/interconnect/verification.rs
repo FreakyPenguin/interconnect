@@ -163,14 +163,14 @@ impl App {
                 trust_label(snapshot.trust)
             ))
             .size(12)
-            .color(shell::MUTED),
+            .style(shell::muted_text),
         ]
         .spacing(16);
         if self.demo.is_some() {
             content = content.push(
                 text("Design preview · sample comparison only. No device or keys are verified.")
                     .size(12)
-                    .color(shell::ACCENT),
+                    .style(shell::accent_text),
             );
         }
         if let Some(incoming) = &snapshot.incoming {
@@ -193,7 +193,7 @@ impl App {
                 }
             }
             Phase::Waiting { device } => content = content.push(text(format!("Waiting for {device}. Accept the request on your other client.")))
-                .push(text("Verification expires after three minutes. You can cancel at any time.").size(12).color(shell::MUTED)),
+                .push(text("Verification expires after three minutes. You can cancel at any time.").size(12).style(shell::muted_text)),
             Phase::Compare { device, comparison } => {
                 content = content.push(shell::title("Compare with your other device", 19))
                     .push(text(format!("Other device: {device}" )).size(13))
@@ -310,13 +310,13 @@ impl App {
         .width((size.width - 32.0).clamp(1.0, 580.0))
         .height((size.height - 32.0).clamp(1.0, preferred_height))
         .clip(true)
-        .style(|_| container::Style {
+        .style(|theme| container::Style {
             border: iced::Border {
-                color: shell::LINE,
+                color: shell::palette(theme).line,
                 width: 1.0,
                 radius: 12.0.into(),
             },
-            ..shell::surface(iced::Color::WHITE)
+            ..shell::surface(theme, shell::palette(theme).background)
         });
         opaque(
             mouse_area(
@@ -324,7 +324,7 @@ impl App {
                     .center_x(Length::Fill)
                     .center_y(Length::Fill)
                     .padding(16)
-                    .style(|_| shell::surface(iced::Color::BLACK.scale_alpha(0.25))),
+                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
             )
             .on_press(message(Event::Ignore))
             .on_scroll(|_| message(Event::Ignore)),

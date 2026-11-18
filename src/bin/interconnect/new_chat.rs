@@ -473,7 +473,7 @@ impl App {
             content = content.push(start);
         }
         if let Some(error) = &state.error {
-            content = content.push(text(error).size(12).color(shell::MUTED));
+            content = content.push(text(error).size(12).style(shell::muted_text));
         }
         content = content.push(
             text(if busy {
@@ -482,15 +482,15 @@ impl App {
                 "New direct chat · Type a name · ↑ ↓ select · Enter open · Esc close"
             })
             .size(11)
-            .color(shell::MUTED),
+            .style(shell::muted_text),
         );
         let card = container(content)
             .padding(12)
             .width(560)
             .max_height(390)
-            .style(|_| container::Style {
+            .style(|theme| container::Style {
                 border: iced::Border::default().rounded(12),
-                ..shell::surface(iced::Color::WHITE)
+                ..shell::surface(theme, shell::palette(theme).background)
             });
         opaque(
             mouse_area(
@@ -498,7 +498,7 @@ impl App {
                     .center_x(Length::Fill)
                     .height(Length::Fill)
                     .padding([48, 16])
-                    .style(|_| shell::surface(iced::Color::BLACK.scale_alpha(0.25))),
+                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
             )
             .on_press(message(Event::Close))
             .on_scroll(|_| message(Event::Ignore)),

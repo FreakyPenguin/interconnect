@@ -35,6 +35,29 @@ Screenshots in the README use only demo data. Capture an ordinary conversation
 with a thread and a separate account-wide search view; keep window size and
 renderer consistent, and check the exported images for clipping or private data.
 
+### Light and dark themes
+
+In demo mode, open Settings → Appearance, select Dark, and Save. Check the
+navigation bar/room list, ordinary conversation and thread, Message formatting
+room (links, code, spoilers, mentions, emoji, inline images and placeholders),
+composer/Markdown preview, selection/search highlights, and reaction buttons.
+Open the room/people/emoji pickers, context menus, tooltips, image viewer, and
+Settings again. Check readable text, hover/selected/focus states, and consistent
+backgrounds at wide and narrow sizes. Repeat with Light.
+
+Keep unsent room/thread drafts and an older timeline reading position before
+switching; they must survive. Changing the selection and pressing Cancel must
+keep the current theme. Defaults then Save restores Light. Demo changes must
+remain in memory, including when an explicit `--config` is supplied.
+
+For an authorized isolated profile, Save Dark and relaunch to check persistence;
+edit `appearance.theme` externally and Reload to apply it. Old files without the
+key select Light; invalid names report a configuration error and keep the last
+valid settings. These are manual acceptance steps, not a claim of connected or
+macOS validation. Automated coverage checks settings compatibility/round trips,
+Save/Cancel/Defaults, state preservation, and rich-text cache refresh on theme
+changes. No connected account is needed for those tests.
+
 ### Received mentions
 
 In the demo's **Message formatting** room, inspect the user mentions at wide and

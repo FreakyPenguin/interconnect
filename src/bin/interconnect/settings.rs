@@ -11,7 +11,9 @@ use iced::{
         text_input,
     },
 };
-use interconnect::settings::{self, GifPlayback, Graphics, SendShortcut, Settings, Store};
+use interconnect::settings::{
+    self, GifPlayback, Graphics, SendShortcut, Settings, Store, ThemeMode,
+};
 use std::path::PathBuf;
 
 #[derive(Default)]
@@ -81,6 +83,7 @@ pub enum Event {
     ShowUnreadSection(bool),
     UnreadFirst(bool),
     LimitRoomWidth(bool),
+    Theme(ThemeMode),
     SendShortcut(SendShortcut),
     GifPlayback(GifPlayback),
     GifSeconds(String),
@@ -247,6 +250,11 @@ impl App {
             Event::UnreadFirst(enabled) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     draft.navigation.unread_first = enabled;
+                }
+            }
+            Event::Theme(mode) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.appearance.theme = mode;
                 }
             }
             Event::LimitRoomWidth(limited) if !self.settings.busy => {
@@ -597,8 +605,8 @@ impl App {
             }));
         }
         if let Some(error) = &self.model.notification_error {
-            notification_controls = notification_controls
-                .push(caption(error).color(iced::Color::from_rgb8(174, 73, 78)));
+            notification_controls =
+                notification_controls.push(caption(error).style(shell::danger_text));
         }
         let mut content = column![
             column![shell::title("Notifications", 14), notification_controls].spacing(12),
@@ -629,6 +637,11 @@ impl App {
             iced::widget::rule::horizontal(1),
             column![
                 shell::title("Appearance", 14),
+                row![text("Theme").size(13), pick_list(
+                    ThemeMode::ALL, Some(draft.appearance.theme),
+                    move |mode| message(if available { Event::Theme(mode) } else { Event::Ignore }),
+                ).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
+                caption("Apply light or dark colors when you save. No restart required."),
                 room_width,
                 caption("Center headers, messages, and the composer in a readable column. Disable to use the full pane width."),
             ].spacing(12),
@@ -651,7 +664,7 @@ impl App {
             ].spacing(12),
             iced::widget::rule::horizontal(1),
             column![
-                row![shell::title("Graphics", 14), text("Restart required").size(11).color(shell::MUTED)]
+                row![shell::title("Graphics", 14), text("Restart required").size(11).style(shell::muted_text)]
                     .spacing(10).align_y(iced::Alignment::Center),
                 gpu,
                 caption("Uses the CPU renderer when disabled. GPU rendering includes a software fallback."),
@@ -674,7 +687,7 @@ impl App {
         // Save errors belong next to the persistent actions, rather than below the fold.
         let mut actions = column![].spacing(10).width(Length::Fill);
         if let Some(error) = &self.settings.error {
-            actions = actions.push(caption(error).color(iced::Color::from_rgb8(174, 73, 78)));
+            actions = actions.push(caption(error).style(shell::danger_text));
         }
         actions =
             actions.push(row![iced::widget::space().width(Length::Fill), cancel, save].spacing(8));
@@ -724,15 +737,15 @@ impl App {
         .width((size.width - 32.0).clamp(1.0, 560.0))
         .height((size.height - 32.0).clamp(1.0, 760.0))
         .clip(true)
-        .style(|_| container::Style {
+        .style(|theme| container::Style {
             // Large shadows in tiny-skia 0.14 repaint outside the damage region.
             // A border gives the card separation without darkening on scroll.
             border: iced::Border {
-                color: shell::LINE,
+                color: shell::palette(theme).line,
                 width: 1.0,
                 radius: 12.0.into(),
             },
-            ..shell::surface(iced::Color::WHITE)
+            ..shell::surface(theme, shell::palette(theme).background)
         });
         opaque(
             mouse_area(
@@ -740,7 +753,7 @@ impl App {
                     .center_x(Length::Fill)
                     .center_y(Length::Fill)
                     .padding(16)
-                    .style(|_| shell::surface(iced::Color::BLACK.scale_alpha(0.25))),
+                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
             )
             .on_scroll(|_| message(Event::Ignore))
             .on_press(message(Event::Ignore)),
@@ -749,12 +762,45 @@ impl App {
 }
 
 fn caption<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
-    text(label).size(12).color(shell::MUTED).width(Length::Fill)
+    text(label)
+        .size(12)
+        .style(shell::muted_text)
+        .width(Length::Fill)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn theme_changes_apply_on_save_and_preserve_conversation_state() {
+        use interconnect::settings::ThemeMode;
+        let mut app = crate::tests::demo_app();
+        let selection = app.selection.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Unsent theme test");
+        app.scroll_positions.insert(key.clone(), 51.0);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::Theme(ThemeMode::Dark)));
+        assert_eq!(app.settings.current.appearance.theme, ThemeMode::Light);
+        let _ = app.update(Message::Settings(Event::Cancel));
+        assert_eq!(app.settings.current.appearance.theme, ThemeMode::Light);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::Theme(ThemeMode::Dark)));
+        let _ = app.update(Message::Settings(Event::Save));
+        assert_eq!(app.settings.current.appearance.theme, ThemeMode::Dark);
+        assert_eq!(app.selection, selection);
+        assert_eq!(
+            app.drafts[&key].content.text().trim_end(),
+            "Unsent theme test"
+        );
+        assert_eq!(app.scroll_positions[&key], 51.0);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::Defaults));
+        let _ = app.update(Message::Settings(Event::Save));
+        assert_eq!(app.settings.current.appearance.theme, ThemeMode::Light);
+    }
 
     #[test]
     fn presence_polling_validates_interval_and_applies_on_save_with_cancel_and_defaults() {
@@ -1128,6 +1174,13 @@ mod tests {
         assert!((inspect(&app, &mut tree, false) - 120.0).abs() < 1.0);
         let _ = app.settings_update(Event::Cancel);
         assert!((inspect(&app, &mut tree, false) - 120.0).abs() < 1.0);
+        for mode in [ThemeMode::Dark, ThemeMode::Light] {
+            let _ = app.settings_update(Event::Open);
+            let _ = app.settings_update(Event::Theme(mode));
+            let _ = app.settings_update(Event::Save);
+            assert_eq!(app.settings.current.appearance.theme, mode);
+            assert!((inspect(&app, &mut tree, false) - 120.0).abs() < 1.0);
+        }
     }
 
     #[test]

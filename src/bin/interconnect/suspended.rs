@@ -235,7 +235,7 @@ mod tests {
                 &mut renderer,
                 &shell::theme(),
                 &renderer::Style {
-                    text_color: shell::INK,
+                    text_color: crate::appearance::LIGHT.ink,
                 },
                 Layout::new(&node),
                 mouse::Cursor::Unavailable,

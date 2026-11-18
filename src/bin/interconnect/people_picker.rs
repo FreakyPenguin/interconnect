@@ -155,13 +155,13 @@ impl State {
             body = body.push(
                 text(format!("Selected: {}", person.name))
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         } else if self.loading {
             body = body.push(
                 text("Searching server directory…")
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         } else if let Some(error) = &self.error {
             let mut retry = button(text("Retry search").size(12)).style(shell::quiet_button);
@@ -173,7 +173,7 @@ impl State {
             body = body.push(
                 text("No directory matches. You can still enter a full Matrix ID.")
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         }
         let mut results = column![].spacing(2);
@@ -183,7 +183,7 @@ impl State {
                 text(&person.name).size(13).wrapping(text::Wrapping::None),
                 text(&person.user_id)
                     .size(11)
-                    .color(shell::MUTED)
+                    .style(shell::muted_text)
                     .wrapping(text::Wrapping::None)
             ]
             .spacing(3)
@@ -198,7 +198,7 @@ impl State {
             .style(move |theme, status| {
                 let mut style = shell::quiet_button(theme, status);
                 if quick && index == self.highlighted {
-                    style.background = Some(iced::Color::from_rgb8(226, 234, 247).into());
+                    style.background = Some(shell::palette(theme).selected.into());
                 }
                 style
             });
@@ -222,7 +222,7 @@ impl State {
             body = body.push(
                 text("More people match. Refine your search.")
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         }
         body.into()

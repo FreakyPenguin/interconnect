@@ -656,13 +656,13 @@ impl App {
                         200
                     })
                     .padding(5)
-                    .style(|_| container::Style {
+                    .style(|theme| container::Style {
                         border: iced::Border {
-                            color: iced::Color::from_rgb8(228, 232, 237),
+                            color: shell::palette(theme).line,
                             width: 1.0,
                             radius: 8.0.into(),
                         },
-                        ..shell::surface(iced::Color::WHITE)
+                        ..shell::surface(theme, shell::palette(theme).background)
                     })
                     .into(),
             )

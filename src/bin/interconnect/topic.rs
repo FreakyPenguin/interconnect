@@ -188,14 +188,14 @@ impl App {
             super::tooltips::tooltip(
                 button(super::single_line::label(label, 12).shrink())
                     .padding(0)
-                    .style(|_, status| iced::widget::button::Style {
+                    .style(|theme, status| iced::widget::button::Style {
                         text_color: if matches!(
                             status,
                             button::Status::Hovered | button::Status::Pressed
                         ) {
-                            shell::ACCENT
+                            shell::palette(theme).accent
                         } else {
-                            shell::MUTED
+                            shell::palette(theme).muted
                         },
                         ..Default::default()
                     })
@@ -206,7 +206,7 @@ impl App {
             .into()
         } else {
             super::tooltips::tooltip(
-                super::single_line::label(label, 12).color(shell::MUTED),
+                super::single_line::label(label, 12).style(shell::muted_text),
                 topic,
                 tooltip::Position::Bottom,
             )

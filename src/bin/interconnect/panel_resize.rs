@@ -195,7 +195,7 @@ impl Widget<Message, Theme, Renderer> for Divider {
         &self,
         tree: &Tree,
         renderer: &mut Renderer,
-        _: &Theme,
+        theme: &Theme,
         _: &renderer::Style,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
@@ -216,9 +216,9 @@ impl Widget<Message, Theme, Renderer> for Divider {
                     ..Default::default()
                 },
                 if active {
-                    shell::ACCENT.scale_alpha(0.65)
+                    shell::palette(theme).accent.scale_alpha(0.65)
                 } else {
-                    shell::LINE
+                    shell::palette(theme).line
                 },
             );
         }

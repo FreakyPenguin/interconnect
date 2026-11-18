@@ -164,7 +164,7 @@ impl App {
             shell::title("Interconnect", 30),
             text("A space for your conversations.")
                 .size(15)
-                .color(shell::MUTED),
+                .style(shell::muted_text),
         ]
         .spacing(18)
         .max_width(420);
@@ -215,7 +215,7 @@ impl App {
                     .push(
                         text("Your session is saved securely in your system keyring.")
                             .size(12)
-                            .color(shell::MUTED),
+                            .style(shell::muted_text),
                     );
             }
             Authentication::Waiting { url } => {
@@ -224,7 +224,7 @@ impl App {
                     content = content.push(text("Open the sign-in page and return here when you're done."))
                         .push(row![button("Open browser").on_press(Message::Login(Event::OpenBrowser)).padding(10),
                             button("Copy sign-in link").on_press(Message::Login(Event::CopyLink)).padding(10)].spacing(12))
-                        .push(text("Sign-in expires after three minutes. In a container, forward localhost port 8765 to your browser's host.").size(12).color(shell::MUTED));
+                        .push(text("Sign-in expires after three minutes. In a container, forward localhost port 8765 to your browser's host.").size(12).style(shell::muted_text));
                 } else {
                     content = content.push(text("Connecting to your homeserver…"));
                 }

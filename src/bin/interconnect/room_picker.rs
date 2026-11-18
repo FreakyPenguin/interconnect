@@ -523,7 +523,7 @@ impl App {
                         icon,
                         column![
                             single_line::label(&space.name, 14),
-                            single_line::label(&space.trail, 11).color(shell::MUTED),
+                            single_line::label(&space.trail, 11).style(shell::muted_text),
                         ]
                         .spacing(2)
                         .width(Length::Fill),
@@ -536,9 +536,9 @@ impl App {
                 .on_press(message(Event::ChooseSpace(space.path.clone())))
                 .style(move |theme, status| {
                     let mut style = shell::quiet_button(theme, status);
-                    style.text_color = shell::INK;
+                    style.text_color = shell::palette(theme).ink;
                     if active {
-                        style.background = Some(iced::Color::from_rgb8(226, 234, 247).into());
+                        style.background = Some(shell::palette(theme).selected.into());
                     }
                     style
                 }),
@@ -548,13 +548,13 @@ impl App {
             let active = index == selected;
             let label = column![
                 text(&room.name).size(14),
-                text(&room.id).size(11).color(shell::MUTED)
+                text(&room.id).size(11).style(shell::muted_text)
             ]
             .spacing(2);
             results = results.push(
                 button(
                     row![
-                        text(if room.direct { "@" } else { "#" }).color(shell::MUTED),
+                        text(if room.direct { "@" } else { "#" }).style(shell::muted_text),
                         label
                     ]
                     .spacing(12),
@@ -564,9 +564,9 @@ impl App {
                 .on_press(message(Event::Choose(room.id.clone())))
                 .style(move |theme, status| {
                     let mut style = shell::quiet_button(theme, status);
-                    style.text_color = shell::INK;
+                    style.text_color = shell::palette(theme).ink;
                     if active {
-                        style.background = Some(iced::Color::from_rgb8(226, 234, 247).into());
+                        style.background = Some(shell::palette(theme).selected.into());
                     }
                     style
                 }),
@@ -581,7 +581,7 @@ impl App {
                         "No matching rooms"
                     })
                     .size(13)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
                 )
                 .padding(16),
             );
@@ -618,7 +618,7 @@ impl App {
                     if count == 1 { "" } else { "s" },
                 ))
                 .size(11)
-                .color(shell::MUTED)
+                .style(shell::muted_text)
             ]
             .spacing(10),
         )
@@ -626,9 +626,9 @@ impl App {
         .width(560)
         .height(420)
         .max_height(420)
-        .style(|_| container::Style {
+        .style(|theme| container::Style {
             border: iced::Border::default().rounded(12),
-            ..shell::surface(iced::Color::WHITE)
+            ..shell::surface(theme, shell::palette(theme).background)
         });
         opaque(
             mouse_area(
@@ -636,7 +636,7 @@ impl App {
                     .center_x(Length::Fill)
                     .height(Length::Fill)
                     .padding([48, 16])
-                    .style(|_| shell::surface(iced::Color::BLACK.scale_alpha(0.25))),
+                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
             )
             .on_press(message(Event::Close))
             .on_scroll(|_| message(Event::Ignore)),

@@ -108,7 +108,7 @@ impl App {
             && target.generation == generation
             && row.event_id.as_ref() == Some(&target.event)
         {
-            column![body, text(error).size(12).color(shell::MUTED)]
+            column![body, text(error).size(12).style(shell::muted_text)]
                 .spacing(4)
                 .into()
         } else {

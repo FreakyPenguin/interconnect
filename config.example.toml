@@ -22,6 +22,8 @@ show_unread_section = true
 unread_first = true
 
 [appearance]
+# Built-in color variant: "light" or "dark". Applies without restarting.
+theme = "light"
 # Center room content in an 840 px column. Disable to use the full pane width.
 limit_room_width = true
 

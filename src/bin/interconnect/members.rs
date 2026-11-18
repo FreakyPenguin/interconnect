@@ -188,10 +188,10 @@ impl App {
                         if pending == 1 { "invite" } else { "invites" },
                     ))
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
                     text("Statuses are last checked snapshots; refresh for the latest.")
                         .size(11)
-                        .color(shell::MUTED),
+                        .style(shell::muted_text),
                 ]
                 .spacing(12),
             )
@@ -210,7 +210,7 @@ impl App {
                             "Members"
                         })
                         .size(12)
-                        .color(shell::MUTED),
+                        .style(shell::muted_text),
                     )
                     .padding([8, 16]),
                 );
@@ -229,7 +229,7 @@ impl App {
                 name,
                 text(&member.user_id)
                     .size(11)
-                    .color(shell::MUTED)
+                    .style(shell::muted_text)
                     .wrapping(text::Wrapping::None)
             ]
             .spacing(3)
@@ -258,7 +258,7 @@ impl App {
                                 &member.role
                             })
                             .size(11)
-                            .color(shell::MUTED)
+                            .style(shell::muted_text)
                         ]
                         .spacing(10)
                         .align_y(iced::Alignment::Center),
@@ -276,7 +276,7 @@ impl App {
                         "No matching members."
                     })
                     .size(13)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
                 )
                 .padding(16),
             );

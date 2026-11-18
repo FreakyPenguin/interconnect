@@ -242,7 +242,7 @@ impl App {
             } else {
                 "Open image to load"
             };
-            container(text(label).size(12).color(shell::MUTED))
+            container(text(label).size(12).style(shell::muted_text))
                 .center_x(Length::Fill)
                 .center_y(180)
                 .into()
@@ -250,9 +250,9 @@ impl App {
         let frame = container(content)
             .height(180)
             .width(Length::Fill)
-            .style(|_| container::Style {
+            .style(|theme| container::Style {
                 border: iced::Border::default().rounded(8),
-                ..shell::surface(iced::Color::from_rgb8(246, 247, 249))
+                ..shell::surface(theme, shell::palette(theme).sidebar)
             });
         let mut open = button(frame)
             .padding(0)
@@ -313,7 +313,7 @@ impl App {
                     .center_y(height)
                     .into()
                 } else {
-                    container(text("Loading image…").size(14).color(shell::MUTED))
+                    container(text("Loading image…").size(14).style(shell::muted_text))
                         .center_x(Length::Fill)
                         .center_y(height)
                         .into()
@@ -367,35 +367,35 @@ impl App {
                                 ),
                             })
                             .size(12)
-                            .color(shell::MUTED)
+                            .style(shell::muted_text)
                         ]
                         .spacing(12)
                         .align_y(iced::Alignment::Center)
                         .into()
                     }
-                    Err(error) => Element::from(text(*error).size(12).color(shell::MUTED)),
+                    Err(error) => Element::from(text(*error).size(12).style(shell::muted_text)),
                 });
             }
             let toolbar = container(toolbar)
                 .padding([8, 10])
                 .width(Length::Fill)
-                .style(|_| container::Style {
+                .style(|theme| container::Style {
                     border: iced::Border::default().rounded(8),
-                    ..shell::surface(shell::SIDEBAR)
+                    ..shell::surface(theme, shell::palette(theme).sidebar)
                 });
             let card = container(column![header, content, toolbar].spacing(12))
                 .padding(16)
                 .width(width)
-                .style(|_| container::Style {
+                .style(|theme| container::Style {
                     border: iced::Border::default().rounded(12),
-                    ..shell::surface(iced::Color::WHITE)
+                    ..shell::surface(theme, shell::palette(theme).background)
                 });
             opaque(
                 mouse_area(
                     container(card)
                         .center_x(Length::Fill)
                         .center_y(Length::Fill)
-                        .style(|_| shell::surface(iced::Color::BLACK.scale_alpha(0.35))),
+                        .style(|theme| shell::surface(theme, shell::palette(theme).image_scrim)),
                 )
                 .on_press(Message::Image(Event::Ignore))
                 .on_scroll(|_| Message::Image(Event::Ignore)),

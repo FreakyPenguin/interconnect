@@ -678,6 +678,7 @@ mod tests {
                         row,
                         assets.clone(),
                         None,
+                        interconnect::settings::ThemeMode::Light,
                     ))
                     .id(super::super::timeline::row_id(index))
                     .into()

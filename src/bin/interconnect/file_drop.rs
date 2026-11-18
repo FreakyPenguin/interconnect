@@ -157,7 +157,7 @@ impl Widget<Message, Theme, Renderer> for DropZone<'_> {
                         color: if state.files.len() > 1 {
                             theme.extended_palette().danger.base.color
                         } else {
-                            shell::ACCENT
+                            shell::palette(theme).accent
                         },
                         width: 2.0,
                         radius: 8.0.into(),

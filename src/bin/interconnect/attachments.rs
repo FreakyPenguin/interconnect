@@ -344,20 +344,20 @@ impl App {
                     ),
                     text(format!("{} KiB", attachment.size.div_ceil(1024)))
                         .size(11)
-                        .color(shell::MUTED),
+                        .style(shell::muted_text),
                     remove
                 ]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),
             )
             .padding([4, 8])
-            .style(|_| container::Style {
+            .style(|theme| container::Style {
                 border: iced::Border {
-                    color: shell::LINE,
+                    color: shell::palette(theme).line,
                     width: 1.0,
                     radius: 6.0.into(),
                 },
-                ..shell::surface(iced::Color::from_rgb8(248, 249, 251))
+                ..shell::surface(theme, shell::palette(theme).toolbar)
             })
             .into(),
         )

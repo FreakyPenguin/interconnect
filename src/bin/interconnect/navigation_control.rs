@@ -190,7 +190,7 @@ impl Widget<Message, Theme, Renderer> for Control<'_> {
                     renderer::Quad {
                         bounds: layout.bounds(),
                         border: Border {
-                            color: shell::ACCENT,
+                            color: shell::palette(theme).accent,
                             width: 1.5,
                             radius: 6.0.into(),
                         },

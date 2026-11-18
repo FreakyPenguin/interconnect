@@ -33,9 +33,9 @@ impl App {
         .spacing(8)
         .align_y(iced::Alignment::Center);
         if pins.error.is_some() {
-            summary = summary.push(text("Some unavailable").size(11).color(shell::MUTED));
+            summary = summary.push(text("Some unavailable").size(11).style(shell::muted_text));
         } else if pins.loading {
-            summary = summary.push(text("Loading…").size(11).color(shell::MUTED));
+            summary = summary.push(text("Loading…").size(11).style(shell::muted_text));
         }
         summary = summary.push(icon(if expanded {
             Kind::ChevronUp
@@ -60,7 +60,7 @@ impl App {
             let timestamp = super::tooltips::tooltip(
                 text(presentation::time_label(message))
                     .size(11)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
                 presentation::time_detail(message),
                 tooltip::Position::Bottom,
             );
@@ -94,7 +94,12 @@ impl App {
                         timestamp
                     ]
                     .spacing(10),
-                    selectable::message_view_with_assets(message, self.inline_assets(), None),
+                    selectable::message_view_with_assets(
+                        message,
+                        self.inline_assets(),
+                        None,
+                        self.settings.current.appearance.theme
+                    ),
                 ]
                 .spacing(4)
                 .width(Length::Fill),
@@ -103,18 +108,18 @@ impl App {
             entries = entries.push(self.pin_feedback(body.into(), message, false, generation));
         }
         if let Some(error) = &pins.error {
-            entries = entries.push(text(error).size(12).color(shell::MUTED));
+            entries = entries.push(text(error).size(12).style(shell::muted_text));
         } else if pins.loading {
             entries = entries.push(
                 text("Loading pinned messages…")
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         } else if pins.rows.len() < pins.total {
             entries = entries.push(
                 text("Some pinned messages are unavailable or exceed the display limit.")
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         }
         let content = container(

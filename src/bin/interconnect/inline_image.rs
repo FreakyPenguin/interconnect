@@ -267,14 +267,20 @@ impl Paragraph {
             .find(|glyph| point.x >= glyph.x && point.x < glyph.x + glyph.w)
             .map(|glyph| glyph.metadata)
     }
-    pub fn draw(&self, renderer: &mut iced::Renderer, position: Point, clip: Rectangle) {
+    pub fn draw(
+        &self,
+        renderer: &mut iced::Renderer,
+        position: Point,
+        clip: Rectangle,
+        color: iced::Color,
+    ) {
         use iced::advanced::{graphics::text::Renderer as _, text::Renderer as _};
         match self {
-            Self::Text(p) => renderer.fill_paragraph(p, position, super::shell::INK, clip),
+            Self::Text(p) => renderer.fill_paragraph(p, position, color, clip),
             Self::Embedded { buffer, .. } => renderer.fill_raw(graphics::Raw {
                 buffer: Arc::downgrade(buffer),
                 position,
-                color: super::shell::INK,
+                color,
                 clip_bounds: clip,
             }),
         }

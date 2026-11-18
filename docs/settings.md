@@ -60,6 +60,7 @@ use `--config`. See the complete [example TOML](../config.example.toml).
 | `navigation.show_room_list` | `true` | Initial room-list visibility. |
 | `navigation.show_unread_section` | `true` | Also list unread rooms in the Unread section. |
 | `navigation.unread_first` | `true` | Sort unread rooms first, then alphabetically within sections. |
+| `appearance.theme` | `"light"` | `"light"` or `"dark"` colors; applies on Save without restarting. |
 | `appearance.limit_room_width` | `true` | Center room content in an 840 px column. |
 | `composer.send_shortcut` | `"ctrl_enter"` | Enter adds a newline; Ctrl+Enter sends. `"enter"` makes Enter send and Shift+Enter add a newline. |
 | `graphics.gpu_enabled` | `true` | Try wgpu with software startup fallback; false forces CPU rendering. Restart required. |
@@ -77,6 +78,21 @@ unknown keys survive edits. Invalid TOML/version, non-UTF-8, oversized files
 reloaded; the last valid settings remain active. Concurrent external edits are
 rejected on Save and require Reload. There is no file watcher or filesystem
 compare-and-swap guarantee.
+
+## Appearance
+
+Settings → Appearance → Theme selects Light or Dark. Save applies the selection;
+Cancel discards it, Defaults selects Light, and Reload applies the file's theme.
+Older configuration files without `appearance.theme` keep the light appearance.
+Demo theme changes stay in memory and do not read or write saved settings.
+
+Both variants share semantic colors defined in
+`src/bin/interconnect/appearance.rs`, covering navigation, dialogs, composer,
+formatted messages, mentions, and selection/search highlights. Theme switching
+uses the normal UI update flow, with no polling or animation timers. Formula
+images keep a light backing to preserve their rasterized ink and any authored
+colors. Custom palette files and automatic system appearance matching are not
+implemented.
 
 ## Home and room organization
 

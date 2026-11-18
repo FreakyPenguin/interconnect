@@ -414,7 +414,7 @@ impl Widget<Message, Theme, Renderer> for Header<'_> {
                                 border: iced::Border::default().rounded(1),
                                 ..Default::default()
                             },
-                            shell::MUTED,
+                            shell::palette(theme).muted,
                         );
                     }
                 }
@@ -439,7 +439,7 @@ impl Widget<Message, Theme, Renderer> for Header<'_> {
                         bounds,
                         ..Default::default()
                     },
-                    shell::ACCENT,
+                    shell::palette(theme).accent,
                 );
             }
         }

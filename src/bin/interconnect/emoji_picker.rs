@@ -131,14 +131,14 @@ impl Catalog {
 }
 
 // Use borders for popup separation: tiny-skia shadows can repaint outside damage.
-pub fn surface(_: &iced::Theme) -> iced::widget::container::Style {
+pub fn surface(theme: &iced::Theme) -> iced::widget::container::Style {
     iced::widget::container::Style {
         border: iced::Border {
-            color: iced::Color::from_rgb8(228, 232, 237),
+            color: shell::palette(theme).line,
             width: 1.0,
             radius: 10.0.into(),
         },
-        ..shell::surface(iced::Color::WHITE)
+        ..shell::surface(theme, shell::palette(theme).background)
     }
 }
 
@@ -421,7 +421,7 @@ pub fn view<'a, Message: Clone + 'static>(
     ]
     .spacing(8);
     let results: Element<'a, Message> = if state.matches.is_empty() {
-        container(text("No emoji found").size(12).color(shell::MUTED))
+        container(text("No emoji found").size(12).style(shell::muted_text))
             .padding(8)
             .into()
     } else {
@@ -449,7 +449,7 @@ pub fn view<'a, Message: Clone + 'static>(
                     state.pages()
                 ))
                 .size(11)
-                .color(shell::MUTED),
+                .style(shell::muted_text),
                 next
             ]
             .spacing(8)
@@ -459,7 +459,7 @@ pub fn view<'a, Message: Clone + 'static>(
         content = content.push(
             text("Custom emoji images are visible to homeservers.")
                 .size(10)
-                .color(shell::MUTED),
+                .style(shell::muted_text),
         );
     }
     if enabled {

@@ -1,7 +1,7 @@
 //! Shared composer surface. Focus follows the real editor without app messages or timers.
 use super::{App, DraftKey, Message, shell};
 use iced::{
-    Border, Color, Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector,
+    Border, Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector,
     advanced::{
         Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
         widget::{self, Tree},
@@ -296,13 +296,17 @@ impl Widget<Message, Theme, Renderer> for Frame<'_> {
             renderer::Quad {
                 bounds: layout.bounds(),
                 border: Border {
-                    color: if focused { shell::ACCENT } else { shell::LINE },
+                    color: if focused {
+                        shell::palette(theme).accent
+                    } else {
+                        shell::palette(theme).line
+                    },
                     width: if focused { 1.5 } else { 1.0 },
                     radius: 10.0.into(),
                 },
                 ..Default::default()
             },
-            Color::WHITE,
+            shell::palette(theme).background,
         );
         self.content.as_widget().draw(
             &tree.children[0],

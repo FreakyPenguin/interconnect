@@ -1,6 +1,6 @@
 //! Cached, grapheme-safe single-line labels. Re-shape only when text or layout changes.
 use iced::{
-    Color, Element, Font, Length, Pixels, Rectangle, Size,
+    Element, Font, Length, Pixels, Rectangle, Size,
     advanced::{
         self, layout, mouse, renderer,
         text::{self, Paragraph as _, paragraph},
@@ -9,6 +9,8 @@ use iced::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 
+type TextStyle<'a> = Box<dyn Fn(&iced::Theme) -> iced::widget::text::Style + 'a>;
+
 type Paragraph = <iced::Renderer as text::Renderer>::Paragraph;
 
 pub(super) fn label(value: &str, size: u32) -> Label<'_> {
@@ -16,7 +18,7 @@ pub(super) fn label(value: &str, size: u32) -> Label<'_> {
         value,
         size: size as f32,
         font: None,
-        color: None,
+        style: None,
         width: Length::Fill,
     }
 }
@@ -25,10 +27,10 @@ pub(super) struct Label<'a> {
     value: &'a str,
     size: f32,
     font: Option<Font>,
-    color: Option<Color>,
+    style: Option<TextStyle<'a>>,
     width: Length,
 }
-impl Label<'_> {
+impl<'a> Label<'a> {
     pub(super) fn shrink(mut self) -> Self {
         self.width = Length::Shrink;
         self
@@ -37,8 +39,11 @@ impl Label<'_> {
         self.font = Some(font);
         self
     }
-    pub(super) fn color(mut self, color: Color) -> Self {
-        self.color = Some(color);
+    pub(super) fn style(
+        mut self,
+        style: impl Fn(&iced::Theme) -> iced::widget::text::Style + 'a,
+    ) -> Self {
+        self.style = Some(Box::new(style));
         self
     }
 }
@@ -139,7 +144,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Label<'
         &self,
         tree: &widget::Tree,
         renderer: &mut iced::Renderer,
-        _: &iced::Theme,
+        theme: &iced::Theme,
         style: &renderer::Style,
         layout: advanced::Layout<'_>,
         _: mouse::Cursor,
@@ -150,7 +155,10 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Label<'
             renderer.fill_paragraph(
                 tree.state.downcast_ref::<State>().paragraph.raw(),
                 layout.position(),
-                self.color.unwrap_or(style.text_color),
+                self.style
+                    .as_ref()
+                    .and_then(|f| f(theme).color)
+                    .unwrap_or(style.text_color),
                 clip,
             );
         }

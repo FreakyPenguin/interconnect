@@ -14,16 +14,8 @@ use iced::{
 use interconnect::navigation::{self, Scope};
 use std::collections::HashSet;
 
-pub const INK: Color = Color::from_rgb8(39, 46, 56);
-pub const MUTED: Color = Color::from_rgb8(112, 121, 134);
-pub const ROOM_WIDE_ACCENT: Color = Color::from_rgb8(158, 91, 24);
-pub const ROOM_ACCENT: Color = Color::from_rgb8(30, 125, 119);
-pub const ACCENT: Color = Color::from_rgb8(66, 99, 157);
-pub(super) const SIDEBAR: Color = Color::from_rgb8(246, 247, 249);
-pub(super) const RAIL: Color = Color::from_rgb8(237, 240, 244);
-pub(super) const LINE: Color = Color::from_rgb8(228, 232, 237);
+pub(super) use super::appearance::palette;
 pub(super) const COMPACT_WIDTH: f32 = 800.0;
-const SELECTED: Color = Color::from_rgb8(226, 234, 247);
 
 pub struct State {
     pub spaces: super::space_navigation::State,
@@ -51,18 +43,9 @@ impl Default for State {
         }
     }
 }
+#[cfg(test)]
 pub fn theme() -> Theme {
-    Theme::custom(
-        "Porcelain",
-        iced::theme::Palette {
-            background: Color::WHITE,
-            text: INK,
-            primary: ACCENT,
-            success: Color::from_rgb8(66, 121, 101),
-            danger: Color::from_rgb8(174, 73, 78),
-            warning: Color::from_rgb8(165, 123, 45),
-        },
-    )
+    super::appearance::theme(interconnect::settings::ThemeMode::Light)
 }
 pub fn title(label: &str, size: u32) -> widget::Text<'_> {
     text(label).size(size).font(Font {
@@ -70,40 +53,48 @@ pub fn title(label: &str, size: u32) -> widget::Text<'_> {
         ..Font::with_name("Inter")
     })
 }
-pub fn surface(color: Color) -> container::Style {
+pub fn surface(theme: &Theme, color: Color) -> container::Style {
     container::Style {
         background: Some(color.into()),
-        text_color: Some(INK),
+        text_color: Some(palette(theme).ink),
         ..Default::default()
     }
 }
-pub fn quiet_button(_: &Theme, status: button::Status) -> button::Style {
+pub fn quiet_button(theme: &Theme, status: button::Status) -> button::Style {
     let background = match status {
-        button::Status::Hovered => Some(RAIL.into()),
-        button::Status::Pressed => Some(SELECTED.into()),
+        button::Status::Hovered => Some(palette(theme).rail.into()),
+        button::Status::Pressed => Some(palette(theme).selected.into()),
         _ => None,
     };
     button::Style {
         background,
         text_color: if status == button::Status::Disabled {
-            MUTED
+            palette(theme).muted
         } else {
-            ACCENT
+            palette(theme).accent
         },
         border: Border::default().rounded(7),
         ..Default::default()
     }
 }
-pub(super) fn navigation_button(selected: bool, status: button::Status) -> button::Style {
+pub(super) fn navigation_button(
+    theme: &Theme,
+    selected: bool,
+    status: button::Status,
+) -> button::Style {
     button::Style {
         background: if selected {
-            Some(SELECTED.into())
+            Some(palette(theme).selected.into())
         } else if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-            Some(RAIL.into())
+            Some(palette(theme).rail.into())
         } else {
             None
         },
-        text_color: if selected { ACCENT } else { INK },
+        text_color: if selected {
+            palette(theme).accent
+        } else {
+            palette(theme).ink
+        },
         border: Border::default().rounded(8),
         ..Default::default()
     }
@@ -111,7 +102,7 @@ pub(super) fn navigation_button(selected: bool, status: button::Status) -> butto
 pub fn scroll_style(theme: &Theme, status: scrollable::Status) -> scrollable::Style {
     let mut style = scrollable::default(theme, status);
     style.vertical_rail.background = None;
-    style.vertical_rail.scroller.background = Color::from_rgb8(195, 203, 214).into();
+    style.vertical_rail.scroller.background = palette(theme).scroller.into();
     style
 }
 pub fn scrollbar() -> scrollable::Direction {
@@ -126,19 +117,19 @@ pub fn jump_button(theme: &Theme, status: button::Status) -> button::Style {
     let mut style = quiet_button(theme, status);
     style.background = Some(
         if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-            SELECTED
+            palette(theme).selected
         } else {
-            Color::WHITE
+            palette(theme).background
         }
         .into(),
     );
     style.border = Border {
-        color: LINE,
+        color: palette(theme).line,
         width: 1.0,
         radius: 18.0.into(),
     };
     style.shadow = iced::Shadow {
-        color: Color::BLACK.scale_alpha(0.12),
+        color: palette(theme).shadow,
         offset: iced::Vector::new(0.0, 2.0),
         blur_radius: 8.0,
     };
@@ -147,29 +138,29 @@ pub fn jump_button(theme: &Theme, status: button::Status) -> button::Style {
 pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     let mut style = quiet_button(theme, status);
     style.text_color = match status {
-        button::Status::Disabled => MUTED.scale_alpha(0.45),
-        button::Status::Active => MUTED,
-        _ => ACCENT,
+        button::Status::Disabled => palette(theme).muted.scale_alpha(0.45),
+        button::Status::Active => palette(theme).muted,
+        _ => palette(theme).accent,
     };
     style.border = Border::default().rounded(5);
     style
 }
-pub(super) fn send_button(_: &Theme, status: button::Status) -> button::Style {
+pub(super) fn send_button(theme: &Theme, status: button::Status) -> button::Style {
     let disabled = status == button::Status::Disabled;
     button::Style {
         background: Some(
             match status {
-                button::Status::Disabled => Color::from_rgb8(235, 238, 243),
-                button::Status::Hovered => Color::from_rgb8(57, 87, 143),
-                button::Status::Pressed => Color::from_rgb8(49, 75, 124),
-                button::Status::Active => ACCENT,
+                button::Status::Disabled => palette(theme).rail,
+                button::Status::Hovered => palette(theme).accent_hover,
+                button::Status::Pressed => palette(theme).accent_pressed,
+                button::Status::Active => palette(theme).accent,
             }
             .into(),
         ),
         text_color: if disabled {
-            MUTED.scale_alpha(0.7)
+            palette(theme).muted.scale_alpha(0.7)
         } else {
-            Color::WHITE
+            palette(theme).on_accent
         },
         border: Border::default().rounded(8),
         ..Default::default()
@@ -182,13 +173,13 @@ pub(super) fn composer_toggle(
 ) -> button::Style {
     let mut style = icon_button(theme, status);
     if selected && status != button::Status::Disabled {
-        style.background = Some(SELECTED.into());
-        style.text_color = ACCENT;
+        style.background = Some(palette(theme).selected.into());
+        style.text_color = palette(theme).accent;
     }
     style.border = Border::default().rounded(6);
     style
 }
-pub(super) fn composer_toolbar(_: &Theme) -> container::Style {
+pub(super) fn composer_toolbar(theme: &Theme) -> container::Style {
     container::Style {
         border: Border {
             radius: iced::border::Radius {
@@ -199,7 +190,7 @@ pub(super) fn composer_toolbar(_: &Theme) -> container::Style {
             },
             ..Default::default()
         },
-        ..surface(Color::from_rgb8(248, 249, 251))
+        ..surface(theme, palette(theme).toolbar)
     }
 }
 pub(super) fn composer_editor_style(
@@ -209,7 +200,7 @@ pub(super) fn composer_editor_style(
     let mut style = text_editor::default(theme, status);
     style.background = Background::Color(Color::TRANSPARENT);
     style.border = Border::default();
-    style.placeholder = MUTED.scale_alpha(0.85);
+    style.placeholder = palette(theme).muted.scale_alpha(0.85);
     style
 }
 #[derive(Default)]
@@ -362,14 +353,16 @@ pub fn message_actions<'a>(
             widget::tooltip::Position::Top,
         ));
     }
-    let actions = container(controls).padding(1).style(|_| container::Style {
-        border: Border {
-            color: LINE,
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        ..surface(Color::WHITE)
-    });
+    let actions = container(controls)
+        .padding(1)
+        .style(|theme| container::Style {
+            border: Border {
+                color: palette(theme).line,
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..surface(theme, palette(theme).background)
+        });
     // Hover only paints the panel; the message keeps its full layout width.
     let message = widget::hover(
         body,
@@ -388,10 +381,10 @@ pub fn message_actions<'a>(
         dismiss,
     )
 }
-pub(super) fn result_row(_: &Theme) -> container::Style {
+pub(super) fn result_row(theme: &Theme) -> container::Style {
     container::Style {
         border: Border {
-            color: LINE,
+            color: palette(theme).line,
             width: 1.0,
             radius: 8.0.into(),
         },
@@ -401,14 +394,14 @@ pub(super) fn result_row(_: &Theme) -> container::Style {
 
 pub(super) fn select_style(theme: &iced::Theme, status: pick_list::Status) -> pick_list::Style {
     let mut style = pick_list::default(theme, status);
-    style.background = iced::Color::WHITE.into();
-    style.text_color = INK;
-    style.handle_color = MUTED;
+    style.background = palette(theme).background.into();
+    style.text_color = palette(theme).ink;
+    style.handle_color = palette(theme).muted;
     style.border = iced::Border {
         color: if matches!(status, pick_list::Status::Active) {
-            LINE
+            palette(theme).line
         } else {
-            ACCENT
+            palette(theme).accent
         },
         width: 1.0,
         radius: 6.0.into(),
@@ -426,9 +419,9 @@ pub(super) fn search_style(theme: &Theme, status: text_input::Status) -> text_in
     let mut style = text_input::default(theme, status);
     style.border = Border {
         color: if matches!(status, text_input::Status::Focused { .. }) {
-            ACCENT
+            palette(theme).accent
         } else {
-            LINE
+            palette(theme).line
         },
         width: 1.0,
         radius: 7.0.into(),
@@ -437,12 +430,12 @@ pub(super) fn search_style(theme: &Theme, status: text_input::Status) -> text_in
 }
 pub fn editor_style(theme: &Theme, status: text_editor::Status) -> text_editor::Style {
     let mut style = text_editor::default(theme, status);
-    style.background = Background::Color(Color::from_rgb8(250, 251, 252));
+    style.background = Background::Color(palette(theme).editor);
     style.border = Border {
         color: if matches!(status, text_editor::Status::Focused { .. }) {
-            ACCENT
+            palette(theme).accent
         } else {
-            LINE
+            palette(theme).line
         },
         width: 1.0,
         radius: 9.0.into(),
@@ -469,9 +462,9 @@ pub fn presence_avatar<'a, M: 'a>(
         container(
             container(presence_dot(status))
                 .padding(2)
-                .style(|_| container::Style {
+                .style(|theme| container::Style {
                     border: Border::default().rounded(12),
-                    ..surface(Color::WHITE)
+                    ..surface(theme, palette(theme).background)
                 })
         )
         .width(32)
@@ -484,12 +477,9 @@ pub fn presence_avatar<'a, M: 'a>(
 
 fn presence_dot<'a, M: 'a>(status: interconnect::connected::Presence) -> Element<'a, M> {
     use interconnect::connected::Presence;
-    let color = match status {
-        Presence::Online => Color::from_rgb8(59, 139, 102),
-        Presence::Away => Color::from_rgb8(184, 137, 53),
-        Presence::Offline => MUTED,
-        Presence::Unknown => return widget::space().width(8).height(8).into(),
-    };
+    if status == Presence::Unknown {
+        return widget::space().width(8).height(8).into();
+    }
     let mark = container(
         // Away has a small horizontal cutout as well as a different color.
         container(
@@ -497,24 +487,34 @@ fn presence_dot<'a, M: 'a>(status: interconnect::connected::Presence) -> Element
                 .width(if status == Presence::Away { 4 } else { 0 })
                 .height(2),
         )
-        .style(move |_| {
-            surface(if status == Presence::Away {
-                Color::WHITE
-            } else {
-                Color::TRANSPARENT
-            })
+        .style(move |theme| {
+            surface(
+                theme,
+                if status == Presence::Away {
+                    palette(theme).background
+                } else {
+                    Color::TRANSPARENT
+                },
+            )
         }),
     )
     .center_x(8)
     .center_y(8)
-    .style(move |_| container::Style {
-        background: Some(color.into()),
-        border: Border {
-            color,
-            width: 1.0,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
+    .style(move |theme| {
+        let color = match status {
+            Presence::Online => palette(theme).success,
+            Presence::Away => palette(theme).warning,
+            _ => palette(theme).muted,
+        };
+        container::Style {
+            background: Some(color.into()),
+            border: Border {
+                color,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        }
     });
     super::tooltips::tooltip(
         mark,
@@ -551,19 +551,13 @@ fn avatar_view<'a, M: 'a>(
         .take(if compact { 1 } else { 2 })
         .flat_map(char::to_uppercase)
         .collect();
-    let colors = [
-        Color::from_rgb8(224, 233, 241),
-        Color::from_rgb8(234, 228, 241),
-        Color::from_rgb8(224, 236, 228),
-        Color::from_rgb8(242, 232, 218),
-    ];
-    let color = colors[sender.bytes().map(usize::from).sum::<usize>() % colors.len()];
+    let index = sender.bytes().map(usize::from).sum::<usize>() % 4;
     container(text(initials).size(if compact { 9 } else { 11 }))
         .center_x(if compact { 16 } else { 32 })
         .center_y(if compact { 16 } else { 32 })
-        .style(move |_| container::Style {
+        .style(move |theme| container::Style {
             border: Border::default().rounded(if compact { 8 } else { 10 }),
-            ..surface(color)
+            ..surface(theme, palette(theme).avatars[index])
         })
         .into()
 }
@@ -576,7 +570,7 @@ pub fn empty_state_with_action<'a>(
     detail: &'a str,
     action: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
-    let mut content = column![title(heading, 20), text(detail).size(13).color(MUTED)]
+    let mut content = column![title(heading, 20), text(detail).size(13).style(muted_text)]
         .spacing(10)
         .max_width(420);
     if let Some(action) = action {
@@ -785,12 +779,12 @@ impl App {
                 container(
                     text(self.model.bookmarks.entries.len().to_string())
                         .size(10)
-                        .color(ACCENT),
+                        .style(accent_text),
                 )
                 .padding([2, 6])
-                .style(|_| container::Style {
+                .style(|theme| container::Style {
                     border: Border::default().rounded(8),
-                    ..surface(SELECTED)
+                    ..surface(theme, palette(theme).selected)
                 }),
             );
         }
@@ -804,7 +798,11 @@ impl App {
                     )
                     .width(Length::Fill)
                     .padding([5, 10])
-                    .style(move |_, status| navigation_button(self.global_search.open, status))
+                    .style(move |theme, status| navigation_button(
+                        theme,
+                        self.global_search.open,
+                        status
+                    ))
                     .on_press_maybe(
                         (!self.closing && !self.stopped)
                             .then_some(Message::GlobalSearch(super::global_search::Event::Open))
@@ -819,7 +817,11 @@ impl App {
                 button(saved_messages)
                     .width(Length::Fill)
                     .padding([5, 10])
-                    .style(move |_, status| navigation_button(self.bookmarks.open, status))
+                    .style(move |theme, status| navigation_button(
+                        theme,
+                        self.bookmarks.open,
+                        status
+                    ))
                     .on_press_maybe(
                         (!self.closing && !self.stopped)
                             .then_some(Message::Bookmark(super::bookmarks::Event::Open))
@@ -847,13 +849,13 @@ impl App {
         let sections = &*self.model.sections;
         let visible = self.visible_rooms();
         if let Some(error) = &self.model.preferences_error {
-            rooms = rooms.push(text(error).size(12).color(MUTED));
+            rooms = rooms.push(text(error).size(12).style(muted_text));
         }
         if let Some(error) = &self.model.navigation_error {
-            rooms = rooms.push(text(error).size(12).color(MUTED));
+            rooms = rooms.push(text(error).size(12).style(muted_text));
         }
         if let Some(error) = &self.section_reorder.error {
-            rooms = rooms.push(text(error).size(12).color(MUTED));
+            rooms = rooms.push(text(error).size(12).style(muted_text));
         }
         let mut matches = 0;
         for section in sections {
@@ -899,7 +901,7 @@ impl App {
                         12.0
                     ),
                     single_line::label(&section.name, 11)
-                        .color(MUTED)
+                        .style(muted_text)
                         .font(Font {
                             weight: font::Weight::Semibold,
                             ..Font::with_name("Inter")
@@ -910,7 +912,7 @@ impl App {
                         String::new()
                     })
                     .size(10)
-                    .color(MUTED),
+                    .style(muted_text),
                     widget::space().width(
                         if interconnect::room_sections::reorder_tag(&section.id).is_some() {
                             16
@@ -926,7 +928,7 @@ impl App {
             .padding([4, 8])
             .style(|theme, status| {
                 let mut style = quiet_button(theme, status);
-                style.text_color = MUTED;
+                style.text_color = palette(theme).muted;
                 style
             })
             .on_press(Message::Section(section.id.clone()));
@@ -971,7 +973,7 @@ impl App {
                         .center_x(16)
                         .into()
                     } else {
-                        Element::from(container(text("#").color(MUTED).size(16)).center_x(16))
+                        Element::from(container(text("#").style(muted_text).size(16)).center_x(16))
                     },
                     super::tooltips::tooltip(
                         single_line::label(&room.name, 13).font(Font {
@@ -998,12 +1000,12 @@ impl App {
                                 "•".into()
                             })
                             .size(10)
-                            .color(ACCENT),
+                            .style(accent_text),
                         )
                         .padding([2, 6])
-                        .style(|_| container::Style {
+                        .style(|theme| container::Style {
                             border: Border::default().rounded(8),
-                            ..surface(SELECTED)
+                            ..surface(theme, palette(theme).selected)
                         }),
                     );
                 }
@@ -1011,7 +1013,7 @@ impl App {
                     .width(Length::Fill)
                     .padding([2, 10])
                     .height(26)
-                    .style(move |_, status| navigation_button(selected, status));
+                    .style(move |theme, status| navigation_button(theme, selected, status));
                 if !self.closing && !self.stopped {
                     control = control.on_press(Message::Room(room.id.clone()));
                 }
@@ -1027,7 +1029,8 @@ impl App {
             }
         }
         if matches == 0 {
-            rooms = rooms.push(container(text("No rooms found").size(13).color(MUTED)).padding(12));
+            rooms = rooms
+                .push(container(text("No rooms found").size(13).style(muted_text)).padding(12));
         }
         let mut new_chat = button(container(icon(Kind::Plus)).center_x(28).center_y(28))
             .padding(2)
@@ -1121,7 +1124,7 @@ impl App {
         .padding([12, 12])
         .width(Length::Fill)
         .height(Length::Fill)
-        .style(|_| surface(SIDEBAR))
+        .style(|theme| surface(theme, palette(theme).sidebar))
         .into()
     }
 }
@@ -1842,5 +1845,23 @@ mod navigation_tests {
             assert_eq!(bounds.height, 26.0);
             assert!(bounds.x >= 0.0 && bounds.x + bounds.width <= 242.0);
         }
+    }
+}
+
+pub(super) fn muted_text(theme: &Theme) -> widget::text::Style {
+    widget::text::Style {
+        color: Some(palette(theme).muted),
+    }
+}
+
+pub(super) fn accent_text(theme: &Theme) -> widget::text::Style {
+    widget::text::Style {
+        color: Some(palette(theme).accent),
+    }
+}
+
+pub(super) fn danger_text(theme: &Theme) -> widget::text::Style {
+    widget::text::Style {
+        color: Some(palette(theme).danger),
     }
 }

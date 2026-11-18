@@ -26,14 +26,14 @@ impl App {
     pub(super) fn account_menu_heading(&self) -> Element<'_, Message> {
         let mut content = column![
             shell::title(self.account_label(), 13),
-            text(&self.model.status).size(11).color(shell::MUTED),
+            text(&self.model.status).size(11).style(shell::muted_text),
         ]
         .spacing(5);
         if self.demo.is_none() && self.settings.graphics_restart_required() {
             content = content.push(
                 text("Graphics changes require a restart")
                     .size(11)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         }
         container(content)
@@ -46,7 +46,7 @@ impl App {
         let connection = self.demo.is_none() && self.model.status != "Connected";
         if connection || self.stopped {
             let mut status = row![super::tooltips::tooltip(
-                super::single_line::label(&self.model.status, 11).color(shell::MUTED),
+                super::single_line::label(&self.model.status, 11).style(shell::muted_text),
                 &self.model.status,
                 iced::widget::tooltip::Position::Top,
             )]
@@ -74,7 +74,9 @@ impl App {
             items = items.push(
                 row![
                     super::tooltips::tooltip(
-                        text("Drafts need attention").size(11).color(shell::MUTED),
+                        text("Drafts need attention")
+                            .size(11)
+                            .style(shell::muted_text),
                         error,
                         iced::widget::tooltip::Position::Top
                     ),
@@ -98,7 +100,7 @@ impl App {
         }
         if let Some(error) = &self.model.media_error {
             items = items.push(super::tooltips::tooltip(
-                text("Media unavailable").size(11).color(shell::MUTED),
+                text("Media unavailable").size(11).style(shell::muted_text),
                 error,
                 iced::widget::tooltip::Position::Top,
             ));
@@ -119,7 +121,7 @@ impl App {
                     .id("utility-banner")
                     .padding([5, 14])
                     .width(Length::Fill)
-                    .style(|_| shell::surface(shell::SIDEBAR))
+                    .style(|theme| shell::surface(theme, shell::palette(theme).sidebar))
             ]
             .into(),
         )

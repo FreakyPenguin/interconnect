@@ -375,12 +375,12 @@ impl App {
             container(content)
                 .padding(24)
                 .max_width(520)
-                .style(|_| shell::surface(iced::Color::WHITE)),
+                .style(|theme| shell::surface(theme, shell::palette(theme).background)),
         )
         .padding(24)
         .center_x(Length::Fill)
         .center_y(Length::Fill)
-        .style(|_| shell::surface(shell::SIDEBAR))
+        .style(|theme| shell::surface(theme, shell::palette(theme).sidebar))
         .into()
     }
 }

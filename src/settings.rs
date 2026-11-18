@@ -42,13 +42,40 @@ impl Default for Settings {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
+    pub theme: ThemeMode,
     pub limit_room_width: bool,
 }
 impl Default for Appearance {
     fn default() -> Self {
         Self {
+            theme: ThemeMode::Light,
             limit_room_width: true,
         }
+    }
+}
+/// Built-in color variants; absent keys preserve the original light appearance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    Light,
+    Dark,
+}
+impl ThemeMode {
+    pub const ALL: [Self; 2] = [Self::Light, Self::Dark];
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+        }
+    }
+}
+impl std::fmt::Display for ThemeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+        })
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +277,10 @@ impl Store {
             i64::from(settings.presence.poll_interval_seconds).into(),
         );
         replace(
+            &mut document["appearance"]["theme"],
+            settings.appearance.theme.as_str().into(),
+        );
+        replace(
             &mut document["appearance"]["limit_room_width"],
             settings.appearance.limit_room_width.into(),
         );
@@ -366,6 +397,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn theme_defaults_support_old_files_and_both_variants() {
+        assert_eq!(decode("").unwrap().appearance.theme, ThemeMode::Light);
+        assert_eq!(
+            decode("[appearance]\nlimit_room_width = false")
+                .unwrap()
+                .appearance
+                .theme,
+            ThemeMode::Light
+        );
+        assert_eq!(
+            decode("[appearance]\ntheme = 'dark'")
+                .unwrap()
+                .appearance
+                .theme,
+            ThemeMode::Dark
+        );
+        assert_eq!(
+            decode("[appearance]\ntheme = 'light'")
+                .unwrap()
+                .appearance
+                .theme,
+            ThemeMode::Light
+        );
+    }
+
+    #[test]
     fn defaults_partial_files_and_schema_validation() {
         assert_eq!(decode("").unwrap(), Settings::default());
         assert_eq!(decode(TEMPLATE).unwrap(), Settings::default());
@@ -395,6 +452,8 @@ mod tests {
             "[navigation",
             "composer = false",
             "[appearance]\nlimit_room_width = 1",
+            "[appearance]\ntheme = 'unknown'",
+            "[appearance]\ntheme = true",
             "[graphics]\ngpu_enabled = 'false'",
             "[graphics]\nlow_power = 1",
             "graphics = false",
@@ -424,6 +483,7 @@ mod tests {
         settings.navigation.show_room_list = false;
         settings.navigation.show_unread_section = false;
         settings.navigation.unread_first = false;
+        settings.appearance.theme = ThemeMode::Dark;
         settings.appearance.limit_room_width = false;
         settings.graphics.gpu_enabled = false;
         settings.graphics.low_power = false;

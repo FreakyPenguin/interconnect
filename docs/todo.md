@@ -21,7 +21,7 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 
 ## Appearance and message display
 
-- Dark mode.
+- Follow system appearance and support custom theme palettes.
 - Text size control
 - Syntax highlighting.
 - Scrollable code blocks (optional in settings, preview lines configurable).

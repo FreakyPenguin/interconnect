@@ -371,7 +371,7 @@ impl App {
             let title = match &self.membership.mode {
                 Mode::Invitations => {
                     for invitation in self.model.invitations.iter() {
-                        let mut entry = column![shell::title(&invitation.name, 15), text(&invitation.id).size(11).color(shell::MUTED)].spacing(6);
+                        let mut entry = column![shell::title(&invitation.name, 15), text(&invitation.id).size(11).style(shell::muted_text)].spacing(6);
                         if let Some(inviter) = &invitation.inviter { entry = entry.push(text(format!("Invited by {inviter}")).size(12)); }
                         if invitation.space { entry = entry.push(text("Space invitation").size(12)); }
                         entry = entry.push(row![
@@ -390,7 +390,7 @@ impl App {
                     let input = text_input("#room:example.org or room link", &self.membership.input)
                         .id("join-room-address").cursor_blinking(false).size(13).padding(10);
                     entries = entries.push(if busy { input } else { input.on_input(|value| message(Event::Input(value))).on_submit(message(Event::Submit)) });
-                    entries = entries.push(text("Use a room alias, room ID, matrix.to link or matrix: link. Private rooms may require an invitation.").size(12).color(shell::MUTED));
+                    entries = entries.push(text("Use a room alias, room ID, matrix.to link or matrix: link. Private rooms may require an invitation.").size(12).style(shell::muted_text));
                     "Join a room"
                 }
                 Mode::Leave(id) => {
@@ -412,8 +412,8 @@ impl App {
                 scrollable(entries).height(Length::Fill).direction(shell::scrollbar()).style(shell::scroll_style), actions,
             ].spacing(18);
             container(container(card).id("membership-dialog").padding(20).width(520)
-                .height((size.height - 48.0).clamp(1.0, if matches!(self.membership.mode, Mode::Invitations) { 560.0 } else { 320.0 })).style(|_| shell::surface(iced::Color::WHITE)))
-                .padding(24).center_x(Length::Fill).center_y(Length::Fill).style(|_| shell::surface(shell::SIDEBAR)).into()
+                .height((size.height - 48.0).clamp(1.0, if matches!(self.membership.mode, Mode::Invitations) { 560.0 } else { 320.0 })).style(|theme| shell::surface(theme, shell::palette(theme).background)))
+                .padding(24).center_x(Length::Fill).center_y(Length::Fill).style(|theme| shell::surface(theme, shell::palette(theme).sidebar)).into()
         }).into()
     }
 }

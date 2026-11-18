@@ -407,7 +407,7 @@ impl App {
         Some(
             container(
                 row![
-                    text("Editing message").size(12).color(shell::MUTED),
+                    text("Editing message").size(12).style(shell::muted_text),
                     iced::widget::space().width(iced::Length::Fill),
                     button(text("Cancel").size(12))
                         .padding([2, 0])

@@ -409,23 +409,23 @@ impl App {
         }
         let mut content = column![
             shell::title("Create a room", 22),
-            text("Name").size(12).color(shell::MUTED),
+            text("Name").size(12).style(shell::muted_text),
             name,
-            text("Topic").size(12).color(shell::MUTED),
+            text("Topic").size(12).style(shell::muted_text),
             topic,
-            text("Space").size(12).color(shell::MUTED),
+            text("Space").size(12).style(shell::muted_text),
             space,
             text("Adding to a space requires permission to manage its rooms.")
                 .size(11)
-                .color(shell::MUTED),
-            text("Room type").size(12).color(shell::MUTED),
+                .style(shell::muted_text),
+            text("Room type").size(12).style(shell::muted_text),
             visibility,
             listed,
             encrypted,
             text("Encryption cannot be disabled after creation.")
                 .size(11)
-                .color(shell::MUTED),
-            text("Message history").size(12).color(shell::MUTED),
+                .style(shell::muted_text),
+            text("Message history").size(12).style(shell::muted_text),
             history,
         ]
         .spacing(8);
@@ -433,21 +433,21 @@ impl App {
             content = content.push(
                 text("Older encrypted messages also require the corresponding encryption keys.")
                     .size(11)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         }
         if let Some(error) = &state.error {
-            content = content.push(text(error).size(12).color(shell::ACCENT));
+            content = content.push(text(error).size(12).style(shell::accent_text));
         }
         if let Some(created) = &state.created
             && let Some(error) = &created.link_error
         {
             content = content
                 .push(shell::title("Room created · space link incomplete", 14))
-                .push(text(error).size(12).color(shell::MUTED));
+                .push(text(error).size(12).style(shell::muted_text));
         }
         if busy {
-            content = content.push(text("Cancelling stops waiting; a room may already have been created. Check your room list before trying again.").size(12).color(shell::MUTED));
+            content = content.push(text("Cancelling stops waiting; a room may already have been created. Check your room list before trying again.").size(12).style(shell::muted_text));
         }
         let close = button(text(if busy { "Cancel creation" } else { "Cancel" }).size(13))
             .padding([7, 14])
@@ -492,9 +492,9 @@ impl App {
         .padding(20)
         .width(540)
         .height((size.height - 32.0).clamp(1.0, 640.0))
-        .style(|_| container::Style {
+        .style(|theme| container::Style {
             border: iced::Border::default().rounded(12),
-            ..shell::surface(iced::Color::WHITE)
+            ..shell::surface(theme, shell::palette(theme).background)
         });
         opaque(
             mouse_area(
@@ -502,7 +502,7 @@ impl App {
                     .center_x(Length::Fill)
                     .center_y(Length::Fill)
                     .padding(16)
-                    .style(|_| shell::surface(iced::Color::BLACK.scale_alpha(0.25))),
+                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
             )
             .on_press(message(Event::Ignore))
             .on_scroll(|_| message(Event::Ignore)),

@@ -63,6 +63,7 @@ pub struct State {
     revealed: BTreeSet<usize>,
     blocks: Vec<LaidBlock>,
     width: Option<f32>,
+    mode: interconnect::settings::ThemeMode,
     image_metrics: Vec<inline_image::Metrics>,
     pub assets: inline_image::Assets,
     pub pressed: Option<Point>,
@@ -78,6 +79,7 @@ impl State {
             revealed: BTreeSet::new(),
             blocks: Vec::new(),
             width: None,
+            mode: interconnect::settings::ThemeMode::Light,
             image_metrics: Vec::new(),
             assets: inline_image::Assets::default(),
             pressed: None,
@@ -90,7 +92,15 @@ impl State {
     pub fn text(&self) -> String {
         self.document.text(&self.revealed)
     }
+    pub fn set_theme(&mut self, mode: interconnect::settings::ThemeMode) {
+        if self.mode != mode {
+            self.mode = mode;
+            self.width = None;
+        }
+    }
     pub fn layout(&mut self, width: f32) -> layout::Node {
+        let active_theme = super::appearance::theme(self.mode);
+        let theme = &active_theme;
         let mut image_metrics = Vec::new();
         for block in &self.document.blocks {
             let inset = ((block.quote_depth + block.list_depth.saturating_sub(1)).min(8) as f32
@@ -210,15 +220,15 @@ impl State {
                         }
                     };
                     let color = if style.room_wide {
-                        shell::ROOM_WIDE_ACCENT
+                        shell::palette(theme).room_wide_accent
                     } else if style.room_mention.is_some() {
-                        shell::ROOM_ACCENT
+                        shell::palette(theme).room_accent
                     } else if style.link.is_some()
                         || style.spoilers.iter().any(|id| !self.revealed.contains(id))
                     {
-                        shell::ACCENT
+                        shell::palette(theme).accent
                     } else {
-                        shell::INK
+                        shell::palette(theme).ink
                     };
                     // Combine ordinary text into spans; keep complete emoji graphemes in their font.
                     let text = run.content.text();
@@ -566,6 +576,8 @@ impl State {
         selection: Option<Range<usize>>,
         search: Option<&str>,
     ) {
+        let active_theme = super::appearance::theme(self.mode);
+        let theme = &active_theme;
         let highlights = search
             .map(|query| super::room_search::matching_ranges(&self.text(), query))
             .unwrap_or_default();
@@ -583,7 +595,7 @@ impl State {
                         Point::new(origin.x, bounds.y - 8.0),
                         Size::new(self.width.unwrap_or(bounds.width), bounds.height + 16.0),
                     ),
-                    iced::Color::from_rgb8(245, 246, 248),
+                    shell::palette(theme).code,
                 );
             }
             if block.block.quote_depth > 0 {
@@ -593,7 +605,7 @@ impl State {
                         Point::new(bounds.x - 9.0, bounds.y),
                         Size::new(2.0, bounds.height),
                     ),
-                    shell::MUTED,
+                    shell::palette(theme).muted,
                 );
             }
             for (index, run_index) in block.runs.iter().enumerate() {
@@ -607,7 +619,7 @@ impl State {
                 for region in block.paragraph.span_bounds(index) {
                     let region = region + (bounds.position() - Point::ORIGIN);
                     if style.code && !code {
-                        quad(renderer, region, iced::Color::from_rgb8(241, 243, 246));
+                        quad(renderer, region, shell::palette(theme).inline_code);
                     }
                     // Keep the background inside the shaped span so wrapping, bidi,
                     // selection and hit testing all use exactly the same geometry.
@@ -623,11 +635,11 @@ impl State {
                                 ..renderer::Quad::default()
                             },
                             if style.room_wide {
-                                shell::ROOM_WIDE_ACCENT.scale_alpha(0.12)
+                                shell::palette(theme).room_wide_accent.scale_alpha(0.12)
                             } else if style.room_mention.is_some() {
-                                shell::ROOM_ACCENT.scale_alpha(0.12)
+                                shell::palette(theme).room_accent.scale_alpha(0.12)
                             } else {
-                                iced::Color::from_rgba8(73, 121, 211, 0.12)
+                                shell::palette(theme).mention
                             },
                         );
                     }
@@ -639,9 +651,9 @@ impl State {
                                 Size::new(region.width, 1.0),
                             ),
                             if style.link.is_some() {
-                                shell::ACCENT
+                                shell::palette(theme).accent
                             } else {
-                                shell::INK
+                                shell::palette(theme).ink
                             },
                         );
                     }
@@ -652,7 +664,7 @@ impl State {
                                 Point::new(region.x, region.y + block.size * 0.75),
                                 Size::new(region.width, 1.0),
                             ),
-                            shell::INK,
+                            shell::palette(theme).ink,
                         );
                     }
                 }
@@ -673,12 +685,12 @@ impl State {
                     for (selected, color) in highlights[first..]
                         .iter()
                         .take_while(|range| range.start < glyph_end)
-                        .map(|range| (range, super::room_search::HIGHLIGHT))
+                        .map(|range| (range, shell::palette(theme).search))
                         .chain(
                             selection
                                 .iter()
                                 .filter(|range| range.start < glyph_end && range.end > glyph_start)
-                                .map(|range| (range, iced::Color::from_rgba8(73, 121, 211, 0.25))),
+                                .map(|range| (range, shell::palette(theme).selection)),
                         )
                     {
                         let cluster = &line.text[glyph.start..glyph.end];
@@ -702,7 +714,12 @@ impl State {
                     }
                 }
             }
-            block.paragraph.draw(renderer, bounds.position(), viewport);
+            block.paragraph.draw(
+                renderer,
+                bounds.position(),
+                viewport,
+                shell::palette(theme).ink,
+            );
             for image in &block.images {
                 let image_bounds = image.bounds + (bounds.position() - Point::ORIGIN);
                 if !image_bounds.intersects(&viewport) {
@@ -713,6 +730,18 @@ impl State {
                     .as_ref()
                     .and_then(|source| self.assets.handle(source));
                 if let Some(handle) = handle {
+                    // Formula bitmaps have their own ink and may contain authored colors.
+                    // Keep a light backing instead of modifying image pixels on the UI thread.
+                    if matches!(image.source, Some(ImageSource::Formula(_))) {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: image_bounds,
+                                border: iced::Border::default().rounded(3),
+                                ..Default::default()
+                            },
+                            shell::palette(theme).formula_surface,
+                        );
+                    }
                     use iced::advanced::image::Renderer as _;
                     let mut drawing = iced::advanced::image::Image::new(handle.clone());
                     drawing.snap = false;
@@ -726,16 +755,16 @@ impl State {
                         renderer,
                         image_bounds,
                         if failed {
-                            iced::Color::from_rgb8(247, 232, 230)
+                            shell::palette(theme).error_surface
                         } else {
-                            iced::Color::from_rgb8(234, 238, 244)
+                            shell::palette(theme).rail
                         },
                     );
                     if let Some(clip) = image_bounds.intersection(&viewport) {
                         renderer.fill_paragraph(
                             &image.placeholder,
                             image_bounds.position(),
-                            shell::MUTED,
+                            shell::palette(theme).muted,
                             clip,
                         );
                     }
@@ -744,11 +773,7 @@ impl State {
                     block.range.start + image.canonical.start < range.end
                         && block.range.start + image.canonical.end > range.start
                 }) {
-                    quad(
-                        renderer,
-                        image_bounds,
-                        iced::Color::from_rgba8(73, 121, 211, 0.25),
-                    );
+                    quad(renderer, image_bounds, shell::palette(theme).selection);
                 }
             }
         }
@@ -807,17 +832,17 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
     fn draw(
         &self,
         renderer: &mut iced::Renderer,
-        _: &iced::Theme,
+        theme: &iced::Theme,
         _: &renderer::Style,
         layout: iced::advanced::Layout<'_>,
         _: iced::advanced::mouse::Cursor,
     ) {
         let bounds = layout.bounds();
-        quad(renderer, bounds, iced::Color::from_rgb8(235, 239, 245));
+        quad(renderer, bounds, shell::palette(theme).rail);
         renderer.fill_paragraph(
             &self.paragraph,
             bounds.position() + Vector::new(6.0, 4.0),
-            shell::INK,
+            shell::palette(theme).ink,
             bounds,
         );
     }
@@ -826,6 +851,69 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn theme_switch_refreshes_span_colors_without_changing_geometry_or_interaction() {
+        use interconnect::settings::ThemeMode;
+        let document = Arc::new(
+            Document::parse(
+                "<p>Hello <a href='https://example.org'>link</a> 👋</p><pre>code</pre>",
+            )
+            .unwrap(),
+        );
+        let mut state = State::new(document);
+        state.focused = true;
+        state.hover = Some(Point::new(10.0, 8.0));
+        state.revealed.insert(7);
+        let initial = state.layout(240.0).bounds();
+        let text = state.text();
+        let hit = state.hit(Point::new(10.0, 8.0));
+        let color = state.blocks[0]
+            .paragraph
+            .buffer()
+            .layout_runs()
+            .next()
+            .unwrap()
+            .glyphs[0]
+            .color_opt;
+        state.set_theme(ThemeMode::Dark);
+        assert!(state.width.is_none());
+        assert_eq!(state.layout(240.0).bounds(), initial);
+        assert_eq!(state.text(), text);
+        assert_eq!(state.hit(Point::new(10.0, 8.0)), hit);
+        assert!(state.focused && state.revealed.contains(&7));
+        assert_eq!(state.hover, Some(Point::new(10.0, 8.0)));
+        assert_ne!(
+            state.blocks[0]
+                .paragraph
+                .buffer()
+                .layout_runs()
+                .next()
+                .unwrap()
+                .glyphs[0]
+                .color_opt,
+            color
+        );
+        state.set_theme(ThemeMode::Dark);
+        assert_eq!(
+            state.width,
+            Some(240.0),
+            "unchanged theme retains shaping cache"
+        );
+        state.set_theme(ThemeMode::Light);
+        assert_eq!(state.layout(240.0).bounds(), initial);
+        assert_eq!(
+            state.blocks[0]
+                .paragraph
+                .buffer()
+                .layout_runs()
+                .next()
+                .unwrap()
+                .glyphs[0]
+                .color_opt,
+            color
+        );
+    }
+
     #[test]
     fn room_wide_mentions_wrap_copy_and_do_not_open_links_or_chats() {
         let document = Arc::new(

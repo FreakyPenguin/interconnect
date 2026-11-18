@@ -575,9 +575,9 @@ impl App {
                         row![
                             text(&hit.sender)
                                 .size(12)
-                                .color(shell::MUTED)
+                                .style(shell::muted_text)
                                 .width(Length::Fill),
-                            text(date).size(11).color(shell::MUTED)
+                            text(date).size(11).style(shell::muted_text)
                         ]
                         .spacing(8),
                         selectable::search_view(&hit.event, &hit.body, &state.submitted),
@@ -590,11 +590,11 @@ impl App {
             );
         }
         if let Some(error) = &state.error {
-            entries = entries.push(text(error).size(13).color(shell::MUTED));
+            entries = entries.push(text(error).size(13).style(shell::muted_text));
         }
         let mut history_controls = column![].spacing(6);
         if let Some(error) = &state.deep_error {
-            history_controls = history_controls.push(text(error).size(13).color(shell::MUTED));
+            history_controls = history_controls.push(text(error).size(13).style(shell::muted_text));
         }
         if let Some(history) = &state.history {
             history_controls = history_controls.push(text(if self.demo.is_some() {
@@ -603,7 +603,7 @@ impl App {
                 format!("Checked {} events · {}/{} rooms finished · {} could not be decrypted · {} rooms unavailable{}",
                     history.scanned, history.finished, history.rooms, history.missing_keys, history.failed,
                     if state.deep_loading { " · searching older history…" } else if history.complete() { " · history scan finished" } else { " · paused; continue to search further" })
-            }).size(12).color(shell::MUTED));
+            }).size(12).style(shell::muted_text));
         }
         if state.deep_loading {
             history_controls = history_controls.push(
@@ -630,12 +630,12 @@ impl App {
                 history_controls = history_controls.push(
                     text("Loads up to 1,000 older events per batch. Stop or continue at any time.")
                         .size(12)
-                        .color(shell::MUTED),
+                        .style(shell::muted_text),
                 );
             }
         }
         if state.loading() && !state.deep_loading {
-            entries = entries.push(text("Searching…").size(13).color(shell::MUTED));
+            entries = entries.push(text("Searching…").size(13).style(shell::muted_text));
         } else if !state.loading() && !state.submitted.is_empty() && state.hits.is_empty() {
             entries = entries.push(shell::empty_state(
                 "No matches",
@@ -651,7 +651,7 @@ impl App {
             entries = entries.push(
                 text("Showing the first 200 results. Refine your search to find more.")
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         } else if state.next.is_some() && !state.loading() {
             entries = entries.push(
@@ -662,13 +662,13 @@ impl App {
         }
         let controls = column![
             heading,
-            text(coverage).size(12).color(shell::MUTED),
+            text(coverage).size(12).style(shell::muted_text),
             row![input, search]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),
             text(format!("{} results", state.hits.len()))
                 .size(12)
-                .color(shell::MUTED),
+                .style(shell::muted_text),
             history_controls,
         ]
         .spacing(12);

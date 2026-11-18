@@ -121,7 +121,7 @@ impl App {
                 .is_some_and(|(_, room)| room == &pointer.room_id)
             && row.event_id.as_ref() == Some(&pointer.event_id)
         {
-            column![body, text(error).size(12).color(shell::MUTED)]
+            column![body, text(error).size(12).style(shell::muted_text)]
                 .spacing(4)
                 .into()
         } else {
@@ -368,16 +368,20 @@ impl App {
     pub(super) fn bookmarks_view(&self) -> Element<'_, Message> {
         let mut entries = column![].spacing(12);
         if let Some(error) = &self.model.bookmarks.error {
-            entries = entries.push(text(error).size(13).color(shell::MUTED));
+            entries = entries.push(text(error).size(13).style(shell::muted_text));
         }
         if let Some((_, error)) = &self.bookmarks.error {
-            entries = entries.push(text(error).size(13).color(shell::MUTED));
+            entries = entries.push(text(error).size(13).style(shell::muted_text));
         }
         if self.model.bookmarks.loading {
-            entries = entries.push(text("Loading saved messages…").size(13).color(shell::MUTED));
+            entries = entries.push(
+                text("Loading saved messages…")
+                    .size(13)
+                    .style(shell::muted_text),
+            );
         }
         if self.bookmarks.pending.is_some() {
-            entries = entries.push(text("Updating bookmark…").size(13).color(shell::MUTED));
+            entries = entries.push(text("Updating bookmark…").size(13).style(shell::muted_text));
         }
         if self.model.bookmarks.entries.is_empty() && self.model.bookmarks.complete {
             entries = entries.push(shell::empty_state(
@@ -430,7 +434,7 @@ impl App {
                 .spacing(6);
             if let Some(preview) = preview {
                 if !preview.sender.is_empty() {
-                    content = content.push(text(&preview.sender).size(12).color(shell::MUTED));
+                    content = content.push(text(&preview.sender).size(12).style(shell::muted_text));
                 }
                 let body: Element<'static, Message> =
                     super::emoji::preview(preview.body.clone()).size(14).into();
@@ -443,7 +447,7 @@ impl App {
                         &entry.fallback
                     })
                     .size(13)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
                 );
             }
             entries = entries.push(

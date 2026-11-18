@@ -44,8 +44,6 @@ pub(super) fn matching_ranges(body: &str, query: &str) -> Vec<std::ops::Range<us
         .collect()
 }
 
-pub(super) const HIGHLIGHT: iced::Color = iced::Color::from_rgba8(255, 207, 64, 0.5);
-
 impl App {
     pub(super) fn room_search_query(&self) -> Option<&str> {
         self.room_search_active()
@@ -195,7 +193,7 @@ impl App {
                     .on_input(|query| message(Event::Edit(query)))
                     .on_submit(message(Event::Step(true)))
                     .width(Length::Fill),
-                text(label).size(11).color(shell::MUTED),
+                text(label).size(11).style(shell::muted_text),
                 super::tooltips::tooltip(
                     previous,
                     "Previous match · Enter",

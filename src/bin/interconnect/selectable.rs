@@ -8,6 +8,7 @@ use iced::advanced::{
 };
 use iced::widget::text_editor::{self, Action, Binding};
 use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme};
+use interconnect::settings::ThemeMode;
 use interconnect::{connected::MessageRow, message_document::Document};
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -30,6 +31,7 @@ pub fn named_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'a, 
         body: Cow::Borrowed(body),
         name,
         appearance: Appearance::Message,
+        mode: ThemeMode::Light,
         assets: Default::default(),
         context: None,
         document: None,
@@ -42,6 +44,7 @@ pub fn search_view<'a>(id: &'a str, body: &'a str, query: &'a str) -> Element<'a
         body: Cow::Borrowed(body),
         name: "",
         appearance: Appearance::Message,
+        mode: ThemeMode::Light,
         assets: Default::default(),
         context: None,
         document: None,
@@ -51,6 +54,7 @@ pub fn preview_view<'a>(
     body: &'a str,
     document: Option<&'a Arc<Document>>,
     assets: inline_image::Assets,
+    mode: ThemeMode,
 ) -> Element<'a, Message> {
     Element::new(Selectable {
         search: None,
@@ -58,6 +62,7 @@ pub fn preview_view<'a>(
         body: Cow::Borrowed(body),
         name: "",
         appearance: Appearance::Message,
+        mode,
         assets,
         context: None,
         document,
@@ -65,20 +70,27 @@ pub fn preview_view<'a>(
 }
 #[cfg(test)]
 pub fn message_view(message: &MessageRow) -> Element<'_, Message> {
-    message_view_with_assets(message, inline_image::Assets::default(), None)
+    message_view_with_assets(
+        message,
+        inline_image::Assets::default(),
+        None,
+        ThemeMode::Light,
+    )
 }
 pub fn message_view_with_assets(
     message: &MessageRow,
     assets: inline_image::Assets,
     context: Option<inline_image::Context>,
+    mode: ThemeMode,
 ) -> Element<'_, Message> {
-    message_view_with_search(message, assets, context, None)
+    message_view_with_search(message, assets, context, None, mode)
 }
 pub fn message_view_with_search<'a>(
     message: &'a MessageRow,
     assets: inline_image::Assets,
     context: Option<inline_image::Context>,
     search: Option<&'a str>,
+    mode: ThemeMode,
 ) -> Element<'a, Message> {
     Element::new(Selectable {
         search,
@@ -86,6 +98,7 @@ pub fn message_view_with_search<'a>(
         body: Cow::Borrowed(&message.body),
         name: &message.display_name,
         appearance: Appearance::Message,
+        mode,
         document: message.formatted.as_ref(),
         assets,
         context,
@@ -99,6 +112,7 @@ pub fn activity_view<'a>(id: &'a str, body: &'a str, name: &'a str) -> Element<'
         // The inline name is already part of the selectable/copyable text.
         name: "",
         appearance: Appearance::Activity,
+        mode: ThemeMode::Light,
         assets: Default::default(),
         context: None,
         document: None,
@@ -113,6 +127,7 @@ struct Selectable<'a> {
     id: &'a str,
     body: Cow<'a, str>,
     appearance: Appearance,
+    mode: ThemeMode,
 }
 pub(super) struct State {
     pub id: String,
@@ -225,15 +240,15 @@ fn editor(
                 )
             })
         })
-        .style(move |_, _| text_editor::Style {
+        .style(move |theme, _| text_editor::Style {
             background: iced::Color::TRANSPARENT.into(),
             border: iced::Border::default(),
             value: match appearance {
-                Appearance::Message => shell::INK,
-                Appearance::Activity => shell::MUTED,
+                Appearance::Message => shell::palette(theme).ink,
+                Appearance::Activity => shell::palette(theme).muted,
             },
-            placeholder: shell::MUTED,
-            selection: iced::Color::from_rgba8(73, 121, 211, 0.25),
+            placeholder: shell::palette(theme).muted,
+            selection: shell::palette(theme).selection,
         })
 }
 impl Widget<Message, Theme, Renderer> for Selectable<'_> {
@@ -318,6 +333,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         let state = tree.state.downcast_mut::<State>();
         if let Some(rich) = &mut state.rich {
             rich.assets = self.assets.clone();
+            rich.set_theme(self.mode);
             return rich.layout(limits.max().width);
         }
         editor(&state.content, self.appearance).layout(&mut tree.children[0], renderer, limits)
@@ -632,7 +648,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                                             bounds,
                                             ..Default::default()
                                         },
-                                        super::room_search::HIGHLIGHT,
+                                        shell::palette(theme).search,
                                     );
                                 }
                             }
@@ -726,6 +742,7 @@ mod tests {
                 name: "Alice",
                 body: Cow::Owned(format!("Hello HELLO café 👩🏽‍💻 hello{ending}hello again")),
                 appearance: Appearance::Message,
+                mode: ThemeMode::Light,
                 assets: Default::default(),
                 context: None,
                 document,
@@ -765,7 +782,7 @@ mod tests {
                     &mut renderer,
                     &shell::theme(),
                     &renderer::Style {
-                        text_color: shell::INK,
+                        text_color: crate::appearance::LIGHT.ink,
                     },
                     Layout::new(&node),
                     mouse::Cursor::Unavailable,
@@ -828,6 +845,7 @@ mod tests {
             name: "Alice",
             body: Cow::Borrowed("image"),
             appearance: Appearance::Message,
+            mode: ThemeMode::Light,
             document: Some(&document),
             assets: Default::default(),
             context: Some(inline_image::Context {
@@ -891,6 +909,7 @@ mod tests {
                 body: Cow::Borrowed("fallback"),
                 document: Some(&document),
                 appearance: Appearance::Message,
+                mode: ThemeMode::Light,
                 assets: Default::default(),
                 context: None,
             };
@@ -953,6 +972,7 @@ mod tests {
             name: "Alice",
             body: Cow::Borrowed("hello world café 👋"),
             appearance: Appearance::Message,
+            mode: ThemeMode::Light,
             assets: Default::default(),
             context: None,
             document: None,

@@ -1,7 +1,7 @@
 //! Native editor scrolling with a quiet scrollbar and an event-driven resize grip.
 use super::{DraftKey, Message, formatted, shell};
 use iced::{
-    Color, Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
+    Element, Event, Length, Point, Rectangle, Renderer, Size, Theme, Vector,
     advanced::{
         Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
         widget::{self, Tree},
@@ -450,11 +450,11 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                 renderer.with_layer(clip, |renderer| {
                     for (index, region) in regions {
                         let accent = if self.mentions[index].target.is_room_wide() {
-                            shell::ROOM_WIDE_ACCENT
+                            shell::palette(theme).room_wide_accent
                         } else if self.mentions[index].target.room_id().is_some() {
-                            shell::ROOM_ACCENT
+                            shell::palette(theme).room_accent
                         } else {
-                            shell::ACCENT
+                            shell::palette(theme).accent
                         };
                         let bounds = region + (text_bounds.position() - Point::ORIGIN);
                         renderer.fill_quad(
@@ -468,7 +468,7 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                             {
                                 accent.scale_alpha(0.12)
                             } else {
-                                Color::from_rgba8(73, 121, 211, 0.12)
+                                shell::palette(theme).mention
                             },
                         );
                         renderer.fill_quad(
@@ -511,9 +511,9 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                     ..Default::default()
                 },
                 if over || state.drag.is_some() {
-                    shell::MUTED.scale_alpha(0.65)
+                    shell::palette(theme).muted.scale_alpha(0.65)
                 } else {
-                    shell::LINE
+                    shell::palette(theme).line
                 },
             );
         }
@@ -527,9 +527,9 @@ impl Widget<Message, Theme, Renderer> for Editor<'_> {
                     ..Default::default()
                 },
                 if over || state.drag.is_some() {
-                    Color::from_rgb8(167, 177, 191)
+                    shell::palette(theme).scroller
                 } else {
-                    Color::from_rgb8(202, 209, 219)
+                    shell::palette(theme).line
                 },
             );
         }
@@ -687,7 +687,7 @@ mod tests {
             renderer,
             &shell::theme(),
             &renderer::Style {
-                text_color: shell::INK,
+                text_color: crate::appearance::LIGHT.ink,
             },
             Layout::new(node),
             mouse::Cursor::Unavailable,
@@ -707,7 +707,7 @@ mod tests {
                 1.0,
             ),
             &[viewport],
-            Color::WHITE,
+            iced::Color::WHITE,
         );
         pixels
     }

@@ -644,7 +644,7 @@ impl App {
             };
             body = body.push(shell::title(title, 16));
             if let Some(pack) = pack {
-                body = body.push(text(&pack.name).size(13).color(shell::MUTED));
+                body = body.push(text(&pack.name).size(13).style(shell::muted_text));
             }
             if let Edit::RemoveImage(shortcode) = edit {
                 body = body.push(text(format!(":{shortcode}:")).size(14));
@@ -665,14 +665,14 @@ impl App {
                 );
         } else {
             if state.loading {
-                body = body.push(text("Loading packs…").size(13).color(shell::MUTED));
+                body = body.push(text("Loading packs…").size(13).style(shell::muted_text));
             }
             match state.editor {
                 Editor::Browse => {
                     body = body.push(
                         text("Personal packs are yours. Room packs are shared with that room.")
                             .size(12)
-                            .color(shell::MUTED),
+                            .style(shell::muted_text),
                     );
                     if !state.listing.packs.is_empty() {
                         let choices: Vec<_> = state
@@ -723,7 +723,8 @@ impl App {
                         ]
                         .spacing(8);
                         if let Source::Room { room, .. } = &pack.source {
-                            body = body.push(text(room.to_string()).size(11).color(shell::MUTED));
+                            body =
+                                body.push(text(room.to_string()).size(11).style(shell::muted_text));
                             utilities = utilities.push(quiet(
                                 if pack.global {
                                     "Disable in other rooms"
@@ -741,7 +742,7 @@ impl App {
                                     "You can use this pack, but do not have permission to edit it.",
                                 )
                                 .size(12)
-                                .color(shell::MUTED),
+                                .style(shell::muted_text),
                             );
                         }
                         let mut entries = column![].spacing(4).width(Length::Fill);
@@ -771,7 +772,11 @@ impl App {
                             }
                         }
                         body = body
-                            .push(text(format!("{count} emoji")).size(12).color(shell::MUTED))
+                            .push(
+                                text(format!("{count} emoji"))
+                                    .size(12)
+                                    .style(shell::muted_text),
+                            )
                             .push(entries)
                             .push(primary("Add emoji", Event::NewImage, writable));
                     }
@@ -812,7 +817,7 @@ impl App {
                         .push(
                             text("This pack will be shared with the current room.")
                                 .size(12)
-                                .color(shell::MUTED),
+                                .style(shell::muted_text),
                         )
                         .push(
                             text_input("Pack name", &state.create_name)
@@ -850,10 +855,10 @@ impl App {
                         16,
                     ));
                     if let Some(pack) = pack {
-                        body = body.push(text(&pack.name).size(12).color(shell::MUTED));
+                        body = body.push(text(&pack.name).size(12).style(shell::muted_text));
                     }
                     body = body
-                        .push(text("Shortcode").size(12).color(shell::MUTED))
+                        .push(text("Shortcode").size(12).style(shell::muted_text))
                         .push(
                             text_input("Shortcode", &state.shortcode)
                                 .id("emoji-shortcode")
@@ -865,7 +870,7 @@ impl App {
                                     writable.then_some(|v| message(Event::Shortcode(v))),
                                 ),
                         )
-                        .push(text("Description").size(12).color(shell::MUTED))
+                        .push(text("Description").size(12).style(shell::muted_text))
                         .push(
                             text_input("Description / alternative text", &state.description)
                                 .size(13)
@@ -876,7 +881,7 @@ impl App {
                                     writable.then_some(|v| message(Event::Description(v))),
                                 ),
                         )
-                        .push(text("Image").size(12).color(shell::MUTED))
+                        .push(text("Image").size(12).style(shell::muted_text))
                         .push(
                             text_input("mxc:// image URL", &state.uri)
                                 .size(13)
@@ -924,12 +929,12 @@ impl App {
                                 body = body.push(
                                     text("Image preview unavailable or loading")
                                         .size(11)
-                                        .color(shell::MUTED),
+                                        .style(shell::muted_text),
                                 );
                             }
                         }
                     }
-                    body = body.push(text("PNG, JPEG, WebP or GIF · up to 2 MiB and 4096 px. Images are visible to homeservers, including in encrypted rooms.").size(11).color(shell::MUTED));
+                    body = body.push(text("PNG, JPEG, WebP or GIF · up to 2 MiB and 4096 px. Images are visible to homeservers, including in encrypted rooms.").size(11).style(shell::muted_text));
                     actions = actions.push(quiet(
                         "Cancel",
                         Event::CancelEdit,
@@ -950,20 +955,16 @@ impl App {
         }
         let mut footer = column![].spacing(8).width(Length::Fill);
         if let Some(error) = &state.error {
-            footer = footer.push(
-                text(error)
-                    .size(12)
-                    .color(iced::Color::from_rgb8(174, 73, 78)),
-            );
+            footer = footer.push(text(error).size(12).style(shell::danger_text));
         }
         if state.pending {
-            footer = footer.push(text("Saving…").size(12).color(shell::MUTED));
+            footer = footer.push(text("Saving…").size(12).style(shell::muted_text));
         }
         if self.demo.is_some() && state.confirm.is_none() && state.editor == Editor::Browse {
             body = body.push(
                 text("Demo changes stay in memory.")
                     .size(11)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         }
         footer = footer.push(actions);
@@ -996,13 +997,13 @@ impl App {
         )
         .width((size.width - 32.0).clamp(1.0, 700.0))
         .height((size.height - 32.0).clamp(1.0, cap))
-        .style(|_| container::Style {
+        .style(|theme| container::Style {
             border: iced::Border {
-                color: shell::LINE,
+                color: shell::palette(theme).line,
                 width: 1.0,
                 radius: 12.0.into(),
             },
-            ..shell::surface(iced::Color::WHITE)
+            ..shell::surface(theme, shell::palette(theme).background)
         });
         opaque(
             mouse_area(
@@ -1010,7 +1011,7 @@ impl App {
                     .center_x(Length::Fill)
                     .center_y(Length::Fill)
                     .padding(16)
-                    .style(|_| shell::surface(iced::Color::BLACK.scale_alpha(0.25))),
+                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
             )
             .on_press(message(Event::Ignore))
             .on_scroll(|_| message(Event::Ignore)),

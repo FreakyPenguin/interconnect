@@ -462,7 +462,7 @@ impl App {
         )]
         .spacing(8);
         if state.sending.is_some() {
-            content = content.push(text("Sending reaction…").size(12).color(shell::MUTED));
+            content = content.push(text("Sending reaction…").size(12).style(shell::muted_text));
         }
         if let Some(error) = &state.error {
             content = content.push(text(error).size(12));

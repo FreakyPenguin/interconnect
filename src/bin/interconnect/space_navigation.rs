@@ -179,7 +179,7 @@ impl App {
                 .center_y(20)
                 .style(|theme: &iced::Theme| container::Style {
                     border: Border::default().rounded(4),
-                    ..shell::surface(theme.extended_palette().primary.weak.color)
+                    ..shell::surface(theme, theme.extended_palette().primary.weak.color)
                 })
                 .into()
         };
@@ -697,19 +697,22 @@ impl App {
                 .find(|s| &s.id == id)
                 .map_or("Space", |s| s.name.as_str());
             let anchor = crumb_id(index);
+            let current = index + 1 == path.len();
             let mut label = row![
                 self.space_icon(id),
                 super::single_line::label(name, 13)
                     .shrink()
-                    .color(if index + 1 == path.len() {
-                        shell::INK
-                    } else {
-                        shell::MUTED
+                    .style(move |theme| iced::widget::text::Style {
+                        color: Some(if current {
+                            shell::palette(theme).ink
+                        } else {
+                            shell::palette(theme).muted
+                        }),
                     }),
                 sized(Kind::ChevronDown, 11.0)
             ];
             if unread.contains(id) {
-                label = label.push(text("•").size(10).color(shell::ACCENT));
+                label = label.push(text("•").size(10).style(shell::accent_text));
             }
             let crumb = container(label.spacing(6).align_y(Alignment::Center))
                 .max_width((width - 220.0).clamp(40.0, 116.0))
@@ -743,7 +746,8 @@ impl App {
         );
         if self.utilities_need_attention() {
             account =
-                container(row![account, text("•").size(13).color(shell::ACCENT)].spacing(0)).into();
+                container(row![account, text("•").size(13).style(shell::accent_text)].spacing(0))
+                    .into();
         }
         let toggle = bar_control(
             container(icon(Kind::Sidebar)).into(),
@@ -752,7 +756,7 @@ impl App {
             enabled,
         );
         let demo: Element<'_, Message> = if self.demo.is_some() {
-            text("Demo").size(10).color(shell::MUTED).into()
+            text("Demo").size(10).style(shell::muted_text).into()
         } else {
             iced::widget::space().into()
         };
@@ -770,7 +774,7 @@ impl App {
         )
         .width(Length::Fill)
         .padding([6, 10])
-        .style(|_| shell::surface(shell::RAIL))
+        .style(|theme| shell::surface(theme, shell::palette(theme).rail))
         .into()
     }
 
@@ -857,13 +861,15 @@ impl App {
                     .align_y(Alignment::Center)
                     .spacing(6);
                 if unread.contains(id) {
-                    label = label.push(text("•").size(10).color(shell::ACCENT));
+                    label = label.push(text("•").size(10).style(shell::accent_text));
                 }
                 let control = navigation_control::view(
                     button(label)
                         .width(Length::Fill)
                         .padding([5, 8])
-                        .style(move |_, status| shell::navigation_button(selected, status))
+                        .style(move |theme, status| {
+                            shell::navigation_button(theme, selected, status)
+                        })
                         .on_press(action.clone()),
                     menu_id(&entry.path),
                     action,
@@ -906,11 +912,11 @@ impl App {
                 );
             }
             if self.menu_entries().is_empty() {
-                choices = choices.push(text("No spaces here").size(13).color(shell::MUTED));
+                choices = choices.push(text("No spaces here").size(13).style(shell::muted_text));
             }
             container(
                 column![
-                    text(heading).size(12).color(shell::MUTED),
+                    text(heading).size(12).style(shell::muted_text),
                     scrollable(choices)
                         .id(RESULTS)
                         .height(Length::Shrink)
@@ -918,20 +924,20 @@ impl App {
                         .style(shell::scroll_style),
                     text("↑↓ move · ←→ expand · Enter open")
                         .size(11)
-                        .color(shell::MUTED)
+                        .style(shell::muted_text)
                 ]
                 .spacing(8),
             )
             .padding(10)
             .width(300)
             .max_height(420)
-            .style(|_| container::Style {
+            .style(|theme| container::Style {
                 border: Border {
-                    color: shell::LINE,
+                    color: shell::palette(theme).line,
                     width: 1.0,
                     radius: 8.0.into(),
                 },
-                ..shell::surface(iced::Color::WHITE)
+                ..shell::surface(theme, shell::palette(theme).background)
             })
             .into()
         });

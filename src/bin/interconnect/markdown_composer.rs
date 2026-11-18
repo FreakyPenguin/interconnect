@@ -258,7 +258,7 @@ impl App {
         if draft.attachment.is_some() {
             return text("Plain text caption")
                 .size(11)
-                .color(shell::MUTED)
+                .style(shell::muted_text)
                 .into();
         }
         let target = Target {
@@ -323,9 +323,9 @@ impl App {
         let body = match &preview.result {
             None => text("Preparing preview…")
                 .size(12)
-                .color(shell::MUTED)
+                .style(shell::muted_text)
                 .into(),
-            Some(Err(error)) => text(error).size(12).color(shell::MUTED).into(),
+            Some(Err(error)) => text(error).size(12).style(shell::muted_text).into(),
             Some(Ok(prepared)) => selectable::preview_view(
                 &prepared.source,
                 prepared.document.as_ref(),
@@ -333,25 +333,26 @@ impl App {
                     remote: self.model.images.clone(),
                     local: self.local_inline.clone(),
                 },
+                self.settings.current.appearance.theme,
             ),
         };
         Some(
             container(
                 column![
-                    text("Preview").size(11).color(shell::MUTED),
+                    text("Preview").size(11).style(shell::muted_text),
                     container(scrollable(body).height(Length::Shrink)).max_height(130)
                 ]
                 .spacing(6),
             )
             .padding(10)
             .width(Length::Fill)
-            .style(|_| container::Style {
+            .style(|theme| container::Style {
                 border: iced::Border {
-                    color: shell::LINE,
+                    color: shell::palette(theme).line,
                     width: 1.0,
                     radius: 8.0.into(),
                 },
-                ..shell::surface(iced::Color::from_rgb8(248, 249, 251))
+                ..shell::surface(theme, shell::palette(theme).toolbar)
             })
             .into(),
         )

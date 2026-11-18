@@ -46,7 +46,8 @@ pub fn render(source: &str, display: bool, remaining_pixels: &mut usize) -> Opti
         } else {
             MathStyle::Text
         },
-        // Keep in sync with the native message text color (shell::INK).
+        // Default light ink. The UI supplies a light backing in dark mode so
+        // these offline assets (including authored colors) stay readable.
         color: Color::new(39.0 / 255.0, 46.0 / 255.0, 56.0 / 255.0, 1.0),
         ..Default::default()
     };

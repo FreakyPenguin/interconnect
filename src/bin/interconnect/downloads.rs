@@ -263,14 +263,14 @@ impl App {
                 icons::Kind::Attach
             }))
             .padding(6)
-            .style(|_| shell::surface(shell::SIDEBAR)),
+            .style(|theme| shell::surface(theme, shell::palette(theme).sidebar)),
             column![
                 super::tooltips::tooltip(
                     single_line::label(filename, 13),
                     filename.to_owned(),
                     iced::widget::tooltip::Position::Top
                 ),
-                text(detail).size(11).color(shell::MUTED)
+                text(detail).size(11).style(shell::muted_text)
             ]
             .spacing(3)
             .width(Length::Fill)
@@ -300,13 +300,13 @@ impl App {
             .padding(10)
             .width(Length::Fill)
             .max_width(344)
-            .style(|_| container::Style {
+            .style(|theme| container::Style {
                 border: iced::Border {
-                    color: shell::LINE,
+                    color: shell::palette(theme).line,
                     width: 1.0,
                     radius: 10.0.into(),
                 },
-                ..shell::surface(iced::Color::WHITE)
+                ..shell::surface(theme, shell::palette(theme).background)
             })
             .into()
     }
@@ -347,14 +347,18 @@ impl App {
             .as_ref()
             .is_some_and(|request| request.target == target)
         {
-            content = content.push(text("Preparing attachment…").size(12).color(shell::MUTED));
+            content = content.push(
+                text("Preparing attachment…")
+                    .size(12)
+                    .style(shell::muted_text),
+            );
         } else if let Some((_, feedback)) = self
             .downloads
             .feedback
             .as_ref()
             .filter(|(current, _)| current == &target)
         {
-            content = content.push(text(feedback.clone()).size(12).color(shell::MUTED));
+            content = content.push(text(feedback.clone()).size(12).style(shell::muted_text));
         }
         content.into()
     }

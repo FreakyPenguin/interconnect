@@ -629,7 +629,7 @@ impl App {
                 "MENTION"
             })
             .size(11)
-            .color(shell::MUTED)
+            .style(shell::muted_text)
         ]
         .spacing(4);
         for (index, person) in active.matches.iter().enumerate() {
@@ -638,7 +638,7 @@ impl App {
                 button(
                     column![
                         text(&person.name).size(13),
-                        text(&person.detail).size(11).color(shell::MUTED)
+                        text(&person.detail).size(11).style(shell::muted_text)
                     ]
                     .spacing(2),
                 )
@@ -647,7 +647,7 @@ impl App {
                 .style(move |theme, status| {
                     let mut style = shell::quiet_button(theme, status);
                     if selected {
-                        style.background = Some(iced::Color::from_rgb8(226, 234, 247).into());
+                        style.background = Some(shell::palette(theme).selected.into());
                     }
                     style
                 })
@@ -672,7 +672,7 @@ impl App {
                         }),
                 )
                 .size(12)
-                .color(shell::MUTED),
+                .style(shell::muted_text),
             );
         }
         let content = container(choices)

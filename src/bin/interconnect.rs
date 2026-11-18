@@ -1,4 +1,6 @@
 #![recursion_limit = "256"]
+#[path = "interconnect/appearance.rs"]
+mod appearance;
 #[path = "interconnect/attachments.rs"]
 mod attachments;
 #[path = "interconnect/bookmarks.rs"]
@@ -2622,14 +2624,14 @@ impl App {
                 format!("{author} replied to {topic}")
             })
             .size(12)
-            .color(shell::MUTED)
+            .style(shell::muted_text)
             .width(Length::Fill),
             text(format!(
                 "{replies} {}",
                 if replies == 1 { "reply" } else { "replies" }
             ))
             .size(11)
-            .color(shell::MUTED),
+            .style(shell::muted_text),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);
@@ -2637,22 +2639,26 @@ impl App {
             heading = heading.push(
                 text(format!("• {unread} new"))
                     .size(11)
-                    .color(shell::ACCENT),
+                    .style(shell::accent_text),
             );
         }
         let mut details = column![
             heading,
             emoji::preview(thread_activity::excerpt(&latest.body, 120))
                 .size(12)
-                .color(shell::MUTED)
+                .style(shell::muted_text)
         ]
         .spacing(3);
         if !latest.send_state.is_empty() && latest.send_state != "Sent" {
-            details = details.push(text(latest.send_state.clone()).size(11).color(shell::MUTED));
+            details = details.push(
+                text(latest.send_state.clone())
+                    .size(11)
+                    .style(shell::muted_text),
+            );
         }
         let mut open = button(
             row![
-                container(text("↳").size(16).color(shell::MUTED)).center_x(32),
+                container(text("↳").size(16).style(shell::muted_text)).center_x(32),
                 details.width(Length::Fill),
                 icons::icon(icons::Kind::ChevronRight)
             ]
@@ -2696,7 +2702,8 @@ impl App {
                                 thread: true,
                                 generation: *generation,
                             }
-                        })
+                        }),
+                        self.settings.current.appearance.theme
                     ),
                 ]
                 .spacing(4)
@@ -2718,11 +2725,11 @@ impl App {
                 },
             )
             .size(12)
-            .color(shell::MUTED)
+            .style(shell::muted_text)
             .into()
         };
         let original = if self.thread_original().is_some_and(|message| message.edited) {
-            column![original, text("edited").size(11).color(shell::MUTED)]
+            column![original, text("edited").size(11).style(shell::muted_text)]
                 .spacing(4)
                 .into()
         } else {
@@ -2935,13 +2942,13 @@ impl App {
             history_controls = history_controls.push(
                 text("Could not mark as read. Refocus this conversation to retry.")
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
             );
         }
         if let Some(error) = pane_error
             && !pane_rows.is_empty()
         {
-            history_controls = history_controls.push(text(error).size(12).color(shell::MUTED));
+            history_controls = history_controls.push(text(error).size(12).style(shell::muted_text));
         }
         match history {
             History::Loading if !pane_rows.is_empty() => {
@@ -2952,7 +2959,7 @@ impl App {
                         "Loading messages…"
                     })
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
                 )
             }
             History::Failed(error) if !pane_rows.is_empty() => {
@@ -2961,7 +2968,7 @@ impl App {
                         "Could not load history: {error}. Live messages remain active."
                     ))
                     .size(12)
-                    .color(shell::MUTED),
+                    .style(shell::muted_text),
                 );
                 history_controls = history_controls.push(retry_history());
             }
@@ -2970,7 +2977,7 @@ impl App {
                     container(
                         text("Beginning of conversation")
                             .size(11)
-                            .color(shell::MUTED),
+                            .style(shell::muted_text),
                     )
                     .padding([12, 0])
                     .center_x(Length::Fill)
@@ -3024,7 +3031,7 @@ impl App {
                     container(
                         text(date.format("%A, %d %B %Y").to_string())
                             .size(11)
-                            .color(shell::MUTED),
+                            .style(shell::muted_text),
                     )
                     .center_x(Length::Fill)
                     .padding([12, 0]),
@@ -3072,6 +3079,7 @@ impl App {
                         generation: *generation,
                     }),
                     (!thread).then(|| self.room_search_query()).flatten(),
+                    self.settings.current.appearance.theme,
                 )
             };
             let mut entry = if activity {
@@ -3093,7 +3101,7 @@ impl App {
                 .spacing(4)
             };
             if message.edited {
-                entry = entry.push(text("edited").size(11).color(shell::MUTED));
+                entry = entry.push(text("edited").size(11).style(shell::muted_text));
             }
             if message.download.is_some() || message.image.is_some() {
                 entry = entry.push(self.attachment_card(message, thread, *generation, true));
@@ -3109,19 +3117,21 @@ impl App {
                     format!("Read by {count} people")
                 };
                 entry = entry.push(tooltips::tooltip(
-                    text(label).size(11).color(shell::MUTED),
+                    text(label).size(11).style(shell::muted_text),
                     message.read_by.join("\n"),
                     iced::widget::tooltip::Position::Top,
                 ));
             }
             if !message.send_state.is_empty() && message.send_state != "Sent" {
-                entry = entry.push(text(&message.send_state).size(11).color(
-                    if message.retry.is_some() {
-                        iced::Color::from_rgb8(174, 73, 78)
-                    } else {
-                        shell::MUTED
-                    },
-                ));
+                entry = entry.push(text(&message.send_state).size(11).style(move |theme| {
+                    iced::widget::text::Style {
+                        color: Some(if message.retry.is_some() {
+                            shell::palette(theme).danger
+                        } else {
+                            shell::palette(theme).muted
+                        }),
+                    }
+                }));
             }
             if let Some(retry) = &message.retry {
                 let mut control = button(if self.retrying.contains(&retry.transaction) {
@@ -3197,7 +3207,7 @@ impl App {
                     container(tooltips::tooltip(
                         text(presentation::time_label(message))
                             .size(10)
-                            .color(shell::MUTED),
+                            .style(shell::muted_text),
                         presentation::time_detail(message),
                         iced::widget::tooltip::Position::Top,
                     ))
@@ -3254,8 +3264,8 @@ impl App {
             message_row = message_row.push(body);
             let mut message_row = container(message_row).id(timeline::row_id(index));
             if search_focus.as_deref() == Some(projected.key().as_str()) {
-                message_row = message_row.style(|_| container::Style {
-                    background: Some(iced::Color::from_rgb8(226, 234, 247).into()),
+                message_row = message_row.style(|theme| container::Style {
+                    background: Some(shell::palette(theme).selected.into()),
                     ..Default::default()
                 });
             }
@@ -3519,7 +3529,7 @@ impl App {
             .align_y(iced::Alignment::Center);
             if self.clipboard_pasting(&key) {
                 writing = writing.push(
-                    container(text("Reading clipboard…").size(12).color(shell::MUTED))
+                    container(text("Reading clipboard…").size(12).style(shell::muted_text))
                         .padding([0, 24]),
                 );
             } else {
@@ -3537,7 +3547,7 @@ impl App {
                 container(
                     text(label)
                         .size(12)
-                        .color(shell::MUTED)
+                        .style(shell::muted_text)
                         .wrapping(iced::widget::text::Wrapping::None)
                         .width(Length::Fill),
                 )
@@ -3560,13 +3570,9 @@ impl App {
                 .map(|chip| container(chip).padding([8, 10]).into())
                 .unwrap_or_else(|| container(iced::widget::space().height(0)).into());
             let error: Element<'_, Message> = if let Some(error) = &draft.error {
-                container(
-                    text(error)
-                        .size(12)
-                        .color(iced::Color::from_rgb8(174, 73, 78)),
-                )
-                .padding([4, 12])
-                .into()
+                container(text(error).size(12).style(shell::danger_text))
+                    .padding([4, 12])
+                    .into()
             } else {
                 container(iced::widget::space().height(0)).into()
             };
@@ -3832,7 +3838,7 @@ fn main() -> anyhow::Result<()> {
             App::view,
         )
         .title("Interconnect")
-        .theme(shell::theme())
+        .theme(|app: &App| appearance::theme(app.settings.current.appearance.theme))
         .default_font(iced::Font::with_name("Inter"))
         .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())
         .font(include_bytes!("../../assets/fonts/Inter-SemiBold.otf").as_slice())

@@ -363,9 +363,9 @@ impl App {
                 .width(iced::Length::Fill)
                 .style(move |theme, status| {
                     let mut style = shell::quiet_button(theme, status);
-                    style.text_color = shell::INK;
+                    style.text_color = shell::palette(theme).ink;
                     if selected {
-                        style.background = Some(iced::Color::from_rgb8(226, 234, 247).into());
+                        style.background = Some(shell::palette(theme).selected.into());
                     }
                     style
                 })
@@ -383,7 +383,7 @@ impl App {
         }
         let content = container(
             column![
-                text("EMOJI").size(11).color(shell::MUTED),
+                text("EMOJI").size(11).style(shell::muted_text),
                 scrollable(choices).style(shell::scroll_style)
             ]
             .spacing(6),

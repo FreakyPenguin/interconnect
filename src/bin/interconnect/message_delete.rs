@@ -277,15 +277,11 @@ impl App {
             shell::title("Delete this message?", 15),
             text("Delete it for everyone in the room. This cannot be undone.")
                 .size(12)
-                .color(shell::MUTED),
+                .style(shell::muted_text),
         ]
         .spacing(10);
         if let Some(error) = &state.error {
-            content = content.push(
-                text(error)
-                    .size(12)
-                    .color(iced::Color::from_rgb8(174, 73, 78)),
-            );
+            content = content.push(text(error).size(12).style(shell::danger_text));
         }
         content = content.push(
             row![
@@ -306,10 +302,10 @@ impl App {
                 .id("delete-confirmation")
                 .width(300)
                 .padding(16)
-                .style(|_| iced::widget::container::Style {
-                    background: Some(iced::Color::WHITE.into()),
+                .style(|theme| iced::widget::container::Style {
+                    background: Some(shell::palette(theme).background.into()),
                     border: iced::Border {
-                        color: shell::LINE,
+                        color: shell::palette(theme).line,
                         width: 1.0,
                         radius: 8.0.into(),
                     },

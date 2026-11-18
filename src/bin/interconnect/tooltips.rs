@@ -1,6 +1,6 @@
 //! Shared presentation for control hints and contextual details.
 use iced::{
-    Border, Color, Element,
+    Border, Element,
     widget::{container, text, tooltip as iced_tooltip},
 };
 
@@ -11,17 +11,23 @@ pub(super) fn tooltip<'a, Message: 'a>(
 ) -> iced_tooltip::Tooltip<'a, Message> {
     iced_tooltip(
         content,
-        container(text(label).size(11).color(Color::from_rgb8(247, 248, 250)))
-            .padding([6, 9])
-            .max_width(360),
+        container(
+            text(label)
+                .size(11)
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(super::shell::palette(theme).tooltip_text),
+                }),
+        )
+        .padding([6, 9])
+        .max_width(360),
         position,
     )
     .padding(0)
     .gap(6)
-    .style(|_| container::Style {
-        background: Some(Color::from_rgb8(43, 48, 57).into()),
+    .style(|theme| container::Style {
+        background: Some(super::shell::palette(theme).tooltip_background.into()),
         border: Border {
-            color: Color::WHITE.scale_alpha(0.12),
+            color: super::shell::palette(theme).tooltip_border,
             width: 1.0,
             radius: 6.0.into(),
         },

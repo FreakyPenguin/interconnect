@@ -263,7 +263,7 @@ impl App {
             shell::title("Invite to room", 13),
             text("Search your server or enter a full Matrix ID.")
                 .size(12)
-                .color(shell::MUTED),
+                .style(shell::muted_text),
             input,
             row![
                 send,
@@ -279,7 +279,7 @@ impl App {
             form = form.push(text(error).size(12));
         }
         if let Some(success) = &state.success {
-            form = form.push(text(success).size(12).color(shell::MUTED));
+            form = form.push(text(success).size(12).style(shell::muted_text));
         }
         container(form).padding(16).width(Length::Fill).into()
     }

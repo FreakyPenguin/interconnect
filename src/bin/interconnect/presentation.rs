@@ -29,7 +29,7 @@ pub(super) fn heading(message: &MessageRow, action: Option<Message>) -> Element<
         let mut heading = row![name].spacing(8).align_y(iced::Alignment::Center);
         if !label.is_empty() {
             heading = heading.push(tooltips::tooltip(
-                text(label).size(11).color(shell::MUTED),
+                text(label).size(11).style(shell::muted_text),
                 time_detail(message),
                 tooltip::Position::Top,
             ));
@@ -55,11 +55,11 @@ pub(super) fn sender_name<'a>(
     let name: Element<'a, Message> = if let Some(action) = action {
         button(content)
             .padding(0)
-            .style(|_, status| iced::widget::button::Style {
+            .style(|theme, status| iced::widget::button::Style {
                 text_color: if matches!(status, button::Status::Hovered | button::Status::Pressed) {
-                    shell::ACCENT
+                    shell::palette(theme).accent
                 } else {
-                    shell::INK
+                    shell::palette(theme).ink
                 },
                 ..Default::default()
             })
