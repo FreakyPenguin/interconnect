@@ -546,3 +546,26 @@ Automated tests cover per-visit receipt snapshots, missing/unloaded boundaries,
 outgoing messages, collapsed thread projection, and preservation after read/space
 updates. Native visual appearance and real homeserver behavior require the manual
 checks above; the procedures do not claim those checks have been run.
+
+## Inline GIF playback
+
+Demo: open **Images**, click the play control centered over the GIF, and verify
+that frames change inside the existing 180 px preview without opening the viewer
+or moving the reading position. The control becomes Stop; stopping or finishing
+retains the current frame and allows replay. Click the preview outside the
+control to open the full-screen image viewer; its existing playback controls
+remain available. Repeat at narrow widths, in both themes, and from a thread.
+Settings → GIF playback applies to both inline and viewer playback.
+
+With an authorized connected profile, check GIFs with separate thumbnails and
+encrypted GIFs without thumbnails. Only clicking Play should request the original
+for inline animation. Loading remains still and cancellable; a failed or limited
+animation offers the viewer for details/retry. Scroll the playing message out of
+view, change rooms, close the thread, open the viewer, or unfocus the window:
+playback must stop without resuming automatically. Switching spaces alone must
+preserve the open conversation, drafts, and reading position.
+
+Automated fixtures cover preview button versus surrounding-image clicks,
+on-demand loading, pending-load cancellation on focus loss, frame deadlines,
+stale ticks, source replacement, viewport departure, and room navigation. Native
+appearance, connected delivery, and measured CPU/wakeups require manual validation.

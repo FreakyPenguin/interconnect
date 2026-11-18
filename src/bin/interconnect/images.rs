@@ -4,7 +4,7 @@ use iced::time::Instant;
 use iced::{
     Element, Length, Subscription,
     futures::StreamExt,
-    widget::{button, column, container, image, mouse_area, opaque, row, text},
+    widget::{button, column, container, image, mouse_area, opaque, row, stack, text},
 };
 use interconnect::{
     connected::MessageRow, image_media::Key, media::Animation, settings::GifPlayback,
@@ -20,6 +20,17 @@ pub struct Viewing {
     label: String,
     frame: usize,
     playback: Option<Playback>,
+    pending: bool,
+}
+impl Viewing {
+    pub(super) fn is_outside_viewport(
+        &self,
+        thread: bool,
+        generation: u64,
+        keys: &[String],
+    ) -> bool {
+        self.thread == thread && self.generation == generation && !keys.contains(&self.row)
+    }
 }
 #[derive(Clone, Debug)]
 struct Playback {
@@ -67,6 +78,11 @@ impl Playback {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open {
+        thread: bool,
+        generation: u64,
+        row: String,
+    },
+    InlineToggle {
         thread: bool,
         generation: u64,
         row: String,
@@ -126,15 +142,63 @@ impl App {
                 if let Some(message) = self.image_message(thread, generation, &row)
                     && let Some(image) = &message.image
                 {
+                    let original = image.original.clone();
+                    let label = Self::attachment_name(message).to_owned();
+                    self.inline_gif = None;
                     self.image_view = Some(Viewing {
                         thread,
                         generation,
                         row,
-                        original: image.original.clone(),
-                        label: Self::attachment_name(message).to_owned(),
+                        original,
+                        label,
                         frame: 0,
                         playback: None,
+                        pending: false,
                     });
+                }
+            }
+            Event::InlineToggle {
+                thread,
+                generation,
+                row,
+            } if self.image_view.is_none()
+                && self.settings.draft.is_none()
+                && self.reaction_picker.is_none()
+                && self.composer_picker.is_none()
+                && !self.closing
+                && !self.stopped
+                && self.window_focused =>
+            {
+                if let Some(message) = self.image_message(thread, generation, &row)
+                    && let Some(image) = &message.image
+                    && (image.gif
+                        || matches!(
+                            self.model.images.animations.get(&image.original),
+                            Some(Ok(_))
+                        ))
+                {
+                    let original = image.original.clone();
+                    let label = Self::attachment_name(message).to_owned();
+                    if let Some(view) = &mut self.inline_gif
+                        && view.thread == thread
+                        && view.generation == generation
+                        && view.row == row
+                        && (view.playback.is_some() || view.pending)
+                    {
+                        view.playback = None;
+                        view.pending = false;
+                    } else {
+                        self.inline_gif = Some(Viewing {
+                            thread,
+                            generation,
+                            row,
+                            original,
+                            label,
+                            frame: 0,
+                            playback: None,
+                            pending: true,
+                        });
+                    }
                 }
             }
             Event::Play if !self.closing && !self.stopped && self.settings.draft.is_none() => {
@@ -152,18 +216,21 @@ impl App {
             }
             Event::Stop => self.stop_image_playback(),
             Event::Tick(started) => {
-                if let Some(view) = &mut self.image_view
-                    && let Some(playback) = &mut view.playback
-                    && playback.started == started
-                {
-                    if let Some(Ok(animation)) = self.model.images.animations.get(&view.original) {
-                        let (frame, finished) = playback.advance(animation, Instant::now());
-                        view.frame = frame;
-                        if finished {
+                for view in self.image_view.iter_mut().chain(self.inline_gif.iter_mut()) {
+                    if let Some(playback) = &mut view.playback
+                        && playback.started == started
+                    {
+                        if let Some(Ok(animation)) =
+                            self.model.images.animations.get(&view.original)
+                        {
+                            let (frame, finished) = playback.advance(animation, Instant::now());
+                            view.frame = frame;
+                            if finished {
+                                view.playback = None;
+                            }
+                        } else {
                             view.playback = None;
                         }
-                    } else {
-                        view.playback = None;
                     }
                 }
             }
@@ -173,28 +240,64 @@ impl App {
         }
     }
     pub(super) fn stop_image_playback(&mut self) {
-        if let Some(view) = &mut self.image_view {
+        for view in self.image_view.iter_mut().chain(self.inline_gif.iter_mut()) {
             view.playback = None;
+            view.pending = false;
         }
     }
     pub(super) fn image_subscription(&self) -> Subscription<Message> {
-        let Some(playback) = self
-            .image_view
-            .as_ref()
-            .and_then(|view| view.playback.as_ref())
-        else {
-            return Subscription::none();
-        };
-        Subscription::run_with((playback.started, playback.next), |(started, next)| {
-            let (started, next) = (*started, *next);
-            iced::futures::stream::once(async move {
-                tokio::time::sleep_until(next.into()).await;
-                Message::Image(Event::Tick(started))
-            })
-            .chain(iced::futures::stream::pending())
-        })
+        Subscription::batch(
+            self.image_view
+                .iter()
+                .chain(self.inline_gif.iter())
+                .filter_map(|view| view.playback.as_ref())
+                .map(|playback| {
+                    Subscription::run_with((playback.started, playback.next), |(started, next)| {
+                        let (started, next) = (*started, *next);
+                        iced::futures::stream::once(async move {
+                            tokio::time::sleep_until(next.into()).await;
+                            Message::Image(Event::Tick(started))
+                        })
+                        .chain(iced::futures::stream::pending())
+                    })
+                }),
+        )
     }
     pub(super) fn validate_image_view(&mut self) {
+        let valid = self.inline_gif.as_ref().is_some_and(|view| {
+            self.image_message(view.thread, view.generation, &view.row)
+                .and_then(|row| row.image.as_ref())
+                .is_some_and(|image| image.original == view.original)
+        });
+        if !valid {
+            self.inline_gif = None;
+        }
+        if self.settings.draft.is_some() {
+            self.stop_image_playback();
+        }
+        if let Some(view) = &mut self.inline_gif {
+            if view.pending {
+                if let Some(Ok(animation)) = self.model.images.animations.get(&view.original) {
+                    view.playback = Some(Playback::new(
+                        animation,
+                        self.settings.current.media.gif_playback,
+                        self.settings.current.media.gif_seconds,
+                        Instant::now(),
+                    ));
+                    view.pending = false;
+                } else if self.model.images.failed.contains(&view.original)
+                    || self.model.images.animations.contains_key(&view.original)
+                    || self.model.images.ready.contains_key(&view.original)
+                    || self.model.media_error.is_some()
+                {
+                    view.pending = false;
+                }
+            }
+            if view.playback.is_some() && !self.model.images.animations.contains_key(&view.original)
+            {
+                view.playback = None;
+            }
+        }
         let label = self.image_view.as_ref().and_then(|view| {
             self.image_message(view.thread, view.generation, &view.row)
                 .filter(|row| {
@@ -220,10 +323,28 @@ impl App {
             .image
             .as_ref()
             .expect("image preview requires metadata");
-        let ready = attachment
-            .preview
-            .as_ref()
-            .and_then(|key| self.model.images.ready.get(key));
+        let inline = self.inline_gif.as_ref().filter(|view| {
+            view.thread == thread
+                && view.generation == generation
+                && view.row == message.key
+                && view.original == attachment.original
+        });
+        let ready = inline
+            .and_then(|view| {
+                self.model
+                    .images
+                    .animations
+                    .get(&view.original)
+                    .and_then(|animation| animation.as_ref().ok())
+                    .and_then(|animation| animation.frames.get(view.frame))
+                    .map(|(handle, _)| handle)
+            })
+            .or_else(|| {
+                attachment
+                    .preview
+                    .as_ref()
+                    .and_then(|key| self.model.images.ready.get(key))
+            });
         let content: Element<'static, Message> = if let Some(handle) = ready {
             image(handle.clone())
                 .content_fit(iced::ContentFit::Contain)
@@ -265,7 +386,62 @@ impl App {
                 row: message.key.clone(),
             }));
         }
-        container(open).max_width(320).width(Length::Fill).into()
+        let mut preview = stack![open];
+        if attachment.gif
+            || matches!(
+                self.model.images.animations.get(&attachment.original),
+                Some(Ok(_))
+            )
+        {
+            let playing = inline.is_some_and(|view| view.pending || view.playback.is_some());
+            let unavailable = self.model.images.failed.contains(&attachment.original)
+                || matches!(
+                    self.model.images.animations.get(&attachment.original),
+                    Some(Err(_))
+                );
+            let control = super::tooltips::icon_button(
+                if playing {
+                    super::icons::Kind::Stop
+                } else {
+                    super::icons::Kind::Play
+                },
+                if playing {
+                    "Stop GIF"
+                } else if unavailable {
+                    "Animation unavailable · Open image for details or retry"
+                } else {
+                    "Play GIF"
+                },
+                (!self.closing && !self.stopped).then(|| {
+                    Message::Image(if unavailable && !playing {
+                        Event::Open {
+                            thread,
+                            generation,
+                            row: message.key.clone(),
+                        }
+                    } else {
+                        Event::InlineToggle {
+                            thread,
+                            generation,
+                            row: message.key.clone(),
+                        }
+                    })
+                }),
+            );
+            let control = container(control)
+                .padding(3)
+                .style(|theme| container::Style {
+                    background: Some(shell::palette(theme).background.into()),
+                    border: iced::Border {
+                        color: shell::palette(theme).line,
+                        width: 1.0,
+                        radius: 24.0.into(),
+                    },
+                    ..Default::default()
+                });
+            preview = preview.push(container(control).center_x(Length::Fill).center_y(180));
+        }
+        container(preview).max_width(320).width(Length::Fill).into()
     }
     pub(super) fn image_viewer(&self) -> Element<'_, Message> {
         iced::widget::responsive(move |size| {
@@ -434,6 +610,188 @@ mod tests {
             row: "sample-gif".into(),
         }));
     }
+    fn toggle_inline(app: &mut App) {
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let _ = app.update(Message::Image(Event::InlineToggle {
+            thread: false,
+            generation,
+            row: "sample-gif".into(),
+        }));
+    }
+
+    #[test]
+    fn inline_control_captures_play_and_stop_but_surrounding_preview_opens_viewer() {
+        use iced::advanced::{Shell, mouse};
+        let mut app = sample();
+        let _ = app.update(Message::WindowFocused(true));
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let message = app
+            .model
+            .room
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.key == "sample-gif")
+            .unwrap()
+            .clone();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        for width in [160.0, 320.0] {
+            for (point, control) in [
+                (iced::Point::new(width / 2.0, 90.0), true),
+                (iced::Point::new(10.0, 10.0), false),
+            ] {
+                let mut preview = app.image_preview(&message, false, generation);
+                let mut tree = Tree::new(&preview);
+                let size = iced::Size::new(width, 180.0);
+                let node = preview.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                let mut messages = Vec::new();
+                for event in [
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ] {
+                    let mut shell = Shell::new(&mut messages);
+                    preview.as_widget_mut().update(
+                        &mut tree,
+                        &iced::Event::Mouse(event),
+                        layout::Layout::new(&node),
+                        mouse::Cursor::Available(point),
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut shell,
+                        &iced::Rectangle::with_size(size),
+                    );
+                }
+                assert_eq!(messages.len(), 1);
+                assert_eq!(
+                    matches!(&messages[0], Message::Image(Event::InlineToggle { .. })),
+                    control
+                );
+                assert_eq!(
+                    matches!(&messages[0], Message::Image(Event::Open { .. })),
+                    !control
+                );
+                drop(preview);
+                for event in messages {
+                    let _ = app.update(event);
+                }
+                if control {
+                    assert!(app.image_view.is_none());
+                    assert_eq!(app.image_subscription().units(), 1);
+                    toggle_inline(&mut app);
+                    assert_eq!(app.image_subscription().units(), 0);
+                } else {
+                    assert!(app.image_view.is_some());
+                    assert!(app.inline_gif.is_none());
+                    let _ = app.update(Message::Image(Event::Close));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn inline_loading_waits_for_media_and_focus_loss_cancels_pending_start() {
+        let mut app = sample();
+        let _ = app.update(Message::WindowFocused(true));
+        let loaded = app.model.images.clone();
+        app.model.images = Default::default();
+        app.demo = None;
+        toggle_inline(&mut app);
+        let original = app.inline_gif.as_ref().unwrap().original.clone();
+        assert!(app.selection.images.contains(&original));
+        assert!(app.inline_gif.as_ref().unwrap().pending);
+        assert_eq!(app.image_subscription().units(), 0);
+        let _ = app.update(Message::WindowFocused(false));
+        app.model.images = loaded.clone();
+        app.validate_image_view();
+        assert_eq!(app.image_subscription().units(), 0);
+        let _ = app.update(Message::WindowFocused(true));
+        app.model.images = Default::default();
+        toggle_inline(&mut app);
+        let mut model = app.model.clone();
+        model.images = loaded;
+        let _ = app.update(Message::State(Box::new(model)));
+        assert_eq!(app.image_subscription().units(), 1);
+        assert!(app.image_view.is_none());
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let _ = app.update(Message::RowsVisible {
+            thread: false,
+            generation,
+            keys: vec![],
+        });
+        assert!(app.inline_gif.is_none());
+        assert!(!app.selection.images.contains(&original));
+        assert_eq!(app.image_subscription().units(), 0);
+    }
+
+    #[test]
+    fn inline_completion_stale_ticks_navigation_and_replaced_sources_cancel_playback() {
+        let mut app = sample();
+        let _ = app.update(Message::WindowFocused(true));
+        toggle_inline(&mut app);
+        let old = app
+            .inline_gif
+            .as_ref()
+            .unwrap()
+            .playback
+            .as_ref()
+            .unwrap()
+            .started;
+        toggle_inline(&mut app);
+        toggle_inline(&mut app);
+        let current = app
+            .inline_gif
+            .as_ref()
+            .unwrap()
+            .playback
+            .as_ref()
+            .unwrap()
+            .started;
+        let _ = app.update(Message::Image(Event::Tick(old)));
+        assert_eq!(
+            app.inline_gif
+                .as_ref()
+                .unwrap()
+                .playback
+                .as_ref()
+                .unwrap()
+                .started,
+            current
+        );
+        let view = app.inline_gif.as_mut().unwrap();
+        let animation = app.model.images.animations[&view.original]
+            .as_ref()
+            .unwrap()
+            .clone();
+        let started = Instant::now() - Duration::from_secs(10);
+        view.playback = Some(Playback::new(&animation, GifPlayback::Once, 5, started));
+        let _ = app.update(Message::Image(Event::Tick(started)));
+        assert_eq!(app.image_subscription().units(), 0);
+        assert_eq!(
+            app.inline_gif.as_ref().unwrap().frame,
+            animation.frames.len() - 1
+        );
+        toggle_inline(&mut app);
+        Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows)
+            .iter_mut()
+            .find(|row| row.key == "sample-gif")
+            .unwrap()
+            .image = None;
+        app.validate_image_view();
+        assert!(app.inline_gif.is_none());
+        assert_eq!(app.image_subscription().units(), 0);
+        let _ = app.update(Message::Room("general".into()));
+        let _ = app.update(Message::Room("images".into()));
+        toggle_inline(&mut app);
+        let _ = app.update(Message::Room("general".into()));
+        assert!(app.inline_gif.is_none());
+        assert_eq!(app.image_subscription().units(), 0);
+    }
+
     #[test]
     fn playback_honors_frame_delays_single_loop_and_precise_duration_deadlines() {
         let images = super::super::demo::images();

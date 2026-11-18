@@ -269,7 +269,9 @@ pub fn attachment(missing: bool) -> interconnect::image_media::Attachment {
 pub fn gif_attachment() -> interconnect::image_media::Attachment {
     let source =
         matrix_sdk::ruma::events::room::MediaSource::Plain("mxc://demo.invalid/gif".into());
-    interconnect::image_media::Attachment::new(&source, None)
+    let mut attachment = interconnect::image_media::Attachment::new(&source, None);
+    attachment.gif = true;
+    attachment
 }
 pub fn custom_emoji(room: &str) -> interconnect::custom_emoji::Snapshot {
     interconnect::custom_emoji::Snapshot {
@@ -550,7 +552,7 @@ impl Demo {
                 sample.thread_replies = 2;
                 let mut missing = message("missing-image", "Alex Rivera", "A missing preview keeps its place in the conversation.");
                 missing.image = Some(attachment(true));
-                let mut gif = message("sample-gif", "Jamie Davis", "A click-to-play animation. Open it, then click Play GIF. Change playback in Settings → GIF playback.");
+                let mut gif = message("sample-gif", "Jamie Davis", "A click-to-play animation. Click Play GIF on the preview, or open it full screen. Change playback in Settings → GIF playback.");
                 gif.image = Some(gif_attachment());
                 gif.thread_replies = 2;
                 for (row, filename) in [(&mut sample, "sample.png"), (&mut missing, "missing.png"), (&mut gif, "animation-preview.png")] {

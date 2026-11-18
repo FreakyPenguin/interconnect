@@ -66,6 +66,7 @@ impl Key {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Attachment {
+    pub gif: bool,
     pub preview: Option<Key>,
     pub original: Key,
 }
@@ -80,13 +81,24 @@ impl Attachment {
         let MessageType::Image(image) = message.msgtype() else {
             return None;
         };
-        let attachment = Self::new(
+        Self::from_image(image)
+    }
+    fn from_image(
+        image: &matrix_sdk::ruma::events::room::message::ImageMessageEventContent,
+    ) -> Option<Self> {
+        let mut attachment = Self::new(
             &image.source,
             image
                 .info
                 .as_ref()
                 .and_then(|info| info.thumbnail_source.as_ref()),
         );
+        attachment.gif = image
+            .info
+            .as_ref()
+            .and_then(|info| info.mimetype.as_deref())
+            .is_some_and(|mime| mime.eq_ignore_ascii_case("image/gif"))
+            || image.filename().to_ascii_lowercase().ends_with(".gif");
         attachment
             .original
             .parameters()
@@ -107,6 +119,7 @@ impl Attachment {
             None => None,
         };
         Self {
+            gif: false,
             preview: preview.filter(|key| key.parameters().uri().is_valid()),
             original: Key::new(source, Variant::Original),
         }
@@ -170,6 +183,36 @@ mod tests {
         Mock, MockServer, ResponseTemplate,
         matchers::{method, path, path_regex, query_param},
     };
+
+    #[test]
+    fn gif_metadata_survives_separate_thumbnails_captions_and_missing_mime_types() {
+        for (mime, filename, caption, expected) in [
+            (Some("image/gif"), "animation", "A caption", true),
+            (Some("IMAGE/GIF"), "animation", "A caption", true),
+            (None, "animation.GIF", "A caption", true),
+            (None, "animation.gif", "animation.gif", true),
+            (
+                Some("image/png"),
+                "photo.png",
+                "A caption mentioning animation.gif",
+                false,
+            ),
+        ] {
+            let image = serde_json::from_value(json!({
+                "body": caption, "filename": filename,
+                "url": "mxc://example.org/original",
+                "info": { "mimetype": mime, "thumbnail_url": "mxc://example.org/still" }
+            }))
+            .unwrap();
+            let attachment = Attachment::from_image(&image).unwrap();
+            assert_eq!(attachment.gif, expected);
+            assert_ne!(attachment.preview.as_ref(), Some(&attachment.original));
+            assert_eq!(
+                attachment.original.file_request().uri().as_str(),
+                "mxc://example.org/original"
+            );
+        }
+    }
 
     fn png() -> Vec<u8> {
         let pixels = image::RgbaImage::from_pixel(800, 400, image::Rgba([30, 80, 160, 255]));

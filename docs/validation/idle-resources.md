@@ -71,6 +71,9 @@ Compare settled visible/hidden windows, focused composers, open/closed threads,
 repeat navigation, offline/reconnect, and suspend/resume. Test both repeated
 visits to the same conversation and many distinct conversations. For GIFs compare
 unopened, open/still, playing, completed, stopped, closed, and unfocused states.
+Compare inline preview playback with viewer playback; scrolling the playing row
+out of view or changing rooms must remove its animation deadline. Loading a GIF
+must not introduce a polling timer, and focus restoration must not restart it.
 Compare presence polling off/on, verification closed/pending, and dirty/clean drafts.
 
 Keep build, renderer/adapter, fonts, window geometry, focus, logging, and incoming

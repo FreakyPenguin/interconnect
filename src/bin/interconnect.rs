@@ -202,6 +202,7 @@ struct App {
     inline_demand: inline_image::Demand,
     local_inline: inline_image::LocalImages,
     image_view: Option<images::Viewing>,
+    inline_gif: Option<images::Viewing>,
     downloads: downloads::State,
     reaction_picker: Option<reaction_picker::State>,
     reaction_sends: HashSet<reaction_picker::Sending>,
@@ -404,6 +405,7 @@ impl App {
             inline_demand: HashMap::new(),
             local_inline: Default::default(),
             image_view: None,
+            inline_gif: None,
             downloads: downloads::State::default(),
             reaction_picker: None,
             reaction_sends: HashSet::new(),
@@ -1086,6 +1088,7 @@ impl App {
         let refresh_media = matches!(
             &message,
             Message::ComposerEmoji(_)
+                | Message::Settings(_)
                 | Message::EmojiCompletion(_)
                 | Message::UserCompletion(_)
                 | Message::Reaction(_)
@@ -1110,7 +1113,10 @@ impl App {
                     | Message::Close
                     | Message::Stopped(_)
                     | Message::Image(
-                        images::Event::Open { .. } | images::Event::Close | images::Event::Retry
+                        images::Event::Open { .. }
+                            | images::Event::InlineToggle { .. }
+                            | images::Event::Close
+                            | images::Event::Retry
                     )
             );
         let mut action_task = Task::none();
@@ -1231,6 +1237,13 @@ impl App {
                     .as_ref()
                     .is_some_and(|(current, _)| *current == generation)
                 {
+                    if self
+                        .inline_gif
+                        .as_ref()
+                        .is_some_and(|view| view.is_outside_viewport(thread, generation, &keys))
+                    {
+                        self.inline_gif = None;
+                    }
                     self.visible_rows[usize::from(thread)] = keys;
                 }
             }
@@ -2138,6 +2151,7 @@ impl App {
     fn refresh_media_demand(&mut self) {
         if self.closing || self.stopped {
             self.image_view = None;
+            self.inline_gif = None;
         }
         self.validate_image_view();
         self.selection.avatars.clear();
@@ -2197,6 +2211,9 @@ impl App {
         if let Some(view) = &self.image_view {
             self.selection.images.push(view.original.clone());
             return;
+        }
+        if let Some(view) = &self.inline_gif {
+            self.selection.images.push(view.original.clone());
         }
         for uri in self
             .invite_avatars()

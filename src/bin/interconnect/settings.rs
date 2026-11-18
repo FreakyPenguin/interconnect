@@ -673,7 +673,7 @@ impl App {
             iced::widget::rule::horizontal(1),
             column![
                 shell::title("GIF playback", 14),
-                caption("GIFs stay still until you click Play in the image viewer."),
+                caption("GIFs stay still until you click Play on a preview or in the image viewer."),
                 gif_controls,
                 caption(if self.valid_gif_seconds() {
                     "Duration repeats the GIF for 1–300 whole seconds. Once plays one loop."

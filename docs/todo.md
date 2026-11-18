@@ -5,7 +5,6 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 ## Messaging and media
 
 - Standalone stickers and animated custom emoji.
-- Better GIF handling (play button without opening fully).
 - Giphy integration?
 
 ## Navigation and notifications
