@@ -28,7 +28,7 @@ mod receipts;
 pub use receipts::ReadTarget;
 mod typing;
 pub use typing::{Activity as TypingActivity, Typing};
-mod members;
+pub(crate) mod members;
 pub use members::{Member, Members};
 mod presence;
 pub use presence::{Demand as PresenceDemand, Status as Presence, Users as PresenceUsers};
@@ -243,47 +243,7 @@ impl Composer {
 
     /// Explicit writes finish against the captured room, even after navigation.
     pub async fn invite_member(self, input: String) -> Result<(), String> {
-        let user = crate::people::parse_user_id(&input)?;
-        let invite = async {
-            use matrix_sdk::ruma::events::room::member::MembershipState;
-            let room = self.0.room();
-            let levels = room
-                .power_levels()
-                .await
-                .map_err(|error| error.to_string())?;
-            if room.state() != matrix_sdk::RoomState::Joined
-                || !levels.user_can_invite(room.own_user_id())
-            {
-                return Err("You no longer have permission to invite people to this room.".into());
-            }
-            if let Some(member) = room
-                .get_member_no_sync(&user)
-                .await
-                .map_err(|error| error.to_string())?
-            {
-                match member.membership() {
-                    MembershipState::Join => {
-                        return Err("This person is already a room member.".into());
-                    }
-                    MembershipState::Invite => {
-                        return Err("This person already has an invitation.".into());
-                    }
-                    MembershipState::Ban => {
-                        return Err("This person is banned from the room.".into());
-                    }
-                    _ => {}
-                }
-            }
-            room.invite_user_by_id(&user)
-                .await
-                .map_err(|error| error.to_string())
-        };
-        tokio::time::timeout(Duration::from_secs(30), invite)
-            .await
-            .map_err(|_| {
-                "The invitation timed out and may have been sent. Check membership before retrying."
-                    .to_owned()
-            })?
+        crate::room_management::invite(self.0.room(), &input).await
     }
 
     /// Read current server state so successive local pin changes preserve one another

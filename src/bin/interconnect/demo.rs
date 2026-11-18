@@ -252,11 +252,35 @@ pub fn spaces() -> Vec<SpaceEntry> {
 pub struct Demo {
     pub(super) emoji_packs: Option<interconnect::custom_emoji::management::Listing>,
     pub(super) emoji_uploads: std::collections::VecDeque<interconnect::image_media::Key>,
+    pub(super) managed_members: HashMap<String, Vec<interconnect::connected::Member>>,
     pub(super) invitations: HashMap<String, Vec<interconnect::connected::Member>>,
     conversations: HashMap<DraftKey, Vec<MessageRow>>,
     code: Option<std::sync::Arc<interconnect::message_document::Document>>,
     next_message: u64,
 }
+impl Demo {
+    pub(super) fn members(
+        &self,
+        generation: u64,
+        room: &str,
+        direct: bool,
+    ) -> interconnect::connected::Members {
+        let invitations = self.invitations.get(room).map_or(&[][..], Vec::as_slice);
+        let mut snapshot = super::members::demo(generation, direct, invitations);
+        if let Some(rows) = self.managed_members.get(room) {
+            let mut rows = rows.clone();
+            for invite in invitations {
+                if !rows.iter().any(|m| m.user_id == invite.user_id) {
+                    rows.push(invite.clone());
+                }
+            }
+            rows.sort_by_cached_key(|m| (m.invited, m.name.to_lowercase(), m.user_id.clone()));
+            snapshot.rows = rows.into();
+        }
+        snapshot
+    }
+}
+
 pub fn attachment(missing: bool) -> interconnect::image_media::Attachment {
     let source = matrix_sdk::ruma::events::room::MediaSource::Plain(
         if missing {

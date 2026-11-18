@@ -38,37 +38,13 @@ pub(super) async fn view(client: Client, id: String, generation: u64, state: wat
     };
     state.send_modify(|s| s.members = Some(snapshot.clone()));
     loop {
-        let result = tokio::time::timeout(
-            Duration::from_secs(30),
-            room.members(RoomMemberships::JOIN | RoomMemberships::INVITE),
-        )
-        .await;
         snapshot.loading = false;
-        match result {
-            Ok(Ok(members)) => {
-                let mut rows: Vec<_> = members
-                    .into_iter()
-                    .map(|member| Member {
-                        invited: member.membership()
-                            == &matrix_sdk::ruma::events::room::member::MembershipState::Invite,
-                        user_id: member.user_id().to_string(),
-                        name: member.name().to_owned(),
-                        avatar_url: member.avatar_url().map(ToOwned::to_owned),
-                        role: match member.suggested_role_for_power_level() {
-                            RoomMemberRole::Creator => "Creator",
-                            RoomMemberRole::Administrator => "Admin",
-                            RoomMemberRole::Moderator => "Moderator",
-                            RoomMemberRole::User => "",
-                        }
-                        .into(),
-                    })
-                    .collect();
-                rows.sort_by_cached_key(|m| (m.invited, m.name.to_lowercase(), m.user_id.clone()));
+        match load(&room).await {
+            Ok(rows) => {
                 snapshot.rows = Arc::new(rows);
                 snapshot.error = None;
             }
-            Ok(Err(_)) => snapshot.error = Some("Could not load room members.".into()),
-            Err(_) => snapshot.error = Some("Loading room members timed out.".into()),
+            Err(error) => snapshot.error = Some(error),
         }
         state.send_if_modified(|s| {
             if s.members.as_ref() == Some(&snapshot) {
@@ -88,6 +64,35 @@ pub(super) async fn view(client: Client, id: String, generation: u64, state: wat
         // A fresh store read covers the whole burst of queued room updates.
         while changes.try_recv().is_ok() {}
     }
+}
+/// Shared projection for the conversation sidebar and explicit management panels.
+pub(crate) async fn load(room: &matrix_sdk::Room) -> Result<Vec<Member>, String> {
+    let members = tokio::time::timeout(
+        Duration::from_secs(30),
+        room.members(RoomMemberships::JOIN | RoomMemberships::INVITE),
+    )
+    .await
+    .map_err(|_| "Loading members timed out.")?
+    .map_err(|_| "Could not load members.")?;
+    let mut rows: Vec<_> = members
+        .into_iter()
+        .map(|member| Member {
+            invited: member.membership()
+                == &matrix_sdk::ruma::events::room::member::MembershipState::Invite,
+            user_id: member.user_id().to_string(),
+            name: member.name().to_owned(),
+            avatar_url: member.avatar_url().map(ToOwned::to_owned),
+            role: match member.suggested_role_for_power_level() {
+                RoomMemberRole::Creator => "Creator",
+                RoomMemberRole::Administrator => "Admin",
+                RoomMemberRole::Moderator => "Moderator",
+                RoomMemberRole::User => "",
+            }
+            .into(),
+        })
+        .collect();
+    rows.sort_by_cached_key(|m| (m.invited, m.name.to_lowercase(), m.user_id.clone()));
+    Ok(rows)
 }
 fn relevant(event_type: Option<String>) -> bool {
     matches!(

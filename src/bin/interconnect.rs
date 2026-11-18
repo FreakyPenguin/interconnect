@@ -817,7 +817,7 @@ impl App {
                 | Message::GlobalSearch(global_search::Event::Open)
                 | Message::Bookmark(bookmarks::Event::Open)
         ) {
-            self.space_settings.close();
+            self.close_space_settings();
         }
         if self.context_menu.is_some() && matches!(message, Message::Escape) {
             self.context_menu = None;
@@ -1132,7 +1132,8 @@ impl App {
         let closing_image = matches!(&message, Message::Image(images::Event::Close));
         let refresh_media = matches!(
             &message,
-            Message::ComposerEmoji(_)
+            Message::SpaceSettings(_)
+                | Message::ComposerEmoji(_)
                 | Message::Settings(_)
                 | Message::EmojiCompletion(_)
                 | Message::UserCompletion(_)
@@ -2267,12 +2268,16 @@ impl App {
             .invite_avatars()
             .into_iter()
             .chain(self.new_chat_avatars())
+            .chain(self.member_management_avatars())
         {
             if !self.selection.avatars.contains(&uri)
                 && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED
             {
                 self.selection.avatars.push(uri);
             }
+        }
+        if self.space_settings.is_open() {
+            return;
         }
         for uri in self
             .visible_members()
@@ -2795,13 +2800,12 @@ impl App {
                     .as_ref()
                     .and_then(|(_, id)| self.model.rooms.iter().find(|r| &r.id == id))
                     .is_some_and(|r| r.direct);
-                let invitations = self
+                let room = self
                     .selection
                     .room
                     .as_ref()
-                    .and_then(|(_, room)| demo.invitations.get(room))
-                    .map_or(&[][..], Vec::as_slice);
-                members::demo(generation, direct, invitations)
+                    .map_or("", |(_, id)| id.as_str());
+                demo.members(generation, room, direct)
             });
             self.model.room = self.selection.room.as_ref().map(|(generation, room)| {
                 demo.pane(

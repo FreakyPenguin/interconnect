@@ -21,5 +21,5 @@ Current gaps are listed in [limitations](limitations.md). Further work includes:
 
 ## Room and space management
 
-- Advanced room settings (avatars, aliases, permissions, encryption, upgrades), member removal
+- Advanced room settings (avatars, aliases, permission rules, encryption, upgrades), bans
 - Creating root spaces, space avatars/aliases, and managing existing subspaces/unjoined children.

@@ -195,7 +195,7 @@ history. Close and reopen: saved demo settings remain per room, unsaved edits ar
 discarded, and switching to another room shows its own settings. Check a room and
 thread draft and an older reading position survive. Release announcements is
 read-only for shared settings but permits personal notification changes. Check
-Members & invitations and cancellation of Leave room.
+Members & invitations opens the shared member editor; also check cancellation of Leave room.
 
 Repeat in Light/Dark at 1400×900 and 640×480: content scrolls, actions stay reachable,
 long topics/IDs wrap or scroll within the panel, backdrop clicks do not reach the
@@ -769,3 +769,33 @@ acceptance remains manual:
   switch accounts during writes; shutdown must still wait for admitted writes.
 - While this panel is visible, verify the hidden conversation does not send read
   receipts, respond to composer shortcuts, or request visible-message media.
+
+### Shared room and space member editor
+
+Automated tests cover the shared joined/pending member projection and invitation
+checks, peer/self permission boundaries, stale role/membership rejection, preserving
+unrelated power-level fields, invitation revocation, permission failures, captured
+write targets, stale UI/picker results, confirmation, paging, and demo persistence.
+The editor uses on-demand SDK reads with no polling or background animation.
+
+Connected/native acceptance remains untested here. In a dedicated test profile:
+
+- Open Space settings, then People → Manage for a conversation; check both list
+  joined members and pending invitees, search by name/ID, and page large rosters.
+- Invite using directory search and a full ID. Check joined, pending, banned,
+  invalid, and denied users; errors must retain the form for correction.
+- Cancel and confirm member removal, invitation revocation, and role changes.
+  Verify Member/Moderator/Admin preserve all other power-level fields. Revoke
+  permissions or change the target's role/membership in another client before
+  confirming; local checks or server rejection must prevent an invalid change.
+- Verify peers, privileged creators, your own account, and promotion above your
+  power have no applicable controls. A granted peer role may not be reversible
+  by the actor; test with dedicated accounts.
+- Space member changes must not alter child-room membership. Space filtering,
+  opening/closing the editor, and room management must preserve conversation
+  drafts and scroll positions.
+- Close/reopen, switch view/account, or quit during directory search, roster loads,
+  and admitted writes. Reads cancel; stale results cannot replace the new panel;
+  writes finish for their captured target and release shutdown bookkeeping once.
+- Allow sync to catch up and reload after ambiguous failures. The editor reads
+  synced membership and power levels, not an atomic server transaction.

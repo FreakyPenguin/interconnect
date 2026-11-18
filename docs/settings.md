@@ -140,7 +140,7 @@ Open a conversation and click the **Room settings** sliders icon beside Members.
 The panel edits the name and topic, personal notification preference, who may join,
 and who may read history. Each setting has its own **Save** button. **Close** or
 Escape discards unsaved edits; **Reload** replaces edits with current synced state.
-Members & invitations opens the existing People panel; Leave room opens a separate
+Members & invitations opens the shared member editor; Leave room opens a separate
 confirmation before leaving. The room ID and encryption status are also shown.
 
 Notifications offer **Use account default**, **All messages**, **Mentions & keywords**,
@@ -155,7 +155,7 @@ Access supports invitation-only and public rooms; restricted/space-based, knock,
 and custom access rules remain read-only. Public access does not publish a room
 in the server directory. History visibility does not grant old encryption keys.
 Encryption is informational; enabling encryption, changing avatars/aliases,
-power-level editing, bans and room upgrades remain outside this panel.
+custom power-level rules, bans and room upgrades remain outside this panel.
 
 Reads run on demand and cancel when the panel closes or the conversation changes.
 Writes finish against their captured room, serialize per room, and keep shutdown
@@ -164,6 +164,42 @@ field against current synced state; concurrent remote changes can still race a
 write because Matrix state events have no compare-and-swap. A timeout or push-rule
 error can leave a partially applied change: allow sync to catch up, then Reload
 before retrying. Demo edits stay in memory without account or network access.
+
+## Spaces and member management
+
+Select a writable space and choose **Subspace** beside its room-list heading to
+create a private or public child space. The parent is fixed to the current space.
+Spaces are unencrypted; creating one keeps the current conversation, draft, and
+reading position. If creation succeeds but the parent link fails, **Retry adding
+to space** retries that link without creating another space. Check the space tree
+before retrying creation after a timeout or cancellation.
+
+The gear beside the space heading opens **Space settings** in the main content
+area. Name, topic, and invitation/public access each have a **Save** button.
+Restricted/knock/custom access remains read-only. Changing space filters or opening
+a conversation closes the panel; it never selects a space as a conversation.
+
+Space settings includes the shared member editor. For rooms, open **People →
+Manage** or **Room settings → Members & invitations**. Search matches names or
+Matrix IDs; large lists show 50 people per page. The people picker accepts a
+server-directory result or full Matrix ID. Pending invitations are labeled.
+**Remove**, **Revoke invitation**, and **Change role** require confirmation.
+Available roles are Member (0), Moderator (50), and Admin (100); existing custom
+numeric levels are preserved until explicitly choosing a role, but arbitrary
+levels cannot be entered here.
+
+Controls follow the current member's permissions. Your own membership/role and
+peers at equal or higher power cannot be changed here. Admin promotion may make
+someone a peer whose role you can no longer change. Backend writes recheck
+permissions and the target's synced membership/role; unrelated power-level
+settings are preserved. Space actions affect that space alone, leaving membership
+in its rooms and subspaces intact. Removing someone does not ban them.
+
+The editor loads on opening or **Reload members**, without polling. Membership
+and permissions are synced snapshots, so allow sync to catch up before reloading
+after a write or timeout. Closing a panel cancels reads and directory search;
+admitted writes finish for their captured account and room/space, and shutdown
+waits for them. Demo membership edits stay in memory and use no network.
 
 ## Emoji packs
 

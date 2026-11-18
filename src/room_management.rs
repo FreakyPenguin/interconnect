@@ -159,16 +159,41 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"next_batch":"one","rooms":{"join":{"!space:example.org":{
                 "state":{"events":[event("m.room.create", "", json!({"creator":"@test:example.org","type":"m.space"})),
                     event("m.room.member", "@test:example.org", json!({"membership":"join"})),
+                    event("m.room.member", "@other:example.org", json!({"membership":"join","displayname":"Other"})),
+                    event("m.room.member", "@peer:example.org", json!({"membership":"join"})),
+                    event("m.room.member", "@pending:example.org", json!({"membership":"invite"})),
+                    event("m.room.member", "@banned:example.org", json!({"membership":"ban"})),
                     event("m.room.name", "", json!({"name":"Original"})),
                     event("m.room.topic", "", json!({"topic":"Topic"})),
                     event("m.room.join_rules", "", json!({"join_rule":access})),
-                    event("m.room.power_levels", "", json!({"users":{"@test:example.org":power},"state_default":50}))]},
+                    event("m.room.power_levels", "", json!({"users":{"@test:example.org":power,"@peer:example.org":100},"state_default":50,"events":{"m.room.topic":60},"notifications":{"room":75}}))]},
                 "timeline":{"events":[],"limited":false},"account_data":{"events":[]}
             }}}}))).mount(&server).await;
         client
             .sync_once(SyncSettings::default().timeout(Duration::ZERO))
             .await
             .unwrap();
+        let chunk: Vec<_> = [
+            ("test", "join"),
+            ("other", "join"),
+            ("peer", "join"),
+            ("pending", "invite"),
+            ("banned", "ban"),
+        ]
+        .into_iter()
+        .map(|(user, membership)| {
+            event(
+                "m.room.member",
+                &format!("@{user}:example.org"),
+                json!({"membership":membership}),
+            )
+        })
+        .collect();
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/v3/rooms/!space:example.org/members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":chunk})))
+            .mount(&server)
+            .await;
         let control = crate::people::Directory::new(client)
             .space_management("!space:example.org".into())
             .await
@@ -228,5 +253,359 @@ mod tests {
             );
             assert_eq!(server.received_requests().await.unwrap().len(), before);
         }
+    }
+    #[tokio::test]
+    async fn shared_member_editor_lists_members_checks_boundaries_and_preserves_power_events() {
+        let (server, control) = fixture(100, "invite").await;
+        let roster = control.clone().members().await.unwrap();
+        assert!(roster.can_invite);
+        assert_eq!(roster.rows.len(), 4);
+        let other = roster
+            .rows
+            .iter()
+            .find(|m| m.member.user_id == "@other:example.org")
+            .unwrap();
+        assert!(other.can_remove);
+        assert!(other.roles.contains(&Role::Admin));
+        let peer = roster
+            .rows
+            .iter()
+            .find(|m| m.member.user_id == "@peer:example.org")
+            .unwrap();
+        assert!(!peer.can_remove);
+        assert!(peer.roles.is_empty());
+        let before = server.received_requests().await.unwrap().len();
+        for change in [
+            MemberChange::Remove {
+                user: "@test:example.org".into(),
+                invited: false,
+            },
+            MemberChange::Remove {
+                user: "@peer:example.org".into(),
+                invited: false,
+            },
+            MemberChange::Remove {
+                user: "@pending:example.org".into(),
+                invited: false,
+            },
+            MemberChange::Role {
+                user: "@other:example.org".into(),
+                before: UserPowerLevel::Int(matrix_sdk::ruma::int!(50)),
+                role: Role::Admin,
+            },
+            MemberChange::Role {
+                user: "@peer:example.org".into(),
+                before: UserPowerLevel::Int(matrix_sdk::ruma::int!(100)),
+                role: Role::Member,
+            },
+            MemberChange::Invite("@pending:example.org".into()),
+            MemberChange::Invite("@banned:example.org".into()),
+        ] {
+            assert!(control.clone().change_member(change).await.is_err());
+        }
+        assert_eq!(server.received_requests().await.unwrap().len(), before);
+        Mock::given(method("PUT")).and(path_regex(".*/state/m.room.power_levels/?"))
+            .and(wiremock::matchers::body_partial_json(json!({"users":{"@other:example.org":50,"@test:example.org":100,"@peer:example.org":100},"events":{"m.room.topic":60},"notifications":{"room":75}})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id":"$roles"}))).expect(1).mount(&server).await;
+        control
+            .clone()
+            .change_member(MemberChange::Role {
+                user: "@other:example.org".into(),
+                before: other.power,
+                role: Role::Moderator,
+            })
+            .await
+            .unwrap();
+        Mock::given(method("POST"))
+            .and(path_regex(".*/kick"))
+            .and(body_json(json!({"user_id":"@pending:example.org"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        control
+            .clone()
+            .change_member(MemberChange::Remove {
+                user: "@pending:example.org".into(),
+                invited: true,
+            })
+            .await
+            .unwrap();
+        Mock::given(method("POST"))
+            .and(path_regex(".*/invite"))
+            .and(body_json(json!({"user_id":"@new:example.org"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        control
+            .clone()
+            .change_member(MemberChange::Invite("@new:example.org".into()))
+            .await
+            .unwrap();
+        Mock::given(method("POST"))
+            .and(path_regex(".*/kick"))
+            .and(body_json(json!({"user_id":"@other:example.org"})))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({"errcode":"M_FORBIDDEN","error":"refused"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(
+            control
+                .change_member(MemberChange::Remove {
+                    user: "@other:example.org".into(),
+                    invited: false
+                })
+                .await
+                .is_err()
+        );
+    }
+    #[tokio::test]
+    async fn moderators_cannot_assign_above_their_power_and_read_only_users_cannot_remove() {
+        for actor in [0, 50] {
+            let (server, control) = fixture(actor, "invite").await;
+            let roster = control.clone().members().await.unwrap();
+            let other = roster
+                .rows
+                .iter()
+                .find(|m| m.member.user_id == "@other:example.org")
+                .unwrap();
+            assert!(!other.roles.contains(&Role::Admin));
+            let before = server.received_requests().await.unwrap().len();
+            assert!(
+                control
+                    .clone()
+                    .change_member(MemberChange::Role {
+                        user: "@other:example.org".into(),
+                        before: other.power,
+                        role: Role::Admin
+                    })
+                    .await
+                    .is_err()
+            );
+            if actor == 0 {
+                assert!(
+                    control
+                        .change_member(MemberChange::Remove {
+                            user: "@other:example.org".into(),
+                            invited: false
+                        })
+                        .await
+                        .is_err()
+                );
+            }
+            assert_eq!(server.received_requests().await.unwrap().len(), before);
+        }
+    }
+}
+
+/// Shared invitation checks for conversation invitations and space management.
+pub(crate) async fn invite(room: &Room, input: &str) -> Result<(), String> {
+    use matrix_sdk::ruma::events::room::member::MembershipState;
+    let user = crate::people::parse_user_id(input)?;
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let levels = room.power_levels().await.map_err(|e| e.to_string())?;
+        if room.state() != RoomState::Joined || !levels.user_can_invite(room.own_user_id()) {
+            return Err(
+                "You no longer have permission to invite people to this room or space.".into(),
+            );
+        }
+        if let Some(member) = room
+            .get_member_no_sync(&user)
+            .await
+            .map_err(|e| e.to_string())?
+        {
+            match member.membership() {
+                MembershipState::Join => return Err("This person is already a room member.".into()),
+                MembershipState::Invite => {
+                    return Err("This person already has an invitation.".into());
+                }
+                MembershipState::Ban => return Err("This person is banned from the room.".into()),
+                _ => {}
+            }
+        }
+        room.invite_user_by_id(&user)
+            .await
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|_| {
+        "The invitation timed out and may have been sent. Check membership before retrying."
+            .to_owned()
+    })?
+}
+
+use matrix_sdk::ruma::{OwnedUserId, events::room::power_levels::UserPowerLevel};
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Role {
+    Member,
+    Moderator,
+    Admin,
+}
+impl Role {
+    fn power(self) -> matrix_sdk::ruma::Int {
+        match self {
+            Self::Member => matrix_sdk::ruma::int!(0),
+            Self::Moderator => matrix_sdk::ruma::int!(50),
+            Self::Admin => matrix_sdk::ruma::int!(100),
+        }
+    }
+}
+impl std::fmt::Display for Role {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Member => "Member",
+            Self::Moderator => "Moderator",
+            Self::Admin => "Admin",
+        })
+    }
+}
+#[derive(Clone, Debug)]
+pub struct ManagedMember {
+    pub member: crate::connected::Member,
+    pub power: UserPowerLevel,
+    pub can_remove: bool,
+    pub roles: Vec<Role>,
+}
+#[derive(Clone, Debug)]
+pub struct Roster {
+    pub rows: Vec<ManagedMember>,
+    pub can_invite: bool,
+}
+#[derive(Clone, Debug)]
+pub enum MemberChange {
+    Invite(String),
+    Remove {
+        user: String,
+        invited: bool,
+    },
+    Role {
+        user: String,
+        before: UserPowerLevel,
+        role: Role,
+    },
+}
+impl Management {
+    pub async fn members(self) -> Result<Roster, String> {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            self.joined()?;
+            let rows = crate::connected::members::load(&self.0).await?;
+            let levels = self
+                .0
+                .power_levels()
+                .await
+                .map_err(|_| "Could not check member permissions.")?;
+            let own = self.0.own_user_id();
+            let mut managed = Vec::with_capacity(rows.len());
+            for member in rows {
+                let user = member
+                    .user_id
+                    .parse::<OwnedUserId>()
+                    .map_err(|_| "Invalid member ID.")?;
+                let power = levels.for_user(&user);
+                let other = user != own;
+                let roles = [Role::Member, Role::Moderator, Role::Admin]
+                    .into_iter()
+                    .filter(|role| {
+                        other
+                            && !member.invited
+                            && levels.user_can_change_user_power_level(own, &user)
+                            && levels.for_user(own) >= role.power()
+                            && power != role.power()
+                    })
+                    .collect();
+                managed.push(ManagedMember {
+                    can_remove: other && levels.user_can_kick_user(own, &user),
+                    member,
+                    power,
+                    roles,
+                });
+            }
+            Ok(Roster {
+                rows: managed,
+                can_invite: levels.user_can_invite(own),
+            })
+        })
+        .await
+        .map_err(|_| "Loading members timed out. Try Reload.".to_owned())?
+    }
+    pub async fn change_member(self, change: MemberChange) -> Result<(), String> {
+        if let MemberChange::Invite(input) = change {
+            return invite(&self.0, &input).await;
+        }
+        tokio::time::timeout(Duration::from_secs(30), async {
+            use matrix_sdk::ruma::events::room::{
+                member::MembershipState, power_levels::RoomPowerLevelsEventContent,
+            };
+            self.joined()?;
+            let input = match &change {
+                MemberChange::Remove { user, .. } | MemberChange::Role { user, .. } => user,
+                _ => unreachable!(),
+            };
+            let user = crate::people::parse_user_id(input)?;
+            let own = self.0.own_user_id();
+            if user == own {
+                return Err("Use room or space settings to manage your own membership.".into());
+            }
+            let member = self
+                .0
+                .get_member_no_sync(&user)
+                .await
+                .map_err(|_| "Could not check membership.")?
+                .ok_or("This person is no longer a member. Reload.")?;
+            let mut levels = self
+                .0
+                .power_levels()
+                .await
+                .map_err(|_| "Could not check permissions.")?;
+            match change {
+                MemberChange::Remove { invited, .. } => {
+                    let expected = if invited {
+                        MembershipState::Invite
+                    } else {
+                        MembershipState::Join
+                    };
+                    if member.membership() != &expected {
+                        return Err(
+                            "Membership changed. Reload before removing this person.".into()
+                        );
+                    }
+                    if !levels.user_can_kick_user(own, &user) {
+                        return Err("You no longer have permission to remove this person.".into());
+                    }
+                    self.0
+                        .kick_user(&user, None)
+                        .await
+                        .map_err(|_| "Could not remove this person.")?;
+                }
+                MemberChange::Role { before, role, .. } => {
+                    if member.membership() != &MembershipState::Join
+                        || levels.for_user(&user) != before
+                    {
+                        return Err("Membership or role changed. Reload before saving.".into());
+                    }
+                    if !levels.user_can_change_user_power_level(own, &user)
+                        || levels.for_user(own) < role.power()
+                    {
+                        return Err("You no longer have permission to assign this role.".into());
+                    }
+                    levels.users.insert(user, role.power());
+                    self.0
+                        .send_state_event(
+                            RoomPowerLevelsEventContent::try_from(levels)
+                                .map_err(|_| "Could not preserve power levels.")?,
+                        )
+                        .await
+                        .map_err(|_| "Could not change this role.")?;
+                }
+                MemberChange::Invite(_) => unreachable!(),
+            }
+            Ok(())
+        })
+        .await
+        .map_err(|_| "The member change timed out. Reload membership before retrying.".to_owned())?
     }
 }

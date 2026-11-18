@@ -121,7 +121,7 @@ impl App {
                 let room = panel.target.1.clone();
                 self.room_settings.panel = None;
                 return self.update(if matches!(event, Event::Members) {
-                    Message::Members(super::members::Event::Open)
+                    Message::SpaceSettings(super::space_settings::Event::OpenMembers(room))
                 } else {
                     Message::Membership(super::membership::Event::Leave(room))
                 });

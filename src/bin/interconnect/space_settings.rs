@@ -1,4 +1,7 @@
-//! Full-size space settings independent of conversation selection.
+//! Full-size space settings and shared member management without changing conversations.
+#[path = "member_management.rs"]
+mod member_management;
+
 use super::{App, MAX_PENDING_OPERATIONS, Message, shell};
 use iced::{
     Element, Length, Task,
@@ -30,6 +33,8 @@ impl State {
     }
 }
 struct Panel {
+    space: bool,
+    members: member_management::State,
     id: String,
     account: Option<String>,
     request: u64,
@@ -44,6 +49,8 @@ struct Panel {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open(String),
+    OpenMembers(String),
+    Members(member_management::Event),
     Close,
     Reload,
     Name(String),
@@ -57,24 +64,52 @@ fn message(event: Event) -> Message {
     Message::SpaceSettings(event)
 }
 impl App {
+    pub(super) fn close_space_settings(&mut self) {
+        if self.space_settings.is_open() {
+            self.pending_scroll = [
+                Some(self.saved_scroll(false)),
+                Some(self.saved_scroll(true)),
+            ];
+            self.space_settings.close();
+        }
+    }
     pub(super) fn validate_space_settings(&mut self) {
         if self.space_settings.panel.as_ref().is_some_and(|p| {
             self.closing
                 || self.stopped
                 || p.account != self.account_id
                 || (self.demo.is_none() && self.model.authentication.is_some())
-                || self.shell.space != Scope::Space(p.id.clone())
-                || !self.model.spaces.iter().any(|s| s.id == p.id)
+                || if p.space {
+                    self.shell.space != Scope::Space(p.id.clone())
+                        || !self.model.spaces.iter().any(|s| s.id == p.id)
+                } else {
+                    self.selection
+                        .room
+                        .as_ref()
+                        .is_none_or(|(_, id)| *id != p.id)
+                        || !self.model.rooms.iter().any(|r| r.id == p.id)
+                }
         }) {
-            self.space_settings.close();
+            self.close_space_settings();
         }
     }
     pub(super) fn space_settings_event(&mut self, event: Event) -> Task<Message> {
+        let opening_space = matches!(&event, Event::Open(_));
         match event {
-            Event::Open(id) => {
+            Event::Members(event) => return self.member_management_event(event),
+            Event::Open(id) | Event::OpenMembers(id) => {
+                let space = opening_space;
                 if !self.context_menu_allowed()
-                    || self.shell.space != Scope::Space(id.clone())
-                    || !self.model.spaces.iter().any(|s| s.id == id)
+                    || if space {
+                        self.shell.space != Scope::Space(id.clone())
+                            || !self.model.spaces.iter().any(|s| s.id == id)
+                    } else {
+                        self.selection
+                            .room
+                            .as_ref()
+                            .is_none_or(|(_, room)| *room != id)
+                            || !self.model.rooms.iter().any(|r| r.id == id)
+                    }
                 {
                     return Task::none();
                 }
@@ -87,6 +122,8 @@ impl App {
                 self.shell.spaces.menu = None;
                 self.generation += 1;
                 self.space_settings.panel = Some(Panel {
+                    space,
+                    members: member_management::State::default(),
                     id,
                     account: self.account_id.clone(),
                     request: self.generation,
@@ -101,8 +138,14 @@ impl App {
                 return self.space_settings_event(Event::Reload);
             }
             Event::Close => {
-                self.space_settings.close();
-                return iced::widget::operation::focus("room-composer");
+                self.close_space_settings();
+                return iced::widget::operation::focus(if self.selection.members.is_some() {
+                    "member-search"
+                } else if self.selection.thread.is_some() {
+                    "thread-composer"
+                } else {
+                    "room-composer"
+                });
             }
             Event::Reload => {
                 let Some(panel) = &mut self.space_settings.panel else {
@@ -122,8 +165,17 @@ impl App {
                 panel.error = None;
                 panel.success = false;
                 if self.demo.is_some() {
-                    let Some(space) = self.model.spaces.iter().find(|s| s.id == panel.id) else {
-                        return Task::none();
+                    let (name, editable) = if panel.space {
+                        let Some(space) = self.model.spaces.iter().find(|s| s.id == panel.id)
+                        else {
+                            return Task::none();
+                        };
+                        (space.name.clone(), space.can_manage_rooms)
+                    } else {
+                        let Some(room) = self.model.rooms.iter().find(|r| r.id == panel.id) else {
+                            return Task::none();
+                        };
+                        (room.name.clone(), room.can_invite)
                     };
                     let settings =
                         self.space_settings
@@ -131,20 +183,26 @@ impl App {
                             .get(&panel.id)
                             .cloned()
                             .unwrap_or(Settings {
-                                name: space.name.clone(),
+                                name,
                                 topic: String::new(),
                                 access: Some(JoinRule::Invite),
-                                editable: [space.can_manage_rooms; 3],
+                                editable: [editable; 3],
                             });
                     panel.saved = Some(settings.clone());
                     panel.draft = Some(settings);
+                    return self.member_management_event(member_management::Event::Reload);
                 } else if let Some(directory) = self.model.people_directory.clone() {
                     panel.pending = true;
                     let id = panel.id.clone();
                     let request = panel.request;
+                    let space = panel.space;
                     let (task, handle) = Task::perform(
                         async move {
-                            let control = directory.space_management(id).await?;
+                            let control = if space {
+                                directory.space_management(id).await?
+                            } else {
+                                directory.room_management(id).await?
+                            };
                             let settings = control.clone().settings().await?;
                             Ok((control, settings))
                         },
@@ -168,6 +226,7 @@ impl App {
                             panel.control = Some(control);
                             panel.saved = Some(settings.clone());
                             panel.draft = Some(settings);
+                            return self.member_management_event(member_management::Event::Reload);
                         }
                         Err(error) => {
                             panel.error = Some(error);
@@ -189,6 +248,9 @@ impl App {
                         .values()
                         .any(|target| target == &(panel.account.clone(), panel.id.clone()))
                 {
+                    return Task::none();
+                }
+                if !panel.space {
                     return Task::none();
                 }
                 let (Some(saved), Some(draft)) = (&panel.saved, &panel.draft) else {
@@ -288,7 +350,14 @@ impl App {
         let panel = self.space_settings.panel.as_ref().unwrap();
         let mut body = column![
             row![
-                shell::title("Space settings", 22),
+                shell::title(
+                    if panel.space {
+                        "Space settings"
+                    } else {
+                        "Room members"
+                    },
+                    22
+                ),
                 iced::widget::space().width(Length::Fill),
                 button("Reload")
                     .style(shell::quiet_button)
@@ -303,7 +372,9 @@ impl App {
             rule::horizontal(1)
         ]
         .spacing(18);
-        if let (Some(saved), Some(draft)) = (&panel.saved, &panel.draft) {
+        if panel.space
+            && let (Some(saved), Some(draft)) = (&panel.saved, &panel.draft)
+        {
             for (field, label, value, before) in [
                 (0, "Name", &draft.name, &saved.name),
                 (1, "Topic", &draft.topic, &saved.topic),
@@ -396,6 +467,7 @@ impl App {
                     .style(shell::muted_text),
             );
         }
+        body = body.push(self.member_management_view());
         if panel.pending {
             body = body.push(text("Working…").size(13));
         }

@@ -6,7 +6,7 @@ Saved accounts require Linux Secret Service or macOS Keychain.
 - Recovery/key-backup UI, account switching, cross-platform account import, legacy sync, and calls are missing.
 - Room settings cover name/topic, account push-rule preferences, invitation/public
   access, and history visibility. Restricted/knock/custom access remains read-only;
-  avatars, aliases, permission editing, encryption changes, bans, upgrades, timed
+  avatars, aliases, permission-rule editing, encryption changes, bans, upgrades, timed
   mutes and per-room notification sounds are not implemented.
 - Space management supports adding joined rooms to writable spaces and removing
   direct room links. Subspaces can be created inside writable spaces. Creating
@@ -14,6 +14,10 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   implemented. Space settings cover name, topic, and invitation/public access;
   special access rules remain read-only. Link changes leave room membership
   and child-side parent metadata intact.
+- Rooms and spaces share member search, pending invitations, invites, removal,
+  invitation revocation, and Member/Moderator/Admin roles. Custom numeric roles,
+  bans/unbans, and changing your own role are not supported. Members and permissions
+  are synced snapshots; allow sync to catch up before reloading after a write.
 - Deletion requires a synced message-like event with an event ID. Cancelling unsent
   local echoes and redacting room-state/activity events are unsupported.
 - Reply previews use loaded timeline/embedded context; originals outside it show an
