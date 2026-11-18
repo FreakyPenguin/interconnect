@@ -514,6 +514,7 @@ impl App {
                     | Message::NewChat(
                         new_chat::Event::Open
                             | new_chat::Event::OpenUser(_)
+                            | new_chat::Event::Mention(_)
                             | new_chat::Event::Submit
                     )
                     | Message::CreateRoom(create_room::Event::Open | create_room::Event::Submit)

@@ -805,7 +805,9 @@ mod tests {
     }
     #[test]
     fn message_links_activate_on_click_and_never_on_selection_drags() {
-        for plain in [false, true] {
+        for kind in 0..3 {
+            let plain = kind == 1;
+            let mention = kind == 2;
             let mut row = crate::demo::Demo::default()
                 .pane(
                     crate::DraftKey {
@@ -833,6 +835,13 @@ mod tests {
             } else {
                 "https://example.org/"
             };
+            if mention {
+                row.formatted = Some(std::sync::Arc::new(
+                    interconnect::message_document::Document::parse(
+                        "<a href='https://matrix.to/#/@maya:example.org'>a long mention label for selecting</a>"
+                    ).unwrap(),
+                ));
+            }
             let mut h = Harness::new();
             let mut element = super::super::timeline::view(
                 1,
@@ -850,7 +859,11 @@ mod tests {
             assert!(
                 messages
                     .iter()
-                    .any(|m| matches!(m, Message::OpenMessageLink(url) if url == destination))
+                    .any(|m| if mention {
+                        matches!(m, Message::NewChat(super::super::new_chat::Event::Mention(user)) if user.as_str() == "@maya:example.org")
+                    } else {
+                        matches!(m, Message::OpenMessageLink(url) if url == destination)
+                    })
             );
             let end = point + iced::Vector::new(90.0, 0.0);
             h.event(&mut element, &node, down(), point);
@@ -859,7 +872,7 @@ mod tests {
             assert!(
                 !messages
                     .iter()
-                    .any(|m| matches!(m, Message::OpenMessageLink(_)))
+                    .any(|m| matches!(m, Message::OpenMessageLink(_) | Message::NewChat(_)))
             );
             assert!(!h.copy(&mut element, &node).is_empty());
         }

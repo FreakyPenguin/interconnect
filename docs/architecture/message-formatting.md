@@ -30,12 +30,16 @@ percent-encoded IDs) or `matrix:u/…` destinations render with a soft accent
 background and stronger text, without the ordinary link underline. Sender labels
 and inline formatting remain intact; code keeps its code appearance. Wrapping,
 bidi, selection, copying, spoiler hiding, and hover/click use the existing shaped
-text and link pipeline. Activation opens the destination with the system opener.
-No member lookup, avatar download, subscription, or timer is added.
+text and link pipeline. Clicking a user mention opens a known one-to-one DM, or
+prefills the direct-chat dialog with the exact user ID. Explicit **Open chat** or
+Enter then reuses/creates the DM through the existing asynchronous directory
+service; dismissing the dialog performs no write. Self mentions do nothing.
+Existing modal, busy-operation, and lifecycle guards apply. Other links still use
+the system opener. No member lookup, subscription, or timer is added.
 
 Plain `@name`, `@room`, and bare Matrix URLs are not inferred to be mentions.
-Room/event links retain normal link styling. Mention completion, authoring, and
-in-app member navigation remain future work.
+Room/event links retain normal link styling. Mention completion and authoring
+remain future work.
 
 ## Inline images and local embedded assets
 

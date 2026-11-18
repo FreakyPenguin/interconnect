@@ -3,7 +3,7 @@ use super::{App, MAX_PENDING_OPERATIONS, Message, people_picker, reaction_picker
 use iced::{
     Element, Length, Task,
     keyboard::{Key, Modifiers, key::Named},
-    widget::{column, container, mouse_area, opaque, text},
+    widget::{button, column, container, mouse_area, opaque, text},
 };
 use interconnect::{
     connected::MessageRow,
@@ -35,6 +35,7 @@ pub struct State {
 pub enum Event {
     Open,
     OpenUser(Target),
+    Mention(matrix_sdk::ruma::OwnedUserId),
     Picker(u64, people_picker::Event),
     Move(bool),
     Submit,
@@ -168,6 +169,49 @@ impl App {
 
     pub(super) fn new_chat_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::Mention(user) => {
+                if self.new_chat.is_some()
+                    || self.message_delete.is_some()
+                    || self.composing
+                    || self.direct_request.is_some()
+                    || self.create_room_request.is_some()
+                    || self.pending_ops >= MAX_PENDING_OPERATIONS
+                    || self.account_id.as_deref() == Some(user.as_str())
+                    || (self.demo.is_some() && user.as_str() == "@you:example.org")
+                {
+                    return Task::none();
+                }
+                // Use the normal dialog guards before either navigating or offering
+                // creation. Merely clicking a mention never writes to the server.
+                let focus = self.new_chat_event(Event::Open);
+                let Some(state) = &mut self.new_chat else {
+                    return Task::none();
+                };
+                if let Some(room) = self
+                    .model
+                    .rooms
+                    .iter()
+                    .find(|room| {
+                        room.direct
+                            && room.direct_user.as_deref() == Some(user.as_str())
+                            && (1..=2).contains(&room.member_count)
+                    })
+                    .map(|room| room.id.clone())
+                {
+                    self.new_chat = None;
+                    self.pending_navigation = None;
+                    return self
+                        .update(Message::Room(room))
+                        .chain(iced::widget::operation::focus("room-composer"));
+                }
+                state.picker.query = user.to_string();
+                state.picker.selected = Some(Person {
+                    user_id: user.to_string(),
+                    name: user.to_string(),
+                    avatar_url: None,
+                });
+                return focus;
+            }
             Event::OpenUser(target) => {
                 if self.new_chat.is_some() || self.message_delete.is_some() {
                     return Task::none();
@@ -399,6 +443,13 @@ impl App {
                 .map(move |event| message(Event::Picker(request, event))),
         ]
         .spacing(10);
+        if state.picker.selected.is_some() {
+            let mut start = button(text("Open chat").size(13)).style(shell::quiet_button);
+            if !busy {
+                start = start.on_press(message(Event::Submit));
+            }
+            content = content.push(start);
+        }
         if let Some(error) = &state.error {
             content = content.push(text(error).size(12).color(shell::MUTED));
         }
@@ -475,6 +526,121 @@ mod tests {
                     .map(|action| (action, row.sender.clone()))
             })
             .unwrap()
+    }
+
+    fn mention(user: &str) -> Message {
+        message(Event::Mention(user.parse().unwrap()))
+    }
+
+    #[test]
+    fn mention_opens_existing_dm_and_preserves_room_and_thread_drafts() {
+        for thread in [false, true] {
+            let mut app = demo_app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let key = app.draft_key(thread).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("unfinished message");
+            app.scroll_positions.insert(key.clone(), 87.0);
+            let scope = app.shell.space.clone();
+            let count = app.model.rooms.len();
+            let _ = app.update(mention("@maya:example.org"));
+            assert_eq!(app.selection.room.as_ref().unwrap().1, "maya");
+            assert!(app.new_chat.is_none());
+            assert!(app.direct_request.is_none());
+            assert_eq!(app.model.rooms.len(), count);
+            assert_eq!(app.pending_ops, 0);
+            assert_eq!(app.shell.space, scope);
+            assert_eq!(app.drafts[&key].content.text(), "unfinished message");
+            assert_eq!(app.scroll_positions[&key], 87.0);
+        }
+    }
+
+    #[test]
+    fn mention_without_known_dm_offers_creation_and_can_be_dismissed() {
+        let mut app = demo_app();
+        let selection = app.selection.clone();
+        let count = app.model.rooms.len();
+        let _ = app.update(mention("@jules:example.org"));
+        let state = app.new_chat.as_ref().unwrap();
+        assert_eq!(state.picker.query, "@jules:example.org");
+        assert_eq!(
+            state.picker.selected.as_ref().unwrap().user_id,
+            "@jules:example.org"
+        );
+        assert_eq!(app.selection, selection);
+        assert_eq!(app.model.rooms.len(), count);
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.direct_request.is_none());
+        let _ = app.update(Message::Escape);
+        assert!(app.new_chat.is_none());
+        assert_eq!(app.selection, selection);
+        let _ = app.update(mention("@jules:example.org"));
+        let _ = app.update(message(Event::Submit));
+        assert_eq!(
+            app.selection.room.as_ref().unwrap().1,
+            "demo-dm:@jules:example.org"
+        );
+        assert!(app.new_chat.is_none());
+        assert_eq!(app.pending_ops, 0);
+        let _ = app.update(Message::Room("studio".into()));
+        let _ = app.update(mention("@jules:example.org"));
+        assert!(app.new_chat.is_none());
+        assert_eq!(app.model.rooms.len(), count + 1);
+    }
+
+    #[test]
+    fn mention_does_not_treat_a_group_as_a_one_to_one_dm() {
+        let mut app = demo_app();
+        std::sync::Arc::make_mut(&mut app.model.rooms)
+            .iter_mut()
+            .find(|room| room.id == "maya")
+            .unwrap()
+            .member_count = 5;
+        let _ = app.update(mention("@maya:example.org"));
+        assert_eq!(app.selection.room.as_ref().unwrap().1, "studio");
+        assert_eq!(
+            app.new_chat.as_ref().unwrap().picker.query,
+            "@maya:example.org"
+        );
+        assert!(app.direct_request.is_none());
+    }
+
+    #[test]
+    fn mention_actions_respect_self_busy_lifecycle_and_modal_guards() {
+        for mode in 0..10 {
+            let mut app = demo_app();
+            match mode {
+                0 => app.account_id = Some("@maya:example.org".into()),
+                1 => app.direct_request = Some(999),
+                2 => app.create_room_request = Some(999),
+                3 => app.composing = true,
+                4 => app.closing = true,
+                5 => app.stopped = true,
+                6 => {
+                    let _ = app.update(Message::QuickRoom(super::super::room_picker::Event::Open));
+                }
+                7 => {
+                    let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+                }
+                8 => {
+                    let _ = app.update(Message::Membership(super::super::membership::Event::Join));
+                }
+                _ => {
+                    let _ = app.update(message(Event::Open));
+                }
+            }
+            let selection = app.selection.clone();
+            let count = app.model.rooms.len();
+            let _ = app.update(mention("@maya:example.org"));
+            assert_eq!(app.selection.room, selection.room, "mode {mode}");
+            assert_eq!(app.selection.thread, selection.thread, "mode {mode}");
+            assert_eq!(app.model.rooms.len(), count);
+            if mode != 9 {
+                assert!(app.new_chat.is_none(), "mode {mode}");
+            }
+        }
     }
 
     #[test]

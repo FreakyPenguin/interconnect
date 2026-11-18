@@ -14,7 +14,7 @@ Saved accounts require Linux Secret Service or macOS Keychain.
 - Formatting omits full tables, syntax highlighting, visual rich-text editing,
   inline-image authoring, and formatted media captions. Excerpts use plain text.
 - Received Matrix user links have mention styling; completion, mention authoring,
-  room-wide mention styling, and in-app member-link navigation are unsupported.
+  and room-wide mention styling are unsupported.
 - Custom emoji packs support management and uploads, but not standalone stickers,
   bulk import/export, or animation. Received emoji retain sender dimensions because
   the pinned SDK strips the emoticon marker.

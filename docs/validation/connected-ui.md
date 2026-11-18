@@ -42,11 +42,17 @@ narrow widths. Check soft accent backgrounds, stronger labels, emoji, long label
 and RTL text. Drag/copy across mentions and adjacent text; the clipboard should
 contain the displayed labels. Hover to inspect the destination. Hidden spoiler
 mentions must stay concealed until revealed. Plain `@maya`/`@room` remain literal.
+Click Maya's mention to open the existing demo DM. Click Jules's mention to open
+a prefilled direct-chat dialog; Escape must leave the conversation and drafts
+intact, while **Open chat** or Enter creates a memory-only demo DM. A subsequent
+click reopens that DM. Dragging over a mention must select text without opening
+anything. Check room/thread drafts and scroll positions survive navigation.
 
 Automated fixtures cover Matrix user URI recognition, spoofed/unrelated links,
-label/style preservation, spoiler privacy, wrapping, hit testing, activation, and
-stable layout after drawing. Desktop appearance and native system-opener behavior
-still require manual acceptance; do not send connected test messages without
+label/style preservation, spoiler privacy, wrapping, hit testing, activation,
+selection drags, DM reuse, creation confirmation/dismissal, modal/lifecycle guards,
+and stable layout after drawing. Desktop appearance and native system-opener
+behavior still require manual acceptance; do not send connected test messages without
 authorization.
 
 ## Desktop login

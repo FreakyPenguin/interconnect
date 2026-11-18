@@ -493,7 +493,11 @@ impl State {
             self.width = None;
             return true;
         }
-        if let Some(link) = &run.style.link {
+        if let Some(user) = &run.style.mention {
+            publish(Message::NewChat(crate::new_chat::Event::Mention(
+                user.clone(),
+            )));
+        } else if let Some(link) = &run.style.link {
             publish(Message::OpenMessageLink(link.clone()));
         }
         false
@@ -1147,7 +1151,7 @@ mod tests {
                 let mut messages = Vec::new();
                 assert!(!state.activate(point, &mut |message| messages.push(message)));
                 assert!(
-                    matches!(&messages[..], [Message::OpenMessageLink(url)] if url == link),
+                    matches!(&messages[..], [Message::NewChat(crate::new_chat::Event::Mention(user))] if user.as_str() == "@maya:example.org"),
                     "width {width}, point {point:?}, run {:?}",
                     state.run_at(point)
                 );
