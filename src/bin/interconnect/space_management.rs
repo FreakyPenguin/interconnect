@@ -10,6 +10,12 @@ pub struct State {
     space: String,
     room: String,
     cancel: tokio_util::sync::CancellationToken,
+    change: Change,
+}
+#[derive(Clone, Copy)]
+enum Change {
+    Add,
+    Remove,
 }
 impl Drop for State {
     fn drop(&mut self) {
@@ -33,18 +39,58 @@ impl App {
             .iter()
             .find(|s| &s.id == id && s.can_manage_rooms && s.children.iter().any(|id| id == room))
     }
+    pub(crate) fn addable_spaces(&self, room: &str) -> Vec<&SpaceEntry> {
+        if !self.model.rooms.iter().any(|r| r.id == room) {
+            return Vec::new();
+        }
+        let mut spaces: Vec<_> = self
+            .model
+            .spaces
+            .iter()
+            .filter(|s| s.can_manage_rooms && !s.children.iter().any(|id| id == room))
+            .collect();
+        spaces.sort_by_cached_key(|s| (s.name.to_lowercase(), s.id.clone()));
+        spaces
+    }
     pub(crate) fn validate_space_management(&mut self) {
         if self.space_management.as_ref().is_some_and(|s| {
             self.account_id != s.account
-                || !self.context_menu_allowed()
-                || self
-                    .removable_space(&s.room)
-                    .is_none_or(|space| space.id != s.space)
-                || !self.context_menu.as_ref().is_some_and(|menu| {
-                    menu.target == Target::Room(s.room.clone()) && menu.pending == Some(s.request)
-                })
+                || self.closing
+                || self.stopped
+                || self.sign_out_open
+                || (self.demo.is_none() && self.model.authentication.is_some())
+                || match s.change {
+                    Change::Remove => {
+                        !self.context_menu_allowed()
+                            || self
+                                .removable_space(&s.room)
+                                .is_none_or(|space| space.id != s.space)
+                            || !self.context_menu.as_ref().is_some_and(|menu| {
+                                menu.target == Target::Room(s.room.clone())
+                                    && menu.pending == Some(s.request)
+                            })
+                    }
+                    Change::Add => {
+                        !self.space_add_picker_matches(&s.room)
+                            || !self
+                                .room_picker
+                                .as_ref()
+                                .is_some_and(|picker| picker.pending == Some(s.request))
+                            || !self
+                                .addable_spaces(&s.room)
+                                .iter()
+                                .any(|space| space.id == s.space)
+                    }
+                }
         }) {
             let s = self.space_management.take().unwrap();
+            if self
+                .room_picker
+                .as_ref()
+                .is_some_and(|picker| picker.pending == Some(s.request))
+            {
+                self.room_picker = None;
+            }
             if self
                 .context_menu
                 .as_ref()
@@ -62,7 +108,9 @@ impl App {
             || self.space_management.is_some()
             || self.pending_ops >= crate::MAX_PENDING_OPERATIONS
             || !self.context_menu.as_ref().is_some_and(|menu| {
-                menu.target == Target::Room(room.clone()) && menu.pending.is_none()
+                menu.target == Target::Room(room.clone())
+                    && menu.account == self.account_id
+                    && menu.pending.is_none()
             })
         {
             return Task::none();
@@ -71,26 +119,73 @@ impl App {
             return Task::none();
         };
         let space = space.id.clone();
+        self.change_room_space(room, space, Change::Remove)
+    }
+    pub(crate) fn add_room_to_selected_space(
+        &mut self,
+        room: String,
+        space: String,
+    ) -> Task<Message> {
+        if self.closing
+            || self.stopped
+            || self.sign_out_open
+            || (self.demo.is_none() && self.model.authentication.is_some())
+            || self.space_management.is_some()
+            || self.pending_ops >= crate::MAX_PENDING_OPERATIONS
+            || !self.space_add_picker_matches(&room)
+            || self
+                .room_picker
+                .as_ref()
+                .is_none_or(|picker| picker.pending.is_some())
+            || !self.addable_spaces(&room).iter().any(|s| s.id == space)
+        {
+            return Task::none();
+        }
+        self.change_room_space(room, space, Change::Add)
+    }
+    fn change_room_space(&mut self, room: String, space: String, change: Change) -> Task<Message> {
         if self.demo.is_some() {
-            std::sync::Arc::make_mut(&mut self.model.spaces)
+            let space = std::sync::Arc::make_mut(&mut self.model.spaces)
                 .iter_mut()
                 .find(|s| s.id == space)
-                .unwrap()
-                .children
-                .retain(|id| id != &room);
+                .unwrap();
+            match change {
+                Change::Add => space.children.push(room),
+                Change::Remove => space.children.retain(|id| id != &room),
+            }
             self.context_menu = None;
+            if matches!(change, Change::Add) {
+                return self.quick_room_event(crate::room_picker::Event::Close);
+            }
             return Task::none();
         }
         let Some(service) = self.model.people_directory.clone() else {
-            self.context_menu.as_mut().unwrap().error =
-                Some("The account is not ready yet.".into());
+            match change {
+                Change::Add => {
+                    self.room_picker.as_mut().unwrap().error =
+                        Some("The account is not ready yet.".into())
+                }
+                Change::Remove => {
+                    self.context_menu.as_mut().unwrap().error =
+                        Some("The account is not ready yet.".into())
+                }
+            }
             return Task::none();
         };
         self.generation += 1;
         let request = self.generation;
-        let menu = self.context_menu.as_mut().unwrap();
-        menu.pending = Some(request);
-        menu.error = None;
+        match change {
+            Change::Add => {
+                let picker = self.room_picker.as_mut().unwrap();
+                picker.pending = Some(request);
+                picker.error = None;
+            }
+            Change::Remove => {
+                let menu = self.context_menu.as_mut().unwrap();
+                menu.pending = Some(request);
+                menu.error = None;
+            }
+        }
         let cancel = tokio_util::sync::CancellationToken::new();
         self.space_management = Some(State {
             request,
@@ -98,13 +193,19 @@ impl App {
             space: space.clone(),
             room: room.clone(),
             cancel: cancel.clone(),
+            change,
         });
         Task::perform(
             async move {
                 tokio::select! {
                     biased;
-                    _ = cancel.cancelled() => Err("Removal cancelled. Check the room list before retrying.".into()),
-                    result = service.remove_room_from_space(space, room) => result,
+                    _ = cancel.cancelled() => Err("Space change cancelled. Check the room list before retrying.".into()),
+                    result = async move {
+                        match change {
+                            Change::Add => service.add_room_to_space(space, room).await,
+                            Change::Remove => service.remove_room_from_space(space, room).await,
+                        }
+                    } => result,
                 }
             },
             move |result| Message::SpaceManagement(Event::Completed(request, result)),
@@ -119,7 +220,17 @@ impl App {
             .is_some_and(|s| s.request == request)
         {
             let state = self.space_management.take().unwrap();
-            self.room_menu_finished(state.account.clone(), request, result);
+            match state.change {
+                Change::Remove => self.room_menu_finished(state.account.clone(), request, result),
+                Change::Add => match result {
+                    Ok(()) => return self.quick_room_event(crate::room_picker::Event::Close),
+                    Err(error) => {
+                        let picker = self.room_picker.as_mut().unwrap();
+                        picker.pending = None;
+                        picker.error = Some(error);
+                    }
+                },
+            }
         }
         Task::none()
     }
@@ -160,6 +271,7 @@ mod tests {
             space: "studio-space".into(),
             room: room.into(),
             cancel: cancel.clone(),
+            change: Change::Remove,
         });
         (request, cancel)
     }
@@ -318,6 +430,94 @@ mod tests {
                 Err("stale".into()),
             )));
             assert!(app.context_menu.as_ref().unwrap().error.is_none());
+            assert!(app.model.navigation_error.is_none());
+        }
+    }
+    fn open_add(app: &mut App, room: &str) {
+        if app.room_picker.is_some() {
+            let _ = app.update(Message::QuickRoom(crate::room_picker::Event::Close));
+        }
+        open(app, room);
+        let _ = app.update(Message::ContextMenu(Menu::Choose(
+            Target::Room(room.into()),
+            "Add room to space…".into(),
+        )));
+        assert!(app.context_menu.is_none());
+        assert!(app.space_add_picker_matches(room));
+    }
+    fn pending_add(app: &mut App) -> (u64, tokio_util::sync::CancellationToken) {
+        open_add(app, "studio");
+        app.generation += 1;
+        let request = app.generation;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        app.room_picker.as_mut().unwrap().pending = Some(request);
+        app.space_management = Some(State {
+            request,
+            account: app.account_id.clone(),
+            space: "community-space".into(),
+            room: "studio".into(),
+            cancel: cancel.clone(),
+            change: Change::Add,
+        });
+        (request, cancel)
+    }
+    #[test]
+    fn add_errors_stay_in_picker_for_retry_and_success_dismisses_it() {
+        let mut app = demo_app();
+        let (request, _) = pending_add(&mut app);
+        let _ = app.update(Message::SpaceManagement(Event::Completed(
+            request,
+            Err("Denied".into()),
+        )));
+        let picker = app.room_picker.as_ref().unwrap();
+        assert!(picker.pending.is_none());
+        assert_eq!(picker.error.as_deref(), Some("Denied"));
+        let (request, _) = pending_add(&mut app);
+        let _ = app.update(Message::SpaceManagement(Event::Completed(request, Ok(()))));
+        assert!(app.room_picker.is_none());
+    }
+    #[test]
+    fn add_cancels_on_dismiss_account_permission_or_sync_changes_and_rejects_late_results() {
+        for reason in 0..5 {
+            let mut app = demo_app();
+            let (request, token) = pending_add(&mut app);
+            match reason {
+                0 => {
+                    let _ = app.update(Message::QuickRoom(crate::room_picker::Event::Close));
+                }
+                1 => {
+                    let _ = app.update(Message::Escape);
+                }
+                2 => {
+                    app.account_id = Some("another".into());
+                    app.validate_space_management();
+                }
+                3 => {
+                    std::sync::Arc::make_mut(&mut app.model.spaces)
+                        .iter_mut()
+                        .find(|s| s.id == "community-space")
+                        .unwrap()
+                        .can_manage_rooms = false;
+                    app.validate_space_management();
+                }
+                _ => {
+                    std::sync::Arc::make_mut(&mut app.model.spaces)
+                        .iter_mut()
+                        .find(|s| s.id == "community-space")
+                        .unwrap()
+                        .children
+                        .push("studio".into());
+                    app.validate_space_management();
+                }
+            }
+            assert!(token.is_cancelled());
+            assert!(app.space_management.is_none());
+            open_add(&mut app, "general");
+            let _ = app.update(Message::SpaceManagement(Event::Completed(
+                request,
+                Err("stale".into()),
+            )));
+            assert!(app.room_picker.as_ref().unwrap().error.is_none());
             assert!(app.model.navigation_error.is_none());
         }
     }

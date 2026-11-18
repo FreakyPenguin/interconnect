@@ -26,6 +26,9 @@ pub struct State {
     selected: usize,
     thread: bool,
     spaces: Option<SpaceIndex>,
+    pub(super) add_room: Option<String>,
+    pub(super) pending: Option<u64>,
+    pub(super) error: Option<String>,
 }
 struct SpaceCandidate {
     path: Vec<String>,
@@ -45,6 +48,7 @@ impl SpaceIndex {
         snapshot: Arc<Vec<SpaceEntry>>,
         preferred: Vec<String>,
         account: Option<String>,
+        add_room: Option<&str>,
     ) -> Self {
         // Build canonical routes once per metadata snapshot, never per keystroke.
         let by_id: HashMap<_, _> = snapshot.iter().map(|space| (&space.id, space)).collect();
@@ -70,14 +74,22 @@ impl SpaceIndex {
                 paths.insert(id.clone(), preferred[..=index].to_vec());
             }
         }
-        let mut entries = vec![SpaceCandidate {
-            path: Vec::new(),
-            name: "Home".into(),
-            trail: "Home".into(),
-            folded_name: "home".into(),
-            folded_trail: "home".into(),
-        }];
+        let mut entries = Vec::new();
+        if add_room.is_none() {
+            entries.push(SpaceCandidate {
+                path: Vec::new(),
+                name: "Home".into(),
+                trail: "Home".into(),
+                folded_name: "home".into(),
+                folded_trail: "home".into(),
+            });
+        }
         for space in snapshot.iter() {
+            if add_room.is_some_and(|room| {
+                !space.can_manage_rooms || space.children.iter().any(|id| id == room)
+            }) {
+                continue;
+            }
             let Some(path) = paths.remove(&space.id) else {
                 continue;
             };
@@ -105,6 +117,7 @@ impl SpaceIndex {
 pub enum Event {
     Open,
     OpenSpaces,
+    AddRoomToSpace(String),
     Refocus,
     Edit(String),
     Move(bool),
@@ -250,6 +263,14 @@ pub fn is_space_shortcut(key: &Key, modifiers: Modifiers) -> bool {
         && modifiers.shift()
 }
 impl App {
+    pub(super) fn space_add_picker_matches(&self, room: &str) -> bool {
+        self.room_picker.as_ref().is_some_and(|s| {
+            s.add_room.as_deref() == Some(room)
+                && s.spaces
+                    .as_ref()
+                    .is_some_and(|index| index.account == self.account_id)
+        })
+    }
     pub(super) fn refresh_space_picker(&mut self) -> Task<Message> {
         let Some(state) = &self.room_picker else {
             return Task::none();
@@ -258,7 +279,11 @@ impl App {
             return Task::none();
         }
         let index = state.spaces.as_ref().unwrap();
-        if index.account != self.account_id
+        if state
+            .add_room
+            .as_ref()
+            .is_some_and(|id| !self.model.rooms.iter().any(|r| &r.id == id))
+            || index.account != self.account_id
             || self.closing
             || self.stopped
             || (self.demo.is_none() && self.model.authentication.is_some())
@@ -278,6 +303,7 @@ impl App {
             self.model.spaces.clone(),
             preferred,
             self.account_id.clone(),
+            state.add_room.as_deref(),
         );
         let state = self.room_picker.as_mut().unwrap();
         state.spaces = Some(index);
@@ -340,8 +366,23 @@ impl App {
 
     pub(super) fn quick_room_event(&mut self, event: Event) -> Task<Message> {
         let _ = self.refresh_space_picker();
+        if self
+            .room_picker
+            .as_ref()
+            .is_some_and(|s| s.pending.is_some())
+            && matches!(
+                event,
+                Event::Edit(_)
+                    | Event::Move(_)
+                    | Event::Submit
+                    | Event::Choose(_)
+                    | Event::ChooseSpace(_)
+            )
+        {
+            return Task::none();
+        }
         match event {
-            Event::Open | Event::OpenSpaces => {
+            Event::Open | Event::OpenSpaces | Event::AddRoomToSpace(_) => {
                 if self.create_room.is_some()
                     || self.new_chat.is_some()
                     || self.closing
@@ -358,7 +399,15 @@ impl App {
                 {
                     return Task::none();
                 }
-                let mode = if matches!(event, Event::OpenSpaces) {
+                let add_room = if let Event::AddRoomToSpace(room) = &event {
+                    if !self.model.rooms.iter().any(|r| &r.id == room) {
+                        return Task::none();
+                    }
+                    Some(room.clone())
+                } else {
+                    None
+                };
+                let mode = if matches!(event, Event::OpenSpaces | Event::AddRoomToSpace(_)) {
                     Mode::Spaces
                 } else {
                     Mode::Rooms
@@ -366,19 +415,21 @@ impl App {
                 let reset = self
                     .room_picker
                     .as_ref()
-                    .is_none_or(|state| state.mode != mode);
+                    .is_none_or(|state| state.mode != mode || state.add_room != add_room);
                 if reset {
                     self.stop_typing();
                     self.emoji_completion.clear();
                     self.user_completion.clear();
                     self.room_picker = Some(State {
                         mode,
+                        add_room: add_room.clone(),
                         thread: self.selection.thread.is_some(),
                         spaces: (mode == Mode::Spaces).then(|| {
                             SpaceIndex::new(
                                 self.model.spaces.clone(),
                                 self.location_path(),
                                 self.account_id.clone(),
+                                add_room.as_deref(),
                             )
                         }),
                         ..State::default()
@@ -415,6 +466,7 @@ impl App {
                 if let Some(state) = &mut self.room_picker {
                     state.query = query;
                     state.selected = 0;
+                    state.error = None;
                     return iced::widget::operation::snap_to(
                         RESULTS,
                         iced::widget::operation::RelativeOffset::START,
@@ -455,6 +507,12 @@ impl App {
                         && (path.is_empty()
                             || navigation::valid_space_path(&self.model.spaces, &path))
                     {
+                        if let Some(room) = state.add_room.clone() {
+                            let Some(space) = path.last().cloned() else {
+                                return Task::none();
+                            };
+                            return self.add_room_to_selected_space(room, space);
+                        }
                         self.room_picker = None;
                         return self.update(Message::SpaceNavigation(
                             space_navigation::Event::Choose(path),
@@ -533,7 +591,12 @@ impl App {
                 )
                 .width(Length::Fill)
                 .padding([8, 12])
-                .on_press(message(Event::ChooseSpace(space.path.clone())))
+                .on_press_maybe(
+                    state
+                        .pending
+                        .is_none()
+                        .then(|| message(Event::ChooseSpace(space.path.clone()))),
+                )
                 .style(move |theme, status| {
                     let mut style = shell::quiet_button(theme, status);
                     style.text_color = shell::palette(theme).ink;
@@ -589,7 +652,9 @@ impl App {
         let card = container(
             column![
                 text_input(
-                    if state.mode == Mode::Spaces {
+                    if state.add_room.is_some() {
+                        "Add room to space…"
+                    } else if state.mode == Mode::Spaces {
                         "Switch to space…"
                     } else {
                         "Switch to room…"
@@ -600,7 +665,12 @@ impl App {
                 .cursor_blinking(false)
                 .size(16)
                 .padding(12)
-                .on_input(|query| message(Event::Edit(query)))
+                .on_input_maybe(
+                    state
+                        .pending
+                        .is_none()
+                        .then_some(|query| message(Event::Edit(query)))
+                )
                 .on_submit(message(Event::Submit)),
                 scrollable(results)
                     .id(RESULTS)
@@ -608,7 +678,7 @@ impl App {
                     .direction(shell::scrollbar())
                     .style(shell::scroll_style),
                 text(format!(
-                    "{} {}{}   ·   ↑ ↓ select   ·   Enter open   ·   Esc close",
+                    "{} {}{}   ·   ↑ ↓ select   ·   Enter {}   ·   Esc close",
                     count,
                     if state.mode == Mode::Spaces {
                         "location"
@@ -616,10 +686,22 @@ impl App {
                         "room"
                     },
                     if count == 1 { "" } else { "s" },
+                    if state.add_room.is_some() {
+                        "add"
+                    } else {
+                        "open"
+                    },
                 ))
                 .size(11)
                 .style(shell::muted_text)
             ]
+            .extend(
+                state
+                    .error
+                    .as_deref()
+                    .or_else(|| state.pending.map(|_| "Adding…"))
+                    .map(|status| Element::from(text(status).size(12).style(shell::muted_text))),
+            )
             .spacing(10),
         )
         .padding(12)
@@ -1365,5 +1447,155 @@ mod tests {
             &Key::Character("p".into()),
             Modifiers::CTRL | Modifiers::SHIFT
         ));
+    }
+    fn open_add(app: &mut App, room: &str) {
+        let _ = app.update(Message::ContextMenu(crate::context_menu::Event::Open(
+            crate::context_menu::Target::Room(room.into()),
+            iced::Point::ORIGIN,
+        )));
+        let _ = app.update(Message::ContextMenu(crate::context_menu::Event::Choose(
+            crate::context_menu::Target::Room(room.into()),
+            "Add room to space…".into(),
+        )));
+        assert!(app.context_menu.is_none());
+        assert_eq!(
+            app.room_picker.as_ref().unwrap().add_room.as_deref(),
+            Some(room)
+        );
+    }
+    #[test]
+    fn add_uses_shared_space_search_and_filters_home_permissions_and_existing_direct_links() {
+        let mut app = demo_app();
+        Arc::make_mut(&mut app.model.spaces)
+            .iter_mut()
+            .find(|s| s.id == "community-space")
+            .unwrap()
+            .can_manage_rooms = false;
+        open_add(&mut app, "studio");
+        let state = app.room_picker.as_ref().unwrap();
+        assert!(state.mode == Mode::Spaces);
+        let matches = state.space_matches();
+        assert!(!matches.is_empty());
+        for candidate in matches {
+            let id = candidate.path.last().unwrap(); // Virtual Home cannot be chosen.
+            let space = app.model.spaces.iter().find(|s| &s.id == id).unwrap();
+            assert!(space.can_manage_rooms && !space.children.contains(&"studio".into()));
+        }
+        let _ = app.update(message(Event::Edit("studio product".into())));
+        let state = app.room_picker.as_ref().unwrap();
+        assert!(
+            state
+                .space_matches()
+                .iter()
+                .any(|s| s.path.last().is_some_and(|id| id == "product-space"))
+        );
+        assert!(
+            state
+                .space_matches()
+                .iter()
+                .all(|s| s.trail.contains("Studio › Product"))
+        );
+        let _ = app.update(message(Event::Edit("product".into())));
+        assert_eq!(
+            app.room_picker.as_ref().unwrap().space_matches()[0]
+                .path
+                .last()
+                .unwrap(),
+            "product-space"
+        );
+        let _ = app.update(message(Event::Edit("no matching destination".into())));
+        let _ = app.update(message(Event::Submit));
+        assert!(app.room_picker.as_ref().unwrap().space_matches().is_empty());
+    }
+    #[test]
+    fn adding_by_enter_or_click_keeps_navigation_conversation_draft_and_scroll() {
+        for click in [true, false] {
+            let mut app = demo_app();
+            let key = app.draft_key(false).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("draft");
+            app.scroll_positions.insert(key.clone(), 150.0);
+            let selection = app.selection.room.clone();
+            let scope = app.shell.space.clone();
+            let before = app.model.spaces.clone();
+            open_add(&mut app, "general");
+            let _ = app.update(message(Event::Edit("personal".into())));
+            let state = app.room_picker.as_ref().unwrap();
+            let path = state.space_matches()[0].path.clone();
+            assert_eq!(path.last().unwrap(), "home-space");
+            let _ = app.update(message(if click {
+                Event::ChooseSpace(path)
+            } else {
+                Event::Submit
+            }));
+            assert!(app.room_picker.is_none());
+            assert_eq!(app.selection.room, selection);
+            assert_eq!(app.shell.space, scope);
+            assert_eq!(app.drafts[&key].content.text(), "draft");
+            assert_eq!(app.scroll_positions[&key], 150.0);
+            for space in app.model.spaces.iter() {
+                let old = before.iter().find(|s| s.id == space.id).unwrap();
+                if space.id == "home-space" {
+                    assert_eq!(space.children.len(), old.children.len() + 1);
+                    assert!(space.children.contains(&"general".into()));
+                } else {
+                    assert_eq!(space, old);
+                }
+            }
+        }
+    }
+    #[test]
+    fn add_picker_refreshes_permissions_and_links_rejects_stale_choices_and_cancels_missing_targets()
+     {
+        for already_linked in [true, false] {
+            let mut app = demo_app();
+            open_add(&mut app, "general");
+            let _ = app.update(message(Event::Edit("community".into())));
+            let path = app.room_picker.as_ref().unwrap().space_matches()[0]
+                .path
+                .clone();
+            let mut snapshot = app.model.clone();
+            let space = Arc::make_mut(&mut snapshot.spaces)
+                .iter_mut()
+                .find(|s| s.id == "community-space")
+                .unwrap();
+            if already_linked {
+                space.children.push("general".into());
+            } else {
+                space.can_manage_rooms = false;
+            }
+            let _ = app.update(Message::State(Box::new(snapshot)));
+            assert_eq!(app.room_picker.as_ref().unwrap().query, "community");
+            assert!(app.room_picker.as_ref().unwrap().space_matches().is_empty());
+            let before = app.model.spaces.clone();
+            let _ = app.update(message(Event::ChooseSpace(path)));
+            assert_eq!(app.model.spaces, before);
+            let _ = app.update(message(Event::ChooseSpace(Vec::new())));
+            assert!(app.room_picker.is_some());
+            Arc::make_mut(&mut app.model.rooms).retain(|r| r.id != "general");
+            let _ = app.update(message(Event::Submit));
+            assert!(app.room_picker.is_none());
+        }
+    }
+    #[test]
+    fn add_picker_handles_empty_destinations_and_cancellation_and_can_return_to_navigation_mode() {
+        let mut app = demo_app();
+        for space in Arc::make_mut(&mut app.model.spaces) {
+            space.can_manage_rooms = false;
+        }
+        open_add(&mut app, "general");
+        assert!(app.room_picker.as_ref().unwrap().space_matches().is_empty());
+        let spaces = app.model.spaces.clone();
+        let _ = app.update(message(Event::Submit));
+        assert_eq!(app.model.spaces, spaces);
+        let _ = app.update(message(Event::OpenSpaces));
+        assert!(app.room_picker.as_ref().unwrap().add_room.is_none());
+        assert!(
+            app.room_picker.as_ref().unwrap().space_matches()[0]
+                .path
+                .is_empty()
+        );
+        let _ = app.update(message(Event::Close));
+        assert!(app.room_picker.is_none());
     }
 }

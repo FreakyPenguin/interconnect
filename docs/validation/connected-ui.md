@@ -35,6 +35,43 @@ Screenshots in the README use only demo data. Capture an ordinary conversation
 with a thread and a separate account-wide search view; keep window size and
 renderer consistent, and check the exported images for clipping or private data.
 
+### Add a room to a space
+
+Right-click a room in the left navigator and choose **Add room to space…**.
+The shared searchable space picker opens with its usual avatars, hierarchy paths,
+ranked search, arrow-key selection, Enter and Escape. Only joined spaces
+where you can send `m.space.child` and the room has no active direct child link
+are listed. A room shown through a subspace can still be linked directly. The
+selector works from Home, All rooms, Direct messages, and any selected space.
+Virtual Home is excluded. With no eligible results it shows **No matching spaces**;
+Escape or clicking the backdrop closes the picker.
+
+In demo, add **General** to **Personal** and verify that its existing Studio link
+remains, the picker dismisses, and reopening the picker excludes Personal. The
+open conversation, room/thread draft, scroll position and selected space must
+stay unchanged, even when the context-menu room differs from the open room.
+Check a long space name and many spaces at the minimum window size, Light/Dark,
+and both renderers. Demo remains local and never accesses an account or network.
+
+In an authorized connected test profile, verify that choosing a destination sends
+one `m.space.child` with a non-empty `via` to the chosen space, without editing
+child-side parent metadata or membership. Child-room state permission is not
+required. The navigator follows synced state; an acknowledged link may take a
+moment to appear. Existing direct links must not have their metadata overwritten.
+
+Revoke space permission, remove the destination/room, or add the same link from
+another client while the selector is open. Choices must refresh with navigation
+updates and eligibility must be checked again before writing. Exercise a server
+error: the picker stays open with the query and error and allows retry or Escape.
+Success dismisses it. Closing the picker, changing account, permission loss or
+shutdown cancels pending work and rejects late results; accepted writes may still
+apply after cancellation. No polling or animation timer is added.
+
+Offline automated tests cover filtering, stale choices, duplicate links, empty
+picker results, errors/retry, cancellation, protocol payloads, and conversation/draft/
+scroll preservation. Native rendering and real-server sync behavior still need
+these manual checks.
+
 ### Remove a room from a space
 
 Select a writable space, right-click a room in the left navigator, and choose

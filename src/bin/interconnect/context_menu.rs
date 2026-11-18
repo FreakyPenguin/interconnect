@@ -42,6 +42,7 @@ pub enum Event {
 }
 pub struct State {
     target: Target,
+    account: Option<String>,
     position: Point,
     sections: bool,
     form: Option<section_management::Form>,
@@ -260,6 +261,12 @@ impl App {
                         Action::Copy(room.matrix_to_uri().to_string()),
                     ));
                 }
+                actions.push((
+                    "Add room to space…",
+                    dispatch(Message::QuickRoom(
+                        super::room_picker::Event::AddRoomToSpace(id.clone()),
+                    )),
+                ));
                 if self.removable_space(id).is_some() {
                     actions.push(("Remove room from space", Action::RemoveFromSpace));
                 }
@@ -373,11 +380,9 @@ impl App {
         }
     }
     pub(super) fn validate_context_menu(&mut self) {
-        if self
-            .context_menu
-            .as_ref()
-            .is_some_and(|state| self.context_actions(&state.target).is_empty())
-        {
+        if self.context_menu.as_ref().is_some_and(|state| {
+            state.account != self.account_id || self.context_actions(&state.target).is_empty()
+        }) {
             self.context_menu = None;
         }
     }
@@ -391,6 +396,7 @@ impl App {
                     let account = target == Target::Account;
                     self.context_menu = Some(State {
                         target,
+                        account: self.account_id.clone(),
                         position,
                         sections: false,
                         form: None,
@@ -491,7 +497,7 @@ impl App {
                 if !self
                     .context_menu
                     .as_ref()
-                    .is_some_and(|state| state.target == target)
+                    .is_some_and(|state| state.target == target && state.account == self.account_id)
                 {
                     return Task::none();
                 }

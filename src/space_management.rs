@@ -1,4 +1,4 @@
-//! Explicit space child unlinking. Parent-side permission is sufficient.
+//! Explicit space child linking and unlinking. Parent-side permission is sufficient.
 use matrix_sdk::{
     Client, RoomState,
     ruma::{
@@ -52,6 +52,58 @@ pub async fn remove_room(client: &Client, space: &str, child: &str) -> Result<()
     .map_err(|_| "Removing the room timed out. Check the room list before retrying.".to_owned())?
 }
 
+/// Link an existing joined room with a routing server that is known to be in it.
+/// Parent permission is sufficient; child-side metadata and membership stay intact.
+pub async fn add_room(client: &Client, space: &str, child: &str) -> Result<(), String> {
+    let space: OwnedRoomId = space.parse().map_err(|_| "Choose a valid space.")?;
+    let child: OwnedRoomId = child.parse().map_err(|_| "Choose a valid room.")?;
+    tokio::time::timeout(std::time::Duration::from_secs(30), async {
+        let parent = client
+            .get_room(&space)
+            .filter(|r| r.state() == RoomState::Joined && r.is_space())
+            .ok_or("The selected space is no longer available.")?;
+        let room = client
+            .get_room(&child)
+            .filter(|r| r.state() == RoomState::Joined && !r.is_space())
+            .ok_or("The room is no longer available.")?;
+        let levels = parent
+            .power_levels()
+            .await
+            .map_err(|_| "Could not check space permissions.")?;
+        if !levels.user_can_send_state(parent.own_user_id(), StateEventType::SpaceChild) {
+            return Err("You no longer have permission to add rooms to this space.".into());
+        }
+        if let Some(raw) = parent
+            .get_state_event_static_for_key::<SpaceChildEventContent, _>(&child)
+            .await
+            .map_err(|_| "Could not check the room’s space link.")?
+        {
+            let event = raw
+                .deserialize()
+                .map_err(|_| "Could not read the room’s space link.")?;
+            if matches!(event, matrix_sdk::deserialized_responses::SyncOrStrippedState::Sync(
+                matrix_sdk::ruma::events::SyncStateEvent::Original(event)
+            ) if !event.content.via.is_empty())
+            {
+                return Err("This room is already directly linked to this space.".into());
+            }
+        }
+        parent
+            .send_state_event_for_key(
+                &child,
+                SpaceChildEventContent::new(vec![room.own_user_id().server_name().to_owned()]),
+            )
+            .await
+            .map_err(|_| {
+                "Could not add the room to the space. Check the room list before retrying."
+                    .to_owned()
+            })?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| "Adding the room timed out. Check the room list before retrying.".to_owned())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,6 +143,13 @@ mod tests {
                 "event_id":format!("${kind}-{key}"), "origin_server_ts":1
             })
         };
+        let joined_room = json!({
+            "state":{"events":[
+                event("m.room.create", "", json!({"creator":"@admin:example.org"})),
+                event("m.room.member", "@test:example.org", json!({"membership":"join"})),
+                event("m.room.power_levels", "", json!({"users":{"@test:example.org":0}, "state_default":100}))
+            ]}, "timeline":{"events":[],"limited":false}, "account_data":{"events":[]}
+        });
         Mock::given(method("GET")).and(path("/_matrix/client/v3/sync"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({
                 "next_batch":"one", "rooms":{"join":{"!space:example.org":{
@@ -101,7 +160,8 @@ mod tests {
                         event("m.space.child", "!room:example.org", json!({"via":["example.org"]})),
                         event("m.space.child", "!removed:example.org", json!({"via":[]}))
                     ]}, "timeline":{"events":[], "limited":false}, "account_data":{"events":[]}
-                }}}
+                }, "!fresh:example.org":joined_room, "!removed:example.org":joined_room,
+                   "!room:example.org":joined_room}}
             }))).mount(server).await;
         client
             .sync_once(SyncSettings::default().timeout(std::time::Duration::ZERO))
@@ -189,6 +249,86 @@ mod tests {
                 .await
                 .unwrap_err()
                 .contains("Could not remove")
+        );
+    }
+    #[tokio::test]
+    async fn add_links_joined_rooms_and_inactive_links_without_child_permission_or_parent_edits() {
+        let server = MockServer::start().await;
+        let client = fixture(&server, 50).await;
+        for child in ["!fresh:example.org", "!removed:example.org"] {
+            Mock::given(method("PUT"))
+                .and(path(format!(
+                    "/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/{child}"
+                )))
+                .and(body_json(json!({"via":["example.org"]})))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({"event_id":"$added"})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            add_room(&client, "!space:example.org", child)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| r.method.as_str() != "GET" && r.url.path().contains("/rooms/"))
+                .count(),
+            2
+        );
+    }
+    #[tokio::test]
+    async fn add_rejects_unwritable_spaces_existing_links_and_unavailable_targets_before_writing() {
+        for power in [0, 50] {
+            let server = MockServer::start().await;
+            let client = fixture(&server, power).await;
+            for (space, child) in [
+                ("!space:example.org", "!room:example.org"),
+                ("!space:example.org", "!missing:example.org"),
+                ("!gone:example.org", "!fresh:example.org"),
+                ("!fresh:example.org", "!removed:example.org"),
+                ("!space:example.org", "!space:example.org"),
+                ("invalid", "!fresh:example.org"),
+                ("!space:example.org", "invalid"),
+            ] {
+                assert!(add_room(&client, space, child).await.is_err());
+            }
+            if power == 0 {
+                assert!(
+                    add_room(&client, "!space:example.org", "!fresh:example.org")
+                        .await
+                        .unwrap_err()
+                        .contains("permission")
+                );
+            }
+            assert!(
+                server
+                    .received_requests()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .all(|r| r.method.as_str() == "GET" || !r.url.path().contains("/rooms/"))
+            );
+        }
+    }
+    #[tokio::test]
+    async fn add_server_rejection_surfaces_for_retry() {
+        let server = MockServer::start().await;
+        let client = fixture(&server, 50).await;
+        Mock::given(method("PUT"))
+            .and(path("/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/!fresh:example.org"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({"errcode":"M_FORBIDDEN","error":"Denied"})))
+            .expect(1).mount(&server).await;
+        assert!(
+            add_room(&client, "!space:example.org", "!fresh:example.org")
+                .await
+                .unwrap_err()
+                .contains("Could not add")
         );
     }
 }

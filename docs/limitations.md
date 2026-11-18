@@ -8,9 +8,9 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   access, and history visibility. Restricted/knock/custom access remains read-only;
   avatars, aliases, permission editing, encryption changes, bans, upgrades, timed
   mutes and per-room notification sounds are not implemented.
-- Space management supports removing directly linked joined rooms when permitted.
-  Adding existing rooms, creating/editing spaces, removing subspaces, and managing
-  unjoined children are not implemented. Removing a link leaves room membership
+- Space management supports adding joined rooms to writable spaces and removing
+  direct room links. Creating/editing spaces, managing subspaces, and managing
+  unjoined children are not implemented. Link changes leave room membership
   and child-side parent metadata intact.
 - Deletion requires a synced message-like event with an event ID. Cancelling unsent
   local echoes and redacting room-state/activity events are unsupported.
