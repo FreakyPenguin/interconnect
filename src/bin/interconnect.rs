@@ -119,6 +119,8 @@ mod tooltips;
 mod topic;
 #[path = "interconnect/typing.rs"]
 mod typing;
+#[path = "interconnect/unread.rs"]
+mod unread;
 #[path = "interconnect/user_completion.rs"]
 mod user_completion;
 #[path = "interconnect/utilities.rs"]
@@ -3135,6 +3137,10 @@ impl App {
         } else {
             thread_activity::project(pane_rows, thread.then_some(selected_id.as_str()))
         };
+        let unread_index = (!thread)
+            .then(|| current_pane(snapshot, *generation))
+            .flatten()
+            .and_then(|pane| unread::divider_index(pane, &rows));
         let preview_roots: std::collections::HashSet<_> = rows
             .iter()
             .filter_map(|row| match row {
@@ -3156,7 +3162,8 @@ impl App {
                 _ => None,
             });
             let activity = message.kind == RowKind::Activity;
-            let grouped = presentation::grouped(previous, message);
+            let unread_start = unread_index == Some(index);
+            let grouped = !unread_start && presentation::grouped(previous, message);
             let new_date = presentation::date(message).filter(|date| {
                 previous_row
                     .and_then(|row| presentation::date(row.message()))
@@ -3174,6 +3181,9 @@ impl App {
                     .center_x(Length::Fill)
                     .padding([12, 0]),
                 );
+            }
+            if unread_start {
+                message_row = message_row.push(unread::divider());
             }
             if let thread_activity::Row::Thread {
                 root,
@@ -5083,6 +5093,7 @@ mod tests {
         let mut model = app.model.clone();
         model.room = Some(Pane {
             generation,
+            read_boundary: None,
             rows: Default::default(),
             error: None,
             history: History::Loading,
@@ -5722,6 +5733,7 @@ mod tests {
     fn stale_snapshots_are_rejected_after_navigation() {
         let snapshot = Some(Pane {
             generation: 1,
+            read_boundary: None,
             rows: Default::default(),
             error: None,
             history: History::Ready,
@@ -5740,6 +5752,7 @@ mod tests {
         let (sender, mut requests) = tokio::sync::mpsc::channel(1);
         app.model.room = Some(Pane {
             generation,
+            read_boundary: None,
             rows: Default::default(),
             error: None,
             history: History::Ready,
@@ -5789,6 +5802,7 @@ mod tests {
             let (sender, mut requests) = tokio::sync::mpsc::channel(1);
             let pane = Pane {
                 generation,
+                read_boundary: None,
                 rows: Default::default(),
                 error: None,
                 history: History::Ready,
@@ -5870,6 +5884,7 @@ mod tests {
         let (sender, mut requests) = tokio::sync::mpsc::channel(1);
         app.model.room = Some(Pane {
             generation,
+            read_boundary: None,
             rows: Default::default(),
             error: None,
             history: History::Ready,

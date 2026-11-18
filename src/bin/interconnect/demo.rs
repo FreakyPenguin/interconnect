@@ -680,6 +680,7 @@ impl Demo {
         }
         Pane {
             generation,
+            read_boundary: (key.room == "release" && key.root.is_none()).then(|| "release".into()),
             rows: self.conversations[&key].clone().into(),
             error: (key.room == "error").then(|| {
                 "This sample room is unavailable. Choose another room to continue.".into()

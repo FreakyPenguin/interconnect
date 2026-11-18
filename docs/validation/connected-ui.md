@@ -496,3 +496,28 @@ Automated fixtures cover single-attempt room/DM errors, malformed success and
 rate-limit responses, cancellation signals on dismissal/quit, pending-operation
 release, and DM reuse before sync. These do not establish native desktop behavior
 or a particular homeserver's behavior after a lost response.
+
+## Unread catch-up divider
+
+Demo: open **Release notes** and check the accent-colored “New messages” divider
+between the two messages. Check narrow widths and both themes. The first message
+after the divider must show its sender even when adjacent messages share a sender
+and date. The demo boundary is a deterministic fixture.
+
+With a dedicated connected profile, open a room with a known earlier read receipt.
+The divider appears before the first incoming event after that position, including
+a collapsed thread activity entry. It stays at the opening read position while
+receipts advance, new messages arrive, or spaces filter the room list. Reopening
+the room captures the latest read position. Thread panes have no room divider.
+Verify drafts, saved scroll positions, history loading, and search/event focus
+still behave as before. A date heading may precede the divider on a new day.
+
+If the read event is outside loaded history, no divider is guessed: use **Load
+older** until the boundary is loaded. A missing receipt, an unrendered receipt
+event, a manual unread flag alone, or only outgoing/local messages after the
+boundary does not create a divider. No timers or extra network fetches are added.
+
+Automated tests cover per-visit receipt snapshots, missing/unloaded boundaries,
+outgoing messages, collapsed thread projection, and preservation after read/space
+updates. Native visual appearance and real homeserver behavior require the manual
+checks above; the procedures do not claim those checks have been run.

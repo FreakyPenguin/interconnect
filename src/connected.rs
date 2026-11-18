@@ -713,6 +713,8 @@ const INITIAL_THREAD_EVENTS: usize = 500;
 #[derive(Clone, Debug)]
 pub struct Pane {
     pub generation: u64,
+    /// Read position captured on opening this view; retained as receipts advance.
+    pub read_boundary: Option<String>,
     pub rows: Arc<Vec<MessageRow>>,
     pub error: Option<String>,
     pub history: History,
@@ -1564,6 +1566,7 @@ async fn view(
             };
             *pane = Some(Pane {
                 generation,
+                read_boundary: None,
                 rows: Arc::default(),
                 error: Some(format!("{error:#}")),
                 history: History::Ready,
@@ -1626,19 +1629,30 @@ async fn publish(
     state: &watch::Sender<Model>,
     load_older: &mpsc::Sender<u64>,
 ) {
-    let previous = {
+    let (previous, boundary) = {
         let model = state.borrow();
         let pane = if thread { &model.thread } else { &model.room };
         pane.as_ref()
             .filter(|p| p.generation == generation)
-            .map(|p| p.rows.clone())
+            .map(|p| (p.rows.clone(), Some(p.read_boundary.clone())))
             .unwrap_or_default()
+    };
+    let read_boundary = if thread {
+        None
+    } else if let Some(boundary) = boundary {
+        boundary
+    } else {
+        timeline
+            .latest_user_read_receipt(timeline.room().own_user_id())
+            .await
+            .map(|(event, _)| event.to_string())
     };
     let rows = timeline_rows_cached(timeline, previous).await;
     state.send_modify(|s| {
         let pane = if thread { &mut s.thread } else { &mut s.room };
         *pane = Some(Pane {
             generation,
+            read_boundary,
             rows: Arc::new(rows),
             error: None,
             history: history.clone(),

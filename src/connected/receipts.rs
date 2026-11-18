@@ -240,6 +240,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn catch_up_boundary_is_frozen_per_room_visit() {
+        use super::super::{History, publish};
+        use iced::futures::StreamExt;
+        let (server, timeline) = fixture(false).await;
+        let (state, _) = watch::channel(Model::default());
+        let (older, _) = tokio::sync::mpsc::channel(1);
+        let boundary = || state.borrow().room.as_ref().unwrap().read_boundary.clone();
+        publish(&timeline, 1, false, 0, &History::Ready, &state, &older).await;
+        assert_eq!(boundary().as_deref(), Some("$root"));
+        let (_, updates) = timeline.subscribe().await;
+        tokio::pin!(updates);
+        Mock::given(method("GET")).and(path("/_matrix/client/v3/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"next_batch":"two","rooms":{"join":{"!room:example.org":{
+                "timeline":{"events":[],"limited":false},
+                "ephemeral":{"events":[{"type":"m.receipt","content":{"$reply":{"m.read":{"@test:example.org":{"ts":4}}}}}]}
+            }}}}))).with_priority(1).expect(1).mount(&server).await;
+        timeline
+            .room()
+            .client()
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let read = timeline
+                    .latest_user_read_receipt(timeline.room().own_user_id())
+                    .await;
+                if read.is_some_and(|(id, _)| id.as_str() == "$reply") {
+                    break;
+                }
+                assert!(updates.next().await.is_some());
+            }
+        })
+        .await
+        .unwrap();
+        publish(&timeline, 1, false, 1, &History::End, &state, &older).await;
+        assert_eq!(boundary().as_deref(), Some("$root"));
+        publish(&timeline, 2, false, 0, &History::Ready, &state, &older).await;
+        assert_eq!(boundary().as_deref(), Some("$reply"));
+        // An absent opening receipt also stays absent for that visit.
+        state.send_modify(|s| s.room.as_mut().unwrap().read_boundary = None);
+        publish(&timeline, 2, false, 1, &History::Ready, &state, &older).await;
+        assert!(boundary().is_none());
+        publish(&timeline, 3, true, 0, &History::Ready, &state, &older).await;
+        assert!(
+            state
+                .borrow()
+                .thread
+                .as_ref()
+                .unwrap()
+                .read_boundary
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn room_receipt_and_fully_read_are_bounded_to_visible_event_and_deduplicated() {
         let (server, timeline) = fixture(false).await;
         Mock::given(method("POST"))
