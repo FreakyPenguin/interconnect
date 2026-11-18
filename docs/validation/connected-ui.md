@@ -462,6 +462,11 @@ to rooms. Check empty results and rename/removal/link changes while the picker
 is open; stale choices must be ignored. An account change must close the picker.
 At 640×480 and with long names/paths, the current breadcrumb, Home, and account
 avatar must remain usable; overflow/root menus must expose hidden ancestors.
+The last breadcrumb is semibold and uses available width to show its full name;
+ancestors remain compact. The room sidebar has only action icons above its room
+filter, without repeating the location title. Automated layout coverage includes
+a long current name at 320, 640, 800, and 1400 pixels; native appearance still
+requires the demo checks above.
 Check the [keyboard model](../keyboard.md#space-navigation), including one
 activation per key, focus restoration on Escape, F6 region changes, and IME/dialog
 precedence. Menus must fit the window and scroll without periodic redraws.

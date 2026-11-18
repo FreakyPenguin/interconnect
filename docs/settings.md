@@ -106,7 +106,10 @@ The hierarchy icon is highlighted when on and muted when off; its tooltip
 names the setting, current state, and shortcut. Ctrl+Shift+L (macOS:
 Command+Shift+L) toggles it directly without moving focus.
 
-The breadcrumb bar replaces the space rail. Its Home arrow and per-level menus
+The breadcrumb bar replaces the space rail. The current space name is slightly
+larger and semibold, using available width instead of the compact ancestor cap.
+The sidebar has an action toolbar without a repeated location title.
+The bar’s Home arrow and per-level menus
 support expandable branches; the account menu lives at the top right. Shared
 spaces retain the path used to reach them, and cycles cannot expand indefinitely.
 The sidebar contains room sections. Ctrl+Shift+P (macOS: Command+Shift+P) opens

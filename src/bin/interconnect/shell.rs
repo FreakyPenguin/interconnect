@@ -765,17 +765,6 @@ impl App {
         .into()
     }
     pub(super) fn room_navigation(&self) -> Element<'_, Message> {
-        let name = match &self.shell.space {
-            Scope::Home => "Home",
-            Scope::All => "All rooms",
-            Scope::Direct => "Direct messages",
-            Scope::Space(id) => self
-                .model
-                .spaces
-                .iter()
-                .find(|s| &s.id == id)
-                .map_or("Space", |s| s.name.as_str()),
-        };
         let mut search = text_input("Find a room…", &self.shell.query)
             .id("room-search")
             .cursor_blinking(false)
@@ -1106,12 +1095,6 @@ impl App {
         container(
             column![
                 row![
-                    container(single_line::label(name, 18).font(Font {
-                        weight: font::Weight::Semibold,
-                        ..Font::with_name("Inter")
-                    }))
-                    .padding([4, 4])
-                    .width(Length::Fill),
                     if let Scope::Space(id) = &self.shell.space {
                         Element::from(super::tooltips::icon_button(Kind::Settings, "Space settings", Some(Message::SpaceSettings(super::space_settings::Event::Open(id.clone())))))
                     } else { Element::from(iced::widget::space().width(0)) },
@@ -1120,6 +1103,7 @@ impl App {
                     super::tooltips::icon_button(Kind::SpaceAdd, "Create subspace",
                         (!self.closing && !self.stopped && matches!(&self.shell.space, Scope::Space(id) if self.model.spaces.iter().any(|s| &s.id == id && s.can_manage_rooms)))
                             .then_some(Message::CreateRoom(super::create_room::Event::OpenSubspace))),
+                    widget::space().width(Length::Fill),
                     super::tooltips::tooltip(
                         super::navigation_control::plain(
                             button(container(icon(Kind::More)).center_x(28).center_y(28))

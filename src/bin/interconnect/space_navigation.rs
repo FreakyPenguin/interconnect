@@ -700,8 +700,16 @@ impl App {
             let current = index + 1 == path.len();
             let mut label = row![
                 self.space_icon(id),
-                super::single_line::label(name, 13)
+                super::single_line::label(name, if current { 14 } else { 13 })
                     .shrink()
+                    .font(iced::Font {
+                        weight: if current {
+                            iced::font::Weight::Semibold
+                        } else {
+                            iced::font::Weight::Normal
+                        },
+                        ..iced::Font::with_name("Inter")
+                    })
                     .style(move |theme| iced::widget::text::Style {
                         color: Some(if current {
                             shell::palette(theme).ink
@@ -714,9 +722,14 @@ impl App {
             if unread.contains(id) {
                 label = label.push(text("•").size(10).style(shell::accent_text));
             }
-            let crumb = container(label.spacing(6).align_y(Alignment::Center))
-                .max_width((width - 220.0).clamp(40.0, 116.0))
-                .id(anchor.clone());
+            let crumb = container(label.spacing(6).align_y(Alignment::Center)).id(anchor.clone());
+            // Ancestors stay compact; the current location uses the remaining
+            // trail width so its full name is visible whenever it fits.
+            let crumb = if current {
+                crumb
+            } else {
+                crumb.max_width((width - 220.0).clamp(40.0, 116.0))
+            };
             trail = trail
                 .push(sized(Kind::ChevronRight, 12.0))
                 .push(bar_control(
@@ -1266,6 +1279,11 @@ mod tests {
             &mut app,
             Event::Choose(vec!["parent".into(), "child".into(), "grandchild".into()]),
         );
+        std::sync::Arc::make_mut(&mut app.model.spaces)
+            .iter_mut()
+            .find(|s| s.id == "grandchild")
+            .unwrap()
+            .name = "Current space with a longer name".into();
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         for width in [320.0, 640.0, 800.0, 1400.0] {
             let size = iced::Size::new(width, 56.0);
@@ -1295,7 +1313,18 @@ mod tests {
                 account.x + account.width <= width,
                 "account clipped at {width}: {account:?}"
             );
-            for crumb in &probe.crumbs {
+            let current = probe.crumbs.last().unwrap();
+            assert!(
+                current.x + current.width < account.x,
+                "current location overlaps the account at {width}"
+            );
+            if width >= 800.0 {
+                assert!(
+                    current.width > 200.0,
+                    "current name is still capped at {width}: {current:?}"
+                );
+            }
+            for crumb in probe.crumbs.iter().take(probe.crumbs.len() - 1) {
                 assert!(
                     crumb.width <= 130.0,
                     "breadcrumb stretched at {width}: {crumb:?}"
