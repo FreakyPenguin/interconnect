@@ -2,10 +2,15 @@
 #[path = "member_management.rs"]
 mod member_management;
 
-use super::{App, MAX_PENDING_OPERATIONS, Message, shell};
+use super::{
+    App, MAX_PENDING_OPERATIONS, Message,
+    icons::{self, Kind},
+    shell,
+    tooltips::icon_button,
+};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, pick_list, row, rule, scrollable, text, text_input},
+    widget::{column, container, pick_list, row, rule, scrollable, text, text_input},
 };
 use interconnect::{
     navigation::Scope,
@@ -350,6 +355,11 @@ impl App {
         let panel = self.space_settings.panel.as_ref().unwrap();
         let mut body = column![
             row![
+                icons::icon(if panel.space {
+                    Kind::Space
+                } else {
+                    Kind::People
+                }),
                 shell::title(
                     if panel.space {
                         "Space settings"
@@ -359,12 +369,24 @@ impl App {
                     22
                 ),
                 iced::widget::space().width(Length::Fill),
-                button("Reload")
-                    .style(shell::quiet_button)
-                    .on_press_maybe((!panel.pending).then_some(message(Event::Reload))),
-                button("Close")
-                    .style(shell::quiet_button)
-                    .on_press(message(Event::Close))
+                icon_button(
+                    Kind::Refresh,
+                    if panel.space {
+                        "Reload space settings"
+                    } else {
+                        "Reload room members"
+                    },
+                    (!panel.pending).then_some(message(Event::Reload))
+                ),
+                icon_button(
+                    Kind::Close,
+                    if panel.space {
+                        "Close space settings"
+                    } else {
+                        "Close room members"
+                    },
+                    Some(message(Event::Close))
+                )
             ]
             .spacing(8)
             .align_y(iced::Alignment::Center),
@@ -395,10 +417,21 @@ impl App {
                 }
                 body = body.push(
                     column![
-                        text(label).size(13).style(shell::muted_text),
+                        row![
+                            icons::icon(if field == 0 { Kind::Edit } else { Kind::Thread }),
+                            text(label).size(13).style(shell::muted_text)
+                        ]
+                        .spacing(8)
+                        .align_y(iced::Alignment::Center),
                         row![
                             input,
-                            button("Save").style(shell::quiet_button).on_press_maybe(
+                            icon_button(
+                                Kind::Check,
+                                if field == 0 {
+                                    "Save name"
+                                } else {
+                                    "Save topic"
+                                },
                                 (editable && value != before)
                                     .then_some(message(Event::Save(field)))
                             )
@@ -439,10 +472,17 @@ impl App {
             };
             body = body.push(
                 column![
-                    text("Who can join").size(13).style(shell::muted_text),
+                    row![
+                        icons::icon(Kind::People),
+                        text("Who can join").size(13).style(shell::muted_text)
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
                     row![
                         access,
-                        button("Save").style(shell::quiet_button).on_press_maybe(
+                        icon_button(
+                            Kind::Check,
+                            "Save access",
                             (supported
                                 && draft.editable[2]
                                 && !panel.pending

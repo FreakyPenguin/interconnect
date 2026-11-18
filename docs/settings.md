@@ -167,23 +167,25 @@ before retrying. Demo edits stay in memory without account or network access.
 
 ## Spaces and member management
 
-Select a writable space and choose **Subspace** beside its room-list heading to
-create a private or public child space. The parent is fixed to the current space.
+Select a writable space and choose the **Create subspace** globe-plus icon beside
+its room-list heading to create a private or public child space. The parent is fixed to the current space.
 Spaces are unencrypted; creating one keeps the current conversation, draft, and
 reading position. If creation succeeds but the parent link fails, **Retry adding
 to space** retries that link without creating another space. Check the space tree
 before retrying creation after a timeout or cancellation.
 
 The gear beside the space heading opens **Space settings** in the main content
-area. Name, topic, and invitation/public access each have a **Save** button.
+area. Name, topic, and invitation/public access each have a checkmark **Save**
+control. Refresh and close use arrow and × icons; hover for action names.
 Restricted/knock/custom access remains read-only. Changing space filters or opening
 a conversation closes the panel; it never selects a space as a conversation.
 
 Space settings includes the shared member editor. For rooms, open **People →
-Manage** or **Room settings → Members & invitations**. Search matches names or
-Matrix IDs; large lists show 50 people per page. The people picker accepts a
+Manage members** (sliders icon) or **Room settings → Members & invitations**.
+Search matches names or Matrix IDs; large lists show 50 people per page. The people picker accepts a
 server-directory result or full Matrix ID. Pending invitations are labeled.
-**Remove**, **Revoke invitation**, and **Change role** require confirmation.
+Person-minus removes a member; × revokes a pending invitation. Tooltips name
+each action. Removal, invitation revocation, and **Change role** require confirmation.
 Available roles are Member (0), Moderator (50), and Admin (100); existing custom
 numeric levels are preserved until explicitly choosing a role, but arbitrary
 levels cannot be entered here.

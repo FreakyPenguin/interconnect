@@ -1,6 +1,10 @@
 //! Shared member editor hosted by space settings and room member management.
 use super::{App, Event as PanelEvent, MAX_PENDING_OPERATIONS, Message, message};
-use crate::{people_picker, shell};
+use crate::{
+    icons::{self, Kind},
+    people_picker, shell,
+    tooltips::icon_button,
+};
 use iced::{
     Element, Length, Task,
     widget::{button, column, container, pick_list, row, rule, text, text_input},
@@ -342,11 +346,14 @@ impl App {
         let mut content = column![
             rule::horizontal(1),
             row![
+                icons::icon(Kind::People),
                 shell::title("Members", 18),
                 iced::widget::space().width(Length::Fill),
-                button("Reload members")
-                    .style(shell::quiet_button)
-                    .on_press_maybe((!busy).then_some(event(Event::Reload)))
+                icon_button(
+                    Kind::Refresh,
+                    "Reload members",
+                    (!busy).then_some(event(Event::Reload))
+                )
             ]
             .spacing(8),
             text("Membership and roles are snapshots. Reload for the latest state.")
@@ -366,9 +373,11 @@ impl App {
                         .picker
                         .view(&self.model.avatars, !busy)
                         .map(move |picker| event(Event::Picker(request, picker))),
-                    button("Send invitation")
-                        .style(shell::quiet_button)
-                        .on_press_maybe((!busy).then_some(event(Event::Invite)))
+                    icon_button(
+                        Kind::PersonAdd,
+                        "Send invitation",
+                        (!busy).then_some(event(Event::Invite))
+                    )
                 ]
                 .spacing(8),
             );
@@ -398,12 +407,18 @@ impl App {
                         .size(12)
                         .style(shell::muted_text),
                         row![
-                            button("Confirm")
-                                .style(shell::primary_button)
-                                .on_press_maybe((!busy).then_some(event(Event::Confirm))),
-                            button("Cancel")
-                                .style(shell::quiet_button)
-                                .on_press_maybe((!busy).then_some(event(Event::Cancel)))
+                            button(
+                                row![icons::icon(Kind::Check), text("Confirm")]
+                                    .spacing(6)
+                                    .align_y(iced::Alignment::Center)
+                            )
+                            .style(shell::primary_button)
+                            .on_press_maybe((!busy).then_some(event(Event::Confirm))),
+                            icon_button(
+                                Kind::Close,
+                                "Cancel change",
+                                (!busy).then_some(event(Event::Cancel))
+                            )
                         ]
                         .spacing(8)
                     ]
@@ -463,18 +478,19 @@ impl App {
                 );
             }
             if managed.can_remove {
-                controls = controls.push(
-                    button(
-                        text(if member.invited {
-                            "Revoke invitation"
-                        } else {
-                            "Remove"
-                        })
-                        .size(12),
-                    )
-                    .style(shell::quiet_button)
-                    .on_press_maybe((!busy).then(|| event(Event::Remove(member.user_id.clone())))),
-                );
+                controls = controls.push(icon_button(
+                    if member.invited {
+                        Kind::Close
+                    } else {
+                        Kind::PersonRemove
+                    },
+                    if member.invited {
+                        "Revoke invitation"
+                    } else {
+                        "Remove member"
+                    },
+                    (!busy).then(|| event(Event::Remove(member.user_id.clone()))),
+                ));
             }
             // Stack actions below identity to retain readable IDs on narrow windows.
             content = content.push(
@@ -493,11 +509,15 @@ impl App {
         if rows.len() > PAGE {
             content = content.push(
                 row![
-                    button("Previous")
-                        .style(shell::quiet_button)
-                        .on_press_maybe((page > 0).then(|| event(Event::Page(page - 1)))),
+                    icon_button(
+                        Kind::ChevronLeft,
+                        "Previous members",
+                        (page > 0).then(|| event(Event::Page(page - 1)))
+                    ),
                     text(format!("{} / {}", page + 1, rows.len().div_ceil(PAGE))).size(12),
-                    button("Next").style(shell::quiet_button).on_press_maybe(
+                    icon_button(
+                        Kind::ChevronRight,
+                        "Next members",
                         ((page + 1) * PAGE < rows.len()).then(|| event(Event::Page(page + 1)))
                     )
                 ]

@@ -1117,8 +1117,8 @@ impl App {
                     } else { Element::from(iced::widget::space().width(0)) },
                     new_chat,
                     create_room,
-                    button(text("Subspace").size(11)).style(quiet_button).on_press_maybe(
-                        matches!(&self.shell.space, Scope::Space(id) if self.model.spaces.iter().any(|s| &s.id == id && s.can_manage_rooms))
+                    super::tooltips::icon_button(Kind::SpaceAdd, "Create subspace",
+                        (!self.closing && !self.stopped && matches!(&self.shell.space, Scope::Space(id) if self.model.spaces.iter().any(|s| &s.id == id && s.can_manage_rooms)))
                             .then_some(Message::CreateRoom(super::create_room::Event::OpenSubspace))),
                     super::tooltips::tooltip(
                         super::navigation_control::plain(

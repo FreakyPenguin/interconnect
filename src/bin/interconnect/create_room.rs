@@ -501,23 +501,33 @@ impl App {
             .padding([7, 14])
             .style(shell::quiet_button)
             .on_press(message(Event::Close));
-        let mut submit = button(
-            text(if busy {
-                if options.subspace {
-                    "Creating subspace…"
-                } else {
-                    "Creating room…"
-                }
-            } else if state.created.is_some() {
-                "Retry adding to space"
+        let submit_label = text(if busy {
+            if options.subspace {
+                "Creating subspace…"
             } else {
-                if options.subspace {
-                    "Create subspace"
-                } else {
-                    "Create room"
-                }
-            })
-            .size(13),
+                "Creating room…"
+            }
+        } else if state.created.is_some() {
+            "Retry adding to space"
+        } else {
+            if options.subspace {
+                "Create subspace"
+            } else {
+                "Create room"
+            }
+        })
+        .size(13);
+        let submit_icon = if state.created.is_some() {
+            super::icons::Kind::Refresh
+        } else if options.subspace {
+            super::icons::Kind::SpaceAdd
+        } else {
+            super::icons::Kind::RoomAdd
+        };
+        let mut submit = button(
+            row![super::icons::icon(submit_icon), submit_label]
+                .spacing(7)
+                .align_y(iced::Alignment::Center),
         )
         .padding([7, 14])
         .style(shell::primary_button);

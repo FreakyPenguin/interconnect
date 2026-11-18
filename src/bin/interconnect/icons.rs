@@ -14,6 +14,10 @@ pub(super) enum Kind {
     Home,
     Plus,
     RoomAdd,
+    Space,
+    SpaceAdd,
+    PersonAdd,
+    PersonRemove,
     More,
     Sidebar,
     Subspaces,
@@ -317,6 +321,49 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                             Size::new(18.0, 16.0),
                             2.0.into(),
                         ),
+                        stroke,
+                    );
+                }
+                Space | SpaceAdd => {
+                    if self.kind == SpaceAdd {
+                        line(&[(18.0, 14.0), (18.0, 22.0)]);
+                        line(&[(14.0, 18.0), (22.0, 18.0)]);
+                    }
+                    let (center, radius) = if self.kind == SpaceAdd {
+                        (10.0, 7.0)
+                    } else {
+                        (12.0, 9.0)
+                    };
+                    line(&[(center - radius, center), (center + radius, center)]);
+                    let point = |x: f32, y: f32| {
+                        Point::new(center + x * radius / 7.0, center + y * radius / 7.0)
+                    };
+                    frame.stroke(&Path::circle(Point::new(center, center), radius), stroke);
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(point(0.0, -7.0));
+                            p.bezier_curve_to(point(-4.0, -3.0), point(-4.0, 3.0), point(0.0, 7.0));
+                            p.bezier_curve_to(point(4.0, 3.0), point(4.0, -3.0), point(0.0, -7.0));
+                        }),
+                        stroke,
+                    );
+                }
+                PersonAdd | PersonRemove => {
+                    line(&[(15.0, 17.0), (23.0, 17.0)]);
+                    if self.kind == PersonAdd {
+                        line(&[(19.0, 13.0), (19.0, 21.0)]);
+                    }
+                    frame.stroke(&Path::circle(Point::new(9.0, 7.0), 3.0), stroke);
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(Point::new(2.0, 21.0));
+                            p.line_to(Point::new(2.0, 18.0));
+                            p.bezier_curve_to(
+                                Point::new(2.0, 11.0),
+                                Point::new(14.0, 11.0),
+                                Point::new(14.0, 16.0),
+                            );
+                        }),
                         stroke,
                     );
                 }

@@ -113,17 +113,17 @@ impl App {
         let header = row![
             shell::title("People", 18),
             iced::widget::space().width(Length::Fill),
-            button(text("Manage").size(12))
-                .style(shell::quiet_button)
-                .on_press_maybe(
-                    self.selection
-                        .room
-                        .as_ref()
-                        .filter(|_| self.context_menu_allowed())
-                        .map(|(_, id)| Message::SpaceSettings(
-                            super::space_settings::Event::OpenMembers(id.clone())
-                        ))
-                ),
+            super::tooltips::icon_button(
+                super::icons::Kind::Settings,
+                "Manage members",
+                self.selection
+                    .room
+                    .as_ref()
+                    .filter(|_| self.context_menu_allowed())
+                    .map(|(_, id)| Message::SpaceSettings(
+                        super::space_settings::Event::OpenMembers(id.clone())
+                    ))
+            ),
             self.presence_refresh_control(),
             super::tooltips::tooltip(
                 button(

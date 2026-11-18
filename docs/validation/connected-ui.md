@@ -738,7 +738,7 @@ Automated coverage checks typed, unencrypted creation, canonical parent metadata
 parent permission checks, partial link recovery, and unchanged conversation selection.
 Native/connected acceptance still requires a dedicated test profile:
 
-- Select a writable space and choose **Subspace** in the room-list header.
+- Select a writable space and choose **Create subspace** (globe-plus) in the room-list header.
 - Create private and public subspaces; verify each appears under its parent and
   the open conversation, draft, and scroll position stay intact.
 - Deny parent child-link permissions before submitting; creation must fail before
@@ -780,7 +780,7 @@ The editor uses on-demand SDK reads with no polling or background animation.
 
 Connected/native acceptance remains untested here. In a dedicated test profile:
 
-- Open Space settings, then People → Manage for a conversation; check both list
+- Open Space settings, then People → Manage members (sliders) for a conversation; check both list
   joined members and pending invitees, search by name/ID, and page large rosters.
 - Invite using directory search and a full ID. Check joined, pending, banned,
   invalid, and denied users; errors must retain the form for correction.
@@ -799,3 +799,15 @@ Connected/native acceptance remains untested here. In a dedicated test profile:
   writes finish for their captured target and release shutdown bookkeeping once.
 - Allow sync to catch up and reload after ambiguous failures. The editor reads
   synced membership and power levels, not an atomic server transaction.
+
+### Space and member action icons
+
+Space creation uses a globe-plus beside the room hash-plus. Space settings and
+the shared member editor use static outline icons with hover tooltips for save,
+refresh, close, invite, remove/revoke, and paging. Role choices and consequential
+confirmation retain text. These use the existing cached icon renderer and add
+no animation timer. Automated UI tests cover the existing actions and panel
+layout; native appearance and tooltip placement still need a demo-mode check at
+wide/narrow sizes in both themes. Verify every icon's tooltip names its action,
+disabled controls stay disabled during requests, and confirmation still precedes
+removal, invitation revocation, and role changes.
