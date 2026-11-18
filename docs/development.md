@@ -129,12 +129,17 @@ To package an existing local release build:
 
 ```sh
 cargo build --locked --release --bin interconnect
-bash scripts/package-linux-release.sh v0.1.0 target/release/interconnect
+bash scripts/package-linux-release.sh v0.1.1-dev target/release/interconnect
 ```
 
 Use the version matching the manifest. Outputs go to `target/linux-release/`
 and `target/debian/`. Direct Debian packaging uses
 `scripts/package-debian.sh stable VERSION BINARY`.
+
+Development builds currently use `0.1.1-dev`. When bumping the package version,
+update `Cargo.toml`, the root package in `Cargo.lock`, and the packaging example
+above. Keep `CFBundleShortVersionString` in `packaging/macos/Info.plist` at the
+matching numeric version (`0.1.1`), without the prerelease suffix.
 
 ## App logo and desktop icons
 
