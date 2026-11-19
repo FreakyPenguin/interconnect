@@ -16,6 +16,8 @@ pub struct State {
     pending: Option<(u64, u64)>,
     error: Option<String>,
     settling: Vec<Change>,
+    leave_plan: Option<interconnect::room_leave::Plan>,
+    leave_load: Option<iced::task::Handle>,
 }
 #[derive(Clone, Debug, Default)]
 enum Mode {
@@ -65,6 +67,10 @@ impl Change {
     }
 }
 impl State {
+    pub(super) fn cancel_leave_read(&mut self) {
+        self.leave_load = None;
+        self.leave_plan = None;
+    }
     pub(super) fn is_pending(&self) -> bool {
         self.pending.is_some()
     }
@@ -87,6 +93,8 @@ impl State {
         self.link_event = None;
         self.error = None;
         self.settling.clear();
+        self.leave_plan = None;
+        self.leave_load = None;
     }
     pub fn reconcile(&mut self, model: &mut Model) {
         self.settling.retain(|change| !change.confirmed(model));
@@ -105,6 +113,13 @@ pub enum Event {
     ),
     Join,
     Leave(String),
+    ReloadLeave,
+    LeavePrepared(
+        u64,
+        Option<String>,
+        String,
+        Result<interconnect::room_leave::Plan, String>,
+    ),
     Input(String),
     Submit,
     Close,
@@ -123,6 +138,69 @@ fn message(event: Event) -> Message {
 impl App {
     pub(super) fn membership_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::ReloadLeave
+                if self.membership.open
+                    && self.membership.pending.is_none()
+                    && !self.closing
+                    && !self.stopped
+                    && (self.demo.is_some() || self.model.authentication.is_none()) =>
+            {
+                let Mode::Leave(id) = &self.membership.mode else {
+                    return Task::none();
+                };
+                let id = id.clone();
+                self.membership.leave_load = None;
+                self.membership.leave_plan = None;
+                self.membership.error = None;
+                self.generation += 1;
+                self.membership.generation = self.generation;
+                if self.demo.is_some() {
+                    let privileged = self
+                        .model
+                        .rooms
+                        .iter()
+                        .find(|r| r.id == id)
+                        .is_some_and(|r| r.can_edit_topic);
+                    self.membership.leave_plan =
+                        Some(interconnect::room_leave::Plan::demo(id, privileged));
+                } else if let Some(directory) = self.model.people_directory.clone() {
+                    let generation = self.membership.generation;
+                    let account = self.account_id.clone();
+                    let target = id.clone();
+                    let (task, handle) =
+                        Task::perform(directory.prepare_room_leave(id), move |result| {
+                            message(Event::LeavePrepared(
+                                generation,
+                                account.clone(),
+                                target.clone(),
+                                result,
+                            ))
+                        })
+                        .abortable();
+                    self.membership.leave_load = Some(handle.abort_on_drop());
+                    return task;
+                } else {
+                    self.membership.error = Some(
+                        "The account is not ready. Reload to check leave consequences.".into(),
+                    );
+                }
+            }
+            Event::LeavePrepared(generation, account, id, result) => {
+                if self.membership.open
+                    && !self.closing
+                    && !self.stopped
+                    && generation == self.membership.generation
+                    && account == self.account_id
+                    && matches!(&self.membership.mode, Mode::Leave(target) if *target == id)
+                {
+                    self.membership.leave_load = None;
+                    match result {
+                        Ok(plan) => self.membership.leave_plan = Some(plan),
+                        Err(error) => self.membership.error = Some(error),
+                    }
+                }
+            }
+
             Event::Link(_) | Event::MessageLink(_, _) if self.context_menu_allowed() => {
                 let (address, event) = match event {
                     Event::Link(address) => (address, None),
@@ -190,15 +268,24 @@ impl App {
                 self.membership.generation = self.generation;
                 self.membership.open = true;
                 self.membership.error = None;
-                return iced::widget::operation::focus(
-                    if matches!(self.membership.mode, Mode::Join) {
+                self.membership.leave_plan = None;
+                self.membership.leave_load = None;
+                let focus =
+                    iced::widget::operation::focus(if matches!(self.membership.mode, Mode::Join) {
                         "join-room-address"
                     } else {
                         "membership-dialog"
-                    },
-                );
+                    });
+                let load = if matches!(self.membership.mode, Mode::Leave(_)) {
+                    self.membership_event(Event::ReloadLeave)
+                } else {
+                    Task::none()
+                };
+                return Task::batch([focus, load]);
             }
             Event::Close => {
+                self.membership.leave_plan = None;
+                self.membership.leave_load = None;
                 self.membership.open = false;
                 self.membership.link_event = None;
                 return iced::widget::operation::focus("room-composer");
@@ -231,7 +318,11 @@ impl App {
                         }
                         (self.membership.input.trim().to_owned(), true)
                     }
-                    Mode::Leave(id) if self.model.rooms.iter().any(|r| &r.id == id) => {
+                    Mode::Leave(id)
+                        if self.membership.leave_plan.is_some()
+                            && self.membership.leave_load.is_none()
+                            && self.model.rooms.iter().any(|r| &r.id == id) =>
+                    {
                         (id.clone(), false)
                     }
                     _ => return Task::none(),
@@ -264,12 +355,20 @@ impl App {
                     });
                 }
                 let target = room.clone();
+                let leave_plan = self.membership.leave_plan.take();
                 return Task::perform(
                     async move {
                         if joining {
                             service.unwrap().join_room(target).await.map(Some)
                         } else {
-                            service.unwrap().leave_room(target).await.map(|()| None)
+                            service
+                                .unwrap()
+                                .leave_room_checked(
+                                    target,
+                                    leave_plan.expect("reviewed leave warning"),
+                                )
+                                .await
+                                .map(|()| None)
                         }
                     },
                     move |result| {
@@ -403,9 +502,11 @@ impl App {
                             }
                         }
                     }
-                    Err(error) => {
+                    Err(error) if visible => {
+                        self.membership.leave_plan = None;
                         self.membership.error = Some(error);
                     }
+                    Err(_) => {}
                 }
             }
             _ => {}
@@ -444,7 +545,16 @@ impl App {
                 }
                 Mode::Leave(id) => {
                     let name = self.model.rooms.iter().find(|r| &r.id == id).map_or(id.as_str(), |r| r.name.as_str());
-                    entries = entries.push(shell::title(name, 16)).push(text("You may need another invitation to rejoin this room.").size(13));
+                    entries = entries.push(shell::title(name, 16));
+                    if let Some(plan) = &self.membership.leave_plan {
+                        for warning in plan.warnings() { entries = entries.push(text(warning).size(13)); }
+                    } else if self.membership.leave_load.is_some() {
+                        entries = entries.push(text("Checking encryption, permissions, and remaining members…").size(13));
+                    }
+                    entries = entries.push(super::tooltips::icon_button(
+                        super::icons::Kind::Refresh, "Reload leave consequences",
+                        (!busy && self.membership.leave_load.is_none()).then_some(message(Event::ReloadLeave))
+                    ));
                     "Leave this room?"
                 }
             };
@@ -455,13 +565,16 @@ impl App {
                 let leaving = matches!(self.membership.mode, Mode::Leave(_));
                 actions = actions.push(button(text(if leaving { "Leave room" } else { "Join room" }).size(13))
                     .style(if leaving { button::danger } else { shell::primary_button })
-                    .on_press_maybe((!busy && !self.closing && (leaving || !self.membership.input.trim().is_empty())).then_some(message(Event::Submit))));
+                    .on_press_maybe((!busy && !self.closing && (if leaving { self.membership.leave_plan.is_some() && self.membership.leave_load.is_none() } else { !self.membership.input.trim().is_empty() })).then_some(message(Event::Submit))));
             }
-            let card = column![shell::title(title, 20),
+            let heading = if matches!(self.membership.mode, Mode::Leave(_)) {
+                shell::title(title, 20).style(shell::danger_text)
+            } else { shell::title(title, 20) };
+            let card = column![heading,
                 scrollable(entries).height(Length::Fill).direction(shell::scrollbar()).style(shell::scroll_style), actions,
             ].spacing(18);
             container(container(card).id("membership-dialog").padding(20).width(520)
-                .height((size.height - 48.0).clamp(1.0, if matches!(self.membership.mode, Mode::Invitations) { 560.0 } else { 320.0 })).style(|theme| shell::surface(theme, shell::palette(theme).background)))
+                .height((size.height - 48.0).clamp(1.0, if matches!(self.membership.mode, Mode::Invitations) { 560.0 } else if matches!(self.membership.mode, Mode::Join) { 320.0 } else { 640.0 })).style(|theme| shell::surface(theme, shell::palette(theme).background)))
                 .padding(24).center_x(Length::Fill).center_y(Length::Fill).style(|theme| shell::surface(theme, shell::palette(theme).sidebar)).into()
         }).into()
     }
@@ -560,6 +673,62 @@ mod tests {
         }
     }
 
+    #[test]
+    fn leave_preview_is_required_and_late_warnings_cannot_replace_a_new_dialog() {
+        let mut app = app();
+        let id = app.selection.room.as_ref().unwrap().1.clone();
+        let _ = app.update(message(Event::Leave(id.clone())));
+        let old = app.membership.generation;
+        let plan = app.membership.leave_plan.take().unwrap();
+        assert!(
+            plan.warnings()
+                .iter()
+                .any(|warning| warning.contains("encrypted"))
+        );
+        let _ = app.update(message(Event::Submit));
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.model.rooms.iter().any(|room| room.id == id));
+        let _ = app.update(message(Event::ReloadLeave));
+        let current = app.membership.generation;
+        assert_ne!(old, current);
+        let _ = app.update(message(Event::LeavePrepared(
+            old,
+            app.account_id.clone(),
+            id.clone(),
+            Err("late preview".into()),
+        )));
+        assert!(app.membership.error.is_none());
+        assert!(app.membership.leave_plan.is_some());
+        let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::Join));
+        let _ = app.update(message(Event::LeavePrepared(
+            current,
+            app.account_id.clone(),
+            id,
+            Ok(plan),
+        )));
+        assert!(matches!(app.membership.mode, Mode::Join));
+        assert!(app.membership.leave_plan.is_none());
+    }
+    #[test]
+    fn room_settings_leave_opens_the_warning_without_leaving_or_losing_the_draft() {
+        let mut app = app();
+        let id = app.selection.room.as_ref().unwrap().1.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("keep this");
+        let _ = app.update(Message::RoomSettings(crate::room_settings::Event::Open(
+            id.clone(),
+        )));
+        let _ = app.update(Message::RoomSettings(crate::room_settings::Event::Leave));
+        assert!(app.membership.open && !app.room_settings.is_open());
+        assert!(matches!(&app.membership.mode, Mode::Leave(room) if *room == id));
+        assert!(app.membership.leave_plan.is_some());
+        assert!(app.model.rooms.iter().any(|room| room.id == id));
+        assert_eq!(app.pending_ops, 0);
+        let _ = app.update(message(Event::Close));
+        assert_eq!(app.drafts[&key].content.text().trim_end(), "keep this");
+    }
     #[test]
     fn closing_and_declining_preserve_conversation_drafts_and_reading_position() {
         let mut app = app();
@@ -665,32 +834,41 @@ mod tests {
         let mut app = app();
         let _ = app.update(message(Event::Open));
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
-        for size in [
-            iced::Size::new(640.0, 480.0),
-            iced::Size::new(1240.0, 820.0),
-        ] {
-            let mut view = app.view();
-            let mut tree = widget::Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            assert_eq!(node.size(), size);
-            let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    iced::time::Instant::now(),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-            assert!(messages.is_empty());
+        for leave in [false, true] {
+            if leave {
+                let _ = app.update(message(Event::Close));
+                let id = app.selection.room.as_ref().unwrap().1.clone();
+                let _ = app.update(message(Event::Leave(id)));
+            }
+            for size in [
+                iced::Size::new(640.0, 480.0),
+                iced::Size::new(1240.0, 820.0),
+            ] {
+                let mut view = app.view();
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                assert_eq!(node.size(), size);
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &iced::Event::Window(iced::window::Event::RedrawRequested(
+                        iced::time::Instant::now(),
+                    )),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &iced::Rectangle::with_size(size),
+                );
+                assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+                assert!(messages.is_empty());
+            }
         }
     }
 }

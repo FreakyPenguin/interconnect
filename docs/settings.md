@@ -146,6 +146,22 @@ Escape discards unsaved edits; **Reload** replaces edits with current synced sta
 Members & invitations opens the shared member editor; Leave room opens a separate
 confirmation before leaving. The room ID and encryption status are also shown.
 
+**Leave room…** is a red action. Its confirmation checks current server state
+before enabling Leave, explaining loss of message access, possible invitation
+requirements, and elevated permissions you may not regain after rejoining. It adds
+warnings for the last administrator, no remaining inviter in a non-public room,
+and the last joined member. Transfer responsibility before leaving when needed.
+Encrypted rooms also warn that history can become permanently unreadable if
+required keys are lost or unavailable; rejoining does not recover those keys.
+Leaving does not itself delete stored encryption keys, forget the room, or remove
+other members/history.
+
+Confirming rechecks these consequences. If membership, permissions, or encryption
+changed, **Reload leave consequences** and review again. Remote changes can still
+race the final leave request. Failed or timed-out writes require checking current
+membership before retrying. Cancel closes the confirmation without leaving or
+discarding conversation drafts.
+
 Notifications offer **Use account default**, **All messages**, **Mentions & keywords**,
 and **Mute room**. The effective account default is displayed. These use Matrix
 account push rules, so they follow the account across clients. Application-wide

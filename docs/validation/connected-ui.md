@@ -970,3 +970,34 @@ manual, using a dedicated test profile and disposable rooms/spaces:
   must be ignored. Close or change account during writes: the captured operation
   finishes, releases pending bookkeeping once, and cannot alter another panel or
   account. Verify shutdown waits for admitted writes.
+
+### Room leave consequences
+
+Room settings has a red Leave room action. Automated checks cover fresh encrypted,
+elevated-role, last-admin/inviter/member warnings; changed-consequence rejection;
+read failures; explicit confirmation; stale preview rejection; preserving drafts;
+and the confirmation's layout and idle redraw behavior. Confirmed room leave is
+separate from space disband/forget and sends no forget or key-deletion request.
+
+Native/connected acceptance remains manual, using disposable rooms and dedicated
+accounts:
+
+- Open Leave from room settings and the room menu. Check red styling, room identity,
+  readable scrollable warnings at minimum window size in both themes, Cancel, and
+  Leave disabled while checking state or after a read failure. Opening alone and
+  pressing Enter in the dialog must not leave. Reload retries a failed preview.
+- Compare unencrypted public rooms, encrypted rooms, elevated members with another
+  administrator, the last administrator, non-public rooms with no remaining inviter,
+  and the last joined member. Warnings must describe possible permanent loss of
+  access/history without claiming that leaving itself deletes keys or other users'
+  history. Review/transfer privileges or verify recovery using another trusted
+  device before testing an encrypted or final-member leave.
+- Change encryption, membership, or relevant capabilities on another client after
+  preview. Confirm must reject changed consequences and require Reload. Concurrent
+  changes can still race the final request; no atomicity is promised.
+- Cancel/close/reopen or change accounts during preview: cancel reads and ignore late
+  warnings/errors. Close during a confirmed write: keep the captured account/room,
+  release bookkeeping once, and wait for it during shutdown. A failed/ambiguous
+  leave requires reviewing state again before retrying. Successful leave removes
+  only the selected room, preserves drafts/other conversations, and must survive
+  an older queued navigation snapshot.

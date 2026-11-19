@@ -1993,6 +1993,7 @@ impl App {
             }
             Message::Close if self.demo.is_some() => return iced::exit(),
             Message::Close => {
+                self.membership.cancel_leave_read();
                 self.emoji_management = None;
                 self.bookmarks.close();
                 self.global_search.close();

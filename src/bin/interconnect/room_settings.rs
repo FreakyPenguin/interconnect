@@ -624,9 +624,16 @@ impl App {
                 button("Members & invitations")
                     .style(shell::quiet_button)
                     .on_press_maybe((!busy).then_some(message(Event::Members))),
-                button("Leave room…")
-                    .style(shell::quiet_button)
-                    .on_press_maybe((!busy).then_some(message(Event::Leave))),
+                button(
+                    row![
+                        super::icons::icon(super::icons::Kind::ArrowLeft),
+                        text("Leave room…")
+                    ]
+                    .spacing(7)
+                    .align_y(iced::Alignment::Center)
+                )
+                .style(button::danger)
+                .on_press_maybe((!busy).then_some(message(Event::Leave))),
             ]
             .spacing(8),
         );

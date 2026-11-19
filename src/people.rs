@@ -174,6 +174,18 @@ impl Directory {
         result
     }
 
+    pub async fn prepare_room_leave(self, room: String) -> Result<crate::room_leave::Plan, String> {
+        crate::room_leave::prepare(&self.0, &room).await
+    }
+    pub async fn leave_room_checked(
+        self,
+        room: String,
+        plan: crate::room_leave::Plan,
+    ) -> Result<(), String> {
+        let result = crate::room_leave::execute(&self.0, &room, plan).await;
+        let _ = self.1.send(());
+        result
+    }
     pub async fn leave_room(self, room: String) -> Result<(), String> {
         let result = crate::room_membership::leave(&self.0, &room).await;
         let _ = self.1.send(());
