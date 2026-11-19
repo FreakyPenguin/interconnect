@@ -44,6 +44,50 @@ profile or opens sign-in. Use a dedicated test profile for connected validation;
 see [profiles](settings.md#account-profiles) and [UI checks](validation/connected-ui.md).
 Do not send test messages or restart an existing connected client without authorization.
 
+### README screenshots
+
+The images in `docs/images/` are captures of the running demo, using a 1440×960
+window and the default light theme on Linux/Wayland. Capture only the app's
+content, excluding desktop chrome, tooltips, and other windows. Keep each image
+focused on a different workflow:
+
+| Image | Demo setup |
+| --- | --- |
+| `demo.png` | Start in Studio → Design studio; Alt+T opens the latest thread beside the room. |
+| `spaces.png` | Keep that room/thread open; use Home's tree to select Studio → Product → Design, then reopen the tree. The filtered sidebar and unchanged conversation should both be visible. |
+| `formatting.png` | Ctrl+P → Message formatting; enter the draft below and click the preview eye. Focus the composer and use Page Up to show the beginning of the timeline with highlighted code. |
+| `search.png` | Ctrl+Shift+F → search for `quiet` and submit to show matches across conversations. |
+
+`keyboard-navigation.gif` is a paced sequence of actual demo captures with key
+labels added below the app. Capture the following states in order, allowing the
+UI to settle after every key press:
+
+1. Initial Design studio room; Alt+T opens its thread.
+2. Ctrl+Shift+P opens the space picker; type `Design`, Down selects Mobile,
+   then Enter filters the sidebar while preserving the room/thread.
+3. Ctrl+P opens the room picker; type `Design studio`, then Enter opens the room.
+   Alt+T returns to its thread.
+4. Ctrl+Shift+F opens account search; type `quiet`, Enter shows results,
+   then Escape returns to the conversation.
+
+Use the same 1440×960 capture area; resize to 1200×800 and append a 76-pixel
+caption/key strip. The GIF has 14 frames held for 1.3–2.8 seconds (26 seconds in
+total), a shared 256-color palette, and no transition effects. Keep source frames
+and intermediate rendering files outside the repository. Verify every capture
+contains only the demo window and inspect the decoded GIF before replacing it.
+
+The formatting capture uses this unsent draft:
+
+```text
+**A useful identity**
+$$\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}$$
+```
+
+These screenshots demonstrate local UI states, not connected-server acceptance
+or draft persistence across restarts. Demo history is already fully included;
+its search view does not exercise encrypted history downloads. See the
+[connected UI guide](validation/connected-ui.md) for those checks.
+
 ## macOS builds
 
 On a Mac with Rust and Xcode command-line tools:
