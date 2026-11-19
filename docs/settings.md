@@ -221,8 +221,12 @@ control. Refresh and close use arrow and × icons; hover for action names.
 Restricted/knock/custom access remains read-only. Changing space filters or opening
 a conversation closes the panel; it never selects a space as a conversation.
 
-Space settings includes the shared member editor. For rooms, open **People →
-Manage members** (sliders icon) or **Room settings → Members & invitations**.
+Space settings includes the shared member editor. For rooms, open **People** to
+manage members directly in the sidebar, or **Room settings → Members & invitations**
+for the full editor. Both share the same role dropdowns, removal actions,
+confirmations, permission checks, and asynchronous writes. People keeps its avatars,
+presence, search/paging, and member chat actions; its reload button refreshes member
+permissions without clearing the search.
 Search matches names or Matrix IDs; large lists show 50 people per page. The people picker accepts a
 server-directory result or full Matrix ID. Pending invitations are labeled.
 Person-minus removes a member; × revokes a pending invitation. Tooltips name

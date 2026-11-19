@@ -11,7 +11,7 @@ use iced::{
 };
 use interconnect::{
     connected::Member,
-    room_management::{ManagedMember, MemberChange, Role, Roster},
+    room_management::{ManagedMember, Management, MemberChange, Role, Roster},
 };
 use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
 
@@ -52,6 +52,7 @@ impl State {
 
 #[derive(Clone, Debug)]
 pub enum Event {
+    Ready(u64, Box<Result<(Management, Roster), String>>),
     Reload,
     Search(String),
     Page(usize),
@@ -64,14 +65,56 @@ pub enum Event {
     Loaded(u64, u64, Box<Result<Roster, String>>),
     Saved(u64, u64, MemberChange, Result<(), String>),
 }
+#[derive(Clone, Copy)]
+pub(crate) enum Host {
+    Panel,
+    Sidebar,
+}
+impl Host {
+    pub(crate) fn message(self, event: Event) -> Message {
+        match self {
+            Self::Panel => message(PanelEvent::Members(event)),
+            Self::Sidebar => message(PanelEvent::SidebarMembers(event)),
+        }
+    }
+}
 fn event(event: Event) -> Message {
-    message(PanelEvent::Members(event))
+    Host::Panel.message(event)
 }
 fn power(role: Role) -> matrix_sdk::ruma::Int {
     match role {
         Role::Member => matrix_sdk::ruma::int!(0),
         Role::Moderator => matrix_sdk::ruma::int!(50),
         Role::Admin => matrix_sdk::ruma::int!(100),
+    }
+}
+fn apply_snapshot(snapshot: &mut interconnect::connected::Members, change: &MemberChange) {
+    let rows = std::sync::Arc::make_mut(&mut snapshot.rows);
+    match change {
+        MemberChange::Remove { user, .. } => rows.retain(|member| member.user_id != *user),
+        MemberChange::Role { user, role, .. } => {
+            if let Some(member) = rows.iter_mut().find(|member| member.user_id == *user) {
+                member.role = role.to_string();
+            }
+        }
+        MemberChange::Invite(user) => {
+            if !rows.iter().any(|member| member.user_id == *user) {
+                rows.push(Member {
+                    name: user.clone(),
+                    user_id: user.clone(),
+                    avatar_url: None,
+                    invited: true,
+                    role: String::new(),
+                });
+                rows.sort_by_cached_key(|member| {
+                    (
+                        member.invited,
+                        member.name.to_lowercase(),
+                        member.user_id.clone(),
+                    )
+                });
+            }
+        }
     }
 }
 fn apply(roster: &mut Roster, change: &MemberChange) {
@@ -112,18 +155,30 @@ fn apply(roster: &mut Roster, change: &MemberChange) {
     });
 }
 impl App {
-    pub(in crate::space_settings) fn member_management_event(
-        &mut self,
-        incoming: Event,
-    ) -> Task<Message> {
+    pub(crate) fn member_management_event(&mut self, host: Host, incoming: Event) -> Task<Message> {
         if let Event::Saved(panel_request, operation, change, result) = incoming {
-            let Some((_, room)) = self.space_settings.writes.remove(&operation) else {
+            let Some((account, room)) = self.space_settings.writes.remove(&operation) else {
                 return Task::none();
             };
             self.inviting.remove(&room);
             self.pending_ops = self.pending_ops.saturating_sub(1);
-            if let Some(panel) = &mut self.space_settings.panel
-                && panel.request == panel_request
+            if result.is_ok()
+                && account == self.account_id
+                && self
+                    .selection
+                    .room
+                    .as_ref()
+                    .is_some_and(|(_, id)| *id == room)
+                && let Some(snapshot) = &mut self.model.members
+                && Some(snapshot.generation) == self.selection.members
+            {
+                apply_snapshot(snapshot, &change);
+            }
+
+            if let Some(panel) = (match host {
+                Host::Panel => &mut self.space_settings.panel,
+                Host::Sidebar => &mut self.space_settings.sidebar,
+            }) && panel.request == panel_request
             {
                 panel.pending = false;
                 match result {
@@ -139,11 +194,29 @@ impl App {
             }
             return Task::none();
         }
-        let Some(panel) = &mut self.space_settings.panel else {
+        let Some(panel) = (match host {
+            Host::Panel => &mut self.space_settings.panel,
+            Host::Sidebar => &mut self.space_settings.sidebar,
+        }) else {
             return Task::none();
         };
         let session = panel.request;
         match incoming {
+            Event::Ready(request, result) => {
+                if request != session {
+                    return Task::none();
+                }
+                panel.pending = false;
+                panel.load = None;
+                match *result {
+                    Ok((control, roster)) => {
+                        panel.control = Some(control);
+                        panel.members.roster = Some(roster);
+                    }
+                    Err(error) => panel.error = Some(error),
+                }
+            }
+
             Event::Loaded(request, operation, result) => {
                 if request != session || operation != panel.members.request {
                     return Task::none();
@@ -179,7 +252,15 @@ impl App {
                             .iter()
                             .any(|r| r.id == panel.id && r.direct);
                     let rows = demo.members(0, &panel.id, direct).rows;
-                    let can_manage = panel.saved.as_ref().is_some_and(|s| s.editable[0]);
+                    let can_manage = if matches!(host, Host::Sidebar) {
+                        self.model
+                            .rooms
+                            .iter()
+                            .find(|r| r.id == panel.id)
+                            .is_some_and(|r| r.can_invite)
+                    } else {
+                        panel.saved.as_ref().is_some_and(|s| s.editable[0])
+                    };
                     let roster = Roster {
                         can_invite: can_manage,
                         rows: rows
@@ -215,7 +296,7 @@ impl App {
                     panel.pending = true;
                     let operation = panel.members.request;
                     let (task, handle) = Task::perform(control.members(), move |result| {
-                        event(Event::Loaded(session, operation, Box::new(result)))
+                        host.message(Event::Loaded(session, operation, Box::new(result)))
                     })
                     .abortable();
                     panel.members.load = Some(handle.abort_on_drop());
@@ -229,7 +310,7 @@ impl App {
             Event::Page(page) => panel.members.page = page,
             Event::Picker(request, picker) if request == session && !panel.pending => {
                 if matches!(picker, people_picker::Event::Submit) {
-                    return self.member_management_event(Event::Invite);
+                    return self.member_management_event(host, Event::Invite);
                 }
                 if matches!(
                     picker,
@@ -248,7 +329,7 @@ impl App {
                         self.model.people_directory.clone(),
                         self.demo.is_some(),
                     )
-                    .map(move |picker| event(Event::Picker(session, picker)));
+                    .map(move |picker| host.message(Event::Picker(session, picker)));
             }
             Event::Remove(user) if !panel.pending => {
                 if let Some(member) = panel.members.roster.as_ref().and_then(|r| {
@@ -326,6 +407,16 @@ impl App {
                     {
                         invitations.retain(|m| m.user_id != *user);
                     }
+                    if self
+                        .selection
+                        .room
+                        .as_ref()
+                        .is_some_and(|(_, id)| *id == panel.id)
+                        && let Some(snapshot) = &mut self.model.members
+                        && Some(snapshot.generation) == self.selection.members
+                    {
+                        apply_snapshot(snapshot, &change);
+                    }
                     panel.members.picker.clear();
                     panel.success = true;
                 } else if let Some(control) = panel.control.clone() {
@@ -340,13 +431,68 @@ impl App {
                         .insert(operation, (panel.account.clone(), panel.id.clone()));
                     let completed = change.clone();
                     return Task::perform(control.change_member(change), move |result| {
-                        event(Event::Saved(session, operation, completed.clone(), result))
+                        host.message(Event::Saved(session, operation, completed.clone(), result))
                     });
                 }
             }
             _ => {}
         }
         Task::none()
+    }
+    pub(crate) fn sidebar_member_controls<'a>(
+        &'a self,
+        member: &'a Member,
+    ) -> Element<'a, Message> {
+        if let Some(panel) = &self.space_settings.sidebar
+            && let Some(managed) = panel.members.roster.as_ref().and_then(|roster| {
+                roster.rows.iter().find(|row| {
+                    row.member.user_id == member.user_id && row.member.invited == member.invited
+                })
+            })
+        {
+            return member_controls(
+                managed,
+                panel.pending || self.inviting.contains(&panel.id),
+                Host::Sidebar,
+            );
+        }
+        text(if member.invited {
+            "Invited"
+        } else if member.role.is_empty() {
+            "Member"
+        } else {
+            &member.role
+        })
+        .size(11)
+        .style(shell::muted_text)
+        .into()
+    }
+    pub(crate) fn member_sidebar_feedback(&self) -> Element<'_, Message> {
+        let mut content = column![].spacing(8);
+        if let Some(panel) = &self.space_settings.sidebar {
+            if let Some(error) = &panel.error {
+                content = content.push(text(error).size(12));
+            }
+            if panel.pending {
+                content = content.push(
+                    text(if panel.load.is_some() || panel.members.load.is_some() {
+                        "Loading member controls…"
+                    } else {
+                        "Saving…"
+                    })
+                    .size(12),
+                );
+            }
+            if panel.success {
+                content = content.push(
+                    text("Saved. Reload permissions before making another role change.").size(12),
+                );
+            }
+            if let Some(change) = &panel.members.confirm {
+                content = content.push(confirmation(change, false, panel.pending, Host::Sidebar));
+            }
+        }
+        content.into()
     }
     pub(crate) fn member_management_avatars(&self) -> Vec<matrix_sdk::ruma::OwnedMxcUri> {
         self.space_settings
@@ -407,50 +553,7 @@ impl App {
             );
         }
         if let Some(change) = &state.confirm {
-            let description = match change {
-                MemberChange::Remove { user, invited } => format!(
-                    "{} {user}?",
-                    if *invited {
-                        "Revoke the invitation for"
-                    } else {
-                        "Remove"
-                    }
-                ),
-                MemberChange::Role { user, role, .. } => format!("Make {user} {role}?"),
-                _ => String::new(),
-            };
-            content = content.push(
-                container(
-                    column![
-                        text(description).size(14),
-                        text(if panel.space {
-                            "This changes only this space. Membership in its rooms stays intact."
-                        } else {
-                            "This changes membership or permissions in this room."
-                        })
-                        .size(12)
-                        .style(shell::muted_text),
-                        row![
-                            button(
-                                row![icons::icon(Kind::Check), text("Confirm")]
-                                    .spacing(6)
-                                    .align_y(iced::Alignment::Center)
-                            )
-                            .style(shell::primary_button)
-                            .on_press_maybe((!busy).then_some(event(Event::Confirm))),
-                            icon_button(
-                                Kind::Close,
-                                "Cancel change",
-                                (!busy).then_some(event(Event::Cancel))
-                            )
-                        ]
-                        .spacing(8)
-                    ]
-                    .spacing(10),
-                )
-                .padding(12)
-                .style(|theme| shell::surface(theme, shell::palette(theme).rail)),
-            );
+            content = content.push(confirmation(change, panel.space, busy, Host::Panel));
         }
         content = content.push(
             text_input("Find a member…", &state.query)
@@ -489,54 +592,11 @@ impl App {
             ]
             .spacing(3)
             .width(Length::Fill);
-            let role: Element<'_, Message> = if !managed.roles.is_empty() && !busy {
-                let user = member.user_id.clone();
-                pick_list(managed.roles.clone(), None::<Role>, move |role| {
-                    event(Event::Role(user.clone(), role))
-                })
-                .placeholder(member.role.clone())
-                .style(shell::select_style)
-                .padding([6, 8])
-                .width(Length::Fill)
-                .text_size(12)
-                .into()
-            } else {
-                text(if member.invited {
-                    "Invited"
-                } else {
-                    &member.role
-                })
-                .size(12)
-                .style(shell::muted_text)
-                .into()
-            };
-            let removal: Element<'_, Message> = if managed.can_remove {
-                icon_button(
-                    if member.invited {
-                        Kind::Close
-                    } else {
-                        Kind::PersonRemove
-                    },
-                    if member.invited {
-                        "Revoke invitation"
-                    } else {
-                        "Remove member"
-                    },
-                    (!busy).then(|| event(Event::Remove(member.user_id.clone()))),
-                )
-                .into()
-            } else {
-                iced::widget::space().into()
-            };
             content = content.push(
                 column![
-                    row![
-                        identity,
-                        container(role).width(128),
-                        container(removal).width(32)
-                    ]
-                    .spacing(12)
-                    .align_y(iced::Alignment::Center),
+                    row![identity, member_controls(managed, busy, Host::Panel)]
+                        .spacing(12)
+                        .align_y(iced::Alignment::Center),
                     rule::horizontal(1),
                 ]
                 .spacing(8),
@@ -567,6 +627,114 @@ impl App {
     }
 }
 
+pub(crate) fn member_controls<'a>(
+    managed: &'a ManagedMember,
+    busy: bool,
+    host: Host,
+) -> Element<'a, Message> {
+    let member = &managed.member;
+    let role: Element<'_, Message> = if !managed.roles.is_empty() && !busy {
+        let user = member.user_id.clone();
+        pick_list(managed.roles.clone(), None::<Role>, move |role| {
+            host.message(Event::Role(user.clone(), role))
+        })
+        .placeholder(if member.role.is_empty() {
+            "Member".to_owned()
+        } else {
+            member.role.clone()
+        })
+        .style(shell::select_style)
+        .padding([6, 8])
+        .width(Length::Fill)
+        .text_size(12)
+        .into()
+    } else {
+        text(if member.invited {
+            "Invited"
+        } else if member.role.is_empty() {
+            "Member"
+        } else {
+            &member.role
+        })
+        .size(12)
+        .style(shell::muted_text)
+        .into()
+    };
+    let removal: Element<'_, Message> = if managed.can_remove {
+        icon_button(
+            if member.invited {
+                Kind::Close
+            } else {
+                Kind::PersonRemove
+            },
+            if member.invited {
+                "Revoke invitation"
+            } else {
+                "Remove member"
+            },
+            (!busy).then(|| host.message(Event::Remove(member.user_id.clone()))),
+        )
+        .into()
+    } else {
+        iced::widget::space().into()
+    };
+
+    row![container(role).width(128), container(removal).width(32)]
+        .spacing(12)
+        .align_y(iced::Alignment::Center)
+        .into()
+}
+fn confirmation(
+    change: &MemberChange,
+    space: bool,
+    busy: bool,
+    host: Host,
+) -> Element<'_, Message> {
+    let description = match change {
+        MemberChange::Remove { user, invited } => format!(
+            "{} {user}?",
+            if *invited {
+                "Revoke the invitation for"
+            } else {
+                "Remove"
+            }
+        ),
+        MemberChange::Role { user, role, .. } => format!("Make {user} {role}?"),
+        _ => String::new(),
+    };
+    container(
+        column![
+            text(description).size(14),
+            text(if space {
+                "This changes only this space. Membership in its rooms stays intact."
+            } else {
+                "This changes membership or permissions in this room."
+            })
+            .size(12)
+            .style(shell::muted_text),
+            row![
+                button(
+                    row![icons::icon(Kind::Check), text("Confirm")]
+                        .spacing(6)
+                        .align_y(iced::Alignment::Center)
+                )
+                .style(shell::primary_button)
+                .on_press_maybe((!busy).then_some(host.message(Event::Confirm))),
+                icon_button(
+                    Kind::Close,
+                    "Cancel change",
+                    (!busy).then_some(host.message(Event::Cancel))
+                )
+            ]
+            .spacing(8)
+        ]
+        .spacing(10),
+    )
+    .padding(12)
+    .style(|theme| shell::surface(theme, shell::palette(theme).rail))
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -590,6 +758,153 @@ mod tests {
             .as_ref()
             .unwrap()
             .rows
+    }
+    fn open_sidebar(app: &mut App) -> u64 {
+        let _ = app.update(Message::Members(crate::members::Event::Open));
+        app.space_settings.sidebar.as_ref().unwrap().request
+    }
+    #[test]
+    fn people_sidebar_shares_role_removal_and_invitation_confirmations() {
+        let mut app = demo_app();
+        let _ = app.update(Message::WindowResized(1400.0));
+        let room = app.selection.room.clone();
+        let scope = app.shell.space.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("unsent");
+        app.scroll_positions.insert(key.clone(), 135.0);
+        open_sidebar(&mut app);
+        assert!(!app.space_settings.is_open());
+        assert!(!app.side_panel_replaces_room(1400.0));
+        for action in [
+            Event::Remove("@you:example.org".into()),
+            Event::Role("@alex:example.org".into(), Role::Member),
+        ] {
+            let _ = app.update(Host::Sidebar.message(action));
+            assert!(
+                app.space_settings
+                    .sidebar
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .confirm
+                    .is_none()
+            );
+        }
+        let _ = app
+            .update(Host::Sidebar.message(Event::Role("@sam:example.org".into(), Role::Moderator)));
+        assert!(
+            app.space_settings
+                .sidebar
+                .as_ref()
+                .unwrap()
+                .members
+                .confirm
+                .is_some()
+        );
+        let _ = app.members_view();
+        let _ = app.update(Host::Sidebar.message(Event::Cancel));
+        assert!(
+            app.model
+                .members
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|m| m.user_id == "@sam:example.org")
+                .unwrap()
+                .role
+                .is_empty()
+        );
+        let _ = app
+            .update(Host::Sidebar.message(Event::Role("@sam:example.org".into(), Role::Moderator)));
+        let _ = app.update(Host::Sidebar.message(Event::Confirm));
+        assert_eq!(
+            app.model
+                .members
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .find(|m| m.user_id == "@sam:example.org")
+                .unwrap()
+                .role,
+            "Moderator"
+        );
+        for user in ["@maya:example.org", "@casey:example.org"] {
+            let _ = app.update(Host::Sidebar.message(Event::Remove(user.into())));
+            assert!(
+                app.space_settings
+                    .sidebar
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .confirm
+                    .is_some()
+            );
+            let _ = app.update(Host::Sidebar.message(Event::Confirm));
+            assert!(
+                !app.model
+                    .members
+                    .as_ref()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .any(|m| m.user_id == user)
+            );
+        }
+        let _ = app.update(Message::Members(crate::members::Event::Search(
+            "sam".into(),
+        )));
+        let _ = app.update(Host::Sidebar.message(Event::Reload));
+        assert_eq!(app.visible_members().len(), 1);
+        assert_eq!(app.selection.room, room);
+        assert_eq!(app.shell.space, scope);
+        assert_eq!(app.drafts[&key].content.text(), "unsent");
+        assert_eq!(app.scroll_positions[&key], 135.0);
+        assert_eq!(app.pending_ops, 0);
+    }
+    #[test]
+    fn sidebar_sessions_reject_late_reads_and_release_writes_once_after_closing() {
+        let mut app = demo_app();
+        let old = open_sidebar(&mut app);
+        let id = app.selection.room.as_ref().unwrap().1.clone();
+        app.generation += 1;
+        let operation = app.generation;
+        app.space_settings
+            .writes
+            .insert(operation, (app.account_id.clone(), id.clone()));
+        app.inviting.insert(id.clone());
+        app.pending_ops = 1;
+        let _ = app.update(Message::Members(crate::members::Event::Close));
+        assert!(app.space_settings.sidebar.is_none());
+        let current = open_sidebar(&mut app);
+        let _ = app
+            .update(Host::Sidebar.message(Event::Ready(old, Box::new(Err("late lookup".into())))));
+        let _ = app.update(Host::Sidebar.message(Event::Loaded(
+            old,
+            operation,
+            Box::new(Err("late roster".into())),
+        )));
+        let saved = Host::Sidebar.message(Event::Saved(
+            old,
+            operation,
+            MemberChange::Role {
+                user: "@sam:example.org".into(),
+                before: UserPowerLevel::Int(matrix_sdk::ruma::int!(0)),
+                role: Role::Admin,
+            },
+            Err("late write".into()),
+        ));
+        let _ = app.update(saved.clone());
+        let _ = app.update(saved);
+        assert_eq!(app.pending_ops, 0);
+        assert!(!app.inviting.contains(&id));
+        let panel = app.space_settings.sidebar.as_ref().unwrap();
+        assert_eq!(panel.request, current);
+        assert!(panel.error.is_none());
+        let _ = app.update(Message::Thread("proposal".into()));
+        assert!(app.space_settings.sidebar.is_none());
     }
     #[test]
     fn room_and_space_editors_share_invites_confirmations_and_preserve_the_conversation() {

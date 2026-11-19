@@ -1,5 +1,6 @@
 //! People shares the conversation sidebar with threads; drafts stay conversation-owned.
 use super::{App, Message, shell};
+use crate::space_settings::member_management::{self, Host};
 use iced::{
     Element, Length, Task,
     widget::{button, column, container, row, rule, scrollable, text, text_input, tooltip},
@@ -36,8 +37,10 @@ impl App {
                 self.pending_scroll[1] = None;
                 self.pending_scroll[0] = Some(self.saved_scroll(false));
                 self.members = State::default();
+                return self.open_member_sidebar();
             }
             Event::Close => {
+                self.close_member_sidebar();
                 self.selection.members = None;
                 self.pending_scroll[0] = Some(self.saved_scroll(false));
             }
@@ -114,15 +117,10 @@ impl App {
             shell::title("People", 18),
             iced::widget::space().width(Length::Fill),
             super::tooltips::icon_button(
-                super::icons::Kind::Settings,
-                "Manage members",
-                self.selection
-                    .room
-                    .as_ref()
-                    .filter(|_| self.context_menu_allowed())
-                    .map(|(_, id)| Message::SpaceSettings(
-                        super::space_settings::Event::OpenMembers(id.clone())
-                    ))
+                super::icons::Kind::Refresh,
+                "Reload member permissions",
+                (!self.closing && !self.stopped)
+                    .then_some(Host::Sidebar.message(member_management::Event::Reload))
             ),
             self.presence_refresh_control(),
             super::tooltips::tooltip(
@@ -141,6 +139,7 @@ impl App {
         .align_y(iced::Alignment::Center);
         let mut content =
             column![container(header).padding([18, 24]), rule::horizontal(1)].spacing(0);
+        content = content.push(container(self.member_sidebar_feedback()).padding([8, 16]));
         if self.can_invite() {
             if self.invite.is_some() {
                 return content
@@ -202,7 +201,7 @@ impl App {
                     ))
                     .size(12)
                     .style(shell::muted_text),
-                    text("Statuses are last checked snapshots; refresh for the latest.")
+                    text("Statuses and roles are snapshots; refresh for the latest.")
                         .size(11)
                         .style(shell::muted_text),
                 ]
@@ -265,13 +264,7 @@ impl App {
                                 }
                             ),
                             identity,
-                            text(if member.invited {
-                                "Invited"
-                            } else {
-                                &member.role
-                            })
-                            .size(11)
-                            .style(shell::muted_text)
+                            self.sidebar_member_controls(member)
                         ]
                         .spacing(10)
                         .align_y(iced::Alignment::Center),

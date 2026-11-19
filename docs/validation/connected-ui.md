@@ -785,10 +785,15 @@ The editor uses on-demand SDK reads with no polling or background animation.
 
 Connected/native acceptance remains untested here. In a dedicated test profile:
 
-- Open Space settings, then People → Manage members (sliders) for a conversation; check both list
+- Open Space settings, then People for a conversation; check both list
   joined members and pending invitees, search by name/ID, and page large rosters.
   Check that each identity, current-role dropdown, and removal action share one
-  row in both themes and at minimum window width, including long names/IDs.
+  row in both themes and at minimum window width, including long names/IDs. Room
+  controls appear directly in the People sidebar alongside avatars/presence and
+  member chat links. Confirmations and errors stay in that sidebar; permission
+  reloads preserve its search/page. Check successful removals and role changes
+  update the visible list, and that closing/reopening or changing rooms rejects
+  stale permission loads and releases in-flight writes exactly once.
 - Invite using directory search and a full ID. Check joined, pending, banned,
   invalid, and denied users; errors must retain the form for correction.
 - Cancel and confirm member removal, invitation revocation, and role changes.

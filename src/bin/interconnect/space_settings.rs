@@ -1,6 +1,6 @@
 //! Full-size space settings and shared member management without changing conversations.
 #[path = "member_management.rs"]
-mod member_management;
+pub(crate) mod member_management;
 #[path = "space_directory.rs"]
 mod space_directory;
 #[path = "space_exit.rs"]
@@ -29,6 +29,7 @@ use std::collections::HashMap;
 #[derive(Default)]
 pub struct State {
     panel: Option<Panel>,
+    sidebar: Option<Panel>,
     writes: HashMap<u64, (Option<String>, String)>,
     demo: HashMap<String, Settings>,
     avatar_writes: HashMap<u64, (u64, Option<String>, String)>,
@@ -43,6 +44,7 @@ impl State {
     pub fn reset(&mut self) {
         self.close();
         self.demo.clear();
+        self.sidebar = None;
     }
 }
 struct Panel {
@@ -73,6 +75,7 @@ pub enum Event {
     Directory(space_directory::Event),
     OpenMembers(String),
     Members(member_management::Event),
+    SidebarMembers(member_management::Event),
     Exit(space_exit::Event),
     Close,
     Reload,
@@ -99,6 +102,88 @@ impl App {
             .clone()
     }
 
+    pub(crate) fn reload_member_sidebar(&mut self) -> Task<Message> {
+        if self.selection.members.is_none() || self.closing || self.stopped {
+            return Task::none();
+        }
+        if self
+            .space_settings
+            .sidebar
+            .as_ref()
+            .is_some_and(|p| p.pending)
+        {
+            return Task::none();
+        }
+        if self
+            .space_settings
+            .sidebar
+            .as_ref()
+            .is_some_and(|p| p.control.is_some())
+            || self.demo.is_some() && self.space_settings.sidebar.is_some()
+        {
+            self.member_management_event(
+                member_management::Host::Sidebar,
+                member_management::Event::Reload,
+            )
+        } else {
+            self.open_member_sidebar()
+        }
+    }
+    pub(crate) fn open_member_sidebar(&mut self) -> Task<Message> {
+        let Some((_, id)) = self.selection.room.clone() else {
+            return Task::none();
+        };
+        self.generation += 1;
+        let request = self.generation;
+        self.space_settings.sidebar = Some(Panel {
+            avatar: avatar_editor::State::default(),
+            space: false,
+            scope: self.shell.space.clone(),
+            members: member_management::State::default(),
+            directory: None,
+            exit: space_exit::State::default(),
+            id: id.clone(),
+            account: self.account_id.clone(),
+            request,
+            pending: false,
+            load: None,
+            control: None,
+            saved: None,
+            draft: None,
+            error: None,
+            success: false,
+        });
+        if self.demo.is_some() {
+            return self.member_management_event(
+                member_management::Host::Sidebar,
+                member_management::Event::Reload,
+            );
+        }
+        let Some(directory) = self.model.people_directory.clone() else {
+            self.space_settings.sidebar.as_mut().unwrap().error =
+                Some("Member controls are not ready. Reload to try again.".into());
+            return Task::none();
+        };
+        let panel = self.space_settings.sidebar.as_mut().unwrap();
+        panel.pending = true;
+        let (task, handle) = Task::perform(
+            async move {
+                let control = directory.room_management(id).await?;
+                let roster = control.clone().members().await?;
+                Ok((control, roster))
+            },
+            move |result| {
+                member_management::Host::Sidebar
+                    .message(member_management::Event::Ready(request, Box::new(result)))
+            },
+        )
+        .abortable();
+        panel.load = Some(handle.abort_on_drop());
+        task
+    }
+    pub(crate) fn close_member_sidebar(&mut self) {
+        self.space_settings.sidebar = None;
+    }
     pub(super) fn close_space_settings(&mut self) {
         if self.space_settings.is_open() {
             self.pending_scroll = [
@@ -109,6 +194,21 @@ impl App {
         }
     }
     pub(super) fn validate_space_settings(&mut self) {
+        if self.space_settings.sidebar.as_ref().is_some_and(|p| {
+            self.closing
+                || self.stopped
+                || p.account != self.account_id
+                || self.selection.members.is_none()
+                || self
+                    .selection
+                    .room
+                    .as_ref()
+                    .is_none_or(|(_, id)| *id != p.id)
+                || !self.model.rooms.iter().any(|r| r.id == p.id)
+        }) {
+            self.space_settings.sidebar = None;
+        }
+
         if self.space_settings.panel.as_ref().is_some_and(|p| {
             self.closing
                 || self.stopped
@@ -139,6 +239,12 @@ impl App {
         let opening_space = matches!(&event, Event::Open(_) | Event::Browse(_));
         let browse = matches!(&event, Event::Browse(_));
         match event {
+            Event::SidebarMembers(member_management::Event::Reload) => {
+                return self.reload_member_sidebar();
+            }
+            Event::SidebarMembers(event) => {
+                return self.member_management_event(member_management::Host::Sidebar, event);
+            }
             Event::Avatar(session, event) => {
                 let Some(panel) = &mut self.space_settings.panel else {
                     return Task::none();
@@ -279,7 +385,9 @@ impl App {
             }
             Event::Exit(event) => return self.space_exit_event(event),
             Event::Directory(event) => return self.space_directory_event(event),
-            Event::Members(event) => return self.member_management_event(event),
+            Event::Members(event) => {
+                return self.member_management_event(member_management::Host::Panel, event);
+            }
             Event::Open(id) | Event::Browse(id) | Event::OpenMembers(id) => {
                 let space = opening_space && !id.is_empty();
                 if !self.context_menu_allowed()
@@ -403,7 +511,10 @@ impl App {
                             });
                     panel.saved = Some(settings.clone());
                     panel.draft = Some(settings);
-                    return self.member_management_event(member_management::Event::Reload);
+                    return self.member_management_event(
+                        member_management::Host::Panel,
+                        member_management::Event::Reload,
+                    );
                 } else if let Some(directory) = self.model.people_directory.clone() {
                     panel.pending = true;
                     let id = panel.id.clone();
@@ -439,7 +550,10 @@ impl App {
                             panel.control = Some(control);
                             panel.saved = Some(settings.clone());
                             panel.draft = Some(settings);
-                            return self.member_management_event(member_management::Event::Reload);
+                            return self.member_management_event(
+                                member_management::Host::Panel,
+                                member_management::Event::Reload,
+                            );
                         }
                         Err(error) => {
                             panel.error = Some(error);
