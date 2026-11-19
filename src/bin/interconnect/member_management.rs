@@ -480,7 +480,27 @@ impl App {
         );
         for managed in rows.iter().skip(page * PAGE).take(PAGE) {
             let member = &managed.member;
-            let mut controls = row![
+            let identity = column![
+                text(&member.name).size(14).wrapping(text::Wrapping::None),
+                text(&member.user_id)
+                    .size(11)
+                    .style(shell::muted_text)
+                    .wrapping(text::Wrapping::None),
+            ]
+            .spacing(3)
+            .width(Length::Fill);
+            let role: Element<'_, Message> = if !managed.roles.is_empty() && !busy {
+                let user = member.user_id.clone();
+                pick_list(managed.roles.clone(), None::<Role>, move |role| {
+                    event(Event::Role(user.clone(), role))
+                })
+                .placeholder(member.role.clone())
+                .style(shell::select_style)
+                .padding([6, 8])
+                .width(Length::Fill)
+                .text_size(12)
+                .into()
+            } else {
                 text(if member.invited {
                     "Invited"
                 } else {
@@ -488,21 +508,10 @@ impl App {
                 })
                 .size(12)
                 .style(shell::muted_text)
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center);
-            if !managed.roles.is_empty() && !busy {
-                let user = member.user_id.clone();
-                controls = controls.push(
-                    pick_list(managed.roles.clone(), None::<Role>, move |role| {
-                        event(Event::Role(user.clone(), role))
-                    })
-                    .placeholder("Change role")
-                    .text_size(12),
-                );
-            }
-            if managed.can_remove {
-                controls = controls.push(icon_button(
+                .into()
+            };
+            let removal: Element<'_, Message> = if managed.can_remove {
+                icon_button(
                     if member.invited {
                         Kind::Close
                     } else {
@@ -514,17 +523,23 @@ impl App {
                         "Remove member"
                     },
                     (!busy).then(|| event(Event::Remove(member.user_id.clone()))),
-                ));
-            }
-            // Stack actions below identity to retain readable IDs on narrow windows.
+                )
+                .into()
+            } else {
+                iced::widget::space().into()
+            };
             content = content.push(
                 column![
-                    text(&member.name).size(14),
-                    text(&member.user_id).size(11).style(shell::muted_text),
-                    controls,
-                    rule::horizontal(1)
+                    row![
+                        identity,
+                        container(role).width(128),
+                        container(removal).width(32)
+                    ]
+                    .spacing(12)
+                    .align_y(iced::Alignment::Center),
+                    rule::horizontal(1),
                 ]
-                .spacing(6),
+                .spacing(8),
             );
         }
         if rows.is_empty() {
