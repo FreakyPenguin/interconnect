@@ -49,6 +49,9 @@ impl Directory {
             Arc::default(),
         )
     }
+    pub fn refresh_navigation(&self) {
+        let _ = self.1.send(());
+    }
     pub(crate) fn navigation_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
         self.1.subscribe()
     }

@@ -897,3 +897,41 @@ Native/connected acceptance remains manual in a dedicated test profile:
 - Keep an unsent draft and older room/thread reading position while creating;
   neither creation mode should navigate or discard them. Cancel and switch
   account during creation; retain the existing stale-result and shutdown rules.
+
+### Leave and disband space confirmations
+
+Space settings includes a red danger section with **Leave space** and **Disband
+space**. Automated tests cover fresh state/permission checks, protected creators,
+confirmation invalidation, scoped writes preserving children/predecessors, partial
+failure, concurrent new members, retrying only a failed forget, typed confirmation,
+account/stale-result rejection, pending-write shutdown, queued navigation, and
+focused-input layout/idle redraw behavior. Native appearance and connected server
+acceptance remain manual, using disposable spaces and dedicated test accounts:
+
+- Verify the danger section, trash/leave icons, readable red styling, complete
+  consequences, affected counts, Cancel, and narrow-screen action wrapping in both
+  themes. Only explicit confirmation may start writes; Disband additionally requires
+  the exact current space name. Enter in that field must not auto-submit.
+- Ordinary members can Leave; Disband must remain disabled without access/child-link
+  permissions or when another admin/protected creator cannot be removed. Change
+  permissions or add a member/link after preview; confirmation must reject before
+  writing and require review.
+- Leave a space with linked rooms/subspaces and other members: only the selected
+  space must be left/forgotten, with child memberships, histories, and predecessor
+  rooms intact. The active conversation/draft/reading position must survive.
+- Disband a disposable public space containing members, pending invites/knocks, and
+  child links. Verify access becomes invitation-only, the local directory listing
+  is removed, the confirmed memberships and links are removed, and leaving occurs
+  last. Do not expect history purging, alias deletion, or external-parent cleanup.
+- Deny individual writes or introduce new members/links during disbanding. Report
+  partial completion, keep the acting member until the final checks pass, and
+  require reloading the confirmation before an explicit retry. Allow sync to catch
+  up after ambiguous errors; no atomicity against concurrent clients is promised.
+- Fail forgetting after leave: keep recovery visible and retry only forgetting.
+  SDK membership/navigation may update before that request completes; preserve the
+  confirmation until the result is reported. Dismissing it may leave an account-only
+  forget failure reported in connection status.
+- Close/navigate/switch account during preview and writes. Reads cancel; admitted
+  writes retain their captured account/space, release pending bookkeeping once, and
+  finish before shutdown. Late results must not modify another account or restore
+  a removed space through queued navigation snapshots.

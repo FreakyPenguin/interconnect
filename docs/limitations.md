@@ -17,7 +17,10 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   Each tab retains up to 1,000 loaded rooms. Other-server directory lookup, knocking,
   and hidden-room discovery are not supported. Space settings cover name, topic, and invitation/public access;
   special access rules remain read-only. Link changes leave room membership
-  and child-side parent metadata intact.
+  and child-side parent metadata intact. Space settings can leave/forget a space
+  or disband it when permissions allow. Disbanding closes access, removes other
+  memberships/invitations/knocks, and unlinks children; it is not atomic or a data
+  purge. Child rooms, history, aliases, and external references are retained.
 - Rooms and spaces share member search, pending invitations, invites, removal,
   invitation revocation, and Member/Moderator/Admin roles. Custom numeric roles,
   bans/unbans, and changing your own role are not supported. Members and permissions

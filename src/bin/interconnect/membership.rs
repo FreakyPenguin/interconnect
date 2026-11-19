@@ -68,6 +68,13 @@ impl State {
     pub(super) fn is_pending(&self) -> bool {
         self.pending.is_some()
     }
+    pub(super) fn record_removed(&mut self, id: String, model: &mut Model, retain: bool) {
+        let change = Change::Removed(id);
+        change.apply(model);
+        if retain {
+            self.settling.push(change);
+        }
+    }
     pub(super) fn record_joined(&mut self, joined: Joined, model: &mut Model, retain: bool) {
         let change = Change::Joined(joined);
         change.apply(model);

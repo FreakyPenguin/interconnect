@@ -26,6 +26,7 @@ pub mod search;
 pub mod session;
 pub mod settings;
 pub mod space_directory;
+pub mod space_exit;
 pub mod space_management;
 pub mod sso;
 pub mod syntax;

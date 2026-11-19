@@ -26,6 +26,30 @@ pub(super) struct State {
     picker: people_picker::State,
     confirm: Option<MemberChange>,
 }
+impl State {
+    pub(super) fn can_remove_others(&self, own: &str) -> bool {
+        self.roster.as_ref().is_some_and(|r| {
+            r.rows
+                .iter()
+                .all(|m| m.member.user_id == own || m.can_remove)
+        })
+    }
+    pub(super) fn other_counts(&self, own: &str) -> (usize, usize) {
+        self.roster.as_ref().map_or((0, 0), |r| {
+            r.rows.iter().filter(|m| m.member.user_id != own).fold(
+                (0, 0),
+                |(joined, invited), m| {
+                    if m.member.invited {
+                        (joined, invited + 1)
+                    } else {
+                        (joined + 1, invited)
+                    }
+                },
+            )
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Reload,

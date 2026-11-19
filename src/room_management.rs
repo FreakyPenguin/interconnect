@@ -34,6 +34,21 @@ impl Settings {
     }
 }
 impl Management {
+    pub async fn prepare_space_exit(
+        self,
+        action: crate::space_exit::Action,
+    ) -> Result<crate::space_exit::Plan, String> {
+        crate::space_exit::prepare(&self.0, action).await
+    }
+    pub async fn exit_space(
+        self,
+        plan: crate::space_exit::Plan,
+    ) -> Result<crate::space_exit::Outcome, String> {
+        crate::space_exit::execute(&self.0, plan).await
+    }
+    pub async fn retry_forgetting_space(self) -> crate::space_exit::Outcome {
+        crate::space_exit::retry_forget(&self.0).await
+    }
     /// Construct on the account's runtime; ownership keeps SDK cleanup runtime-safe.
     pub(crate) fn new(room: Room) -> Self {
         Self(RuntimeOwned::new(room))

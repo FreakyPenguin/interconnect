@@ -244,6 +244,42 @@ after a write or timeout. Closing a panel cancels reads and directory search;
 admitted writes finish for their captured account and room/space, and shutdown
 waits for them. Demo membership edits stay in memory and use no network.
 
+## Leaving and disbanding spaces
+
+Space settings has a red **Destructive actions** section with two separate
+confirmations. Neither action sends messages or deletes child rooms.
+
+- **Leave space** leaves and forgets the selected space for your account. Other
+  members, child-room/subspace memberships, child links, and Matrix history remain.
+  The space disappears from your joined navigation; invitation-only spaces may
+  require another invitation to rejoin.
+- **Disband space** closes access, unlists the space from your homeserver's public
+  directory when listed, removes other joined members and pending invitations or
+  join requests, and unlinks direct child rooms/subspaces. It then verifies that
+  no other active memberships or child links remain before leaving and forgetting
+  the space. Your memberships in child rooms are preserved. History, aliases,
+  parent-space references, and listings on other homeservers may remain.
+
+Disband is enabled only when the loaded permissions permit closing access,
+unlinking children, and removing every other loaded member. Equal-power admins
+and privileged room creators can prevent it. The confirmation fetches fresh server
+state, shows affected counts, and requires typing the exact space name. It rechecks
+that state before writing, and stops if membership, permissions, access, names, or
+links changed. The server remains authoritative for each write.
+
+This is not an atomic operation or server-side data purge. Errors can leave access,
+memberships, directory visibility, or links partly changed. Reload the confirmation
+to review what remains before explicitly retrying; the client does not silently
+replay destructive writes or remove newly discovered members. Remote changes can
+still race the checks. If leaving succeeds but forgetting fails, **Retry forgetting**
+finishes that account-only step without repeating disbanding.
+
+Closing a confirmation cancels a pending preview read. Once confirmed, its captured
+space operation finishes even if the panel is closed, and shutdown waits for it.
+Leaving/disbanding the currently selected space returns the filter to Home while
+preserving the open room/thread, draft, and reading position. Demo actions affect
+only local sample data.
+
 ## Emoji packs
 
 Settings → Emoji packs manages personal and permitted room packs. Enabling a

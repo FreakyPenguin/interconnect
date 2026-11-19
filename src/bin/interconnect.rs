@@ -811,7 +811,8 @@ impl App {
         }
         if matches!(
             message,
-            Message::Room(_)
+            Message::Space(_)
+                | Message::Room(_)
                 | Message::GlobalSearch(global_search::Event::Open)
                 | Message::Bookmark(bookmarks::Event::Open)
         ) {

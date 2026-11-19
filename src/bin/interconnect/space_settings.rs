@@ -3,6 +3,8 @@
 mod member_management;
 #[path = "space_directory.rs"]
 mod space_directory;
+#[path = "space_exit.rs"]
+mod space_exit;
 
 use super::{
     App, MAX_PENDING_OPERATIONS, Message,
@@ -44,6 +46,7 @@ struct Panel {
     scope: Scope,
     members: member_management::State,
     directory: Option<space_directory::State>,
+    exit: space_exit::State,
     id: String,
     account: Option<String>,
     request: u64,
@@ -63,6 +66,7 @@ pub enum Event {
     Directory(space_directory::Event),
     OpenMembers(String),
     Members(member_management::Event),
+    Exit(space_exit::Event),
     Close,
     Reload,
     Name(String),
@@ -91,7 +95,11 @@ impl App {
                 || self.stopped
                 || p.account != self.account_id
                 || (self.demo.is_none() && self.model.authentication.is_some())
-                || if p.directory.is_some() {
+                || if p.exit.is_writing() {
+                    false
+                } else if p.exit.has_left() {
+                    self.shell.space != p.scope
+                } else if p.directory.is_some() {
                     self.shell.space != p.scope
                         || (p.space && !self.model.spaces.iter().any(|s| s.id == p.id))
                 } else if p.space {
@@ -119,6 +127,7 @@ impl App {
                 };
                 return self.space_settings_event(Event::Browse(id));
             }
+            Event::Exit(event) => return self.space_exit_event(event),
             Event::Directory(event) => return self.space_directory_event(event),
             Event::Members(event) => return self.member_management_event(event),
             Event::Open(id) | Event::Browse(id) | Event::OpenMembers(id) => {
@@ -152,6 +161,7 @@ impl App {
                     scope: self.shell.space.clone(),
                     members: member_management::State::default(),
                     directory: browse.then(|| space_directory::State::new(space)),
+                    exit: space_exit::State::default(),
                     id,
                     account: self.account_id.clone(),
                     request: self.generation,
@@ -205,6 +215,7 @@ impl App {
                 panel.request = self.generation;
                 panel.error = None;
                 panel.success = false;
+                panel.exit = space_exit::State::default();
                 if self.demo.is_some() {
                     let (name, editable) = if panel.space {
                         let Some(space) = self.model.spaces.iter().find(|s| s.id == panel.id)
@@ -392,6 +403,9 @@ impl App {
         if panel.directory.is_some() {
             return self.space_directory_view();
         }
+        if panel.exit.is_open() {
+            return self.space_exit_view();
+        }
         let mut body = column![
             row![
                 icons::icon(if panel.space {
@@ -556,6 +570,9 @@ impl App {
             );
         }
         body = body.push(self.member_management_view());
+        if panel.space && panel.saved.is_some() {
+            body = body.push(self.space_exit_actions());
+        }
         if panel.pending {
             body = body.push(text("Working…").size(13));
         }
