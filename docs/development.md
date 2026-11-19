@@ -10,17 +10,6 @@ See the [Dockerfile](../.devcontainer/Dockerfile) for native dependencies.
 TLS uses Rustls and Secret Service uses Rust cryptography; OpenSSL and libdbus
 development packages are unnecessary.
 
-Code highlighting uses `syntect` with `two-face`'s bundled, bat-curated syntax
-definitions and themes; no language definitions are maintained in this repository.
-The Oniguruma backend compiles its bundled C source with the existing C toolchain.
-Received-message projection and Markdown preparation cache light/dark code colors
-on blocking workers, alongside formula preparation. `Document::parse` deliberately
-remains a cheap structural parser; `parse_with_formulas` prepares both assets and
-must be called on a worker. Syntax colors survive resizing and theme changes
-without parsing again. Cached code colors are document-owned, with no polling,
-background animation, or global message-content cache. Syntax/theme assets are
-embedded and require no network access.
-
 ```sh
 cargo build --locked --bin interconnect
 cargo fmt --all -- --check
@@ -38,31 +27,10 @@ Development/test profiles optimize tiny-skia to keep image redraws responsive.
 checks its signature/icon, and tests session lifecycle without Keychain access.
 CI builds do not establish native desktop acceptance.
 
-### CI dependency caching
-
-All three build workflows use the commit-pinned
-[Swatinem/rust-cache](https://github.com/Swatinem/rust-cache) action to retain Cargo
-downloads and compiled dependencies in `target/`. Linux checks, Debian release
-packaging, and macOS release builds use separate cache keys for their native
-build environments and profiles. The action also keys caches by Rust compiler,
-Cargo manifests/lockfile, and build environment variables. It can restore a
-previous dependency cache after a lockfile change; Cargo rebuilds what changed.
-Workspace application artifacts are excluded, so application code still builds
-on each run. The action respects the Debian job's custom `CARGO_HOME`.
-
-The first successful run in each environment populates its cache. Later runs
-should reuse compatible dependencies; a new stable compiler or an evicted cache
-requires a cold build. Toolchain installation, native package installation,
-application compilation/linking, tests, and packaging still take time. Keep the
-existing two-job limits on Debian/macOS to stay within runner memory limits.
-
-To validate this in Actions, compare two successful runs with unchanged Rust
-version, dependencies, and build settings. Check the cache restore/save logs and
-confirm the second Cargo build reuses dependencies. Repeat after an application
-source edit and a dependency update to check reuse and selective recompilation.
-These timings and hosted cache behavior must be verified on GitHub; local YAML
-validation does not establish a measured speedup. If the native build setup
-changes incompatibly, bump that workflow's explicit cache `key`.
+CI caches dependencies separately per platform/profile; compiler, manifests,
+lockfile, and environment affect reuse. Bump a workflow's cache key after
+incompatible native setup changes. Keep Debian/macOS builds at two jobs for memory.
+Measure cache reuse in Actions logs/timings, not local checks.
 
 ## Running the client
 
@@ -147,10 +115,9 @@ Use the version matching the manifest. Outputs go to `target/linux-release/`
 and `target/debian/`. Direct Debian packaging uses
 `scripts/package-debian.sh stable VERSION BINARY`.
 
-Development builds currently use `0.1.1-dev`. When bumping the package version,
-update `Cargo.toml`, the root package in `Cargo.lock`, and the packaging example
-above. Keep `CFBundleShortVersionString` in `packaging/macos/Info.plist` at the
-matching numeric version (`0.1.1`), without the prerelease suffix.
+Version bumps must update `Cargo.toml`, the root entry in `Cargo.lock`, packaging
+examples, and `CFBundleShortVersionString` in `packaging/macos/Info.plist` (numeric
+version only, without the prerelease suffix).
 
 ## App logo and desktop icons
 
@@ -241,26 +208,17 @@ dbus-send --session --print-reply --dest=org.freedesktop.secrets \
 
 ## Native macOS account storage
 
-macOS uses Security.framework Keychain directly, under service `Interconnect`;
-it needs no D-Bus forwarding. Use a native app bundle for prompts and notification
-identity. Credential calls run on serialized blocking workers, with the profile
-lock retained until native work completes even if its UI request is cancelled.
-See [account checks](validation/connected-ui.md#native-macos-account-storage).
+macOS uses Keychain under service `Interconnect`; no D-Bus setup is needed.
+Use the native bundle for prompts and notification identity. See
+[account checks](validation/connected-ui.md#native-macos-account-storage).
 
 ## Attachments and desktop services
 
-Linux file picking uses the desktop portal; macOS uses a native picker. Pasted
-files and picker results must be accessible from the client environment: mount
-host-selected paths at the same paths when using a container. Paste prefers file
-lists, then images, then text. Multiple files may be attached per send, up to
-50 MiB each. Picker, paste, and drop selections append to the current
-conversation’s draft. Each file sends
-as its own message in selection order, with the caption on the first file.
-If queue admission fails partway through, only the remaining files stay staged;
-the caption clears once its file has been queued.
+Linux file picking uses the desktop portal; macOS uses a native picker.
+Container runs need host-selected paths mounted at the same paths inside the
+container. See [composition](keyboard.md#composition) for attachment behavior.
 
-Open attachments through `xdg-open` on Linux or `open` on macOS; temporary files
-remain until quit so the external application can read them. File drops use the
-[pinned Winit fork](architecture/winit-file-drops.md). See
-[notifications](validation/notifications.md), [verification](validation/verification.md),
-and [keyboard shortcuts](keyboard.md) for desktop behavior and checks.
+External attachment opening uses `xdg-open` or macOS `open`; temporary files stay
+until quit. Drops depend on the [Winit fork](architecture/winit-file-drops.md).
+See [notifications](validation/notifications.md) and
+[verification](validation/verification.md) for native checks.

@@ -1,58 +1,36 @@
 # Current limitations
 
-Interconnect supports one account per process and requires native sliding sync.
-Saved accounts require Linux Secret Service or macOS Keychain.
+One account per process; native sliding sync and Linux Secret Service or macOS
+Keychain are required.
 
-- Recovery/key-backup UI, account switching, cross-platform account import, legacy sync, and calls are missing.
-- Room settings cover avatars, name/topic, account push-rule preferences, invitation/public
-  access, and history visibility. Restricted/knock/custom access remains read-only;
-  aliases, permission-rule editing, encryption changes, bans, upgrades, timed
-  mutes and per-room notification sounds are not implemented.
-- Space management supports adding joined rooms to writable spaces and removing
-  direct room links. The globe-plus action creates root spaces from Home and
-  subspaces inside writable spaces. Editing links to existing subspaces or
-  unjoined children is not implemented. A paginated hierarchy browser can discover and join visible rooms
-  and subspaces, with a second tab for the connected homeserver's public directory.
-  Space search covers loaded results; directory searches run on explicit submission.
-  Each tab retains up to 1,000 loaded rooms. Other-server directory lookup, knocking,
-  and hidden-room discovery are not supported. Space settings cover name, topic, and invitation/public access;
-  special access rules remain read-only. Link changes leave room membership
-  and child-side parent metadata intact. Space settings can leave/forget a space
-  or disband it when permissions allow. Disbanding closes access, removes other
-  memberships/invitations/knocks, and unlinks children; it is not atomic or a data
-  purge. Child rooms, history, aliases, and external references are retained.
-- Rooms and spaces share member search, pending invitations, invites, removal,
-  invitation revocation, and Member/Moderator/Admin roles. Custom numeric roles,
-  bans/unbans, and changing your own role are not supported. Members and permissions
-  are synced snapshots; allow sync to catch up before reloading after a write.
-- Deletion requires a synced message-like event with an event ID. Cancelling unsent
-  local echoes and redacting room-state/activity events are unsupported.
-- Reply previews use loaded timeline/embedded context; originals outside it show an
-  unavailable label. Fetching or jumping to a quoted original is not implemented.
-- Editing covers your text messages and emotes; media captions, notices, and
-  arbitrary HTML round-tripping are unsupported.
-- Receipt labels show room readers, not thread-specific readers. Thread unread
-  badges are local to the process; receipt privacy preferences are missing.
-- Formatting omits full tables, visual rich-text editing,
-  inline-image authoring, and formatted media captions. Excerpts use plain text.
-- Code highlighting uses declared languages from the bundled syntax collection;
-  missing/unknown languages, blocks over 16 KiB, and lines over 2048 bytes stay
-  plain monospace. Language detection and composer-source highlighting are absent.
-- User mention completion suggests up to six joined room members from a snapshot
-  of at most 4096 users. Full display names insert as editable text with per-occurrence
-  identities and visual highlighting. Room link completion via `#` searches only
-  joined rooms in the current snapshot, with canonical aliases (not alternate
-  aliases or a server directory). `@room` is an explicit completion choice,
-  offered only when cached room permissions allow notifications; sending rechecks
-  permission. Received room-wide styling requires `m.mentions.room` metadata.
-- Custom emoji packs support management and uploads, but not standalone stickers,
-  bulk import/export, or animation. Received emoji retain sender dimensions because
-  the pinned SDK strips the emoticon marker.
-- [Keyboard shortcuts](keyboard.md) cover common workflows; complete button
-  traversal and focus restoration remain unfinished.
-- Text drafts persist encrypted. Attachments, unfinished message edits, and scroll
-  positions do not survive restart. Complete offline history, timeline virtualization,
-  and configurable storage retention remain unfinished.
+- No recovery/key-backup UI, account switching/import, legacy sync, or calls.
+- No room alias/power-rule editing, encryption changes, bans, upgrades, timed mutes,
+  or per-room sounds. Restricted/knock/custom access is read-only.
+- Space links support joined rooms, not existing subspaces/unjoined children.
+  Directory search covers the connected homeserver only; space search covers
+  loaded results (1,000 per tab). No knocking or hidden-room discovery.
+  Disbanding is partial/retryable, not atomic or a data purge; children/history/
+  aliases/external references remain. See [management](settings.md).
+- Member roles are Member/Moderator/Admin; no custom numeric role entry, self-role
+  changes, or bans/unbans. Membership/permissions are synced snapshots.
+- Deletion requires a synced message event ID; no cancellation of unsent echoes
+  or redaction of state/activity events. Editing covers owned text/emotes, not
+  media captions, notices, or arbitrary HTML round-tripping.
+- Reply previews need loaded/embedded context; no fetching/jumping to quoted originals.
+- Reader labels are room-scoped; thread unread badges are process-local. No receipt
+  privacy preferences.
+- No full tables, visual rich-text editor, inline-image authoring, or formatted media
+  captions. Excerpts are plain. Code highlighting needs a declared bundled language;
+  unknown languages, blocks over 16 KiB, and lines over 2048 bytes stay plain.
+  No language detection or composer-source highlighting.
+- User completion shows six matches from at most 4096 joined members; room links
+  search the joined snapshot/canonical aliases only. Room notifications require
+  explicit completion and permission; received styling needs mention metadata.
+- No standalone stickers, bulk emoji import/export, or animation. Received emoji
+  retain sender dimensions because SDK sanitization strips the emoticon marker.
+- [Keyboard traversal/focus restoration](keyboard.md) remains incomplete.
+- Encrypted text drafts persist; attachments, unfinished edits, and scroll positions
+  do not survive restart. No complete offline history, timeline virtualization,
+  or configurable storage retention.
 
-See [UI validation](validation/connected-ui.md) for repeatable desktop checks and
-validation boundaries.
+See [ideas](todo.md) and [validation boundaries](validation/connected-ui.md#validation-scope).

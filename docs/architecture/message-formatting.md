@@ -2,188 +2,120 @@
 
 ## Received messages
 
-SDK-sanitized `m.text`, `m.notice`, and `m.emote` HTML becomes a native
-`message_document::Document`, including edits and reply-fallback handling.
-Paragraphs, headings, quotes, lists, code, links, spoilers, and inline styles are
-supported. Unsupported structures degrade to text; author CSS/scripts are inert.
-Plain messages remain literal, without Markdown interpretation.
-
-Bare HTTP/HTTPS and `www.` links are detected in plain text/HTML text runs, excluding
-code, existing anchors, hidden spoilers, and embedded-object alternatives.
-Activation validates HTTP, HTTPS, mailto, or Matrix destinations and uses the
-asynchronous system opener. Parsing fetches no links or URL previews.
-
-Projection runs on blocking workers with 64 KiB HTML/output, 4096 nodes, and
-32-level traversal limits; oversized messages fall back to plain text. Unchanged
-content reuses its document; edits replace it. Cancellation stops further rows
-after the current bounded message, and generation checks guard publication.
+SDK-sanitized `m.text`, `m.notice`, and `m.emote` HTML projects to native
+`message_document::Document` on blocking workers. Paragraphs, headings, lists,
+quotes, code, links, spoilers, and inline styles are supported; unsupported
+structures degrade to text. CSS/scripts are inert; plain messages stay literal.
+Projection is bounded to 64 KiB HTML/output, 4096 nodes, and 32 levels; oversized
+content falls back to plain text. Reuse unchanged documents, replace on edit, and
+check cancellation/generation before publishing.
 
 Measurement, drawing, hit-testing, selection, and decoration share Iced/Cosmic
-Text paragraphs. Copy uses the displayed document's canonical text. Hidden
-spoilers copy placeholders; reveal resets selection/layout and remains local to
-the widget. Room-list, pin, and notification excerpts use the plain SDK fallback.
+Text paragraphs. Copy uses canonical displayed text, image alternatives, and
+LaTeX source; hidden spoilers copy placeholders. Reveal is widget-local and
+resets selection/layout. Excerpts use the SDK plain fallback.
+
+Bare HTTP/HTTPS/`www.` links exclude code, existing anchors, hidden spoilers, and
+object alternatives. Activation validates destinations; ordinary links use the
+async system opener and Matrix links route internally. Parsing fetches no previews.
+
+Code uses syntect with two-face's bundled syntax/themes (Oniguruma backend).
+Light/dark colors are document-owned and prepared on workers with formulas;
+`Document::parse` stays structural, while `parse_with_formulas` prepares assets.
+Resize/theme changes reuse colors. Missing languages, blocks over 16 KiB, or lines
+over 2048 bytes fall back to monospace. Assets are embedded; no global content cache.
 
 ## Received user mentions
 
-Explicit HTML user anchors with validated `https://matrix.to/#/@…` (including
-percent-encoded IDs) or `matrix:u/…` destinations render with a soft accent
-background and stronger text, without the ordinary link underline. Sender labels
-and inline formatting remain intact; code keeps its code appearance. Wrapping,
-bidi, selection, copying, spoiler hiding, and hover/click use the existing shaped
-text and link pipeline. Clicking a user mention opens a known one-to-one DM, or
-prefills the direct-chat dialog with the exact user ID. Explicit **Open chat** or
-Enter then reuses/creates the DM through the existing asynchronous directory
-service; dismissing the dialog performs no write. Self mentions do nothing.
-Existing modal, busy-operation, and lifecycle guards apply. Other links still use
-the system opener. No member lookup, subscription, or timer is added.
+Validated Matrix user anchors use an accent background; explicit room anchors use
+teal. Known users reuse DMs; unknown users prefill chat creation, requiring explicit
+submission. Self links do nothing. Known rooms open internally; unknown rooms
+prefill Join. Event permalinks navigate to the event; joined-space links filter
+without switching conversation. Labels preserve inline formatting and spoiler privacy.
 
-Plain `@name`, `@room`, and bare Matrix URLs are not inferred to be mentions.
-Explicit room ID/alias anchors use teal backgrounds and stronger text. Known
-room IDs and canonical aliases navigate inside the app; unfamiliar rooms prefill
-the existing Join dialog without submitting it. Event links retain normal link
-styling. `#` completion searches names, canonical aliases, and IDs from the joined
-room snapshot and inserts a stable room ID link with the account server as a
-routing hint. It does not fetch a room directory or load members. Room labels
-share the editable occurrence bindings and encrypted draft storage with user
-labels, including edit recovery and partial/whole deletion. Only user targets
-contribute to `m.mentions.user_ids`; room links never set `m.mentions.room`.
-Legacy user draft bindings retain their serialized `user_id` representation.
-
-Room-wide notifications use an explicit occurrence binding (`room_wide: true` in
-encrypted drafts) and `m.mentions.room` on the wire. They have no permalink and
-never navigate on click. Received `@room` tokens are highlighted in amber only
-when that metadata is true, excluding code, existing links, and image alternative
-text. Splitting runs retains inline formatting, copy text, wrapping, and spoiler
-privacy; the document cache includes the notification flag. There is no
-notification inference for incoming legacy messages without mention metadata.
-
-Only accepted room-wide choices create outgoing notifications. Literal `@room`
-text stays unbound; outgoing messages include explicit empty mention metadata to
-suppress legacy body-based notification matching. Partial or whole deletion of
-the bound token drops its notification identity. Edit recovery preserves tracked
-room-wide tokens; removing their last occurrence clears the replacement flag,
-while unrepresented existing room notification metadata is retained. SDK edits
-compute notification differences so surviving broadcasts are not re-notified.
-New room notifications recheck `user_can_trigger_room_notification` on the SDK
-worker before queue admission. Completion reads cached room permissions without
-new subscriptions or polling. See the [Matrix mention specification](https://spec.matrix.org/v1.17/client-server-api/#user-and-room-mentions).
+Room-wide tokens are amber only with `m.mentions.room` metadata, excluding code,
+links, and image alternatives. Cache identity includes that flag. No inference
+from plain `@name`/`@room` or legacy body-only notification text.
 
 ## Inline images and local embedded assets
 
-Incoming HTML images accept validated MXC sources only; HTTP, file, data, and
-application-local URLs cannot load images. Application producers supply decoded
-local/formula assets. Rendering does not read files or decode on the UI thread.
+Incoming images accept validated MXC only; app producers supply decoded local or
+formula assets. File access/decoding stays off the UI thread. Declared dimensions
+reserve space through loading/failure; a single dimension uses intrinsic ratio,
+missing dimensions may relayout, invalid/zero dimensions count as absent. Images
+scale to line width with a 2048 px cap and align to the baseline.
 
-Declared width/height reserve the rectangle through loading/failure. A single
-dimension uses intrinsic aspect ratio when available; missing dimensions can
-relayout after decoding. Invalid/zero values count as absent. Objects scale to
-line width with a 2048 px dimension cap. HTML images align to the text baseline.
+The [Cosmic Text patch](../../vendor/cosmic-text/PATCH.md) shapes U+FFFC with explicit
+width/ascent/descent before bidi/wrapping. Selection is atomic and copies alternatives,
+not the marker. Spoiler images request media only after reveal; intrinsic-size
+changes preserve scroll anchors.
 
-Images shape as U+FFFC with exact width/ascent/descent supplied by the
-[Cosmic Text patch](../../vendor/cosmic-text/PATCH.md), before bidi/wrapping.
-Selection treats them atomically and copies alternative text, never the shaping
-marker. Spoiler images demand media only after reveal. Scroll anchors survive
-intrinsic-size changes.
-
-Visible-demand reports carry conversation/document identity. At most 32 unique
-inline sources share four download/decode slots and the 96 MiB attachment pixel
-cache. Inline files are limited to 2 MiB encoded, 4096 px source dimensions, and
-1024×1024 decode targets. GIFs show a static frame. Hiding/closing releases demand;
-pixels may remain in the bounded LRU. No image polling timer is added.
+At most 32 visible inline sources share four download/decode slots and a 96 MiB
+attachment pixel cache. Limits: 2 MiB encoded, 4096 px source dimensions, 1024×1024
+decode targets. Inline GIFs are static. Demand carries document/conversation
+identity; hiding/closing releases it while bounded LRU pixels may remain.
 
 ## Mathematical messages
 
-Matrix `span[data-mx-maths]` and `div[data-mx-maths]` carry delimiter-free LaTeX.
-RaTeX with bundled KaTeX fonts renders inline/display assets on the existing
-blocking projection/composition worker. Plain incoming text is never scanned
-for dollar signs. Formulas copy their LaTeX source and need no network service,
-TeX installation, timer, or persistent cache.
+Matrix `span[data-mx-maths]` / `div[data-mx-maths]` carry delimiter-free LaTeX.
+RaTeX with bundled KaTeX fonts renders on projection/composition workers. Incoming
+plain text is never scanned for dollar signs; copy returns source. No TeX install,
+network, persistent formula cache, or arbitrary LaTeX packages/documents.
 
-Up to 16 formulas per document, each with 2048 source bytes, are attempted.
-Rasterization uses twice logical resolution, capped at 2048 px per dimension,
-256K pixels per formula, and 512K pixels per document. Invalid/oversized formulas
-retain sender fallback text, or the LaTeX attribute if no fallback exists.
-Sources/errors are not logged. Arbitrary LaTeX packages/documents are unsupported.
+Limits: 16 formulas/document, 2048 source bytes each, 2× logical resolution,
+2048 px/dimension, 256K pixels/formula, 512K/document. Invalid/oversized formulas
+retain fallback text (or LaTeX attribute). Sources/errors are not logged.
 
 ## Markdown composition
 
-Room/thread drafts default to Markdown; Plain text changes mode without rewriting
-the source. Mode and explicit emoji choices persist with the
-[encrypted draft](drafts.md). Attachment captions remain plain.
+Drafts default to Markdown; Plain text preserves source. CommonMark plus
+strikethrough supports headings/lists/quotes/code/links; soft breaks become chat
+breaks, raw HTML escapes, and image syntax becomes alternative text. `$…$` and
+`$$…$$` produce Matrix math HTML; code/Plain text stay literal. Backslash math
+delimiters are not composer syntax. Attachment captions stay plain.
 
-CommonMark plus strikethrough supports headings, lists, quotes, code, and links.
-Soft line breaks become explicit chat breaks. Raw HTML is escaped and Markdown
-images become alternative text. `$…$` and `$$…$$` serialize to Matrix math HTML;
-code and Plain text stay literal. Element's alternative backslash delimiters are
-not composer syntax here, though their resulting Matrix HTML can be received.
+Preview snapshots explicitly and shares Send's payload builder; typing does not
+parse. Edits invalidate preview; account/request/source checks reject stale work.
+Conversion uses two workers with 64 KiB input/output, 2048 parser events, and 24
+nesting levels. Errors retain drafts and allow switching to Plain text.
 
-Preview explicitly snapshots the draft and uses the same payload builder as Send;
-typing does not parse or schedule preview work. Edits invalidate the preview;
-account/request/source checks reject stale results. Conversion has two workers,
-64 KiB input/output, 2048 parser events, and 24 nesting levels. Errors retain the
-draft and permit switching to Plain text.
-
-The original source is the Matrix `body`; generated HTML is `formatted_body` with
-`org.matrix.custom.html`. The SDK owns queue admission, encryption, relations,
-local echoes, and retries. No full tables, syntax highlighting, WYSIWYG editing,
-inline-image authoring, or formatted media captions are implemented.
+Source becomes `body`; HTML becomes `formatted_body` with `org.matrix.custom.html`.
+The SDK owns queue admission, encryption, relations, local echoes, and retries.
+See [limitations](../limitations.md) for unsupported authoring features.
 
 ## User mention composition
 
-Typing `@` at a token boundary opens a room-user popup in the focused room/thread
-composer. Names and full IDs distinguish duplicate display names. Matching is
-case-insensitive, with exact/prefix matches first and up to six visible choices.
-Up/Down changes selection; Enter/Tab or clicking accepts; Escape dismisses without
-closing a thread. Acceptance inserts the full display name (or Matrix ID when unnamed) plus a
-trailing space at line end, preserving adjacent punctuation. It never sends the message. Email
-addresses, URLs, selections, attachments, hidden panes, and IME preedit do not
-open completion. `@room` is offered as **Everyone in this room** when the
-cached power levels allow room notifications. Accepting it inserts a bound
-`@room` token with an amber background and underline. User choices stay first
-for an empty `@` query; the room-wide choice is first for matching prefixes.
+`@` completion loads joined members on demand through the account directory
+handle: 30-second deadline, at most 4096 people, six visible matches ranked by
+exact/prefix then case-insensitive matching. No directory-wide search, avatar
+fetching, member subscription, or polling. Closing/navigation cancels the load;
+account/conversation/generation/caret/source checks reject stale choices.
+See [keyboard controls](../keyboard.md#composition) for triggers and acceptance.
 
-The account's existing directory handle loads joined members on demand, with a
-30-second deadline and at most 4096 projected people. There is no directory-wide
-search, avatar download, member subscription, or polling timer. Each completion
-session retains its member snapshot; closing/navigation cancels the load and
-releases it. Request, account, conversation, generation, caret, and source checks
-reject stale results and selections. Failed loads show an error; dismiss/reopen
-to retry. Demo suggestions stay local and never create an SDK client.
+User/room choices bind visible UTF-8 byte ranges to stable Matrix targets (up to
+256 named selections/draft). Partial label edits retain identity; whole deletion/
+replacement removes it. Native editor geometry paints decorations without changing
+shaping, clipboard text, or caret positions. Cursor-only changes do not parse.
+`#` searches joined-room names/canonical aliases/IDs without directory/member loads.
+Bindings persist in [encrypted drafts](drafts.md); legacy `user_id` bindings remain compatible.
 
-Each choice binds a byte range of visible name text to a Matrix user ID (up to
-256 per draft), persisted with its encrypted source. Names are plain editable
-text: deleting a last name or editing part of a label preserves the surviving
-name's identity. Exact editor replacement ranges keep duplicate names separate;
-replacing/deleting the entire name removes its binding. Adjacent body text stays
-outside the label. Cursor-only changes do not parse or rewrite the draft.
+Preview/Send/edit preparation emits escaped anchors in either mode. Code/raw HTML/
+existing links/image alternatives stay literal. Only emitted user anchors add
+`m.mentions.user_ids`; room links never notify. Literal names/tokens infer nothing.
+Explicit empty mention metadata suppresses legacy body-based notification matching.
 
-The composer paints a soft accent background and underline for each named range,
-using the native editor's glyph geometry before drawing text, selection and caret.
-Decorations follow wrapping, bidi, emoji, shortening, and scrolling, and clip to
-the text viewport. They change neither shaping nor source/clipboard text and add
-no timers. Selecting a whole name and pressing Delete/Backspace, or erasing it
-character by character, removes its decoration and identity binding completely.
+Room-wide choices bind `room_wide: true` and emit `m.mentions.room`. Any token
+alteration drops identity. Completion uses cached permission; the worker rechecks
+`user_can_trigger_room_notification` before queue admission. SDK edits compute
+notification differences to avoid re-notifying surviving broadcasts.
 
-Preview, Send, and edit preparation share the bounded worker. Named occurrences
-become escaped Matrix user anchors in Markdown and Plain modes, and only emitted
-anchors add IDs to `m.mentions`. Code, raw HTML, existing links, and image
-alternatives remain literal. Manually typing/copying a name does not infer its
-identity. Plain message bodies contain the chosen/edited names. Old draft files
-and their explicit full-ID selections remain compatible.
-
-Editing recovers existing anchors by HTML position, preserving labels and targets
-without guessing identities from names. Authored Markdown links keep their source;
-plain/display-name fallbacks use canonical visible text with per-occurrence
-identities. Arbitrary HTML formatting still follows the existing editing limits.
-The temporary edit owns separate bindings: save/cancel restores the original
-unsent draft and its selections. Existing notification metadata is retained with
-newly selected IDs; deleting the last explicitly represented occurrence of a user
-also removes that user's metadata on Save. Unrepresented legacy mentions and the
-pre-existing room-wide flag are retained. Oversized conversions fail without silently dropping bindings.
+Edit recovery uses HTML positions, preserving duplicate labels/targets without
+name guessing. Temporary edits have separate bindings; save/cancel restores the
+unsent draft. Removing the last represented occurrence removes its metadata;
+unrepresented legacy mentions/room flags remain. Oversized conversions fail
+without dropping bindings. See the [mention spec](https://spec.matrix.org/v1.17/client-server-api/#user-and-room-mentions).
 
 ## Custom emoji
-
-Pack discovery feeds composer/reaction pickers and shortcode completion:
 
 | Purpose | Preferred type | Legacy type |
 | --- | --- | --- |
@@ -191,43 +123,32 @@ Pack discovery feeds composer/reaction pickers and shortcode completion:
 | Global references | `m.image_pack.rooms` | `im.ponies.emote_rooms` |
 | Personal pack | — | `im.ponies.user_emotes` |
 
-Stable packs take priority per pack; sticker-only packs are excluded. Sources
-include current room, up to eight joined canonical parent spaces, and at most
-64 globally referenced rooms; projection caps at 64 packs/source and 1024 emoji.
-A narrow `emoji-packs` sliding-sync connection requests pack/parent state with
-zero history and no encryption extensions. It ends with the session. Errors
-retain caches and retry on later events, without an application refresh timer.
+Stable packs win per pack; sticker-only packs are excluded. Discovery includes
+current room, eight joined canonical parent spaces, and 64 globally referenced
+rooms; projection caps at 64 packs/source and 1024 emoji. A session-owned
+`emoji-packs` sliding-sync stream requests pack/parent state with zero history and
+no encryption extensions. Errors retain caches and retry on later events.
 
-Choosing an emoji binds a readable `:wave:` token to that image in the draft;
-collisions use `:wave/2:`. Manually typed tokens do not silently resolve. Up to
-256 choices persist per draft, unaffected by later catalog changes. Preview/Send
-emit escaped image HTML in either mode, preserving literal code/raw HTML/image
-alternatives. The plain body keeps tokens. Received emoji use the same inline
-pipeline; SDK sanitization removes the emoticon marker, so sender dimensions
-(normally height 32) remain. MXC reaction keys render as static images.
+Explicit choices bind `:wave:` tokens (collisions: `:wave/2:`) to MXC, up to 256
+per draft, independent of later catalog changes. Manually typed tokens do not
+resolve. Preview/Send emits image HTML in either mode, respecting literal contexts;
+plain body retains tokens. Received emoji use inline images; SDK sanitization
+strips the emoticon marker, so sender dimensions remain. MXC reactions are static.
 
-Picker/completion/reaction/preview demand adds at most 80 unique images to the
-same four slots/96 MiB cache. Packs are not bulk downloaded. **Emoji media is
-unencrypted even in encrypted rooms.** Animation and standalone stickers are
-unsupported. Protocol references: [image packs](https://spec.matrix.org/v1.19/client-server-api/#image-packs)
+Picker/completion/reaction/preview demand adds up to 80 unique images to the same
+four slots/96 MiB cache; no bulk downloads. **Media is unencrypted even in encrypted
+rooms.** No animation/standalone stickers. See [image packs](https://spec.matrix.org/v1.19/client-server-api/#image-packs)
 and [MSC2545](https://github.com/matrix-org/matrix-spec-proposals/blob/main/proposals/2545-emotes.md).
 
 ### Pack management
 
-An account-scoped runtime-owned service serializes writes. Open/Reload performs
-bounded fresh reads (up to 128 known packs), without a new background subscription.
-Existing event types and unknown JSON/sticker fields are preserved; new room
-packs/global references use stable types. Invalid MXC, duplicate shortcodes, and
-content over 48 KiB are rejected. Permissions are rechecked before writes;
-server enforcement remains authoritative.
+Account-scoped serialized writes preserve event types and unknown JSON/sticker
+fields; new room/global entries use stable types. Open/Reload reads up to 128 packs.
+Reject invalid MXC, duplicate shortcodes, or content over 48 KiB. Recheck permissions
+and conflicts; GET/PUT races remain possible without conditional Matrix writes.
 
-Fresh reads detect intervening edits, but Matrix offers no conditional write
-here: another client's update between GET and PUT can race. Local preparation
-runs on blocking workers; explicit Save alone uploads, without source paths or
-filenames. Metadata failure after upload can leave unused media. Deleting entries
-removes references, not media; existing messages/draft bindings keep their MXC URI.
-
-Read/file tasks are abortable and account/dialog scoped. Submitted writes finish
-against the captured target and participate in shutdown; load/global operations
-have 30-second deadlines and saves 60 seconds. Demo edits stay in memory and
-never upload. See [settings](../settings.md#emoji-packs) for file/shortcode limits.
+Preparation runs on blocking workers; only Save uploads, without paths/filenames.
+Failed publication can leave unused media; deletion removes references, not media
+or existing bindings. Reads/file tasks cancel; admitted writes retain target and
+participate in shutdown. Read/global deadlines are 30 seconds; saves 60 seconds.
+Demo stays local. See [file/shortcode limits](../settings.md#emoji-packs).

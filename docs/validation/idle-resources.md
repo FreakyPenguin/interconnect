@@ -19,11 +19,10 @@ cargo test --locked --workspace
 cargo test --locked --lib repeated_navigation_releases_timelines -- --ignored
 ```
 
-The ignored fixture reopens a mock encrypted room/thread 100 times. It checks
-at most one active presentation future per pane, one SDK timeline after thread
-close, and none after shutdown and snapshot release. Weak references observe
-ownership without extending it. This does not bound allocator RSS, SDK event
-caches, room subscriptions, or drafts across many distinct rooms.
+The ignored fixture reopens a mock encrypted room/thread 100 times: at most one
+presentation future/pane, one timeline after thread close, none after shutdown/
+snapshot release. It does not bound RSS, SDK caches/subscriptions, or drafts
+across distinct rooms.
 
 ## Opt-in live diagnostics
 
@@ -68,17 +67,14 @@ memory nor an allocation/leak count.
 ## Measurement scenarios
 
 Compare settled visible/hidden windows, focused composers, open/closed threads,
-repeat navigation, offline/reconnect, and suspend/resume. Test both repeated
-visits to the same conversation and many distinct conversations. For GIFs compare
-unopened, open/still, playing, completed, stopped, closed, and unfocused states.
-Compare inline preview playback with viewer playback; scrolling the playing row
-out of view or changing rooms must remove its animation deadline. Loading a GIF
-must not introduce a polling timer, and focus restoration must not restart it.
-Compare presence polling off/on, verification closed/pending, and dirty/clean drafts.
+repeated/distinct-room navigation, offline/reconnect, suspend/resume, presence
+off/on, verification closed/pending, and drafts dirty/clean.
 
-Keep build, renderer/adapter, fonts, window geometry, focus, logging, and incoming
-traffic comparable. Exclude compilation/startup from idle captures. Hiding a
-window leaves Matrix sync running. Headless/software results do not establish
-native GPU memory, battery use, or macOS behavior; unit tests do not measure
-CPU or wakeups. Store capture output as local artifacts, not baseline run logs
-in this document.
+For inline/viewer GIFs compare unopened, still, playing, completed, stopped, closed,
+and unfocused. Viewport departure/navigation must remove animation deadlines;
+loading stays still and focus restoration must not restart playback.
+
+Keep build, renderer/adapter, fonts, geometry, focus, logging, and traffic comparable;
+exclude startup/compilation. Hiding keeps sync running. Headless/software captures
+do not establish native GPU/battery/macOS behavior; unit tests do not measure
+CPU/wakeups. Keep capture artifacts local, not in this reference.

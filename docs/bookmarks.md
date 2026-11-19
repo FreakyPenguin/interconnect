@@ -1,10 +1,8 @@
 # Saved messages
 
 Use a message's bookmark action to save/remove it. The toolbar bookmark icon opens
-account-wide saved messages, 20 per page; its count badge is hidden at zero.
-Back/Escape returns without changing the conversation's draft or reading position.
-**Go to message** opens the original room/thread and loads intervening history
-as needed; normal newest/history navigation remains available.
+account-wide saved messages, 20 per page. Back/Escape preserves drafts and reading
+positions. **Go to message** opens the original room/thread, loading history as needed.
 
 ## Storage
 
@@ -36,9 +34,8 @@ a session. Unavailable source previews can still be removed. Visible sources
 follow edits/deletion. Invalid, shared, public, upgraded, or inaccessible storage
 is never silently replaced; uncertain room creation requires explicit recovery.
 
-A runtime-owned SDK service loads previews only for the visible page, with at most
-four setups in flight and no polling. Original-event navigation uses normal room
-or thread timelines, so memory can grow with intervening history. Cancellation
-and source subscriptions must preserve the separately open conversation.
+Previews load only for the visible page, with four setups at most and no polling.
+Original navigation can grow timeline memory with intervening history; cancellation
+and subscriptions must preserve the open conversation.
 
 See [UI acceptance](validation/connected-ui.md#sending-and-room-management).
