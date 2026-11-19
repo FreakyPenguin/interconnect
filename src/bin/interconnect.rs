@@ -3,6 +3,8 @@
 mod appearance;
 #[path = "interconnect/attachments.rs"]
 mod attachments;
+#[path = "interconnect/avatar_editor.rs"]
+mod avatar_editor;
 #[path = "interconnect/bookmarks.rs"]
 mod bookmarks;
 #[path = "interconnect/branding.rs"]
@@ -1132,6 +1134,7 @@ impl App {
         let refresh_media = matches!(
             &message,
             Message::SpaceSettings(_)
+                | Message::RoomSettings(_)
                 | Message::ComposerEmoji(_)
                 | Message::Settings(_)
                 | Message::EmojiCompletion(_)
@@ -2268,6 +2271,8 @@ impl App {
             .into_iter()
             .chain(self.new_chat_avatars())
             .chain(self.member_management_avatars())
+            .chain(self.room_settings_avatar())
+            .chain(self.space_settings_avatar())
         {
             if !self.selection.avatars.contains(&uri)
                 && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED

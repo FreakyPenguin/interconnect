@@ -50,6 +50,7 @@ impl std::fmt::Debug for Control {
 }
 #[derive(Clone, Debug)]
 pub struct Settings {
+    pub avatar: crate::room_avatar::Details,
     pub control: Option<Control>,
     pub name: String,
     pub topic: String,
@@ -70,10 +71,11 @@ pub enum Change {
 }
 impl Composer {
     pub async fn room_settings(self, control: Option<Control>) -> Result<Settings, String> {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            self.read_room_settings(control),
-        )
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            let mut settings = self.read_room_settings(control).await?;
+            settings.avatar.url = crate::room_avatar::current(self.0.room()).await?;
+            Ok(settings)
+        })
         .await
         .map_err(|_| "Loading room settings timed out. Try Reload.".to_owned())?
     }
@@ -99,6 +101,11 @@ impl Composer {
             )
             .await;
         Ok(Settings {
+            avatar: crate::room_avatar::Details {
+                url: room.avatar_url(),
+                editable: levels
+                    .user_can_send_state(room.own_user_id(), StateEventType::RoomAvatar),
+            },
             control: Some(control.clone()),
             name: room.name().unwrap_or_default(),
             topic: room.topic().unwrap_or_default(),
@@ -275,6 +282,14 @@ mod tests {
         let room = client
             .get_room(matrix_sdk::ruma::room_id!("!room:example.org"))
             .unwrap();
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.avatar/?"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_json(json!({"errcode":"M_NOT_FOUND","error":"No avatar"})),
+            )
+            .mount(&server)
+            .await;
         let composer = Composer(RuntimeOwned::new(Arc::new(
             TimelineBuilder::new(&room).build().await.unwrap(),
         )));
@@ -336,8 +351,8 @@ mod tests {
         );
 
         let (server, composer) = fixture(0).await;
-        let before = server.received_requests().await.unwrap().len();
         let snapshot = composer.clone().room_settings(None).await.unwrap();
+        let before = server.received_requests().await.unwrap().len();
         assert_eq!(snapshot.editable, [false; 4]);
         assert!(
             composer

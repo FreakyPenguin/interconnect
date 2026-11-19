@@ -1,4 +1,5 @@
 //! Room-bound settings with bounded asynchronous loads and serialized writes.
+use super::avatar_editor;
 use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
 use iced::{
     Element, Length, Task,
@@ -7,6 +8,8 @@ use iced::{
     },
 };
 use interconnect::connected::room_settings::{Change, Control, Notifications, Settings};
+use interconnect::room_avatar::{Details, Upload};
+use matrix_sdk::ruma::OwnedMxcUri;
 use matrix_sdk::ruma::events::room::{history_visibility::HistoryVisibility, join_rules::JoinRule};
 use std::collections::{HashMap, HashSet};
 
@@ -16,6 +19,7 @@ pub struct State {
     control: Option<Control>,
     busy: HashSet<String>,
     demo: HashMap<String, Settings>,
+    avatar_writes: HashMap<u64, (u64, Option<String>, String)>,
 }
 impl State {
     pub fn dismiss(&mut self) {
@@ -27,6 +31,7 @@ impl State {
     }
 }
 struct Panel {
+    avatar: avatar_editor::State,
     target: (u64, String),
     request: u64,
     pending: bool,
@@ -38,6 +43,8 @@ struct Panel {
 }
 #[derive(Clone, Debug)]
 pub enum Event {
+    Avatar(u64, avatar_editor::Event),
+    AvatarSaved(u64, Option<Upload>, Result<Option<OwnedMxcUri>, String>),
     Open(String),
     Close,
     Members,
@@ -67,6 +74,17 @@ fn apply(settings: &mut Settings, change: &Change) {
     }
 }
 impl App {
+    pub(super) fn room_settings_avatar(&self) -> Option<OwnedMxcUri> {
+        self.room_settings
+            .panel
+            .as_ref()?
+            .saved
+            .as_ref()?
+            .avatar
+            .url
+            .clone()
+    }
+
     pub(super) fn validate_room_settings(&mut self) {
         if self.room_settings.panel.as_ref().is_some_and(|p| {
             self.closing
@@ -79,6 +97,124 @@ impl App {
     }
     pub(super) fn room_settings_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::Avatar(session, event) => {
+                let Some(panel) = &mut self.room_settings.panel else {
+                    return Task::none();
+                };
+                let picker_result = matches!(event, avatar_editor::Event::Picked(..));
+                if panel.request != session
+                    || (!picker_result
+                        && (panel.pending
+                            || self.room_settings.busy.contains(&panel.target.1)
+                            || self.pending_ops >= MAX_PENDING_OPERATIONS))
+                {
+                    return Task::none();
+                }
+                let Some(saved) = &panel.saved else {
+                    return Task::none();
+                };
+                if !matches!(event, avatar_editor::Event::Save) {
+                    return panel
+                        .avatar
+                        .update(event, &saved.avatar, true)
+                        .map(move |event| message(Event::Avatar(session, event)));
+                }
+                if !saved.avatar.editable || panel.avatar.is_picking() {
+                    return Task::none();
+                }
+                let Some(upload) = panel.avatar.edit() else {
+                    return Task::none();
+                };
+                let baseline = saved.avatar.url.clone();
+                if self.demo.is_some() {
+                    self.room_settings
+                        .demo
+                        .insert(panel.target.1.clone(), saved.clone());
+                }
+                let id = panel.target.1.clone();
+                let account = self.account_id.clone();
+                let directory = self.model.people_directory.clone();
+                if self.demo.is_none() && directory.is_none() {
+                    return Task::none();
+                }
+                self.generation += 1;
+                let operation = self.generation;
+                self.room_settings
+                    .avatar_writes
+                    .insert(operation, (session, account.clone(), id.clone()));
+                self.room_settings.busy.insert(id.clone());
+                panel.pending = true;
+                panel.error = None;
+                panel.success = false;
+                self.pending_ops += 1;
+                let completed = upload.clone();
+                let demo = self.demo.is_some();
+                return Task::perform(
+                    async move {
+                        if demo {
+                            Ok(upload.map(|_| {
+                                OwnedMxcUri::from(format!("mxc://demo.invalid/avatar-{operation}"))
+                            }))
+                        } else {
+                            directory
+                                .expect("ready directory")
+                                .room_management(id)
+                                .await?
+                                .save_avatar(baseline, upload)
+                                .await
+                        }
+                    },
+                    move |result| message(Event::AvatarSaved(operation, completed.clone(), result)),
+                );
+            }
+            Event::AvatarSaved(operation, upload, result) => {
+                let Some((session, account, id)) =
+                    self.room_settings.avatar_writes.remove(&operation)
+                else {
+                    return Task::none();
+                };
+                self.room_settings.busy.remove(&id);
+                self.pending_ops = self.pending_ops.saturating_sub(1);
+                if account != self.account_id || self.closing || self.stopped {
+                    return Task::none();
+                }
+                if let Ok(url) = &result {
+                    if let (Some(url), Some(upload)) = (url, &upload) {
+                        std::sync::Arc::make_mut(&mut self.model.avatars)
+                            .insert(url.clone(), upload.preview().clone());
+                    }
+                    if self.demo.is_some()
+                        && let Some(settings) = self.room_settings.demo.get_mut(&id)
+                    {
+                        settings.avatar.url = url.clone();
+                    }
+                }
+                if let Some(panel) = &mut self.room_settings.panel
+                    && panel.request == session
+                    && panel.target.1 == id
+                {
+                    panel.pending = false;
+                    match result {
+                        Ok(url) => {
+                            if let Some(saved) = &mut panel.saved {
+                                saved.avatar.url = url.clone();
+                            }
+                            if let Some(draft) = &mut panel.draft {
+                                draft.avatar.url = url.clone();
+                            }
+                            panel.avatar.saved(url, upload);
+                            if self.demo.is_some()
+                                && let Some(saved) = &panel.saved
+                            {
+                                self.room_settings.demo.insert(id, saved.clone());
+                            }
+                            panel.success = true;
+                        }
+                        Err(error) => panel.error = Some(error),
+                    }
+                }
+            }
+
             Event::Open(id) => {
                 if !self.context_menu_allowed()
                     || self.pending_ops >= MAX_PENDING_OPERATIONS
@@ -92,6 +228,7 @@ impl App {
                 }
                 self.generation += 1;
                 self.room_settings.panel = Some(Panel {
+                    avatar: avatar_editor::State::default(),
                     target: self.selection.room.clone().unwrap(),
                     request: self.generation,
                     pending: false,
@@ -138,6 +275,7 @@ impl App {
                 }
                 self.generation += 1;
                 panel.request = self.generation;
+                panel.avatar = avatar_editor::State::default();
                 panel.error = None;
                 panel.success = false;
                 if self.demo.is_some() {
@@ -153,6 +291,10 @@ impl App {
                             .get(&room.id)
                             .cloned()
                             .unwrap_or(Settings {
+                                avatar: Details {
+                                    url: None,
+                                    editable: room.can_edit_topic,
+                                },
                                 control: None,
                                 name: room.name.clone(),
                                 topic: room.topic.clone(),
@@ -230,7 +372,8 @@ impl App {
                 let Some(panel) = &mut self.room_settings.panel else {
                     return Task::none();
                 };
-                if panel.pending
+                if panel.avatar.is_picking()
+                    || panel.pending
                     || self.room_settings.busy.contains(&panel.target.1)
                     || self.pending_ops >= MAX_PENDING_OPERATIONS
                 {
@@ -358,6 +501,12 @@ impl App {
         let mut content = column![shell::title("Room settings", 20)].spacing(14);
         if let (Some(draft), Some(saved)) = (&panel.draft, &panel.saved) {
             let enabled = !busy && self.pending_ops < MAX_PENDING_OPERATIONS;
+            content = content.push(
+                panel
+                    .avatar
+                    .view(&saved.avatar, &self.model.avatars, enabled)
+                    .map(move |event| message(Event::Avatar(panel.request, event))),
+            );
             let name = text_input("Room name", &draft.name)
                 .id("room-settings-name")
                 .cursor_blinking(false)
@@ -696,6 +845,94 @@ mod tests {
     fn open(app: &mut App) {
         let room = app.selection.room.as_ref().unwrap().1.clone();
         let _ = app.update(message(Event::Open(room)));
+    }
+    #[tokio::test]
+    async fn avatar_drafts_save_separately_and_late_results_release_once() {
+        let mut app = demo_app();
+        open(&mut app);
+        let session = app.room_settings.panel.as_ref().unwrap().request;
+        let id = app.room_settings.panel.as_ref().unwrap().target.1.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("unsent");
+        app.scroll_positions.insert(key.clone(), 145.0);
+        let upload = avatar_editor::test_upload().await;
+        let _ = app.update(message(Event::Name("Uncommitted metadata".into())));
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Pick)));
+        let _ = app.update(message(Event::Avatar(
+            session,
+            avatar_editor::Event::Picked(1, Ok(Some(upload.clone()))),
+        )));
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .avatar
+                .url
+                .is_none()
+        );
+        assert_eq!(app.pending_ops, 0);
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Save)));
+        let operation = app.generation;
+        assert_eq!(app.pending_ops, 1);
+        let _ = app.update(message(Event::Close));
+        let url: OwnedMxcUri = "mxc://demo.invalid/saved-avatar".into();
+        let _ = app.update(message(Event::AvatarSaved(
+            operation,
+            Some(upload.clone()),
+            Ok(Some(url.clone())),
+        )));
+        let _ = app.update(message(Event::AvatarSaved(
+            operation,
+            Some(upload),
+            Ok(Some(url.clone())),
+        )));
+        assert_eq!(app.pending_ops, 0);
+        assert!(!app.room_settings.busy.contains(&id));
+        open(&mut app);
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.saved.as_ref().unwrap().avatar.url, Some(url));
+        assert_ne!(panel.saved.as_ref().unwrap().name, "Uncommitted metadata");
+        let session = panel.request;
+        let _ = app.update(message(Event::Avatar(
+            session.wrapping_sub(1),
+            avatar_editor::Event::Remove,
+        )));
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .avatar
+                .edit()
+                .is_none()
+        );
+        let _ = app.update(message(Event::Avatar(
+            session,
+            avatar_editor::Event::Remove,
+        )));
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Save)));
+        let operation = app.generation;
+        let _ = app.update(message(Event::AvatarSaved(operation, None, Ok(None))));
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .avatar
+                .url
+                .is_none()
+        );
+        assert_eq!(app.pending_ops, 0);
+        assert_eq!(app.drafts[&key].content.text(), "unsent");
+        assert_eq!(app.scroll_positions[&key], 145.0);
     }
     #[test]
     fn demo_settings_persist_per_room_without_changing_drafts_or_scroll() {

@@ -6,6 +6,7 @@ mod space_directory;
 #[path = "space_exit.rs"]
 mod space_exit;
 
+use super::avatar_editor;
 use super::{
     App, MAX_PENDING_OPERATIONS, Message,
     icons::{self, Kind},
@@ -16,10 +17,12 @@ use iced::{
     Element, Length, Task,
     widget::{column, container, pick_list, row, rule, scrollable, text, text_input},
 };
+use interconnect::room_avatar::{Details, Upload};
 use interconnect::{
     navigation::Scope,
     room_management::{Change, Management, Settings},
 };
+use matrix_sdk::ruma::OwnedMxcUri;
 use matrix_sdk::ruma::events::room::join_rules::JoinRule;
 use std::collections::HashMap;
 
@@ -28,6 +31,7 @@ pub struct State {
     panel: Option<Panel>,
     writes: HashMap<u64, (Option<String>, String)>,
     demo: HashMap<String, Settings>,
+    avatar_writes: HashMap<u64, (u64, Option<String>, String)>,
 }
 impl State {
     pub fn is_open(&self) -> bool {
@@ -42,6 +46,7 @@ impl State {
     }
 }
 struct Panel {
+    avatar: avatar_editor::State,
     space: bool,
     scope: Scope,
     members: member_management::State,
@@ -60,6 +65,8 @@ struct Panel {
 }
 #[derive(Clone, Debug)]
 pub enum Event {
+    Avatar(u64, avatar_editor::Event),
+    AvatarSaved(u64, Option<Upload>, Result<Option<OwnedMxcUri>, String>),
     Open(String),
     Browse(String),
     FindRooms,
@@ -80,6 +87,18 @@ fn message(event: Event) -> Message {
     Message::SpaceSettings(event)
 }
 impl App {
+    pub(super) fn space_settings_avatar(&self) -> Option<OwnedMxcUri> {
+        self.space_settings
+            .panel
+            .as_ref()
+            .filter(|p| p.space && p.directory.is_none() && !p.exit.is_open())?
+            .saved
+            .as_ref()?
+            .avatar
+            .url
+            .clone()
+    }
+
     pub(super) fn close_space_settings(&mut self) {
         if self.space_settings.is_open() {
             self.pending_scroll = [
@@ -120,6 +139,137 @@ impl App {
         let opening_space = matches!(&event, Event::Open(_) | Event::Browse(_));
         let browse = matches!(&event, Event::Browse(_));
         match event {
+            Event::Avatar(session, event) => {
+                let Some(panel) = &mut self.space_settings.panel else {
+                    return Task::none();
+                };
+                let picker_result = matches!(event, avatar_editor::Event::Picked(..));
+                if panel.request != session
+                    || (!picker_result
+                        && (panel.pending
+                            || self.space_settings.writes.values().any(|target| {
+                                target == &(panel.account.clone(), panel.id.clone())
+                            })
+                            || self.pending_ops >= MAX_PENDING_OPERATIONS
+                            || !panel.space
+                            || panel.directory.is_some()
+                            || panel.exit.is_open()))
+                {
+                    return Task::none();
+                }
+                let Some(saved) = &panel.saved else {
+                    return Task::none();
+                };
+                if !matches!(event, avatar_editor::Event::Save) {
+                    return panel
+                        .avatar
+                        .update(event, &saved.avatar, true)
+                        .map(move |event| message(Event::Avatar(session, event)));
+                }
+                if !saved.avatar.editable || panel.avatar.is_picking() {
+                    return Task::none();
+                }
+                let Some(upload) = panel.avatar.edit() else {
+                    return Task::none();
+                };
+                let baseline = saved.avatar.url.clone();
+                if self.demo.is_some() {
+                    self.space_settings
+                        .demo
+                        .insert(panel.id.clone(), saved.clone());
+                }
+                let id = panel.id.clone();
+                let account = self.account_id.clone();
+                let directory = self.model.people_directory.clone();
+                if self.demo.is_none() && directory.is_none() {
+                    return Task::none();
+                }
+                self.generation += 1;
+                let operation = self.generation;
+                self.space_settings
+                    .avatar_writes
+                    .insert(operation, (session, account.clone(), id.clone()));
+                self.space_settings
+                    .writes
+                    .insert(operation, (account.clone(), id.clone()));
+                panel.pending = true;
+                panel.error = None;
+                panel.success = false;
+                self.pending_ops += 1;
+                let completed = upload.clone();
+                let demo = self.demo.is_some();
+                return Task::perform(
+                    async move {
+                        if demo {
+                            Ok(upload.map(|_| {
+                                OwnedMxcUri::from(format!("mxc://demo.invalid/avatar-{operation}"))
+                            }))
+                        } else {
+                            directory
+                                .expect("ready directory")
+                                .space_management(id)
+                                .await?
+                                .save_avatar(baseline, upload)
+                                .await
+                        }
+                    },
+                    move |result| message(Event::AvatarSaved(operation, completed.clone(), result)),
+                );
+            }
+            Event::AvatarSaved(operation, upload, result) => {
+                let Some((session, account, id)) =
+                    self.space_settings.avatar_writes.remove(&operation)
+                else {
+                    return Task::none();
+                };
+                self.space_settings.writes.remove(&operation);
+                self.pending_ops = self.pending_ops.saturating_sub(1);
+                if account != self.account_id || self.closing || self.stopped {
+                    return Task::none();
+                }
+                if let Ok(url) = &result {
+                    if let (Some(url), Some(upload)) = (url, &upload) {
+                        std::sync::Arc::make_mut(&mut self.model.avatars)
+                            .insert(url.clone(), upload.preview().clone());
+                    }
+                    if self.demo.is_some() {
+                        if let Some(settings) = self.space_settings.demo.get_mut(&id) {
+                            settings.avatar.url = url.clone();
+                        }
+                        if let Some(space) = std::sync::Arc::make_mut(&mut self.model.spaces)
+                            .iter_mut()
+                            .find(|space| space.id == id)
+                        {
+                            space.avatar_url = url.clone();
+                        }
+                    }
+                }
+                if let Some(panel) = &mut self.space_settings.panel
+                    && panel.request == session
+                    && panel.id == id
+                {
+                    panel.pending = false;
+                    match result {
+                        Ok(url) => {
+                            if let Some(saved) = &mut panel.saved {
+                                saved.avatar.url = url.clone();
+                            }
+                            if let Some(draft) = &mut panel.draft {
+                                draft.avatar.url = url.clone();
+                            }
+                            panel.avatar.saved(url, upload);
+                            if self.demo.is_some()
+                                && let Some(saved) = &panel.saved
+                            {
+                                self.space_settings.demo.insert(id, saved.clone());
+                            }
+                            panel.success = true;
+                        }
+                        Err(error) => panel.error = Some(error),
+                    }
+                }
+            }
+
             Event::FindRooms => {
                 let id = match &self.shell.space {
                     Scope::Space(id) => id.clone(),
@@ -157,6 +307,7 @@ impl App {
                 self.shell.spaces.menu = None;
                 self.generation += 1;
                 self.space_settings.panel = Some(Panel {
+                    avatar: avatar_editor::State::default(),
                     space,
                     scope: self.shell.space.clone(),
                     members: member_management::State::default(),
@@ -213,6 +364,7 @@ impl App {
                 }
                 self.generation += 1;
                 panel.request = self.generation;
+                panel.avatar = avatar_editor::State::default();
                 panel.error = None;
                 panel.success = false;
                 panel.exit = space_exit::State::default();
@@ -235,6 +387,15 @@ impl App {
                             .get(&panel.id)
                             .cloned()
                             .unwrap_or(Settings {
+                                avatar: Details {
+                                    url: self
+                                        .model
+                                        .spaces
+                                        .iter()
+                                        .find(|space| space.id == panel.id)
+                                        .and_then(|space| space.avatar_url.clone()),
+                                    editable,
+                                },
                                 name,
                                 topic: String::new(),
                                 access: Some(JoinRule::Invite),
@@ -292,7 +453,8 @@ impl App {
                 let Some(panel) = &mut self.space_settings.panel else {
                     return Task::none();
                 };
-                if panel.pending
+                if panel.avatar.is_picking()
+                    || panel.pending
                     || self.pending_ops >= MAX_PENDING_OPERATIONS
                     || self
                         .space_settings
@@ -459,6 +621,16 @@ impl App {
         if panel.space
             && let (Some(saved), Some(draft)) = (&panel.saved, &panel.draft)
         {
+            body = body.push(
+                panel
+                    .avatar
+                    .view(
+                        &saved.avatar,
+                        &self.model.avatars,
+                        !panel.pending && self.pending_ops < MAX_PENDING_OPERATIONS,
+                    )
+                    .map(move |event| message(Event::Avatar(panel.request, event))),
+            );
             for (field, label, value, before) in [
                 (0, "Name", &draft.name, &saved.name),
                 (1, "Topic", &draft.topic, &saved.topic),
@@ -613,6 +785,102 @@ mod tests {
     fn open(app: &mut App) -> u64 {
         let _ = app.update(message(Event::Open("studio-space".into())));
         app.space_settings.panel.as_ref().unwrap().request
+    }
+    #[tokio::test]
+    async fn avatar_drafts_save_separately_and_late_results_release_once() {
+        let mut app = demo_app();
+        let session = open(&mut app);
+        let id = "studio-space".to_owned();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("unsent");
+        app.scroll_positions.insert(key.clone(), 145.0);
+        let upload = avatar_editor::test_upload().await;
+        let _ = app.update(message(Event::Name("Uncommitted metadata".into())));
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Pick)));
+        let _ = app.update(message(Event::Avatar(
+            session,
+            avatar_editor::Event::Picked(1, Ok(Some(upload.clone()))),
+        )));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .avatar
+                .url
+                .is_none()
+        );
+        assert_eq!(app.pending_ops, 0);
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Save)));
+        let operation = app.generation;
+        assert_eq!(app.pending_ops, 1);
+        let _ = app.update(message(Event::Close));
+        let url: OwnedMxcUri = "mxc://demo.invalid/saved-avatar".into();
+        let _ = app.update(message(Event::AvatarSaved(
+            operation,
+            Some(upload.clone()),
+            Ok(Some(url.clone())),
+        )));
+        let _ = app.update(message(Event::AvatarSaved(
+            operation,
+            Some(upload),
+            Ok(Some(url.clone())),
+        )));
+        assert_eq!(app.pending_ops, 0);
+        assert!(!app.space_settings.writes.contains_key(&operation));
+        assert_eq!(
+            app.model
+                .spaces
+                .iter()
+                .find(|s| s.id == id)
+                .unwrap()
+                .avatar_url,
+            Some(url.clone())
+        );
+        open(&mut app);
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.saved.as_ref().unwrap().avatar.url, Some(url));
+        assert_ne!(panel.saved.as_ref().unwrap().name, "Uncommitted metadata");
+        let session = panel.request;
+        let _ = app.update(message(Event::Avatar(
+            session.wrapping_sub(1),
+            avatar_editor::Event::Remove,
+        )));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .avatar
+                .edit()
+                .is_none()
+        );
+        let _ = app.update(message(Event::Avatar(
+            session,
+            avatar_editor::Event::Remove,
+        )));
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Save)));
+        let operation = app.generation;
+        let _ = app.update(message(Event::AvatarSaved(operation, None, Ok(None))));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .avatar
+                .url
+                .is_none()
+        );
+        assert_eq!(app.pending_ops, 0);
+        assert_eq!(app.drafts[&key].content.text(), "unsent");
+        assert_eq!(app.scroll_positions[&key], 145.0);
     }
     #[test]
     fn space_settings_preserve_conversation_draft_scroll_and_suppress_hidden_actions() {

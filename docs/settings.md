@@ -157,7 +157,7 @@ Name, topic, access and history require room permissions and affect everyone.
 Access supports invitation-only and public rooms; restricted/space-based, knock,
 and custom access rules remain read-only. Public access does not publish a room
 in the server directory. History visibility does not grant old encryption keys.
-Encryption is informational; enabling encryption, changing avatars/aliases,
+Encryption is informational; enabling encryption, changing aliases,
 custom power-level rules, bans and room upgrades remain outside this panel.
 
 Reads run on demand and cancel when the panel closes or the conversation changes.
@@ -279,6 +279,28 @@ space operation finishes even if the panel is closed, and shutdown waits for it.
 Leaving/disbanding the currently selected space returns the filter to Home while
 preserving the open room/thread, draft, and reading position. Demo actions affect
 only local sample data.
+
+## Room and space avatars
+
+Both settings pages show the current avatar with image, remove, discard, and save
+controls. Users without permission to send `m.room.avatar` can view it; editing
+controls are disabled. Choose a PNG, JPEG or WebP (up to 10 MiB and 4096 pixels
+on either side) to preview it locally. Save uploads the image and updates the
+room or space for everyone. Other unsaved settings are preserved. Reload or
+closing the page discards an unsaved avatar draft.
+
+Images are oriented and resized to fit 512 × 512, preserving their aspect ratio,
+and encoded as a static PNG without original metadata on a blocking worker.
+Avatar media is unencrypted, including in encrypted rooms. Remove clears the
+avatar reference; it does not delete the uploaded file or previous history.
+
+Saving checks fresh server permissions and the original avatar URL before writing,
+and checks again after an upload. Remote changes require Reload. Matrix has no
+conditional avatar update, so a remote edit can still race the final write. A
+failed or timed-out save may have succeeded; reload before retrying. Uploading
+can leave unused media if publication fails. Admitted writes finish for their
+captured account and target even after closing the panel, and shutdown waits
+for them. Demo mode previews local files and saves only to sample data.
 
 ## Emoji packs
 

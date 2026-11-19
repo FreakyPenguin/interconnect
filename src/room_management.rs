@@ -13,6 +13,7 @@ use std::{sync::Arc, time::Duration};
 pub struct Management(Arc<RuntimeOwned<Room>>);
 #[derive(Clone, Debug)]
 pub struct Settings {
+    pub avatar: crate::room_avatar::Details,
     pub name: String,
     pub topic: String,
     pub access: Option<JoinRule>,
@@ -34,6 +35,14 @@ impl Settings {
     }
 }
 impl Management {
+    pub async fn save_avatar(
+        self,
+        baseline: Option<matrix_sdk::ruma::OwnedMxcUri>,
+        upload: Option<crate::room_avatar::Upload>,
+    ) -> Result<Option<matrix_sdk::ruma::OwnedMxcUri>, String> {
+        crate::room_avatar::save(&self.0, baseline, upload).await
+    }
+
     pub async fn prepare_space_exit(
         self,
         action: crate::space_exit::Action,
@@ -67,6 +76,11 @@ impl Management {
             .await
             .map_err(|_| "Could not check permissions.")?;
         Ok(Settings {
+            avatar: crate::room_avatar::Details {
+                url: self.0.avatar_url(),
+                editable: levels
+                    .user_can_send_state(self.0.own_user_id(), StateEventType::RoomAvatar),
+            },
             name: self.0.name().unwrap_or_default(),
             topic: self.0.topic().unwrap_or_default(),
             access: self.0.join_rule(),
@@ -79,9 +93,13 @@ impl Management {
         })
     }
     pub async fn settings(self) -> Result<Settings, String> {
-        tokio::time::timeout(Duration::from_secs(30), self.read_settings())
-            .await
-            .map_err(|_| "Loading settings timed out. Try Reload.".to_owned())?
+        tokio::time::timeout(Duration::from_secs(30), async {
+            let mut settings = self.read_settings().await?;
+            settings.avatar.url = crate::room_avatar::current(&self.0).await?;
+            Ok(settings)
+        })
+        .await
+        .map_err(|_| "Loading settings timed out. Try Reload.".to_owned())?
     }
     /// Compare against synced state and recheck permissions before each explicit write.
     /// Matrix has no state compare-and-swap; a remote race remains possible.
@@ -209,11 +227,242 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":chunk})))
             .mount(&server)
             .await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.avatar/?"))
+            .respond_with(
+                ResponseTemplate::new(404)
+                    .set_body_json(json!({"errcode":"M_NOT_FOUND","error":"No avatar"})),
+            )
+            .mount(&server)
+            .await;
         let control = crate::people::Directory::new(client)
             .space_management("!space:example.org".into())
             .await
             .unwrap();
         (server, control)
+    }
+    async fn avatar_upload() -> crate::room_avatar::Upload {
+        let file = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
+        image::DynamicImage::new_rgba8(2, 3)
+            .save(file.path())
+            .unwrap();
+        crate::room_avatar::read_image(file.path().to_owned())
+            .await
+            .unwrap()
+    }
+    async fn avatar_permissions(server: &MockServer, power: u32) {
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.power_levels/?"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"users":{"@test:example.org":power}})),
+            )
+            .mount(server)
+            .await;
+    }
+    async fn avatar_writer(server: &MockServer) {
+        Mock::given(method("GET"))
+            .and(path_regex(".*/media/.*config"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"m.upload.size": 10485760})),
+            )
+            .mount(server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex(".*/media/.*upload"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"content_uri":"mxc://example.org/new"})),
+            )
+            .mount(server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/state/m.room.avatar/?"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id":"$avatar"})))
+            .mount(server)
+            .await;
+    }
+    #[tokio::test]
+    async fn avatar_upload_and_removal_publish_only_confirmed_image_metadata() {
+        let (server, control) = fixture(100, "invite").await;
+        avatar_permissions(&server, 100).await;
+        avatar_writer(&server).await;
+        let settings = control.clone().settings().await.unwrap();
+        assert!(settings.avatar.editable);
+        assert!(settings.avatar.url.is_none());
+        let upload = avatar_upload().await;
+        let result = control.clone().save_avatar(None, Some(upload)).await;
+        assert!(
+            result.is_ok(),
+            "{result:?}; requests: {:?}",
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .map(|r| (r.method.to_string(), r.url.path().to_owned()))
+                .collect::<Vec<_>>()
+        );
+        let url = result.unwrap().unwrap();
+        assert_eq!(url.as_str(), "mxc://example.org/new");
+        let requests = server.received_requests().await.unwrap();
+        let writes: Vec<_> = requests.iter().filter(|r| r.method == "PUT").collect();
+        assert_eq!(writes.len(), 1);
+        let content: Value = serde_json::from_slice(&writes[0].body).unwrap();
+        assert_eq!(content["url"], "mxc://example.org/new");
+        assert_eq!(content["info"]["mimetype"], "image/png");
+        assert_eq!(content["info"]["w"], 2);
+        assert_eq!(content["info"]["h"], 3);
+        let media = requests
+            .iter()
+            .find(|r| r.method == "POST" && r.url.path().contains("/media/"))
+            .unwrap();
+        assert_eq!(
+            image::guess_format(&media.body).unwrap(),
+            image::ImageFormat::Png
+        );
+        assert_eq!(content["info"]["size"], media.body.len());
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.avatar/?"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"url":url})))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        assert_eq!(
+            control.clone().settings().await.unwrap().avatar.url,
+            Some(url.clone())
+        );
+        assert!(
+            control
+                .save_avatar(Some(url), None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.method == "POST" && r.url.path().contains("/media/"))
+                .count(),
+            1
+        );
+        let last = requests.iter().rfind(|r| r.method == "PUT").unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&last.body).unwrap(),
+            json!({"url":null})
+        );
+    }
+    #[tokio::test]
+    async fn avatar_permission_and_baseline_checks_prevent_any_writes() {
+        let (server, control) = fixture(0, "invite").await;
+        avatar_permissions(&server, 0).await;
+        assert!(!control.clone().settings().await.unwrap().avatar.editable);
+        assert!(
+            control
+                .save_avatar(None, Some(avatar_upload().await))
+                .await
+                .unwrap_err()
+                .contains("permission")
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .all(|r| r.method == "GET"
+                    || (!r.url.path().contains("/state/") && !r.url.path().contains("/media/")))
+        );
+        let (server, control) = fixture(100, "invite").await;
+        avatar_permissions(&server, 100).await;
+        assert!(
+            control
+                .save_avatar(Some("mxc://example.org/stale".into()), None)
+                .await
+                .unwrap_err()
+                .contains("changed")
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .all(|r| r.method == "GET"
+                    || (!r.url.path().contains("/state/") && !r.url.path().contains("/media/")))
+        );
+    }
+    #[tokio::test]
+    async fn avatar_remote_edit_during_upload_prevents_publication() {
+        let (server, control) = fixture(100, "invite").await;
+        avatar_permissions(&server, 100).await;
+        avatar_writer(&server).await;
+        let reads = std::sync::atomic::AtomicUsize::new(0);
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.avatar/?"))
+            .respond_with(move |_: &wiremock::Request| {
+                let content = if reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    json!({})
+                } else {
+                    json!({"url":"mxc://example.org/remote"})
+                };
+                ResponseTemplate::new(200).set_body_json(content)
+            })
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        assert!(
+            control
+                .save_avatar(None, Some(avatar_upload().await))
+                .await
+                .unwrap_err()
+                .contains("changed")
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.method == "POST" && r.url.path().contains("/media/"))
+                .count(),
+            1
+        );
+        assert!(requests.iter().all(|r| r.method != "PUT"));
+    }
+    #[tokio::test]
+    async fn avatar_permission_revocation_during_upload_prevents_publication() {
+        let (server, control) = fixture(100, "invite").await;
+        avatar_writer(&server).await;
+        let reads = std::sync::atomic::AtomicUsize::new(0);
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.power_levels/?"))
+            .respond_with(move |_: &wiremock::Request| {
+                let power = if reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    100
+                } else {
+                    0
+                };
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"users":{"@test:example.org":power}}))
+            })
+            .mount(&server)
+            .await;
+        assert!(
+            control
+                .save_avatar(None, Some(avatar_upload().await))
+                .await
+                .unwrap_err()
+                .contains("permission")
+        );
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r.method == "POST" && r.url.path().contains("/media/"))
+                .count(),
+            1
+        );
+        assert!(requests.iter().all(|r| r.method != "PUT"));
     }
     #[tokio::test]
     async fn space_metadata_rechecks_permissions_conflicts_and_special_access_rules() {

@@ -935,3 +935,31 @@ acceptance remain manual, using disposable spaces and dedicated test accounts:
   writes retain their captured account/space, release pending bookkeeping once, and
   finish before shutdown. Late results must not modify another account or restore
   a removed space through queued navigation snapshots.
+
+### Room and space avatars
+
+Automated checks cover image bounds/normalization/cancellation, explicit-save
+upload and removal, server permission and conflict checks, local drafts, stale
+picker/completion rejection, demo persistence, and pending-write bookkeeping.
+Native file dialogs, image appearance, and connected-server acceptance remain
+manual, using a dedicated test profile and disposable rooms/spaces:
+
+- In both themes and at minimum window size, inspect current avatars and the
+  placeholder, tooltips, local preview, discard, and disabled controls for members
+  lacking avatar permissions. Test a room with avatar permission differing from
+  name/topic permission. Verify idle panels introduce no periodic redraws.
+- Choose PNG, JPEG (including EXIF rotation), and WebP; cancellation or invalid,
+  oversized, or damaged input must preserve the previous draft and show a useful
+  error. Merely choosing a file must send no media/state writes.
+- Save a replacement or removal and verify another client sees it. The space
+  breadcrumb follows normal SDK sync. Other unsaved settings, conversation drafts,
+  open threads, and scroll positions must survive. Demo changes stay local.
+- Change the avatar or revoke permission on another client before saving and while
+  upload is in progress: reject publication when detected, require Reload, and
+  preserve the local preview for review. No atomicity with the final write is
+  promised. Simulate a lost save response; reload to establish server state before
+  retrying. Removing an avatar must not delete server media.
+- Close/reload/navigate during image selection or loading; late picker/load results
+  must be ignored. Close or change account during writes: the captured operation
+  finishes, releases pending bookkeeping once, and cannot alter another panel or
+  account. Verify shutdown waits for admitted writes.

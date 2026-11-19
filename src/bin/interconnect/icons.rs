@@ -48,6 +48,7 @@ pub(super) enum Kind {
     Smile,
     AddReaction,
     Attach,
+    Image,
     Eye,
 }
 
@@ -166,6 +167,23 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                             stroke,
                         );
                     }
+                }
+                Image => {
+                    line(&[
+                        (3.0, 3.0),
+                        (21.0, 3.0),
+                        (21.0, 21.0),
+                        (3.0, 21.0),
+                        (3.0, 3.0),
+                    ]);
+                    line(&[
+                        (3.0, 17.0),
+                        (9.0, 11.0),
+                        (14.0, 16.0),
+                        (17.0, 13.0),
+                        (21.0, 17.0),
+                    ]);
+                    frame.stroke(&Path::circle(Point::new(16.0, 8.0), 2.0), stroke);
                 }
                 Eye => {
                     frame.stroke(

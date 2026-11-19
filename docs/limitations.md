@@ -4,9 +4,9 @@ Interconnect supports one account per process and requires native sliding sync.
 Saved accounts require Linux Secret Service or macOS Keychain.
 
 - Recovery/key-backup UI, account switching, cross-platform account import, legacy sync, and calls are missing.
-- Room settings cover name/topic, account push-rule preferences, invitation/public
+- Room settings cover avatars, name/topic, account push-rule preferences, invitation/public
   access, and history visibility. Restricted/knock/custom access remains read-only;
-  avatars, aliases, permission-rule editing, encryption changes, bans, upgrades, timed
+  aliases, permission-rule editing, encryption changes, bans, upgrades, timed
   mutes and per-room notification sounds are not implemented.
 - Space management supports adding joined rooms to writable spaces and removing
   direct room links. The globe-plus action creates root spaces from Home and
