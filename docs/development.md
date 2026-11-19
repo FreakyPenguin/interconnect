@@ -108,7 +108,7 @@ To package an existing local release build:
 
 ```sh
 cargo build --locked --release --bin interconnect
-bash scripts/package-linux-release.sh v0.1.1-dev target/release/interconnect
+bash scripts/package-linux-release.sh v0.2.0 target/release/interconnect
 ```
 
 Use the version matching the manifest. Outputs go to `target/linux-release/`
