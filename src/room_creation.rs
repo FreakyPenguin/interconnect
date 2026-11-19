@@ -53,7 +53,7 @@ impl std::fmt::Display for History {
 }
 #[derive(Clone, Debug)]
 pub struct Options {
-    pub subspace: bool,
+    pub is_space: bool,
     pub name: String,
     pub topic: String,
     pub space: Option<String>,
@@ -65,7 +65,7 @@ pub struct Options {
 impl Default for Options {
     fn default() -> Self {
         Self {
-            subspace: false,
+            is_space: false,
             name: String::new(),
             topic: String::new(),
             space: None,
@@ -79,13 +79,23 @@ impl Default for Options {
 impl Options {
     pub fn validate(&self) -> Result<(), String> {
         if self.name.trim().is_empty() {
-            return Err("Enter a room name.".into());
+            return Err(if self.is_space {
+                "Enter a space name."
+            } else {
+                "Enter a room name."
+            }
+            .into());
         }
         if self.name.len() > 255 {
-            return Err("Keep the room name within 255 bytes.".into());
+            return Err(if self.is_space {
+                "Keep the space name within 255 bytes."
+            } else {
+                "Keep the room name within 255 bytes."
+            }
+            .into());
         }
-        if self.subspace && (self.space.is_none() || self.encrypted) {
-            return Err("A subspace requires a parent space and cannot be encrypted.".into());
+        if self.is_space && self.encrypted {
+            return Err("Spaces cannot be encrypted.".into());
         }
         if self.listed && self.visibility != Visibility::Public {
             return Err("Only public rooms can be listed in the directory.".into());
@@ -106,7 +116,7 @@ impl Options {
     }
     fn request(&self, via: matrix_sdk::ruma::OwnedServerName) -> Request {
         let mut request = Request::new();
-        if self.subspace {
+        if self.is_space {
             let mut content = CreationContent::new();
             content.room_type = Some(matrix_sdk::ruma::room::RoomType::Space);
             request.creation_content =
@@ -159,7 +169,7 @@ impl Options {
 }
 #[derive(Clone, Debug)]
 pub struct Created {
-    pub subspace: bool,
+    pub is_space: bool,
     pub room: RoomEntry,
     pub space: Option<String>,
     pub link_error: Option<String>,
@@ -206,7 +216,7 @@ pub(crate) async fn create(client: &Client, options: Options) -> Result<Created,
     }
     let room = send_create(client, options.request(user.server_name().to_owned())).await?;
     let created = Created {
-        subspace: options.subspace,
+        is_space: options.is_space,
         room: RoomEntry {
             id: room.to_string(),
             name: options.name.trim().to_owned(),
@@ -274,9 +284,9 @@ mod tests {
             "initial_state":request.initial_state,"is_direct":request.is_direct,"invite":request.invite})
     }
     #[test]
-    fn subspaces_are_typed_unencrypted_and_require_a_parent() {
+    fn spaces_are_typed_unencrypted_with_optional_parent() {
         let options = Options {
-            subspace: true,
+            is_space: true,
             encrypted: false,
             space: Some("!parent:example.org".into()),
             ..named()
@@ -289,14 +299,14 @@ mod tests {
         let body = request_body(&options);
         assert!(state(&body, "m.room.encryption").is_none());
         assert_eq!(state(&body, "m.space.parent").unwrap()["canonical"], true);
-        assert!(
-            Options {
-                space: None,
-                ..options.clone()
-            }
-            .validate()
-            .is_err()
-        );
+        let root = Options {
+            space: None,
+            ..options.clone()
+        };
+        root.validate().unwrap();
+        let body = request_body(&root);
+        assert!(state(&body, "m.space.parent").is_none());
+        assert!(state(&body, "m.room.encryption").is_none());
         assert!(
             Options {
                 encrypted: true,
@@ -403,6 +413,40 @@ mod tests {
                 .unwrap();
         }
         client
+    }
+    #[tokio::test]
+    async fn root_spaces_create_without_parent_metadata_or_link_writes() {
+        for visibility in [Visibility::Private, Visibility::Public] {
+            let server = MockServer::start().await;
+            let client = fixture(&server, None).await;
+            Mock::given(method("POST")).and(path("/_matrix/client/v3/createRoom"))
+                .and(body_partial_json(json!({"creation_content":{"type":"m.space"}, "preset":if visibility == Visibility::Private { "private_chat" } else { "public_chat" }})))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"room_id":"!root:example.org"})))
+                .expect(1).mount(&server).await;
+            let created = create(
+                &client,
+                Options {
+                    is_space: true,
+                    encrypted: false,
+                    visibility,
+                    ..named()
+                },
+            )
+            .await
+            .unwrap();
+            assert!(created.is_space);
+            assert!(created.space.is_none());
+            assert!(created.link_error.is_none());
+            let requests = server.received_requests().await.unwrap();
+            assert!(!requests.iter().any(|r| r.method == "PUT"));
+            let request = requests
+                .iter()
+                .find(|r| r.url.path().ends_with("/createRoom"))
+                .unwrap();
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            assert!(state(&body, "m.space.parent").is_none());
+            assert!(state(&body, "m.room.encryption").is_none());
+        }
     }
     #[tokio::test]
     async fn ambiguous_creation_failures_are_never_replayed() {

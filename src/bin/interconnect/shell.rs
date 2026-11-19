@@ -1108,14 +1108,35 @@ impl App {
             column![
                 row![
                     if let Scope::Space(id) = &self.shell.space {
-                        Element::from(super::tooltips::icon_button(Kind::Settings, "Space settings", Some(Message::SpaceSettings(super::space_settings::Event::Open(id.clone())))))
-                    } else { Element::from(iced::widget::space().width(0)) },
-                    super::tooltips::icon_button(Kind::Compass, "Find rooms to join", Some(Message::SpaceSettings(super::space_settings::Event::FindRooms))),
+                        Element::from(super::tooltips::icon_button(
+                            Kind::Settings,
+                            "Space settings",
+                            Some(Message::SpaceSettings(super::space_settings::Event::Open(
+                                id.clone(),
+                            ))),
+                        ))
+                    } else {
+                        Element::from(iced::widget::space().width(0))
+                    },
+                    super::tooltips::icon_button(
+                        Kind::Compass,
+                        "Find rooms to join",
+                        Some(Message::SpaceSettings(
+                            super::space_settings::Event::FindRooms
+                        ))
+                    ),
                     new_chat,
                     create_room,
-                    super::tooltips::icon_button(Kind::SpaceAdd, "Create subspace",
-                        (!self.closing && !self.stopped && matches!(&self.shell.space, Scope::Space(id) if self.model.spaces.iter().any(|s| &s.id == id && s.can_manage_rooms)))
-                            .then_some(Message::CreateRoom(super::create_room::Event::OpenSubspace))),
+                    super::tooltips::icon_button(
+                        Kind::SpaceAdd,
+                        if matches!(self.shell.space, Scope::Space(_)) {
+                            "Create subspace"
+                        } else {
+                            "Create space"
+                        },
+                        self.can_create_space()
+                            .then_some(Message::CreateRoom(super::create_room::Event::OpenSpace))
+                    ),
                     widget::space().width(Length::Fill),
                     super::tooltips::tooltip(
                         super::navigation_control::plain(

@@ -580,7 +580,7 @@ impl App {
                     )
                     | Message::CreateRoom(
                         create_room::Event::Open
-                            | create_room::Event::OpenSubspace
+                            | create_room::Event::OpenSpace
                             | create_room::Event::Submit
                     )
                     | Message::Edit(..)
@@ -674,7 +674,7 @@ impl App {
                     )
                     | Message::CreateRoom(
                         create_room::Event::Open
-                            | create_room::Event::OpenSubspace
+                            | create_room::Event::OpenSpace
                             | create_room::Event::Submit
                     )
                     | Message::Settings(settings::Event::Open)
@@ -707,9 +707,7 @@ impl App {
                     | Message::ComposerEmoji(_)
                     | Message::Image(images::Event::Open { .. })
                     | Message::NewChat(new_chat::Event::Open)
-                    | Message::CreateRoom(
-                        create_room::Event::Open | create_room::Event::OpenSubspace
-                    )
+                    | Message::CreateRoom(create_room::Event::Open | create_room::Event::OpenSpace)
                     | Message::Topic(topic::Event::Open(..))
                     | Message::Invite(invite::Event::Open)
                     | Message::Pin(pin_action::Event::Set(..))

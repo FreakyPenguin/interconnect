@@ -37,7 +37,7 @@ pub struct State {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open,
-    OpenSubspace,
+    OpenSpace,
     Close,
     Ignore,
     Focus(bool),
@@ -80,13 +80,24 @@ pub fn shortcut(
     }
 }
 impl App {
+    pub(super) fn can_create_space(&self) -> bool {
+        !self.closing
+            && !self.stopped
+            && match &self.shell.space {
+                Scope::Home | Scope::All => true,
+                Scope::Space(id) => self
+                    .model
+                    .spaces
+                    .iter()
+                    .any(|s| &s.id == id && s.can_manage_rooms),
+                Scope::Direct => false,
+            }
+    }
     pub(super) fn create_room_event(&mut self, event: Event) -> Task<Message> {
         match event {
-            Event::Open | Event::OpenSubspace => {
-                let subspace = matches!(event, Event::OpenSubspace);
-                if subspace
-                    && !matches!(&self.shell.space, Scope::Space(id) if self.model.spaces.iter().any(|s| &s.id == id && s.can_manage_rooms))
-                {
+            Event::Open | Event::OpenSpace => {
+                let is_space = matches!(event, Event::OpenSpace);
+                if is_space && !self.can_create_space() {
                     return Task::none();
                 }
                 if self.closing
@@ -128,8 +139,8 @@ impl App {
                         account: self.account_id.clone(),
                         thread: self.selection.thread.is_some(),
                         options: Options {
-                            subspace,
-                            encrypted: !subspace,
+                            is_space,
+                            encrypted: !is_space,
                             space,
                             ..Default::default()
                         },
@@ -171,7 +182,10 @@ impl App {
                 let account = state.account.clone();
                 let mut validation = state.options.clone();
                 if self.demo.is_some() {
-                    validation.space = validation.subspace.then(|| "!demo:example.org".into());
+                    validation.space = validation
+                        .space
+                        .as_ref()
+                        .map(|_| "!demo:example.org".into());
                 }
                 if let Err(error) = validation.validate() {
                     state.error = Some(error);
@@ -188,7 +202,7 @@ impl App {
                 }
                 if self.demo.is_some() {
                     let mut created = state.created.clone().unwrap_or_else(|| Created {
-                        subspace: state.options.subspace,
+                        is_space: state.options.is_space,
                         room: interconnect::navigation::RoomEntry {
                             id: format!("demo-room:{request}"),
                             name: state.options.name.trim().into(),
@@ -258,7 +272,7 @@ impl App {
                     .is_some_and(|s| s.request == request && s.account == account);
                 match *result {
                     Ok(created) => {
-                        if created.subspace {
+                        if created.is_space {
                             let entry = interconnect::navigation::SpaceEntry {
                                 id: created.room.id.clone(),
                                 name: created.room.name.clone(),
@@ -274,7 +288,7 @@ impl App {
                                 }
                             }
                         }
-                        if !created.subspace
+                        if !created.is_space
                             && !self.model.rooms.iter().any(|r| r.id == created.room.id)
                         {
                             std::sync::Arc::make_mut(&mut self.model.rooms)
@@ -316,7 +330,7 @@ impl App {
                 if let Some(created) = self.create_room.as_mut().and_then(|s| s.created.take()) {
                     self.create_room = None;
                     self.pending_navigation = None;
-                    if created.subspace {
+                    if created.is_space {
                         return Task::none();
                     }
                     let task = self.update(Message::Room(created.room.id));
@@ -340,7 +354,7 @@ impl App {
                         Event::Name(value) => state.options.name = value,
                         Event::Topic(value) => state.options.topic = value,
                         Event::Space(id)
-                            if !state.options.subspace
+                            if !state.options.is_space
                                 && state.spaces.iter().any(|s| s.id == id) =>
                         {
                             state.options.space = id
@@ -351,7 +365,7 @@ impl App {
                                 state.options.listed = false;
                             }
                         }
-                        Event::Encrypted(value) if !state.options.subspace => {
+                        Event::Encrypted(value) if !state.options.is_space => {
                             state.options.encrypted = value
                         }
                         Event::History(value) => state.options.history = value,
@@ -377,24 +391,47 @@ impl App {
         let busy = self.create_room_request.is_some() || self.direct_request.is_some();
         let editable = !busy && state.created.is_none();
         let options = &state.options;
-        let mut name = text_input("Room name", &options.name)
-            .id(NAME)
-            .cursor_blinking(false)
-            .padding([7, 10])
-            .size(13)
-            .style(shell::search_style);
-        let mut topic = text_input("What is this room for? (optional)", &options.topic)
-            .id(TOPIC)
-            .cursor_blinking(false)
-            .padding([7, 10])
-            .size(13)
-            .style(shell::search_style);
+        let kind = if options.is_space {
+            if options.space.is_some() {
+                "subspace"
+            } else {
+                "space"
+            }
+        } else {
+            "room"
+        };
+        let mut name = text_input(
+            if options.is_space {
+                "Space name"
+            } else {
+                "Room name"
+            },
+            &options.name,
+        )
+        .id(NAME)
+        .cursor_blinking(false)
+        .padding([7, 10])
+        .size(13)
+        .style(shell::search_style);
+        let mut topic = text_input(
+            if options.is_space {
+                "What is this space for? (optional)"
+            } else {
+                "What is this room for? (optional)"
+            },
+            &options.topic,
+        )
+        .id(TOPIC)
+        .cursor_blinking(false)
+        .padding([7, 10])
+        .size(13)
+        .style(shell::search_style);
         if editable {
             name = name.on_input(|v| message(Event::Name(v)));
             topic = topic.on_input(|v| message(Event::Topic(v)));
         }
         let selected = state.spaces.iter().find(|s| s.id == options.space).cloned();
-        let space: Element<'_, Message> = if editable && !options.subspace {
+        let space: Element<'_, Message> = if editable && !options.is_space {
             pick_list(state.spaces.clone(), selected, |s| {
                 message(Event::Space(s.id))
             })
@@ -404,9 +441,13 @@ impl App {
             .width(Length::Fill)
             .into()
         } else {
-            text(selected.map_or_else(|| "No space".into(), |s| s.name))
-                .size(14)
-                .into()
+            text(if options.is_space && options.space.is_none() {
+                "None · root space".into()
+            } else {
+                selected.map_or_else(|| "No space".into(), |s| s.name)
+            })
+            .size(14)
+            .into()
         };
         let visibility = select(
             &[Visibility::Private, Visibility::Public],
@@ -445,10 +486,10 @@ impl App {
         }
         let mut content = column![
             shell::title(
-                if options.subspace {
-                    "Create a subspace"
-                } else {
-                    "Create a room"
+                match kind {
+                    "space" => "Create a space",
+                    "subspace" => "Create a subspace",
+                    _ => "Create a room",
                 },
                 22
             ),
@@ -456,17 +497,33 @@ impl App {
             name,
             text("Topic").size(12).style(shell::muted_text),
             topic,
-            text("Space").size(12).style(shell::muted_text),
+            text(if options.is_space {
+                "Parent space"
+            } else {
+                "Space"
+            })
+            .size(12)
+            .style(shell::muted_text),
             space,
-            text("Adding to a space requires permission to manage its rooms.")
-                .size(11)
-                .style(shell::muted_text),
-            text("Room type").size(12).style(shell::muted_text),
+            text(if options.is_space && options.space.is_none() {
+                "This space will appear at the top level."
+            } else {
+                "Adding to a space requires permission to manage its rooms."
+            })
+            .size(11)
+            .style(shell::muted_text),
+            text(if options.is_space {
+                "Visibility"
+            } else {
+                "Room type"
+            })
+            .size(12)
+            .style(shell::muted_text),
             visibility,
             listed,
         ]
         .spacing(8);
-        if !options.subspace {
+        if !options.is_space {
             content = content
                 .push(encrypted)
                 .push(
@@ -491,7 +548,14 @@ impl App {
             && let Some(error) = &created.link_error
         {
             content = content
-                .push(shell::title("Room created · space link incomplete", 14))
+                .push(shell::title(
+                    if options.is_space {
+                        "Space created · parent link incomplete"
+                    } else {
+                        "Room created · space link incomplete"
+                    },
+                    14,
+                ))
                 .push(text(error).size(12).style(shell::muted_text));
         }
         if busy {
@@ -502,24 +566,16 @@ impl App {
             .style(shell::quiet_button)
             .on_press(message(Event::Close));
         let submit_label = text(if busy {
-            if options.subspace {
-                "Creating subspace…"
-            } else {
-                "Creating room…"
-            }
+            format!("Creating {kind}…")
         } else if state.created.is_some() {
-            "Retry adding to space"
+            "Retry adding to space".into()
         } else {
-            if options.subspace {
-                "Create subspace"
-            } else {
-                "Create room"
-            }
+            format!("Create {kind}")
         })
         .size(13);
         let submit_icon = if state.created.is_some() {
             super::icons::Kind::Refresh
-        } else if options.subspace {
+        } else if options.is_space {
             super::icons::Kind::SpaceAdd
         } else {
             super::icons::Kind::RoomAdd
@@ -538,7 +594,7 @@ impl App {
         if state.created.is_some() && !busy {
             actions = actions.push(
                 button(
-                    text(if options.subspace {
+                    text(if options.is_space {
                         "Done"
                     } else {
                         "Open room"
@@ -638,7 +694,7 @@ mod tests {
     }
     fn created(id: &str, error: Option<&str>) -> Created {
         Created {
-            subspace: false,
+            is_space: false,
             room: interconnect::navigation::RoomEntry {
                 id: id.into(),
                 name: "New room".into(),
@@ -649,13 +705,121 @@ mod tests {
         }
     }
     #[test]
+    fn home_and_all_rooms_use_the_same_action_to_create_unlinked_root_spaces() {
+        for scope in [Scope::Home, Scope::All] {
+            let mut app = demo_app();
+            let _ = app.update(Message::Space(scope.clone()));
+            let selection = app.selection.clone();
+            let key = app.draft_key(false).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("draft");
+            app.scroll_positions.insert(key.clone(), 120.0);
+            let parents = app
+                .model
+                .spaces
+                .iter()
+                .map(|s| (s.id.clone(), s.children.clone()))
+                .collect::<Vec<_>>();
+            assert!(app.can_create_space());
+            let _ = app.update(message(Event::OpenSpace));
+            let state = app.create_room.as_ref().unwrap();
+            let id = format!("demo-room:{}", state.request);
+            assert!(state.options.is_space);
+            assert!(!state.options.encrypted);
+            assert!(state.options.space.is_none());
+            let _ = app.update(message(Event::Space(Some("studio-space".into()))));
+            let _ = app.update(message(Event::Encrypted(true)));
+            assert!(app.create_room.as_ref().unwrap().options.space.is_none());
+            assert!(!app.create_room.as_ref().unwrap().options.encrypted);
+            let _ = app.update(message(Event::Name("Root space".into())));
+            let _ = app.update(message(Event::Submit));
+            assert!(app.create_room.is_none());
+            assert!(
+                app.model
+                    .spaces
+                    .iter()
+                    .any(|s| s.id == id && s.name == "Root space")
+            );
+            assert!(!app.model.rooms.iter().any(|r| r.id == id));
+            for (parent, children) in parents {
+                assert_eq!(
+                    app.model
+                        .spaces
+                        .iter()
+                        .find(|s| s.id == parent)
+                        .unwrap()
+                        .children,
+                    children
+                );
+            }
+            assert_eq!(app.selection.room, selection.room);
+            assert_eq!(app.selection.thread, selection.thread);
+            assert_eq!(app.shell.space, scope);
+            assert_eq!(app.drafts[&key].content.text(), "draft");
+            assert_eq!(app.scroll_positions[&key], 120.0);
+            assert_eq!(app.pending_ops, 0);
+        }
+        let mut app = demo_app();
+        std::sync::Arc::make_mut(&mut app.model.spaces)
+            .iter_mut()
+            .find(|s| s.id == "studio-space")
+            .unwrap()
+            .can_manage_rooms = false;
+        assert!(!app.can_create_space());
+        let _ = app.update(message(Event::OpenSpace));
+        assert!(app.create_room.is_none());
+    }
+    #[test]
+    fn root_space_creation_survives_queued_navigation_without_inventing_a_parent_link() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Space(Scope::Home));
+        app.demo = None;
+        app.model.authentication = None;
+        let stale = app.model.clone();
+        let _ = app.update(message(Event::OpenSpace));
+        let request = app.create_room.as_ref().unwrap().request;
+        app.create_room_request = Some(request);
+        app.pending_ops = 1;
+        let selection = app.selection.room.clone();
+        let _ = app.update(message(Event::Completed(
+            request,
+            app.account_id.clone(),
+            Box::new(Ok(Created {
+                is_space: true,
+                room: interconnect::navigation::RoomEntry {
+                    id: "!root:example.org".into(),
+                    name: "Root".into(),
+                    ..Default::default()
+                },
+                space: None,
+                link_error: None,
+            })),
+        )));
+        assert!(app.pending_created_subspace.is_some());
+        assert!(app.pending_created_space.is_none());
+        let _ = app.update(Message::State(Box::new(stale)));
+        assert!(app.model.spaces.iter().any(|s| s.id == "!root:example.org"));
+        assert!(!app.model.rooms.iter().any(|r| r.id == "!root:example.org"));
+        assert!(
+            app.model
+                .spaces
+                .iter()
+                .all(|s| !s.children.contains(&"!root:example.org".into()))
+        );
+        assert_eq!(app.selection.room, selection);
+        assert_eq!(app.shell.space, Scope::Home);
+        let confirmed = app.model.clone();
+        let _ = app.update(Message::State(Box::new(confirmed)));
+        assert!(app.pending_created_subspace.is_none());
+    }
+    #[test]
     fn subspace_creation_preserves_conversation_and_links_only_in_space_tree() {
         let mut app = demo_app();
         let selection = app.selection.clone();
         let scope = app.shell.space.clone();
-        let _ = app.update(message(Event::OpenSubspace));
+        let _ = app.update(message(Event::OpenSpace));
         let state = app.create_room.as_ref().unwrap();
-        assert!(state.options.subspace);
+        assert!(state.options.is_space);
         assert!(!state.options.encrypted);
         let id = format!("demo-room:{}", state.request);
         let _ = app.update(message(Event::Name("Nested".into())));
@@ -674,8 +838,8 @@ mod tests {
                 .children
                 .contains(&id)
         );
-        app.shell.space = Scope::Home;
-        let _ = app.update(message(Event::OpenSubspace));
+        app.shell.space = Scope::Direct;
+        let _ = app.update(message(Event::OpenSpace));
         assert!(app.create_room.is_none());
     }
     #[test]
@@ -1001,7 +1165,7 @@ mod layout_tests {
             request,
             app.account_id.clone(),
             Box::new(Ok(Created {
-                subspace: false,
+                is_space: false,
                 room: interconnect::navigation::RoomEntry {
                     id: "!new:example.org".into(),
                     name: "Room".into(),

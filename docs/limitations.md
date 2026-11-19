@@ -9,9 +9,9 @@ Saved accounts require Linux Secret Service or macOS Keychain.
   avatars, aliases, permission-rule editing, encryption changes, bans, upgrades, timed
   mutes and per-room notification sounds are not implemented.
 - Space management supports adding joined rooms to writable spaces and removing
-  direct room links. Subspaces can be created inside writable spaces. Creating
-  root spaces and editing links to existing subspaces or unjoined children are not
-  implemented. A paginated hierarchy browser can discover and join visible rooms
+  direct room links. The globe-plus action creates root spaces from Home and
+  subspaces inside writable spaces. Editing links to existing subspaces or
+  unjoined children is not implemented. A paginated hierarchy browser can discover and join visible rooms
   and subspaces, with a second tab for the connected homeserver's public directory.
   Space search covers loaded results; directory searches run on explicit submission.
   Each tab retains up to 1,000 loaded rooms. Other-server directory lookup, knocking,

@@ -206,8 +206,10 @@ or saved-account access.
 
 ## Spaces and member management
 
-Select a writable space and choose the **Create subspace** globe-plus icon beside
-its room-list heading to create a private or public child space. The parent is fixed to the current space.
+Use the same globe-plus action in the sidebar to create spaces. From **Home**
+(including **Include subspaces**), its tooltip is **Create space** and it creates
+a root space with no parent. Inside a writable space it becomes **Create subspace**
+and fixes that space as the parent. Both support private or public visibility.
 Spaces are unencrypted; creating one keeps the current conversation, draft, and
 reading position. If creation succeeds but the parent link fails, **Retry adding
 to space** retries that link without creating another space. Check the space tree

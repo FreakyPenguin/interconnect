@@ -876,3 +876,24 @@ manual:
 - Confirm opaque IDs can join using directory routing hints. Check the 1,000-room
   per-tab cap, duplicate tokens/results, both themes, and widths down to 320 px.
   Demo browsing and searching must stay independent of accounts and network.
+
+### Root spaces from Home
+
+The existing globe-plus action is **Create space** on Home/All rooms and **Create
+subspace** inside a writable space. Both use the same form and asynchronous
+creation/recovery path. Root spaces have no parent and send no parent-link event.
+They are added to the space tree while the conversation and current filter stay
+unchanged. Automated checks cover private/public root creation without parent
+metadata or link writes, Home/All demo creation, unencrypted/fixed-parent guards,
+read-only parent denial, queued navigation snapshots, drafts, and scroll state.
+
+Native/connected acceptance remains manual in a dedicated test profile:
+
+- From Home with Include subspaces both off and on, check the globe-plus tooltip,
+  root-space form title and parent label. Create private/public roots and verify
+  they appear in the roots menu, without links from an existing space.
+- From a writable space, the same icon must still create a child of that space;
+  no extra creation button should appear. Verify read-only spaces stay disabled.
+- Keep an unsent draft and older room/thread reading position while creating;
+  neither creation mode should navigate or discard them. Cancel and switch
+  account during creation; retain the existing stale-result and shutdown rules.
