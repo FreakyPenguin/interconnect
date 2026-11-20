@@ -130,18 +130,29 @@ impl State {
         task
     }
     pub fn view<'a>(&'a self, images: &'a Images, enabled: bool) -> Element<'a, Event> {
-        self.view_inner(images, enabled, false)
+        self.view_inner(images, enabled, false, false)
     }
-    pub fn quick_view<'a>(&'a self, images: &'a Images, enabled: bool) -> Element<'a, Event> {
-        self.view_inner(images, enabled, true)
+    pub fn quick_view<'a>(
+        &'a self,
+        images: &'a Images,
+        enabled: bool,
+        room_address: bool,
+    ) -> Element<'a, Event> {
+        self.view_inner(images, enabled, true, room_address)
     }
     fn view_inner<'a>(
         &'a self,
         images: &'a Images,
         enabled: bool,
         quick: bool,
+        room_address: bool,
     ) -> Element<'a, Event> {
-        let mut input = text_input("Name or @name:server", &self.query)
+        let placeholder = if quick {
+            "Name, @user:server, #room:server or room link"
+        } else {
+            "Name or @name:server"
+        };
+        let mut input = text_input(placeholder, &self.query)
             .id(SEARCH_ID)
             .cursor_blinking(false)
             .size(13)
@@ -151,6 +162,15 @@ impl State {
             input = input.on_input(Event::Edit).on_submit(Event::Submit);
         }
         let mut body = column![input].spacing(8);
+        if room_address {
+            return body
+                .push(
+                    text("Open a joined room or review its address before joining.")
+                        .size(12)
+                        .style(shell::muted_text),
+                )
+                .into();
+        }
         if let Some(person) = &self.selected {
             body = body.push(
                 text(format!("Selected: {}", person.name))

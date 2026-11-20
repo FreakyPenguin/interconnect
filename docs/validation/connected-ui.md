@@ -309,6 +309,12 @@ Use a second client for server-dependent state and delivery:
 - Send text/emotes/media in rooms/threads; test offline queue, retry, duplicate
   prevention, encryption, editing, confirmed deletion, reactions, pins, and topics.
 - Start a DM, create/join by ID/alias/link, accept/decline invites, and leave.
+- In Ctrl+N / Command+N, enter a room alias, ID, or Matrix room link: Enter or
+  **Open or join room…** opens a joined room or prefills Join without joining.
+  Check malformed addresses, routing hints, cancellation, switching back to people
+  search, and late people results after entering a room. Preserve conversation,
+  drafts, and scroll positions when cancelling. Automated demo fixtures cover
+  routing and picker state; connected joining remains a live-server check.
 - Save/remove/page bookmarks and open originals, including unavailable encrypted
   sources and invalid storage. Manage personal/room emoji packs; only Save uploads,
   conflicts require Reload, removal keeps media, and uploads are unencrypted.

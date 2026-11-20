@@ -7,7 +7,7 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+N | Start a direct chat. |
+| Ctrl+N | Start a direct chat or open/join a room by address. |
 | Ctrl+Shift+N | Create a room. |
 | Ctrl+P / Ctrl+Shift+P | Room switcher / space picker. |
 | Ctrl+K | Focus room filter; Enter opens first match. |
@@ -23,6 +23,10 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 
 Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
 the previous match; account-search Enter submits.
+
+The Ctrl+N picker accepts `#room:server`, `!room:server`, matrix.to room links,
+and `matrix:` room links. Enter opens known rooms or prefills the Join dialog;
+joining an unfamiliar room requires submitting that dialog.
 
 ### Space navigation
 

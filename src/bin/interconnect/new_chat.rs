@@ -1,4 +1,4 @@
-//! Quick-open people picker; only choosing a person creates a server-side room.
+//! Quick-open people and room-address picker; room joins use the membership dialog.
 use super::{App, MAX_PENDING_OPERATIONS, Message, people_picker, reaction_picker, shell};
 use iced::{
     Element, Length, Task,
@@ -45,6 +45,14 @@ pub enum Event {
 }
 fn message(event: Event) -> Message {
     Message::NewChat(event)
+}
+fn is_room_query(query: &str) -> bool {
+    let query = query.trim();
+    query.starts_with(['#', '!'])
+        || query.starts_with("matrix:")
+        || url::Url::parse(query)
+            .ok()
+            .is_some_and(|url| url.host_str() == Some("matrix.to"))
 }
 pub fn is_shortcut(key: &Key, modifiers: Modifiers) -> bool {
     matches!(key.as_ref(), Key::Character("n" | "N"))
@@ -290,6 +298,19 @@ impl App {
                 if matches!(event, people_picker::Event::Submit) {
                     return self.new_chat_event(Event::Submit);
                 }
+                if let people_picker::Event::Edit(query) = &event
+                    && is_room_query(query)
+                {
+                    state.picker.clear();
+                    state.picker.query = query.clone();
+                    state.error = None;
+                    return Task::none();
+                }
+                if is_room_query(&state.picker.query)
+                    && !matches!(event, people_picker::Event::Edit(_))
+                {
+                    return Task::none();
+                }
                 let choose = matches!(event, people_picker::Event::Select(_));
                 state.error = None;
                 let task = state
@@ -318,6 +339,25 @@ impl App {
                 let Some(state) = &mut self.new_chat else {
                     return Task::none();
                 };
+                if state.account != self.account_id {
+                    return Task::none();
+                }
+                if is_room_query(&state.picker.query) {
+                    let address =
+                        match interconnect::room_membership::Address::parse(&state.picker.query) {
+                            Ok(address) => address,
+                            Err(error) => {
+                                state.error = Some(error);
+                                return Task::none();
+                            }
+                        };
+                    let state = self.new_chat.take().unwrap();
+                    if !self.context_menu_allowed() {
+                        self.new_chat = Some(state);
+                        return Task::none();
+                    }
+                    return self.membership_event(super::membership::Event::Link(address));
+                }
                 let user = parse_user_id(&state.picker.query).or_else(|error| {
                     state
                         .picker
@@ -451,10 +491,11 @@ impl App {
         let state = self.new_chat.as_ref().unwrap();
         let request = state.request;
         let busy = self.direct_request.is_some() || self.create_room_request.is_some();
+        let room_address = is_room_query(&state.picker.query);
         let mut content = column![
             state
                 .picker
-                .quick_view(&self.model.avatars, !busy)
+                .quick_view(&self.model.avatars, !busy, room_address)
                 .map(move |event| message(Event::Picker(request, event))),
         ]
         .spacing(10);
@@ -465,8 +506,16 @@ impl App {
                     .on_press(message(Event::Close)),
             );
         }
-        if state.picker.selected.is_some() {
-            let mut start = button(text("Open chat").size(13)).style(shell::quiet_button);
+        if room_address || state.picker.selected.is_some() {
+            let mut start = button(
+                text(if room_address {
+                    "Open or join room…"
+                } else {
+                    "Open chat"
+                })
+                .size(13),
+            )
+            .style(shell::quiet_button);
             if !busy {
                 start = start.on_press(message(Event::Submit));
             }
@@ -479,7 +528,7 @@ impl App {
             text(if busy {
                 "Opening chat… · Esc cancels · A room may already have been created"
             } else {
-                "New direct chat · Type a name · ↑ ↓ select · Enter open · Esc close"
+                "Name or room address · ↑ ↓ select · Enter open · Esc close"
             })
             .size(11)
             .style(shell::muted_text),
@@ -999,6 +1048,135 @@ mod tests {
         );
     }
     #[test]
+    fn room_addresses_prefill_join_without_writes_and_preserve_drafts_on_cancel() {
+        for input in [
+            "  #public:example.org  ",
+            "!public:example.org",
+            "https://matrix.to/#/!public:example.org?via=route.example.org",
+            "matrix:r/public:example.org",
+        ] {
+            let mut app = demo_app();
+            let _ = app.update(Message::Thread("review".into()));
+            let selection = app.selection.clone();
+            let scope = app.shell.space.clone();
+            let key = app.draft_key(true).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("unfinished reply");
+            app.scroll_positions.insert(key.clone(), 87.0);
+            let rooms = app.model.rooms.len();
+            let request = open(&mut app);
+            let _ = app.update(message(Event::Picker(request, People::Edit(input.into()))));
+            let _ = app.update(message(Event::Picker(request, People::Submit)));
+            assert!(app.new_chat.is_none());
+            assert!(app.membership.open);
+            assert_eq!(app.selection, selection);
+            assert_eq!(app.model.rooms.len(), rooms);
+            assert_eq!(app.pending_ops, 0);
+            let _ = app.update(Message::Membership(super::super::membership::Event::Close));
+            assert_eq!(app.selection, selection);
+            assert_eq!(app.shell.space, scope);
+            assert_eq!(app.drafts[&key].content.text(), "unfinished reply");
+            assert_eq!(app.scroll_positions[&key], 87.0);
+
+            let request = open(&mut app);
+            let _ = app.update(message(Event::Picker(request, People::Edit(input.into()))));
+            let _ = app.update(message(Event::Submit));
+            let _ = app.update(Message::Membership(super::super::membership::Event::Submit));
+            assert!(!app.membership.open);
+            let room = app
+                .model
+                .rooms
+                .iter()
+                .find(|room| {
+                    app.selection
+                        .room
+                        .as_ref()
+                        .is_some_and(|(_, id)| id == &room.id)
+                })
+                .unwrap();
+            // Demo retains the submitted address as the room name, including routing hints.
+            assert_eq!(
+                interconnect::room_membership::Address::parse(&room.name).unwrap(),
+                interconnect::room_membership::Address::parse(input).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn joined_room_ids_and_aliases_open_from_new_chat_without_joining() {
+        for input in ["!demo-general:example.org", "#general:example.org"] {
+            let mut app = demo_app();
+            let rooms = app.model.rooms.len();
+            let request = open(&mut app);
+            let _ = app.update(message(Event::Picker(request, People::Edit(input.into()))));
+            let _ = app.update(message(Event::Submit));
+            assert_eq!(app.selection.room.as_ref().unwrap().1, "general");
+            assert!(app.new_chat.is_none());
+            assert!(!app.membership.open);
+            assert_eq!(app.model.rooms.len(), rooms);
+            assert_eq!(app.pending_ops, 0);
+        }
+    }
+
+    #[test]
+    fn room_input_rejects_late_people_results_and_invalid_addresses_then_returns_to_people() {
+        let mut app = demo_app();
+        let selected = app.selection.room.clone();
+        let rooms = app.model.rooms.len();
+        let request = open(&mut app);
+        let _ = app.update(message(Event::Picker(request, People::Edit("ja".into()))));
+        populate(&mut app);
+        for input in [
+            "#",
+            "matrix:invalid",
+            "matrix:u/person:example.org",
+            "https://matrix.to/#/invalid",
+        ] {
+            let _ = app.update(message(Event::Picker(request, People::Edit(input.into()))));
+            for old in 0..10 {
+                let _ = app.update(message(Event::Picker(
+                    request,
+                    People::Loaded(
+                        old,
+                        Ok(SearchResults {
+                            people: vec![Person {
+                                user_id: "@jamie:example.org".into(),
+                                name: "Jamie".into(),
+                                avatar_url: None,
+                            }],
+                            limited: false,
+                        }),
+                    ),
+                )));
+            }
+            let _ = app.update(message(Event::Picker(
+                request,
+                People::Select("@jamie:example.org".into()),
+            )));
+            let state = app.new_chat.as_ref().unwrap();
+            assert_eq!(state.picker.query, input);
+            assert!(state.picker.results.is_empty());
+            assert!(state.picker.selected.is_none());
+            let _ = app.update(message(Event::Submit));
+            assert!(app.new_chat.as_ref().unwrap().error.is_some());
+            assert!(!app.membership.open);
+            assert_eq!(app.selection.room, selected);
+            assert_eq!(app.model.rooms.len(), rooms);
+            assert_eq!(app.pending_ops, 0);
+        }
+        let _ = app.update(message(Event::Picker(
+            request,
+            People::Edit("@jamie:example.org".into()),
+        )));
+        assert!(app.new_chat.as_ref().unwrap().error.is_none());
+        let _ = app.update(message(Event::Submit));
+        assert_eq!(
+            app.selection.room.as_ref().unwrap().1,
+            "demo-dm:@jamie:example.org"
+        );
+    }
+
+    #[test]
     fn late_creation_cannot_navigate_a_new_picker_or_account_and_shutdown_waits() {
         for mode in [0, 1, 2] {
             let mut app = demo_app();
@@ -1087,10 +1265,23 @@ mod tests {
 
     #[test]
     fn picker_fits_minimum_window_and_enter_submits_once_without_idle_timer() {
+        for room in [false, true] {
+            check_picker_layout_and_keys(room);
+        }
+    }
+
+    fn check_picker_layout_and_keys(room: bool) {
         use iced::advanced::{Shell, layout, mouse, widget};
         let mut app = demo_app();
         let request = open(&mut app);
-        populate(&mut app);
+        if room {
+            let _ = app.update(message(Event::Picker(
+                request,
+                People::Edit("#public:example.org".into()),
+            )));
+        } else {
+            populate(&mut app);
+        }
         let mut view = app.new_chat_view();
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         let mut tree = widget::Tree::new(&view);
