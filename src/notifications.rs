@@ -2,7 +2,7 @@
 //! Only SDK push-rule notifications enter this bounded, session-owned worker.
 use std::{
     collections::{HashSet, VecDeque},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use iced::futures::future::select_all;
@@ -368,7 +368,7 @@ async fn show(title: &str, body: &str, observe: bool) -> Result<Option<Response>
     #[cfg(target_os = "linux")]
     {
         use iced::futures::StreamExt;
-        use std::collections::HashMap;
+        use std::{collections::HashMap, time::Duration};
         let deliver = async {
             let connection = zbus::Connection::session().await?;
             let proxy = zbus::Proxy::new_owned(

@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use std::time::Duration;
 
 fn event() -> serde_json::Value {
     json!({"type":"m.room.message", "event_id":"$message", "sender":"@other:example.org",
