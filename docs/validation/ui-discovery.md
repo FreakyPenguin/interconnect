@@ -48,3 +48,21 @@ native macOS or connected-server run record.
 Automated tests cover pin target validation and draft retention, creation-menu
 permission changes, saving/removing from the context menu, and existing search
 and saved-message navigation behavior.
+
+## Image inspection and attachment actions
+
+- Open a still image and an explicitly played GIF. Zoom in to 2× and 4× the fit
+  size, pan with wheel/scrollbars in both directions, then choose Fit. Reopening
+  the viewer starts fitted again. Zoom controls and Close remain visible with
+  long filenames at 640×480.
+- Tab through viewer controls and return to the conversation with Escape. Check
+  that panning cannot scroll the covered conversation.
+- Open and Save as have visible labels on attachments and in the viewer. Native
+  file selection/opening needs a desktop service; demo captures do not validate
+  host portal access or native macOS file behavior.
+- Zooming/panning a still image must not add an animation subscription or a
+  periodic redraw deadline. GIF playback continues to use only its existing
+  explicit Play/Stop deadlines.
+
+Automated regressions cover bounded zoom, reset on reopening, minimum-window
+layout, backdrop scroll capture, existing download cancellation, and GIF timing.

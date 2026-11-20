@@ -4,7 +4,7 @@ use iced::time::Instant;
 use iced::{
     Element, Length, Subscription,
     futures::StreamExt,
-    widget::{button, column, container, image, mouse_area, opaque, row, stack, text},
+    widget::{button, column, container, image, mouse_area, opaque, row, scrollable, stack, text},
 };
 use interconnect::{
     connected::MessageRow, image_media::Key, media::Animation, settings::GifPlayback,
@@ -21,6 +21,7 @@ pub struct Viewing {
     frame: usize,
     playback: Option<Playback>,
     pending: bool,
+    zoom: u8,
 }
 impl Viewing {
     pub(super) fn is_outside_viewport(
@@ -91,6 +92,8 @@ pub enum Event {
     Retry,
     Play,
     Stop,
+    Zoom(bool),
+    Fit,
     Tick(Instant),
     Ignore,
 }
@@ -154,6 +157,7 @@ impl App {
                         frame: 0,
                         playback: None,
                         pending: false,
+                        zoom: 0,
                     });
                 }
             }
@@ -197,6 +201,7 @@ impl App {
                             frame: 0,
                             playback: None,
                             pending: true,
+                            zoom: 0,
                         });
                     }
                 }
@@ -215,6 +220,20 @@ impl App {
                 }
             }
             Event::Stop => self.stop_image_playback(),
+            Event::Zoom(inward) => {
+                if let Some(view) = &mut self.image_view {
+                    view.zoom = if inward {
+                        (view.zoom + 1).min(2)
+                    } else {
+                        view.zoom.saturating_sub(1)
+                    };
+                }
+            }
+            Event::Fit => {
+                if let Some(view) = &mut self.image_view {
+                    view.zoom = 0;
+                }
+            }
             Event::Tick(started) => {
                 for view in self.image_view.iter_mut().chain(self.inline_gif.iter_mut()) {
                     if let Some(playback) = &mut view.playback
@@ -378,7 +397,8 @@ impl App {
         let mut open = button(frame)
             .padding(0)
             .width(Length::Fill)
-            .style(shell::quiet_button);
+            .style(shell::quiet_button)
+            .keyboard_navigation(true);
         if !self.closing && !self.stopped {
             open = open.on_press(Message::Image(Event::Open {
                 thread,
@@ -450,54 +470,72 @@ impl App {
             let animation = self.model.images.animations.get(&view.original);
             let height =
                 (size.height - if animation.is_some() { 238.0 } else { 190.0 }).clamp(1.0, 800.0);
-            let content: Element<'_, Message> =
-                if let Some(handle) = self.model.images.ready.get(&view.original) {
-                    let handle = animation
-                        .and_then(|animation| animation.as_ref().ok())
-                        .and_then(|animation| animation.frames.get(view.frame))
-                        .map(|(frame, _)| frame)
-                        .unwrap_or(handle);
-                    let image = image(handle.clone())
-                        .width(Length::Fill)
-                        .height(height)
-                        .content_fit(iced::ContentFit::Contain);
-                    if matches!(animation, Some(Ok(_))) {
-                        mouse_area(image)
-                            .on_press(Message::Image(if view.playback.is_some() {
-                                Event::Stop
-                            } else {
-                                Event::Play
-                            }))
-                            .into()
-                    } else {
-                        image.into()
-                    }
-                } else if self.model.media_error.is_some() {
-                    container(text("Image loading is unavailable").size(14))
-                        .center_x(Length::Fill)
-                        .center_y(height)
+            let content: Element<'_, Message> = if let Some(handle) =
+                self.model.images.ready.get(&view.original)
+            {
+                let handle = animation
+                    .and_then(|animation| animation.as_ref().ok())
+                    .and_then(|animation| animation.frames.get(view.frame))
+                    .map(|(frame, _)| frame)
+                    .unwrap_or(handle);
+                let scale = f32::from(1_u8 << view.zoom);
+                let image = image(handle.clone())
+                    .width((width - 32.0) * scale)
+                    .height(height * scale)
+                    .content_fit(iced::ContentFit::Contain);
+                let image: Element<'_, Message> = if matches!(animation, Some(Ok(_))) {
+                    mouse_area(image)
+                        .on_press(Message::Image(if view.playback.is_some() {
+                            Event::Stop
+                        } else {
+                            Event::Play
+                        }))
                         .into()
-                } else if self.model.images.failed.contains(&view.original) {
-                    container(
-                        column![
-                            text("Could not load this image").size(14),
-                            super::tooltips::icon_button(
-                                super::icons::Kind::Refresh,
-                                "Retry loading image",
-                                Some(Message::Image(Event::Retry))
-                            )
-                        ]
-                        .spacing(12),
-                    )
+                } else {
+                    image.into()
+                };
+                iced::widget::keyed_column([(
+                    view.zoom,
+                    Element::from(
+                        scrollable(image)
+                            .id("image-viewer-pan")
+                            .direction(scrollable::Direction::Both {
+                                horizontal: scrollable::Scrollbar::new().width(6).scroller_width(6),
+                                vertical: scrollable::Scrollbar::new().width(6).scroller_width(6),
+                            })
+                            .width(Length::Fill)
+                            .height(height)
+                            .style(shell::scroll_style),
+                    ),
+                )])
+                .height(height)
+                .into()
+            } else if self.model.media_error.is_some() {
+                container(text("Image loading is unavailable").size(14))
                     .center_x(Length::Fill)
                     .center_y(height)
                     .into()
-                } else {
-                    container(text("Loading image…").size(14).style(shell::muted_text))
-                        .center_x(Length::Fill)
-                        .center_y(height)
-                        .into()
-                };
+            } else if self.model.images.failed.contains(&view.original) {
+                container(
+                    column![
+                        text("Could not load this image").size(14),
+                        super::tooltips::icon_button(
+                            super::icons::Kind::Refresh,
+                            "Retry loading image",
+                            Some(Message::Image(Event::Retry))
+                        )
+                    ]
+                    .spacing(12),
+                )
+                .center_x(Length::Fill)
+                .center_y(height)
+                .into()
+            } else {
+                container(text("Loading image…").size(14).style(shell::muted_text))
+                    .center_x(Length::Fill)
+                    .center_y(height)
+                    .into()
+            };
             let header = row![
                 container(super::tooltips::tooltip(
                     super::single_line::label(&view.label, 14),
@@ -505,6 +543,37 @@ impl App {
                     iced::widget::tooltip::Position::Bottom,
                 ))
                 .width(Length::Fill),
+                row![
+                    button(text("Fit").size(12))
+                        .padding([5, 8])
+                        .style(shell::quiet_button)
+                        .keyboard_navigation(true)
+                        .on_press_maybe((view.zoom > 0).then_some(Message::Image(Event::Fit))),
+                    button(text("−").size(16))
+                        .padding([3, 9])
+                        .style(shell::quiet_button)
+                        .keyboard_navigation(true)
+                        .on_press_maybe(
+                            (view.zoom > 0).then_some(Message::Image(Event::Zoom(false)))
+                        ),
+                    text(if view.zoom == 0 {
+                        "Fit".into()
+                    } else {
+                        format!("{}× fit", 1_u8 << view.zoom)
+                    })
+                    .size(12)
+                    .style(shell::muted_text),
+                    button(text("+").size(16))
+                        .padding([3, 9])
+                        .style(shell::quiet_button)
+                        .keyboard_navigation(true)
+                        .on_press_maybe(
+                            (view.zoom < 2 && self.model.images.ready.contains_key(&view.original))
+                                .then_some(Message::Image(Event::Zoom(true)))
+                        ),
+                ]
+                .spacing(4)
+                .align_y(iced::Alignment::Center),
                 container(super::tooltips::icon_button(
                     super::icons::Kind::Close,
                     "Close image viewer",
@@ -515,6 +584,13 @@ impl App {
             .spacing(12)
             .align_y(iced::Alignment::Center);
             let mut toolbar = column![].spacing(8);
+            if view.zoom > 0 {
+                toolbar = toolbar.push(
+                    text("Scroll or drag the scrollbars to pan. Fit resets the view.")
+                        .size(12)
+                        .style(shell::muted_text),
+                );
+            }
             if let Some(message) = self.image_message(view.thread, view.generation, &view.row) {
                 toolbar =
                     toolbar.push(self.download_actions(message, view.thread, view.generation));
@@ -569,15 +645,20 @@ impl App {
                     border: iced::Border::default().rounded(12),
                     ..shell::surface(theme, shell::palette(theme).background)
                 });
-            opaque(
-                mouse_area(
-                    container(card)
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill)
-                        .style(|theme| shell::surface(theme, shell::palette(theme).image_scrim)),
-                )
-                .on_press(Message::Image(Event::Ignore))
-                .on_scroll(|_| Message::Image(Event::Ignore)),
+            super::focus_scope::view(
+                opaque(
+                    mouse_area(
+                        container(card)
+                            .center_x(Length::Fill)
+                            .center_y(Length::Fill)
+                            .style(|theme| {
+                                shell::surface(theme, shell::palette(theme).image_scrim)
+                            }),
+                    )
+                    .on_press(Message::Image(Event::Ignore))
+                    .on_scroll(|_| Message::Image(Event::Ignore)),
+                ),
+                "image-viewer",
             )
         })
         .into()
@@ -1126,6 +1207,36 @@ mod tests {
         assert!(close.y >= 0.0 && close.y + close.height <= size.height);
         // Icon controls retain a usable target without reserving a text label.
         assert!(close.width >= 32.0 && close.height >= 32.0);
+        assert_eq!(app.image_subscription().units(), 0);
+    }
+
+    #[test]
+    fn viewer_zoom_is_bounded_fits_small_windows_and_resets_on_reopen_without_timers() {
+        let mut app = sample();
+        let generation = app.selection.room.as_ref().unwrap().0;
+        open(&mut app, generation);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        for _ in 0..4 {
+            app.image_event(Event::Zoom(true));
+        }
+        assert_eq!(app.image_view.as_ref().unwrap().zoom, 2);
+        let size = iced::Size::new(640.0, 480.0);
+        {
+            let mut view = app.image_viewer();
+            let mut tree = Tree::new(&view);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            assert_eq!(node.size(), size);
+        }
+        assert_eq!(app.image_subscription().units(), 0);
+        app.image_event(Event::Fit);
+        app.image_event(Event::Zoom(false));
+        assert_eq!(app.image_view.as_ref().unwrap().zoom, 0);
+        app.image_event(Event::Zoom(true));
+        app.image_event(Event::Close);
+        open(&mut app, generation);
+        assert_eq!(app.image_view.as_ref().unwrap().zoom, 0);
         assert_eq!(app.image_subscription().units(), 0);
     }
 
