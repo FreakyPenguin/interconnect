@@ -1015,7 +1015,10 @@ fn setting<'a>(
     column![
         row![
             text(label).size(13).width(Length::Fill),
-            container(action).id(format!("room-settings-save-{field}")),
+            container(action)
+                .height(32)
+                .align_y(iced::alignment::Vertical::Center)
+                .id(format!("room-settings-save-{field}")),
         ]
         .align_y(iced::Alignment::Center)
         .spacing(10),
@@ -1923,6 +1926,7 @@ mod layout_tests {
         }
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         for width in [240.0, 560.0] {
+            let mut previous_control = None;
             for changed in [false, true] {
                 let mut view = setting(
                     "Topic",
@@ -1949,6 +1953,10 @@ mod layout_tests {
                 assert_eq!(control.width, width);
                 assert!(action.x >= 0.0 && action.x + action.width <= width);
                 assert!(action.y + action.height <= control.y);
+                if let Some(previous) = previous_control {
+                    assert_eq!(control, previous, "editing must not shift the field");
+                }
+                previous_control = Some(control);
             }
         }
     }

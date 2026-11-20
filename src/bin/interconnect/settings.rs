@@ -726,6 +726,7 @@ impl App {
             },
             (available
                 && self.settings.confirm_discard.is_none()
+                && self.settings.dirty()
                 && (self.demo.is_some() || self.settings.store.is_some())
                 && self.valid_gif_seconds()
                 && self.valid_presence_seconds())
