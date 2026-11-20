@@ -33,4 +33,36 @@ Keychain are required.
   do not survive restart. No complete offline history, timeline virtualization,
   or configurable storage retention.
 
+## Missing protocol features
+
+The main Matrix feature gaps below describe what Interconnect exposes, even where
+the SDK can handle the underlying events. This is not an exhaustive protocol
+compliance checklist.
+
+- **Calls:** no voice/video calls or group-call participation. Received call events
+  appear as activity text only.
+- **Polls:** no creation, voting, ending polls, or results UI. Received polls show
+  fallback text or the question.
+- **Locations:** no location sending, maps, or live-location tracking. Received
+  locations have text-only presentation.
+- **Media:** no voice-message recording or in-app audio/video playback. Audio/video
+  files can still be sent as attachments and downloaded/opened externally.
+  Standalone sticker events have text-only presentation; no sticker sending.
+- **Encryption and trust:** no recovery, key-backup, cross-signing setup, or manual
+  room-key import/export UI. Verification supports SAS with your own devices only;
+  no QR verification or verification of other users. See
+  [device verification](validation/verification.md).
+- **Account and sessions:** no registration, password changes/reset, account
+  deactivation, profile name/avatar editing, or renaming/revoking other devices.
+  Login supports password and browser SSO; legacy sync is unsupported.
+- **Room administration:** no alias management, custom power-rule editing,
+  encryption changes, room upgrades, or bans/unbans. Restricted/knock access rules
+  are read-only; no knocking or join-request management UI.
+- **Discovery and invitations:** no remote-homeserver directory selection or
+  email/phone invitations. Space linking does not cover existing subspaces or
+  unjoined children. See [room and space management](settings.md).
+- **Moderation and privacy:** no ignore/block-user or abuse-reporting UI, receipt
+  privacy controls, or general push-rule editor. Per-room notification presets
+  are supported, but timed mutes are missing.
+
 See [ideas](todo.md) and [validation boundaries](validation/connected-ui.md#validation-scope).
