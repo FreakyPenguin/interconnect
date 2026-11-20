@@ -795,19 +795,44 @@ impl App {
     fn emoji_management_card(&self, size: iced::Size) -> Element<'_, Message> {
         let state = self.emoji_management.as_ref().expect("open emoji manager");
         let available = !state.loading && !state.pending && state.task.is_none();
-        let quiet = |label: &'static str, event: Event, enabled: bool| {
+        let quiet = |label: &'static str, event: Event, enabled: bool| -> Element<'_, Message> {
+            let kind = match &event {
+                Event::Reload => Some(super::icons::Kind::Refresh),
+                Event::BeginRename => Some(super::icons::Kind::Edit),
+                Event::CancelEdit => Some(super::icons::Kind::Close),
+                Event::ImagePage(false) => Some(super::icons::Kind::ChevronLeft),
+                Event::ImagePage(true) => Some(super::icons::Kind::ChevronRight),
+                Event::DeletePack | Event::RemoveImage => Some(super::icons::Kind::Delete),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                return super::tooltips::icon_button(kind, label, enabled.then(|| message(event)))
+                    .into();
+            }
             button(text(label).size(13))
                 .padding([7, 10])
                 .style(shell::quiet_button)
                 .keyboard_navigation(true)
                 .on_press_maybe(enabled.then(|| message(event)))
+                .into()
         };
-        let primary = |label: &'static str, event: Event, enabled: bool| {
+        let primary = |label: &'static str, event: Event, enabled: bool| -> Element<'_, Message> {
+            let kind = match &event {
+                Event::Rename | Event::SaveImage => Some(super::icons::Kind::Check),
+                Event::NewImage => Some(super::icons::Kind::Plus),
+                Event::PickFile => Some(super::icons::Kind::Image),
+                _ => None,
+            };
+            if let Some(kind) = kind {
+                return super::tooltips::icon_button(kind, label, enabled.then(|| message(event)))
+                    .into();
+            }
             button(text(label).size(13))
                 .padding([7, 14])
                 .style(shell::primary_button)
                 .keyboard_navigation(true)
                 .on_press_maybe(enabled.then(|| message(event)))
+                .into()
         };
         let header = row![
             shell::title("Emoji packs", 20),

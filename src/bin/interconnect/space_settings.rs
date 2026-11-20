@@ -10,9 +10,7 @@ use super::avatar_editor;
 use super::{App, MAX_PENDING_OPERATIONS, Message, icons::Kind, shell, tooltips::icon_button};
 use iced::{
     Element, Length, Task,
-    widget::{
-        button, column, container, pick_list, row, rule, scrollable, text, text_editor, text_input,
-    },
+    widget::{column, container, pick_list, row, rule, scrollable, text, text_editor, text_input},
 };
 use interconnect::room_avatar::{Details, Upload};
 use interconnect::{
@@ -982,11 +980,11 @@ impl App {
             column![
                 feedback,
                 row![
-                    button(text("Reload").size(13))
-                        .padding([7, 10])
-                        .style(shell::quiet_button)
-                        .keyboard_navigation(true)
-                        .on_press_maybe((!panel.pending).then_some(message(Event::Reload))),
+                    super::tooltips::icon_button(
+                        super::icons::Kind::Refresh,
+                        "Reload space settings",
+                        (!panel.pending).then_some(message(Event::Reload)),
+                    ),
                     iced::widget::space().width(Length::Fill),
                     text(if panel.dirty() {
                         "Unsaved changes · save each edited field"

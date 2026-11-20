@@ -5,7 +5,7 @@ use super::{
 };
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, image, row, text},
+    widget::{column, container, image, row, text},
 };
 use interconnect::{
     media::Images,
@@ -137,27 +137,21 @@ impl State {
         let mut controls = column![
             text("Avatar").size(13),
             row![
-                button(
-                    text(if details.url.is_some() {
-                        "Change image…"
+                super::tooltips::icon_button(
+                    Kind::Image,
+                    if details.url.is_some() {
+                        "Change avatar image"
                     } else {
-                        "Choose image…"
-                    })
-                    .size(13)
-                )
-                .padding([7, 10])
-                .style(shell::quiet_button)
-                .keyboard_navigation(true)
-                .on_press_maybe(available.then_some(Event::Pick)),
-                button(text("Remove image").size(13))
-                    .padding([7, 10])
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press_maybe(
-                        (available
-                            && (details.url.is_some() || matches!(self.edit, Some(Some(_)))))
-                        .then_some(Event::Remove)
-                    ),
+                        "Choose avatar image"
+                    },
+                    available.then_some(Event::Pick),
+                ),
+                super::tooltips::icon_button(
+                    Kind::Delete,
+                    "Remove avatar image",
+                    (available && (details.url.is_some() || matches!(self.edit, Some(Some(_)))))
+                        .then_some(Event::Remove),
+                ),
             ]
             .spacing(6)
             .wrap()
@@ -166,16 +160,16 @@ impl State {
         if self.edit.is_some() || self.picker.is_some() {
             controls = controls.push(
                 row![
-                    button(text("Discard change").size(13))
-                        .padding([7, 10])
-                        .style(shell::quiet_button)
-                        .keyboard_navigation(true)
-                        .on_press_maybe(enabled.then_some(Event::Reset)),
-                    button(text("Save image").size(13))
-                        .padding([7, 12])
-                        .style(shell::primary_button)
-                        .keyboard_navigation(true)
-                        .on_press_maybe((available && self.edit.is_some()).then_some(Event::Save)),
+                    super::tooltips::icon_button(
+                        Kind::Close,
+                        "Discard avatar change",
+                        enabled.then_some(Event::Reset),
+                    ),
+                    super::tooltips::icon_button(
+                        Kind::Check,
+                        "Save avatar image",
+                        (available && self.edit.is_some()).then_some(Event::Save),
+                    ),
                 ]
                 .spacing(6)
                 .wrap(),

@@ -97,3 +97,14 @@ versus unmasked blending arithmetic; this is not missing invalidation or text.
 The text regression excludes these borders. Outward pixel rounding did not
 resolve that separate issue and was not included in the patch. Native desktop
 confirmation belongs to the integrated review, not this offscreen test.
+
+## Compact routine actions
+
+Emoji pack editors, room/space creation, section editing, space settings and the
+shared avatar editor use the existing outline icons for routine reload, save,
+cancel, edit, file selection and paging actions. Each icon retains an action
+specific tooltip and opt-in keyboard traversal. Dirty/discard and destructive
+confirmation choices retain explicit text; creation submits and room-pack
+sharing choices also retain wording. Availability and request handling are
+unchanged. Source formatting was checked; integrated Cargo and native checks
+must confirm the compact controls at both window sizes.

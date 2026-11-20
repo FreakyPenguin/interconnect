@@ -178,32 +178,42 @@ impl App {
             && self.pending_ops < crate::MAX_PENDING_OPERATIONS
             && (self.demo.is_some() || self.model.people_directory.is_some())
             && form.name().is_none_or(|name| !name.trim().is_empty());
+        let save: Element<'_, Message> = if matches!(form.change, Change::Remove { .. }) {
+            button(
+                text(if state.pending.is_some() {
+                    "Removing…"
+                } else {
+                    submit
+                })
+                .size(13),
+            )
+            .style(button::danger)
+            .keyboard_navigation(true)
+            .on_press_maybe(enabled.then(|| message(Event::SaveSection)))
+            .into()
+        } else {
+            super::tooltips::icon_button(
+                super::icons::Kind::Check,
+                if state.pending.is_some() {
+                    "Saving section…"
+                } else {
+                    "Save section"
+                },
+                enabled.then(|| message(Event::SaveSection)),
+            )
+            .into()
+        };
         body.push(
             row![
-                button(text("Cancel").size(13))
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press_maybe(
-                        state
-                            .pending
-                            .is_none()
-                            .then(|| message(Event::CancelSection))
-                    ),
-                button(
-                    text(if state.pending.is_some() {
-                        "Saving…"
-                    } else {
-                        submit
-                    })
-                    .size(13)
-                )
-                .style(if matches!(form.change, Change::Remove { .. }) {
-                    button::danger
-                } else {
-                    shell::primary_button
-                })
-                .keyboard_navigation(true)
-                .on_press_maybe(enabled.then(|| message(Event::SaveSection))),
+                super::tooltips::icon_button(
+                    super::icons::Kind::Close,
+                    "Cancel section changes",
+                    state
+                        .pending
+                        .is_none()
+                        .then(|| message(Event::CancelSection)),
+                ),
+                save,
             ]
             .spacing(8),
         )

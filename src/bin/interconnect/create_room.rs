@@ -569,11 +569,15 @@ impl App {
         if busy {
             content = content.push(text("Cancelling stops waiting; a room may already have been created. Check your room list before trying again.").size(12).style(shell::muted_text));
         }
-        let close = button(text(if busy { "Cancel creation" } else { "Cancel" }).size(13))
-            .padding([7, 14])
-            .keyboard_navigation(true)
-            .style(shell::quiet_button)
-            .on_press(message(Event::Close));
+        let close = super::tooltips::icon_button(
+            super::icons::Kind::Close,
+            if busy {
+                "Cancel creation"
+            } else {
+                "Cancel creation and close"
+            },
+            Some(message(Event::Close)),
+        );
         let submit_label = text(if busy {
             format!("Creating {kind}…")
         } else if state.created.is_some() {
