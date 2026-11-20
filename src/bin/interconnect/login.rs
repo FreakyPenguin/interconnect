@@ -23,6 +23,7 @@ pub struct State {
     pub browser_error: Option<String>,
     verify_after_login: bool,
     recover_after_registration: bool,
+    cancel_requested: bool,
 }
 
 #[derive(Clone)]
@@ -39,6 +40,7 @@ pub enum Event {
     SubmitToken(RegistrationChallenge),
     SubmitPassword,
     Submit,
+    CancelSignIn,
     OpenBrowser,
     BrowserOpened(String, Result<(), String>),
     CopyLink,
@@ -59,6 +61,7 @@ impl std::fmt::Debug for Event {
             Self::SubmitToken(_) => "SubmitToken",
             Self::SubmitPassword => "SubmitPassword",
             Self::Submit => "Submit",
+            Self::CancelSignIn => "CancelSignIn",
             Self::OpenBrowser => "OpenBrowser",
             Self::BrowserOpened(_, _) => "BrowserOpened",
             Self::CopyLink => "CopyLink",
@@ -166,6 +169,30 @@ impl App {
                     self.model.authentication = Some(Authentication::Waiting { url: None });
                 }
             }
+            Event::CancelSignIn
+                if !self.closing
+                    && !self.login.cancel_requested
+                    && matches!(
+                        self.model.authentication,
+                        Some(Authentication::Waiting { .. })
+                    ) =>
+            {
+                if self
+                    .login
+                    .sender
+                    .as_ref()
+                    .is_some_and(|sender| sender.try_send(LoginRequest::Cancel).is_ok())
+                {
+                    self.login.cancel_requested = true;
+                    self.login.browser_error = None;
+                } else {
+                    self.login.browser_error = Some(
+                        "Could not request cancellation yet. Try Cancel again in a moment.".into(),
+                    );
+                }
+                // The connection owner publishes the result after safe cleanup.
+                // Never display a fresh form while credential work is admitted.
+            }
             Event::RegistrationToken(challenge, token)
                 if !self.closing
                     && matches!(&self.model.authentication, Some(Authentication::Registration(current)) if current == &challenge && matches!(current.step, RegistrationStep::Token { .. })) =>
@@ -258,6 +285,12 @@ impl App {
     }
 
     pub(super) fn finish_login(&mut self) -> Task<Message> {
+        if !matches!(
+            self.model.authentication,
+            Some(Authentication::Waiting { .. })
+        ) {
+            self.login.cancel_requested = false;
+        }
         if self.closing || self.login.token_prompt.as_ref().is_some_and(|prompt| {
             !matches!(&self.model.authentication, Some(Authentication::Registration(current)) if current == prompt)
         }) {
@@ -340,10 +373,13 @@ impl App {
                     20,
                 ));
                 if let Some(error) = error {
-                    content = content.push(text(error.clone()).size(13));
+                    content = content.push(text(error.clone()).size(13).style(shell::danger_text));
                 }
                 content = content.push(text("Homeserver").size(13));
                 let input = text_input("https://matrix.org", &self.login.homeserver)
+                    .id("login-homeserver")
+                    .cursor_blinking(false)
+                    .style(shell::search_style)
                     .on_input(|value| Message::Login(Event::Homeserver(value)))
                     .on_submit(Message::Login(if registering {
                         Event::SubmitRegistration
@@ -357,6 +393,14 @@ impl App {
                 content = content
                     .push(input)
                     .push(
+                        text(if registering {
+                            "Username"
+                        } else {
+                            "Username or Matrix ID"
+                        })
+                        .size(13),
+                    )
+                    .push(
                         text_input(
                             if registering {
                                 "Username (without @ or server)"
@@ -365,11 +409,18 @@ impl App {
                             },
                             &self.login.username,
                         )
+                        .id("login-username")
+                        .cursor_blinking(false)
+                        .style(shell::search_style)
                         .on_input(|value| Message::Login(Event::Username(value)))
                         .padding(12),
                     )
+                    .push(text("Password").size(13))
                     .push(
                         text_input("Password", &self.login.password)
+                            .id("login-password")
+                            .cursor_blinking(false)
+                            .style(shell::search_style)
                             .secure(true)
                             .on_input(|value| {
                                 Message::Login(Event::Password(Zeroizing::new(value)))
@@ -378,8 +429,11 @@ impl App {
                             .padding(12),
                     );
                 if registering {
-                    content = content.push(
+                    content = content.push(text("Confirm password").size(13)).push(
                         text_input("Confirm password", &self.login.confirm_password)
+                            .id("login-confirm-password")
+                            .cursor_blinking(false)
+                            .style(shell::search_style)
                             .secure(true)
                             .on_input(|value| {
                                 Message::Login(Event::ConfirmPassword(Zeroizing::new(value)))
@@ -390,11 +444,18 @@ impl App {
                     if !self.login.confirm_password.is_empty()
                         && self.login.password != self.login.confirm_password
                     {
-                        content = content.push(text("Passwords must match.").size(13));
+                        content = content.push(
+                            text("Passwords must match.")
+                                .size(13)
+                                .style(shell::danger_text),
+                        );
                     }
                     if self.login.username.contains(['@', ':']) {
-                        content = content
-                            .push(text("Enter a username without @ or a server name.").size(13));
+                        content = content.push(
+                            text("Enter a username without @ or a server name.")
+                                .size(13)
+                                .style(shell::danger_text),
+                        );
                     }
                 }
                 content = content.push(
@@ -403,7 +464,9 @@ impl App {
                     } else {
                         "Sign in"
                     })
+                    .keyboard_navigation(true)
                     .padding([10, 16])
+                    .style(shell::primary_button)
                     .on_press_maybe(
                         (enabled
                             && !self.login.username.trim().is_empty()
@@ -415,6 +478,8 @@ impl App {
                 if !registering {
                     content = content.push(
                         button("Continue in browser")
+                            .keyboard_navigation(true)
+                            .style(shell::quiet_button)
                             .padding([10, 16])
                             .on_press_maybe(enabled.then_some(Message::Login(Event::Submit))),
                     );
@@ -426,6 +491,7 @@ impl App {
                         } else {
                             "New to Matrix? Create an account"
                         })
+                        .keyboard_navigation(true)
                         .style(button::text)
                         .on_press_maybe(
                             (!self.closing).then_some(Message::Login(Event::ToggleRegistration)),
@@ -448,11 +514,36 @@ impl App {
                 ));
                 if url.is_some() {
                     content = content.push(text("Open the sign-in page and return here when you're done."))
-                        .push(row![button("Open browser").on_press(Message::Login(Event::OpenBrowser)).padding(10),
-                            button("Copy sign-in link").on_press(Message::Login(Event::CopyLink)).padding(10)].spacing(12))
+                        .push(row![button("Open browser").keyboard_navigation(true).on_press(Message::Login(Event::OpenBrowser)).padding(10),
+                            button("Copy sign-in link").keyboard_navigation(true).on_press(Message::Login(Event::CopyLink)).padding(10)].spacing(12))
                         .push(text("Sign-in expires after three minutes. In a container, forward localhost port 8765 to your browser's host.").size(12).style(shell::muted_text));
                 } else {
                     content = content.push(text("Connecting to your homeserver…"));
+                }
+                content = content.push(
+                    button(
+                        text(if self.login.cancel_requested {
+                            "Cancelling…"
+                        } else if self.login.registering {
+                            "Cancel account creation"
+                        } else {
+                            "Cancel sign-in"
+                        })
+                        .size(13),
+                    )
+                    .keyboard_navigation(true)
+                    .padding([7, 14])
+                    .style(shell::quiet_button)
+                    .on_press_maybe(
+                        (!self.closing
+                            && !self.login.cancel_requested
+                            && self.login.sender.is_some())
+                        .then_some(Message::Login(Event::CancelSignIn)),
+                    ),
+                );
+                if self.login.cancel_requested {
+                    content = content.push(text("If sign-in already completed, it will finish safely. A device approved in your browser may need removing in another client.")
+                        .size(12).style(shell::muted_text));
                 }
             }
             Authentication::Registration(challenge) => {
@@ -473,8 +564,12 @@ impl App {
                         }
                         let prompt = challenge.clone();
                         content = content
+                            .push(text("Registration token").size(13))
                             .push(
                                 text_input("Registration token", token)
+                                    .id("login-registration-token")
+                                    .cursor_blinking(false)
+                                    .style(shell::search_style)
                                     .secure(true)
                                     .on_input(move |value| {
                                         Message::Login(Event::RegistrationToken(
@@ -487,25 +582,31 @@ impl App {
                                     )))
                                     .padding(12),
                             )
-                            .push(button("Continue").padding(10).on_press_maybe(
-                                (!self.closing && !token.trim().is_empty()).then_some(
-                                    Message::Login(Event::SubmitToken(challenge.clone())),
-                                ),
-                            ));
+                            .push(
+                                button("Continue")
+                                    .keyboard_navigation(true)
+                                    .padding(10)
+                                    .on_press_maybe(
+                                        (!self.closing && !token.trim().is_empty()).then_some(
+                                            Message::Login(Event::SubmitToken(challenge.clone())),
+                                        ),
+                                    ),
+                            );
                     }
                     RegistrationStep::Browser(_) => {
                         content = content
                     .push(text("Complete this step in your browser, then return here and continue. The server may ask for more than one step.").size(14))
                     .push(row![
-                        button("Open browser").on_press(Message::Login(Event::OpenBrowser)).padding(10),
-                        button("Copy link").on_press(Message::Login(Event::CopyLink)).padding(10),
+                        button("Open browser").keyboard_navigation(true).on_press(Message::Login(Event::OpenBrowser)).padding(10),
+                        button("Copy link").keyboard_navigation(true).on_press(Message::Login(Event::CopyLink)).padding(10),
                     ].spacing(12))
-                    .push(button("Continue").on_press_maybe((!self.closing).then_some(Message::Login(Event::RegistrationResponse(challenge.clone(), RegistrationReply::Continue)))).padding(10));
+                    .push(button("Continue").keyboard_navigation(true).on_press_maybe((!self.closing).then_some(Message::Login(Event::RegistrationResponse(challenge.clone(), RegistrationReply::Continue)))).padding(10));
                     }
                 }
                 content = content
                     .push(
                         button("Cancel")
+                            .keyboard_navigation(true)
                             .on_press_maybe((!self.closing).then_some(Message::Login(
                                 Event::RegistrationResponse(
                                     challenge.clone(),
@@ -523,26 +624,36 @@ impl App {
             Authentication::Failed(error) => {
                 content = content
                     .push(shell::title("Could not open profile", 20))
-                    .push(text(error.clone()).size(13))
+                    .push(text(error.clone()).size(13).style(shell::danger_text))
                     .push(
-                        text("Resolve the profile or keyring problem and reopen Interconnect.")
+                        text("Resolve the profile or keyring problem, then reopen Interconnect. Existing account data is retained.")
                             .size(13),
-                    );
+                    )
+                    .push(button("Close Interconnect").keyboard_navigation(true).padding([7, 14])
+                        .style(shell::quiet_button).on_press_maybe((!self.closing).then_some(Message::Close)));
             }
         }
         if let Some(error) = &self.login.browser_error {
-            content = content.push(text(error).size(13));
+            content = content.push(text(error).size(13).style(shell::danger_text));
         }
         if self.closing {
             content = content.push(text("Closing…"));
         }
-        container(
+        let form = container(
             scrollable(container(content).padding(32).center_x(Length::Fill))
                 .height(Length::Shrink),
         )
         .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .into()
+        .center_y(Length::Fill);
+        if matches!(authentication, Authentication::Waiting { .. }) {
+            super::focus_scope::dismissible(
+                form,
+                "login-waiting-focus",
+                Message::Login(Event::CancelSignIn),
+            )
+        } else {
+            super::focus_scope::view(form, "login-focus")
+        }
     }
 }
 
@@ -1058,6 +1169,101 @@ mod tests {
         })));
         assert!(app.drafts.is_empty());
         assert!(app.scroll_positions.is_empty());
+    }
+
+    #[test]
+    fn cancellation_waits_for_authoritative_state_and_rejects_repeated_requests() {
+        let (mut app, mut requests) = form();
+        submit(&mut app, false);
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(LoginRequest::SignIn { .. })
+        ));
+        let _ = app.login_update(Event::CancelSignIn);
+        assert!(matches!(requests.try_recv(), Ok(LoginRequest::Cancel)));
+        assert!(app.login.cancel_requested);
+        assert!(matches!(
+            app.model.authentication,
+            Some(Authentication::Waiting { .. })
+        ));
+        let _ = app.login_update(Event::CancelSignIn);
+        assert!(requests.try_recv().is_err());
+        app.model.authentication = Some(Authentication::SignIn { error: None });
+        let _ = app.finish_login();
+        assert!(!app.login.cancel_requested);
+        let _ = app.login_update(Event::CancelSignIn);
+        assert!(requests.try_recv().is_err());
+    }
+
+    #[test]
+    fn cancellation_queue_failure_keeps_waiting_and_allows_explicit_retry() {
+        let (mut app, mut requests) = form();
+        submit(&mut app, false);
+        let _ = app.login_update(Event::CancelSignIn);
+        assert!(!app.login.cancel_requested);
+        assert!(app.login.browser_error.is_some());
+        assert!(matches!(
+            app.model.authentication,
+            Some(Authentication::Waiting { .. })
+        ));
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(LoginRequest::SignIn { .. })
+        ));
+        let _ = app.login_update(Event::CancelSignIn);
+        assert!(matches!(requests.try_recv(), Ok(LoginRequest::Cancel)));
+        assert!(app.login.cancel_requested);
+        assert!(app.login.browser_error.is_none());
+    }
+
+    #[test]
+    fn focused_sign_in_and_registration_fields_do_not_schedule_caret_redraws() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+        let (mut app, _) = form();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        app.login.registering = true;
+        for id in [
+            "login-homeserver",
+            "login-username",
+            "login-password",
+            "login-confirm-password",
+        ] {
+            let mut view = app.view();
+            let mut tree = widget::Tree::new(&view);
+            let size = iced::Size::new(640.0, 480.0);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut widget::operation::focusable::focus(widget::Id::new(id)),
+            );
+            let now = iced::time::Instant::now();
+            for millis in [0, 500, 1000, 1500] {
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &iced::Event::Window(iced::window::Event::RedrawRequested(
+                        now + std::time::Duration::from_millis(millis),
+                    )),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &iced::Rectangle::with_size(size),
+                );
+                assert_eq!(
+                    shell.redraw_request(),
+                    iced::window::RedrawRequest::Wait,
+                    "{id}"
+                );
+                assert!(messages.is_empty());
+            }
+        }
     }
 
     #[test]
