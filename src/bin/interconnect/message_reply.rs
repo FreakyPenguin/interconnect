@@ -92,19 +92,13 @@ impl App {
         {
             return Task::none();
         }
-        // A known thread reply belongs in its thread pane. For an unloaded
-        // original, retain the source thread; its root itself lives in the room.
+        // Inspect both panes: a reply in a thread may quote an ordinary room
+        // event or another thread. Unknown targets use the room's unfiltered
+        // timeline, which includes thread events and can load either kind.
         let root = self
             .reply_row(source.thread, &event)
-            .and_then(|row| row.thread_root.clone())
-            .or_else(|| {
-                source
-                    .thread
-                    .then_some(self.selection.thread.as_ref())
-                    .flatten()
-                    .filter(|(_, root)| root != &event)
-                    .map(|(_, root)| root.clone())
-            });
+            .or_else(|| self.reply_row(!source.thread, &event))
+            .and_then(|row| row.thread_root.clone());
         let thread = root.is_some();
         if let Some(root) = root {
             self.select_thread(root);
@@ -334,7 +328,7 @@ mod tests {
         assert!(app.selection.thread.is_none());
     }
     #[test]
-    fn reply_jump_routes_known_thread_events_unloaded_replies_and_thread_roots() {
+    fn reply_jump_routes_known_thread_events_and_thread_roots() {
         let mut app = demo_app();
         let jump = quote(&mut app, false, "review", "review-reply-1");
         let _ = app.update(jump);
@@ -344,7 +338,8 @@ mod tests {
             app.selection.event_focus[1],
             Some((generation, "review-reply-1".into()))
         );
-        for original in ["review-reply-1", "$unloaded"] {
+        {
+            let original = "review-reply-1";
             let jump = quote(&mut app, true, "review-reply-2", original);
             let _ = app.update(jump);
             let generation = app.selection.thread.as_ref().unwrap().0;
@@ -364,6 +359,22 @@ mod tests {
             Some((generation, "review".into()))
         );
     }
+    #[test]
+    fn thread_replies_to_room_or_unknown_events_use_the_unfiltered_room_timeline() {
+        for original in ["welcome", "$unloaded"] {
+            let mut app = demo_app();
+            let _ = app.update(Message::Thread("review".into()));
+            let jump = quote(&mut app, true, "review-reply-2", original);
+            let _ = app.update(jump);
+            assert!(app.selection.thread.is_none());
+            let generation = app.selection.room.as_ref().unwrap().0;
+            assert_eq!(
+                app.selection.event_focus[0],
+                Some((generation, original.into()))
+            );
+        }
+    }
+
     #[test]
     fn reply_jump_rejects_stale_sources_changed_quotes_and_blocked_input() {
         for blocked in 0..6 {
