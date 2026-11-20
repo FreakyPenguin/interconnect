@@ -6,18 +6,23 @@ use iced::{
 };
 use std::sync::OnceLock;
 
-const PAGE_SIZE: usize = 48;
+const PAGE_SIZE: usize = 96;
+const POPULAR: &[&str] = &[
+    "👍", "❤️", "😂", "🎉", "👀", "🙌", "✅", "🔥", "🙏", "😊", "🚀", "💯",
+];
 pub const SEARCH_ID: &str = "emoji-picker-search";
 
 /// A shared surface for picker hosts, including any host-specific status text.
 pub fn panel<'a, Message: 'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    container(content)
-        .id("emoji-picker-panel")
-        .padding(12)
-        .width(320)
-        .height(400)
-        .style(surface)
-        .into()
+    super::focus_scope::view(
+        container(content)
+            .id("emoji-picker-panel")
+            .padding(12)
+            .width(320)
+            .height(400)
+            .style(surface),
+        "emoji-picker",
+    )
 }
 
 /// The key is the selected value, independent of the display name and glyph.
@@ -61,7 +66,7 @@ impl Catalog {
         Self::new(all)
     }
     pub fn new(entries: Vec<Entry>) -> Self {
-        let mut categories = vec![Category::All];
+        let mut categories = vec![Category::Popular, Category::All];
         for entry in &entries {
             let category = Category::Named(entry.category.clone());
             if !categories.contains(&category) {
@@ -145,12 +150,10 @@ pub fn surface(theme: &iced::Theme) -> iced::widget::container::Style {
 pub fn unicode() -> &'static Catalog {
     static CATALOG: OnceLock<Catalog> = OnceLock::new();
     CATALOG.get_or_init(|| {
-        let popular = [
-            "👍", "❤️", "😂", "🎉", "👀", "🙌", "✅", "🔥", "🙏", "😊", "🚀", "💯",
-        ];
         let mut entries = Vec::new();
-        let all = popular
-            .into_iter()
+        let all = POPULAR
+            .iter()
+            .copied()
             .filter_map(emojis::get)
             .map(|emoji| (emoji, false))
             .chain(emojis::iter().map(|emoji| (emoji, true)));
@@ -221,12 +224,14 @@ pub fn glyph<'a, M: 'static>(
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Category {
+    Popular,
     All,
     Named(String),
 }
 impl std::fmt::Display for Category {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Popular => f.write_str("Common emoji & packs"),
             Self::All => f.write_str("All emoji"),
             Self::Named(name) => f.write_str(name),
         }
@@ -257,13 +262,15 @@ impl State {
             .collect()
     }
     pub fn new(catalog: &Catalog) -> Self {
-        Self {
+        let mut state = Self {
             query: String::new(),
-            category: Category::All,
+            category: Category::Popular,
             page: 0,
             matches: (0..catalog.entries.len()).collect(),
             revision: 0,
-        }
+        };
+        state.update(catalog, Event::Search(String::new()));
+        state
     }
     /// Returns a selected catalog key; the caller decides what selection does.
     pub fn update(&mut self, catalog: &Catalog, event: Event) -> Option<String> {
@@ -297,6 +304,14 @@ impl State {
             .enumerate()
             .filter(|(index, entry)| {
                 (match &self.category {
+                    // Searching from the common choices searches the whole
+                    // catalog. Choosing another category explicitly narrows it.
+                    Category::Popular => {
+                        !words.is_empty()
+                            || POPULAR.contains(&entry.key.as_str())
+                            || (entry.custom.is_some() && *index < 12)
+                            || catalog.entries.len() <= POPULAR.len()
+                    }
                     Category::All => true,
                     Category::Named(category) => *category == entry.category,
                 }) && words
@@ -342,6 +357,7 @@ fn entry_view<'a, Message: Clone + 'static>(
         )
         .padding(0)
         .style(shell::quiet_button)
+        .keyboard_navigation(true)
         .on_press_maybe(select),
         entry.custom.as_ref().map_or_else(
             || entry.name.clone(),
@@ -380,6 +396,7 @@ pub fn view<'a, Message: Clone + 'static>(
             Some(state.category.clone()),
             move |category| category_event(Event::Category(category)),
         )
+        .keyboard_navigation(true)
         .text_size(13)
         .padding([7, 10])
         .style(shell::select_style)
@@ -389,22 +406,35 @@ pub fn view<'a, Message: Clone + 'static>(
             .padding(5)
             .into()
     };
-    let grid = row(state.visible().map(|index| {
-        let entry = &catalog.entries[index];
-        entry_view(
-            entry,
-            images,
-            enabled.then(|| on_event(Event::Select(entry.key.clone()))),
-        )
-    }))
-    .spacing(3)
-    .wrap();
+    let grid_event = on_event.clone();
+    // Reserve the scrollbar before calculating columns. Row::wrap measures
+    // against the scrollable's outer width and can clip its last emoji column.
+    let grid = iced::widget::responsive(move |size| {
+        let columns = (((size.width - 12.0 + 3.0) / 37.0).floor() as usize).max(1);
+        let visible: Vec<_> = state.visible().collect();
+        column(visible.chunks(columns).map(|indices| {
+            row(indices.iter().map(|index| {
+                let entry = &catalog.entries[*index];
+                entry_view(
+                    entry,
+                    images,
+                    enabled.then(|| grid_event(Event::Select(entry.key.clone()))),
+                )
+            }))
+            .spacing(3)
+            .into()
+        }))
+        .spacing(3)
+        .into()
+    });
     let mut previous = button(super::icons::icon(super::icons::Kind::ChevronLeft))
         .padding(7)
-        .style(shell::icon_button);
+        .style(shell::icon_button)
+        .keyboard_navigation(true);
     let mut next = button(super::icons::icon(super::icons::Kind::ChevronRight))
         .padding(7)
-        .style(shell::icon_button);
+        .style(shell::icon_button)
+        .keyboard_navigation(true);
     if enabled && state.page > 0 {
         previous = previous.on_press(on_event(Event::Page(false)));
     }
@@ -433,20 +463,21 @@ pub fn view<'a, Message: Clone + 'static>(
     } else {
         grid.into()
     };
-    content = content
-        .push(
-            iced::widget::keyed_column([(
-                state.revision,
-                Element::from(
-                    scrollable(results)
-                        .id("emoji-picker-results")
-                        .height(Length::Fill)
-                        .style(shell::scroll_style),
-                ),
-            )])
-            .height(Length::Fill),
-        )
-        .push(
+    content = content.push(
+        iced::widget::keyed_column([(
+            state.revision,
+            Element::from(
+                scrollable(results)
+                    .id("emoji-picker-results")
+                    .height(Length::Fill)
+                    .direction(shell::scrollbar())
+                    .style(shell::scroll_style),
+            ),
+        )])
+        .height(Length::Fill),
+    );
+    if state.pages() > 1 {
+        content = content.push(
             row![
                 super::tooltips::tooltip(
                     previous,
@@ -454,7 +485,7 @@ pub fn view<'a, Message: Clone + 'static>(
                     iced::widget::tooltip::Position::Top
                 ),
                 text(format!(
-                    "{} / {}",
+                    "Page {} of {}",
                     (state.page + 1).min(state.pages()),
                     state.pages()
                 ))
@@ -465,6 +496,7 @@ pub fn view<'a, Message: Clone + 'static>(
             .spacing(8)
             .align_y(iced::Alignment::Center),
         );
+    }
     if catalog.entries.iter().any(|entry| entry.custom.is_some()) {
         content = content.push(
             text("Custom emoji images are visible to homeservers.")
@@ -476,6 +508,7 @@ pub fn view<'a, Message: Clone + 'static>(
         content = content.push(
             button(text("Manage packs…").size(12))
                 .style(shell::quiet_button)
+                .keyboard_navigation(true)
                 .on_press(on_event(Event::Manage)),
         );
     }
@@ -543,6 +576,8 @@ mod tests {
     fn search_categories_pages_and_exact_unicode_keep_selection_keys_separate() {
         let catalog = unicode();
         let mut state = State::new(catalog);
+        assert_eq!(state.visible().count(), POPULAR.len());
+        state.update(catalog, Event::Category(Category::All));
         assert_eq!(state.visible().count(), PAGE_SIZE);
         state.update(catalog, Event::Page(true));
         assert_eq!(state.page, 1);
@@ -680,6 +715,48 @@ mod tests {
                     .filter(|event| matches!(event, Event::Select(key) if key == "🚀"))
                     .count(),
                 2 * usize::from(enabled)
+            );
+        }
+    }
+
+    #[test]
+    fn emoji_columns_keep_every_choice_inside_the_scrollbar_gutter() {
+        #[derive(Default)]
+        struct Bounds(Vec<iced::Rectangle>);
+        impl widget::Operation for Bounds {
+            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                operate(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id.is_some_and(|id| format!("{id:?}").contains("emoji-choice:")) {
+                    self.0.push(bounds);
+                }
+            }
+        }
+        let catalog = unicode();
+        let mut state = State::new(catalog);
+        state.update(catalog, Event::Category(Category::All));
+        let images = Default::default();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        for width in [240.0, 272.0, 296.0, 320.0] {
+            let size = iced::Size::new(width, 376.0);
+            let mut picker = view(&state, catalog, &images, true, |event| event);
+            let mut tree = Tree::new(&picker);
+            let node = picker.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(size, size),
+            );
+            let mut bounds = Bounds::default();
+            picker
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+            assert_eq!(bounds.0.len(), PAGE_SIZE);
+            assert!(
+                bounds
+                    .0
+                    .iter()
+                    .all(|rect| rect.x >= 0.0 && rect.x + rect.width <= width - 8.0)
             );
         }
     }

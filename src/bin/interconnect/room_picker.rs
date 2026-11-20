@@ -566,6 +566,9 @@ impl App {
         Task::none()
     }
     pub(super) fn quick_room_view(&self) -> Element<'_, Message> {
+        iced::widget::responsive(move |size| self.quick_room_sized(size)).into()
+    }
+    fn quick_room_sized(&self, size: iced::Size) -> Element<'_, Message> {
         let state = self.room_picker.as_ref().unwrap();
         let matches = if state.mode == Mode::Rooms {
             state.matches(&self.model.rooms)
@@ -658,6 +661,16 @@ impl App {
         }
         let card = container(
             column![
+                shell::title(
+                    if state.add_room.is_some() {
+                        "Add room to space"
+                    } else if state.mode == Mode::Spaces {
+                        "Switch space"
+                    } else {
+                        "Switch room"
+                    },
+                    18
+                ),
                 text_input(
                     if state.add_room.is_some() {
                         "Add room to space…"
@@ -670,8 +683,9 @@ impl App {
                 )
                 .id(SEARCH)
                 .cursor_blinking(false)
-                .size(16)
-                .padding(12)
+                .size(14)
+                .padding([7, 10])
+                .style(shell::search_style)
                 .on_input_maybe(
                     state
                         .pending
@@ -712,9 +726,12 @@ impl App {
             .spacing(10),
         )
         .padding(12)
-        .width(560)
-        .height(420)
-        .max_height(420)
+        .width((size.width - 32.0).clamp(1.0, 560.0))
+        .height(
+            (150.0 + count.clamp(1, 6) as f32 * 52.0)
+                .min(480.0)
+                .min((size.height - 96.0).max(1.0)),
+        )
         .style(|theme| container::Style {
             border: iced::Border::default().rounded(12),
             ..shell::surface(theme, shell::palette(theme).background)

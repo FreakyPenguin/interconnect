@@ -2,13 +2,12 @@
 use super::{App, MAX_PENDING_OPERATIONS, Message, shell};
 use iced::{
     Element, Length, Task,
-    widget::{
-        button, column, container, image, mouse_area, opaque, pick_list, row, scrollable, text,
-        text_input,
-    },
+    widget::{button, column, container, image, pick_list, row, text, text_input},
 };
 use interconnect::custom_emoji::management::{self, Edit, Listing, Pack, Source, Upload};
 use serde_json::json;
+
+const IMAGE_PAGE: usize = 48;
 
 pub struct State {
     account: Option<String>,
@@ -30,6 +29,9 @@ pub struct State {
     upload: Option<Upload>,
     confirm: Option<Edit>,
     editor: Editor,
+    image_query: String,
+    image_page: usize,
+    advanced_uri: bool,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Editor {
@@ -58,6 +60,28 @@ impl State {
         self.upload = None;
         self.confirm = None;
         self.editor = Editor::Browse;
+        self.advanced_uri = false;
+    }
+    fn filtered_images(&self) -> Vec<(&str, &serde_json::Value)> {
+        let query = self.image_query.trim().to_lowercase();
+        self.listing
+            .packs
+            .get(self.selected)
+            .and_then(|pack| pack.content.as_ref())
+            .and_then(|content| content["images"].as_object())
+            .into_iter()
+            .flat_map(|images| images.iter())
+            .take(1024)
+            .filter(|(shortcode, image)| {
+                shortcode.to_lowercase().contains(&query)
+                    || image["body"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&query)
+            })
+            .map(|(shortcode, image)| (shortcode.as_str(), image))
+            .collect()
     }
 }
 #[derive(Clone, Debug)]
@@ -88,6 +112,9 @@ pub enum Event {
     Confirm,
     CancelConfirm,
     Global,
+    FilterImages(String),
+    ImagePage(bool),
+    AdvancedUri,
     Saved(u64, Option<String>, bool, Result<Pack, String>),
 }
 fn message(event: Event) -> Message {
@@ -99,7 +126,21 @@ impl App {
         let Some(state) = &self.emoji_management else {
             return Vec::new();
         };
-        if state.upload.is_some() {
+        if state.editor == Editor::Browse {
+            let images = state.filtered_images();
+            let page = state
+                .image_page
+                .min(images.len().saturating_sub(1) / IMAGE_PAGE);
+            return images
+                .into_iter()
+                .skip(page * IMAGE_PAGE)
+                .take(IMAGE_PAGE)
+                .filter_map(|(_, image)| image["url"].as_str())
+                .map(matrix_sdk::ruma::OwnedMxcUri::from)
+                .filter(|uri| uri.is_valid())
+                .map(interconnect::image_media::Key::inline)
+                .collect();
+        } else if state.upload.is_some() {
             return Vec::new();
         }
         let uri = matrix_sdk::ruma::OwnedMxcUri::from(state.uri.as_str());
@@ -167,6 +208,9 @@ impl App {
                     upload: None,
                     confirm: None,
                     editor: Editor::Browse,
+                    image_query: String::new(),
+                    image_page: 0,
+                    advanced_uri: false,
                 });
                 return self.load_emoji_management();
             }
@@ -308,6 +352,8 @@ impl App {
                 match event {
                     Event::Select(index) if index < state.listing.packs.len() => {
                         state.selected = index;
+                        state.image_query.clear();
+                        state.image_page = 0;
                         state.reset_editor();
                         state.error = None;
                     }
@@ -319,6 +365,23 @@ impl App {
                         state.uri = value;
                         state.upload = None;
                     }
+                    Event::FilterImages(query) => {
+                        state.image_query = query;
+                        state.image_page = 0;
+                    }
+                    Event::ImagePage(forward) => {
+                        let last = state.filtered_images().len().saturating_sub(1) / IMAGE_PAGE;
+                        state.image_page = if forward {
+                            (state.image_page + 1).min(last)
+                        } else {
+                            state.image_page.saturating_sub(1)
+                        };
+                        return iced::widget::operation::snap_to(
+                            "emoji-management-body",
+                            iced::widget::operation::RelativeOffset::START,
+                        );
+                    }
+                    Event::AdvancedUri => state.advanced_uri = !state.advanced_uri,
                     Event::BeginRename => {
                         state.reset_editor();
                         state.editor = Editor::Rename;
@@ -606,26 +669,28 @@ impl App {
             button(text(label).size(13))
                 .padding([7, 10])
                 .style(shell::quiet_button)
+                .keyboard_navigation(true)
                 .on_press_maybe(enabled.then(|| message(event)))
         };
         let primary = |label: &'static str, event: Event, enabled: bool| {
             button(text(label).size(13))
                 .padding([7, 14])
                 .style(shell::primary_button)
+                .keyboard_navigation(true)
                 .on_press_maybe(enabled.then(|| message(event)))
         };
-        let header = container(
-            row![
-                shell::title("Emoji packs", 20),
-                iced::widget::space().width(Length::Fill),
-                quiet("Reload", Event::Reload, available),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-        )
-        .padding([16, 20])
-        .width(Length::Fill)
-        .id("emoji-management-header");
+        let header = row![
+            shell::title("Emoji packs", 20),
+            iced::widget::space().width(Length::Fill),
+            quiet("Reload", Event::Reload, available),
+            super::tooltips::icon_button(
+                super::icons::Kind::Close,
+                "Close emoji packs",
+                (!state.pending).then_some(message(Event::Close)),
+            ),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
         let pack = state.listing.packs.get(state.selected);
         let writable = available && pack.is_some_and(|pack| pack.writable);
         let mut body = column![].spacing(12).width(Length::Fill);
@@ -661,6 +726,7 @@ impl App {
                             style.border = iced::Border::default().rounded(6);
                             style
                         })
+                        .keyboard_navigation(true)
                         .on_press_maybe(writable.then(|| message(Event::Confirm))),
                 );
         } else {
@@ -700,6 +766,7 @@ impl App {
                                     message(Event::Select(choice.index))
                                 })
                                 .width(Length::Fill)
+                                .keyboard_navigation(true)
                                 .text_size(13)
                                 .padding([7, 10])
                                 .style(shell::select_style),
@@ -745,31 +812,76 @@ impl App {
                                 .style(shell::muted_text),
                             );
                         }
+                        let images = state.filtered_images();
+                        let count = images.len();
+                        let page = state.image_page.min(count.saturating_sub(1) / IMAGE_PAGE);
+                        body = body.push(
+                            text_input("Find emoji in this pack…", &state.image_query)
+                                .id("emoji-pack-filter")
+                                .cursor_blinking(false)
+                                .size(13)
+                                .padding([7, 10])
+                                .style(shell::search_style)
+                                .on_input_maybe(
+                                    available
+                                        .then_some(|query| message(Event::FilterImages(query))),
+                                ),
+                        );
                         let mut entries = column![].spacing(4).width(Length::Fill);
-                        let mut count = 0;
-                        if let Some(images) =
-                            pack.content.as_ref().and_then(|v| v["images"].as_object())
+                        for (shortcode, emoji) in
+                            images.into_iter().skip(page * IMAGE_PAGE).take(IMAGE_PAGE)
                         {
-                            for (shortcode, image) in images.iter().take(1024) {
-                                count += 1;
-                                entries = entries.push(
-                                    button(
-                                        text(format!(
-                                            ":{shortcode}:  {}",
-                                            image["body"].as_str().unwrap_or("")
-                                        ))
-                                        .size(13),
-                                    )
-                                    .padding([8, 10])
-                                    .width(Length::Fill)
-                                    .style(shell::quiet_button)
-                                    .on_press_maybe(
-                                        available.then(|| {
-                                            message(Event::ChooseImage(shortcode.clone()))
-                                        }),
-                                    ),
+                            let thumbnail: Element<'_, Message> = emoji["url"]
+                                .as_str()
+                                .map(matrix_sdk::ruma::OwnedMxcUri::from)
+                                .and_then(|uri| {
+                                    self.model
+                                        .images
+                                        .ready
+                                        .get(&interconnect::image_media::Key::inline(uri))
+                                })
+                                .map_or_else(
+                                    || {
+                                        container(super::icons::icon(super::icons::Kind::Image))
+                                            .center_x(36)
+                                            .center_y(36)
+                                            .into()
+                                    },
+                                    |handle| {
+                                        image(handle.clone())
+                                            .width(36)
+                                            .height(36)
+                                            .content_fit(iced::ContentFit::Contain)
+                                            .into()
+                                    },
                                 );
-                            }
+                            entries = entries.push(
+                                button(
+                                    row![
+                                        thumbnail,
+                                        column![
+                                            text(format!(":{shortcode}:")).size(13),
+                                            super::single_line::label(
+                                                emoji["body"].as_str().unwrap_or(""),
+                                                12
+                                            )
+                                            .style(shell::muted_text),
+                                        ]
+                                        .spacing(3)
+                                        .width(Length::Fill),
+                                    ]
+                                    .spacing(12)
+                                    .align_y(iced::Alignment::Center),
+                                )
+                                .padding([8, 10])
+                                .width(Length::Fill)
+                                .style(shell::quiet_button)
+                                .keyboard_navigation(true)
+                                .on_press_maybe(
+                                    available
+                                        .then(|| message(Event::ChooseImage(shortcode.to_owned()))),
+                                ),
+                            );
                         }
                         body = body
                             .push(
@@ -777,16 +889,38 @@ impl App {
                                     .size(12)
                                     .style(shell::muted_text),
                             )
-                            .push(entries)
-                            .push(primary("Add emoji", Event::NewImage, writable));
+                            .push(entries);
+                        if count > IMAGE_PAGE {
+                            body = body.push(
+                                row![
+                                    quiet(
+                                        "Previous",
+                                        Event::ImagePage(false),
+                                        available && page > 0
+                                    ),
+                                    text(format!(
+                                        "Page {} of {}",
+                                        page + 1,
+                                        count.div_ceil(IMAGE_PAGE)
+                                    ))
+                                    .size(12)
+                                    .style(shell::muted_text),
+                                    quiet(
+                                        "Next",
+                                        Event::ImagePage(true),
+                                        available && (page + 1) * IMAGE_PAGE < count
+                                    ),
+                                ]
+                                .spacing(10)
+                                .align_y(iced::Alignment::Center),
+                            );
+                        }
+                        body = body.push(primary("Add emoji", Event::NewImage, writable));
                     }
                     if state.listing.can_create {
                         actions =
                             actions.push(quiet("New room pack…", Event::BeginCreate, available));
                     }
-                    actions = actions
-                        .push(iced::widget::space().width(Length::Fill))
-                        .push(quiet("Close", Event::Close, !state.pending));
                 }
                 Editor::Rename => {
                     body = body.push(shell::title("Rename pack", 16)).push(
@@ -882,23 +1016,37 @@ impl App {
                                 ),
                         )
                         .push(text("Image").size(12).style(shell::muted_text))
-                        .push(
-                            text_input("mxc:// image URL", &state.uri)
-                                .size(13)
-                                .padding([7, 10])
-                                .style(shell::search_style)
-                                .cursor_blinking(false)
-                                .on_input_maybe(writable.then_some(|v| message(Event::Uri(v)))),
-                        )
-                        .push(quiet(
+                        .push(primary(
                             if state.task.is_some() {
                                 "Preparing image…"
+                            } else if state.upload.is_some() || !state.uri.is_empty() {
+                                "Replace image…"
                             } else {
                                 "Choose image…"
                             },
                             Event::PickFile,
                             writable,
+                        ))
+                        .push(quiet(
+                            if state.advanced_uri {
+                                "Hide existing image URL"
+                            } else {
+                                "Use an existing image URL…"
+                            },
+                            Event::AdvancedUri,
+                            available,
                         ));
+                    if state.advanced_uri {
+                        body = body.push(
+                            text_input("mxc:// image URL", &state.uri)
+                                .id("emoji-image-url")
+                                .size(13)
+                                .padding([7, 10])
+                                .style(shell::search_style)
+                                .cursor_blinking(false)
+                                .on_input_maybe(writable.then_some(|v| message(Event::Uri(v)))),
+                        );
+                    }
                     if let Some(upload) = &state.upload {
                         body = body.push(
                             row![
@@ -948,7 +1096,11 @@ impl App {
                         .push(primary(
                             "Save emoji",
                             Event::SaveImage,
-                            writable && !state.shortcode.trim().is_empty(),
+                            writable
+                                && !state.shortcode.trim().is_empty()
+                                && (state.upload.is_some()
+                                    || matrix_sdk::ruma::OwnedMxcUri::from(state.uri.as_str())
+                                        .is_valid()),
                         ));
                 }
             }
@@ -978,43 +1130,10 @@ impl App {
         } else {
             640.0
         };
-        let card = container(
-            column![
-                header,
-                iced::widget::rule::horizontal(1),
-                scrollable(container(body).padding(20).width(Length::Fill))
-                    .id("emoji-management-body")
-                    .height(Length::Fill)
-                    .direction(shell::scrollbar())
-                    .style(shell::scroll_style),
-                iced::widget::rule::horizontal(1),
-                container(footer)
-                    .padding([14, 20])
-                    .width(Length::Fill)
-                    .id("emoji-management-actions"),
-            ]
-            .spacing(0),
-        )
-        .width((size.width - 32.0).clamp(1.0, 700.0))
-        .height((size.height - 32.0).clamp(1.0, cap))
-        .style(|theme| container::Style {
-            border: iced::Border {
-                color: shell::palette(theme).line,
-                width: 1.0,
-                radius: 12.0.into(),
-            },
-            ..shell::surface(theme, shell::palette(theme).background)
-        });
-        opaque(
-            mouse_area(
-                container(card)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .padding(16)
-                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
-            )
-            .on_press(message(Event::Ignore))
-            .on_scroll(|_| message(Event::Ignore)),
+        let card = super::dialog::frame(size, 700.0, cap, "emoji-management", header, body, footer);
+        super::focus_scope::view(
+            super::dialog::modal(card, message(Event::Ignore)),
+            "emoji-management",
         )
     }
 }
@@ -1080,6 +1199,25 @@ mod tests {
             app,
             Event::Loaded(request, account, Ok(demo_listing(&room))),
         );
+    }
+    #[test]
+    fn browse_thumbnails_follow_only_the_filtered_page_and_stop_on_close() {
+        let mut app = crate::tests::demo_app();
+        open(&mut app);
+        let images: serde_json::Map<String, serde_json::Value> = (0..60).map(|index| (
+            format!("shape{index:02}"),
+            json!({"url":format!("mxc://demo.invalid/image{index}"), "body":format!("Shape {index}")}),
+        )).collect();
+        app.emoji_management.as_mut().unwrap().listing.packs[0].content =
+            Some(json!({"images": images}));
+        assert_eq!(app.emoji_management_images().len(), IMAGE_PAGE);
+        event(&mut app, Event::ImagePage(true));
+        assert_eq!(app.emoji_management_images().len(), 12);
+        event(&mut app, Event::FilterImages("shape00".into()));
+        assert_eq!(app.emoji_management_images().len(), 1);
+        assert_eq!(app.emoji_management.as_ref().unwrap().image_page, 0);
+        event(&mut app, Event::Close);
+        assert!(app.emoji_management_images().is_empty());
     }
     fn finish(app: &mut App, baseline: Pack, edit: Edit) -> Pack {
         let state = app.emoji_management.as_ref().unwrap();

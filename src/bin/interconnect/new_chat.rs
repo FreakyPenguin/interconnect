@@ -488,11 +488,15 @@ impl App {
             .collect()
     }
     pub(super) fn new_chat_view(&self) -> Element<'_, Message> {
+        iced::widget::responsive(move |size| self.new_chat_sized(size)).into()
+    }
+    fn new_chat_sized(&self, size: iced::Size) -> Element<'_, Message> {
         let state = self.new_chat.as_ref().unwrap();
         let request = state.request;
         let busy = self.direct_request.is_some() || self.create_room_request.is_some();
         let room_address = is_room_query(&state.picker.query);
         let mut content = column![
+            shell::title("New conversation", 18),
             state
                 .picker
                 .quick_view(&self.model.avatars, !busy, room_address)
@@ -535,8 +539,17 @@ impl App {
         );
         let card = container(content)
             .padding(12)
-            .width(560)
-            .max_height(390)
+            .width((size.width - 32.0).clamp(1.0, 560.0))
+            .height(
+                (154.0
+                    + state.picker.results.len().min(5) as f32 * 54.0
+                    + if room_address || state.picker.selected.is_some() {
+                        36.0
+                    } else {
+                        0.0
+                    })
+                .min((size.height - 96.0).clamp(1.0, 440.0)),
+            )
             .style(|theme| container::Style {
                 border: iced::Border::default().rounded(12),
                 ..shell::surface(theme, shell::palette(theme).background)
