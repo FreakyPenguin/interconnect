@@ -18,6 +18,23 @@ Linux/Wayland; Apple Silicon macOS builds are experimental.
 Keep a room and its thread open together, with separate composers and drafts.
 All screenshots and GIFs below use local sample data.
 
+## In development for 0.4.0
+
+- Follow reply previews to their originals, then use conversation back/forward
+  history to return to the room, thread, and reading location you left.
+- Restore room/thread reading positions across restarts using encrypted event
+  anchors. Restoration depends on available history and room keys.
+- More dependable composer focus when opening threads and returning from saved
+  messages or message menus.
+- Follow system appearance and enlarge text and controls together with interface
+  sizes from 100% to 150%.
+- Cancel queued messages and uploads, with confirmation explaining the case where
+  a send is already in flight.
+- Manage ignored users in Account settings, or open those controls from People.
+
+See [validation guidance](docs/validation/connected-ui.md) for automated coverage
+and connected desktop checks that still need manual validation.
+
 ## New in 0.3.0
 
 - Account registration, recovery-key setup/import/replacement, and a verification

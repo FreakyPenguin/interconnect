@@ -53,6 +53,8 @@ mod formatted;
 mod global_search;
 #[path = "interconnect/icons.rs"]
 mod icons;
+#[path = "interconnect/ignored_users.rs"]
+mod ignored_users;
 #[path = "interconnect/images.rs"]
 mod images;
 #[path = "interconnect/inline_image.rs"]
@@ -97,6 +99,8 @@ mod popover;
 mod presence;
 #[path = "interconnect/presentation.rs"]
 mod presentation;
+#[path = "interconnect/queued_sends.rs"]
+mod queued_sends;
 #[path = "interconnect/reaction_picker.rs"]
 mod reaction_picker;
 #[path = "interconnect/reactions.rs"]
@@ -211,6 +215,7 @@ struct App {
     stopped: bool,
     drafts: HashMap<DraftKey, Draft>,
     draft_persistence: draft_persistence::State,
+    queued_sends: queued_sends::State,
     retrying: HashSet<String>,
     retry_errors: HashMap<String, String>,
     pending_ops: usize,
@@ -223,6 +228,7 @@ struct App {
     conversation_history: conversation_history::State,
     scroll_positions: HashMap<DraftKey, f32>,
     reading_positions: reading_positions::State,
+    ignored_users: ignored_users::State,
     pending_scroll: [Option<f32>; 2],
     timeline_metrics: [Option<(u64, u64, timeline::Metrics)>; 2],
     thread_activity: thread_activity::State,
@@ -325,6 +331,7 @@ enum Message {
     SearchOpen,
     AdjacentRoom(bool),
     ConversationHistory(bool),
+    IgnoredUsers(ignored_users::Event),
     OpenLastThread,
     ToggleNavigation,
     Focus(bool),
@@ -405,6 +412,7 @@ enum Message {
     Send(DraftKey),
     Sent(DraftKey, Option<String>, Result<(), String>),
     AttachmentsSent(DraftKey, Option<String>, usize, Result<(), String>),
+    QueuedSend(queued_sends::Event),
     Retry(RetrySend),
     Retried(String, Result<(), String>),
     Composing(bool),
@@ -428,6 +436,7 @@ impl App {
             stopped: false,
             drafts: HashMap::new(),
             draft_persistence: draft_persistence::State::default(),
+            queued_sends: queued_sends::State::default(),
             retrying: HashSet::new(),
             retry_errors: HashMap::new(),
             pending_ops: 0,
@@ -445,6 +454,7 @@ impl App {
             conversation_history: conversation_history::State::default(),
             scroll_positions: HashMap::new(),
             reading_positions: Default::default(),
+            ignored_users: Default::default(),
             pending_scroll: [None, None],
             timeline_metrics: [None, None],
             thread_activity: thread_activity::State::default(),
@@ -539,6 +549,9 @@ impl App {
         task
     }
     fn update_dispatch(&mut self, message: Message) -> Task<Message> {
+        if let Message::IgnoredUsers(event) = message {
+            return self.ignored_users_event(event);
+        }
         interconnect::diagnostics::update();
         if let Message::Settings(settings::Event::SystemTheme(mode)) = &message {
             self.settings.system_theme = *mode;
@@ -1995,8 +2008,12 @@ impl App {
                     }
                 }
             }
+            Message::QueuedSend(event) => action_task = self.queued_send_event(event),
             Message::Retry(retry)
-                if !self.closing && !self.stopped && self.pending_ops < MAX_PENDING_OPERATIONS =>
+                if !self.closing
+                    && !self.stopped
+                    && self.pending_ops < MAX_PENDING_OPERATIONS
+                    && !self.queued_send_pending(&retry.transaction) =>
             {
                 let id = retry.transaction.clone();
                 if self.retrying.insert(id.clone()) {
@@ -2276,6 +2293,7 @@ impl App {
             self.stop_typing();
         }
         self.validate_section_drag();
+        self.validate_queued_send();
         self.validate_message_delete();
         self.validate_redacted_edits();
         self.validate_context_menu();
@@ -2834,7 +2852,8 @@ impl App {
                                 draft.reply.is_some() && draft.editing.is_none() && !draft.pending
                             })
                         });
-                let scoped_escape = self.settings.draft.is_some()
+                let scoped_escape = self.queued_send_confirmation_open()
+                    || self.settings.draft.is_some()
                     || self.emoji_management.is_some()
                     || self.image_view.is_some()
                     || self.space_settings.is_open();
@@ -2948,6 +2967,17 @@ impl App {
         ])
     }
     fn view(&self) -> Element<'_, Message> {
+        // Keep native appearance tracking active even with explicit app colors.
+        // In particular, a customized macOS window stops emitting theme changes.
+        iced::widget::themer(
+            Some(appearance::theme(self.effective_theme())),
+            self.view_content(),
+        )
+        .text_color(|theme| appearance::palette(theme).ink)
+        .background(|theme| appearance::palette(theme).background.into())
+        .into()
+    }
+    fn view_content(&self) -> Element<'_, Message> {
         if !self.draft_persistence.close_requested
             && self.demo.is_none()
             && let Some(authentication) = &self.model.authentication
@@ -2966,17 +2996,6 @@ impl App {
             || self.emoji_management.is_some()
             || self.image_view.is_some()
             || self.verification.open;
-        // Keep native appearance tracking active even with explicit app colors.
-        // In particular, a customized macOS window stops emitting theme changes.
-        iced::widget::themer(
-            Some(appearance::theme(self.effective_theme())),
-            self.view_content(),
-        )
-        .text_color(|theme| appearance::palette(theme).ink)
-        .background(|theme| appearance::palette(theme).background.into())
-        .into()
-    }
-    fn view_content(&self) -> Element<'_, Message> {
         let mut layers = iced::widget::stack![dialog::underlay(self.shell_view(), covered)];
         if self.draft_persistence.close_requested {
             return self
@@ -3702,13 +3721,20 @@ impl App {
                 } else {
                     "Retry"
                 });
-                if !self.closing && !self.stopped && !self.retrying.contains(&retry.transaction) {
+                if !self.closing
+                    && !self.stopped
+                    && !self.retrying.contains(&retry.transaction)
+                    && !self.queued_send_pending(&retry.transaction)
+                {
                     control = control.on_press(Message::Retry(retry.clone()));
                 }
                 entry = entry.push(control);
                 if let Some(error) = self.retry_errors.get(&retry.transaction) {
                     entry = entry.push(text(error));
                 }
+            }
+            if let Some(control) = self.queued_send_controls(message, thread, *generation) {
+                entry = entry.push(control);
             }
             if !thread
                 && message.thread_replies > 0

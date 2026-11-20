@@ -15,8 +15,8 @@ builds are experimental.
   no QR or verification of other users. [Recovery](validation/recovery.md) supports
   key creation/import/replacement, but no destructive identity reset or manual
   room-key export/import.
-- No ignore/block-user, abuse reports, receipt privacy controls, general push-rule
-  editor, timed mutes, or per-room sounds.
+- No abuse reports, receipt privacy controls, general push-rule editor, timed
+  mutes, or per-room sounds.
 
 ## Rooms and spaces
 
@@ -36,9 +36,10 @@ builds are experimental.
 
 ## Conversations and storage
 
-- Deletion needs a synced event ID; no unsent-echo cancellation or state/activity
-  redaction. Editing covers owned text/emotes, not captions/notices or arbitrary
-  HTML round-tripping. Reply previews need loaded/embedded context; opening an
+- Deletion needs a synced event ID; no state/activity redaction. Queue cancellation
+  stops pending uploads/unsent echoes; an in-flight send can finish before the SDK
+  removes it, so others may see it first. Editing covers owned text/emotes, not
+  captions/notices or arbitrary HTML round-tripping. Reply previews need loaded/embedded context; opening an
   original explicitly loads history, subject to available keys and server access.
 - Reader labels are room-scoped; thread unread badges are process-local.
 - No full tables, visual rich-text editor, inline-image authoring, formatted media
