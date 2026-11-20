@@ -560,10 +560,22 @@ impl App {
                         .picker
                         .view(&self.model.avatars, !busy)
                         .map(move |picker| event(Event::Picker(request, picker))),
-                    icon_button(
-                        Kind::PersonAdd,
-                        "Send invitation",
-                        (!busy).then_some(event(Event::Invite))
+                    button(
+                        row![
+                            icons::icon(Kind::PersonAdd),
+                            text("Send invitation").size(13)
+                        ]
+                        .spacing(7)
+                        .align_y(iced::Alignment::Center)
+                    )
+                    .padding([7, 10])
+                    .style(shell::primary_button)
+                    .keyboard_navigation(true)
+                    .on_press_maybe(
+                        (!busy
+                            && self.pending_ops < MAX_PENDING_OPERATIONS
+                            && interconnect::people::parse_user_id(&state.picker.query).is_ok())
+                        .then_some(event(Event::Invite))
                     )
                 ]
                 .spacing(8),

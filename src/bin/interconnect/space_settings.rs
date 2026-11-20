@@ -306,7 +306,7 @@ impl App {
                     panel.topic = text_editor::Content::with_text(
                         panel.saved.as_ref().map_or("", |s| s.topic.as_str()),
                     );
-                    panel.avatar = avatar_editor::State::default();
+                    panel.avatar.reset();
                     return self.update(*next);
                 }
             }
@@ -760,7 +760,7 @@ impl App {
     pub(super) fn space_settings_view(&self) -> Element<'_, Message> {
         let panel = self.space_settings.panel.as_ref().unwrap();
         if panel.transition.is_some() {
-            return super::focus_scope::view(
+            return super::focus_scope::dismissible(
                 container(super::room_settings::discard_prompt(
                     message(Event::KeepChanges(panel.request)),
                     message(Event::DiscardChanges(panel.request)),
@@ -769,6 +769,7 @@ impl App {
                 .center_x(Length::Fill)
                 .center_y(Length::Fill),
                 "space-settings-discard",
+                Message::Escape,
             );
         }
         if panel.directory.is_some() {
@@ -953,7 +954,7 @@ impl App {
             .spacing(6),
         )
         .padding([14, 24]);
-        super::focus_scope::view(
+        super::focus_scope::dismissible(
             column![
                 header,
                 rule::horizontal(1),
@@ -968,6 +969,7 @@ impl App {
             .height(Length::Fill)
             .width(Length::Fill),
             "space-settings-scope",
+            Message::Escape,
         )
     }
 }

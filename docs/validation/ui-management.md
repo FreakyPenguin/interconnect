@@ -48,3 +48,14 @@ unit tests do not establish server or platform behavior.
   error and retain the old saved name.
 - A late Discard action from another panel request, or a Discard action without
   an active confirmation, must preserve the current form draft.
+
+- Escape from a focused management field dismisses in one press. An open choice
+  menu keeps Escape first; Escape from a discard prompt means Keep editing.
+- Invitation buttons stay disabled for an empty or partial directory query.
+  Choosing a result or typing a valid full Matrix ID enables invitation in both
+  member-management forms and the People sidebar; backend permission and duplicate
+  checks remain authoritative.
+
+- Discarding an avatar draft must invalidate its picker serial even when a later
+  recovery step keeps the panel open. A late picker result must not replace a new
+  selection or restore a discarded preview.

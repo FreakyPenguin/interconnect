@@ -33,6 +33,12 @@ impl State {
     pub fn is_picking(&self) -> bool {
         self.picker.is_some()
     }
+    /// Drop a local draft without reusing an earlier file-picker request serial.
+    pub fn reset(&mut self) {
+        self.cancel_picker();
+        self.edit = None;
+        self.error = None;
+    }
     pub fn edit(&self) -> Option<Option<Upload>> {
         self.edit.clone()
     }
@@ -85,11 +91,7 @@ impl State {
                 self.edit = details.url.as_ref().map(|_| None);
                 self.error = None;
             }
-            Event::Reset => {
-                self.cancel_picker();
-                self.edit = None;
-                self.error = None;
-            }
+            Event::Reset => self.reset(),
             _ => {}
         }
         Task::none()
@@ -234,11 +236,18 @@ mod tests {
         );
         assert!(editor.edit().is_none());
         let _ = editor.update(Event::Pick, &details, true);
+        let second = editor.serial;
         let _ = editor.update(
-            Event::Picked(editor.serial, Ok(Some(upload))),
+            Event::Picked(first, Ok(Some(upload.clone()))),
             &details,
             true,
         );
+        assert!(
+            editor.edit().is_none(),
+            "an old result cannot satisfy a new picker"
+        );
+        assert!(editor.is_picking());
+        let _ = editor.update(Event::Picked(second, Ok(Some(upload))), &details, true);
         assert!(matches!(editor.edit(), Some(Some(_))));
         let _ = editor.update(Event::Remove, &details, true);
         assert!(matches!(editor.edit(), Some(None)));

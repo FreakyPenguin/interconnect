@@ -229,6 +229,7 @@ impl App {
                     .width(Length::Fill)
                     .padding([9, 12])
                     .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press(message(Event::Open)),
             )
             .padding(16)
@@ -250,8 +251,10 @@ impl App {
             .size(13),
         )
         .padding([7, 10])
-        .style(shell::primary_button);
+        .style(shell::primary_button)
+        .keyboard_navigation(true);
         if !busy
+            && parse_user_id(&state.picker.query).is_ok()
             && self.pending_ops < MAX_PENDING_OPERATIONS
             && (self.demo.is_some()
                 || current_pane(&self.model.room, state.target.room.0)
@@ -277,7 +280,7 @@ impl App {
         ]
         .spacing(10);
         if let Some(error) = &state.error {
-            form = form.push(text(error).size(12));
+            form = form.push(text(error).size(12).style(shell::danger_text));
         }
         if let Some(success) = &state.success {
             form = form.push(text(success).size(12).style(shell::muted_text));

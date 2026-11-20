@@ -510,7 +510,7 @@ impl App {
                 .on_press_maybe((enabled && valid).then_some(event(Event::Confirm(state.request)))),
             );
         }
-        crate::focus_scope::view(
+        crate::focus_scope::dismissible(
             column![
                 container(header).padding([18, 24]),
                 rule::horizontal(1),
@@ -525,6 +525,7 @@ impl App {
             .width(Length::Fill)
             .height(Length::Fill),
             "space-exit-scope",
+            Message::Escape,
         )
     }
 }

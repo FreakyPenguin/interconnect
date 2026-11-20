@@ -189,7 +189,7 @@ impl App {
                     panel.topic = text_editor::Content::with_text(
                         panel.saved.as_ref().map_or("", |s| s.topic.as_str()),
                     );
-                    panel.avatar = avatar_editor::State::default();
+                    panel.avatar.reset();
                     panel.addresses = addresses::Editor::default();
                     return self.update(*next);
                 }
@@ -678,7 +678,7 @@ impl App {
         let panel = self.room_settings.panel.as_ref().unwrap();
         let busy = panel.pending || self.room_settings.busy.contains(&panel.target.1);
         if panel.transition.is_some() {
-            return super::focus_scope::view(
+            return super::focus_scope::dismissible(
                 opaque(
                     mouse_area(
                         container(discard_prompt(
@@ -694,6 +694,7 @@ impl App {
                     .on_scroll(|_| message(Event::Ignore)),
                 ),
                 "room-settings-discard",
+                Message::Escape,
             );
         }
         let mut content = column![].spacing(16);
@@ -911,12 +912,13 @@ impl App {
             .align_y(iced::Alignment::Center)
         ]
         .spacing(8);
-        super::focus_scope::view(
+        super::focus_scope::dismissible(
             super::dialog::modal(
                 super::dialog::frame(size, 560.0, 760.0, "room-settings", header, content, footer),
                 message(Event::Ignore),
             ),
             "room-settings-scope",
+            Message::Escape,
         )
     }
 }
@@ -1603,6 +1605,55 @@ mod layout_tests {
     };
 
     #[test]
+    fn escape_from_a_focused_room_field_emits_one_dismissal() {
+        let mut app = crate::tests::demo_app();
+        let room = app.selection.room.as_ref().unwrap().1.clone();
+        let _ = app.update(message(Event::Open(room)));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let size = iced::Size::new(640.0, 480.0);
+        let mut view = app.room_settings_sized(size);
+        let mut tree = widget::Tree::new(&view);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        view.as_widget_mut().operate(
+            &mut tree,
+            layout::Layout::new(&node),
+            &renderer,
+            &mut operation::focusable::focus::<()>("room-settings-name".into()),
+        );
+        let mut messages = Vec::new();
+        let mut shell = iced::advanced::Shell::new(&mut messages);
+        view.as_widget_mut().update(
+            &mut tree,
+            &iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                physical_key: iced::keyboard::key::Physical::Code(
+                    iced::keyboard::key::Code::Escape,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            }),
+            layout::Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut shell,
+            &iced::Rectangle::with_size(size),
+        );
+        assert!(shell.is_event_captured());
+        assert!(matches!(messages.as_slice(), [Message::Escape]));
+        drop(view);
+        for event in messages {
+            let _ = app.update(event);
+        }
+        assert!(!app.room_settings.is_open());
+    }
+
+    #[test]
     fn panel_fits_minimum_window_traps_text_focus_and_has_no_caret_timer() {
         let mut app = crate::tests::demo_app();
         let room = app.selection.room.as_ref().unwrap().1.clone();
@@ -1638,8 +1689,7 @@ mod layout_tests {
                     &mut operation,
                 );
                 assert!(matches!(operation.finish(), Outcome::Some(())));
-                let value = result.lock().unwrap().take().unwrap();
-                value
+                result.lock().unwrap().take().unwrap()
             };
             let initial = count(&mut view, &mut tree);
             assert!(
