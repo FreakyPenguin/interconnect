@@ -214,7 +214,22 @@ Linux private Secret Service fixtures and CI tests do not validate Keychain poli
   source conversation. Older-event loading remains cancellable. Test inaccessible
   saved sources and malformed/shared storage.
 
-Positions are per-session; loaded history can grow memory without virtualization.
+Reading anchors persist encrypted per room/thread; loaded history can grow memory
+without virtualization. Quit/reopen over older room and thread messages, including
+a changed window size: restore the same event and its viewport offset. Check
+newest-following separately. Unavailable/deleted events, missing keys, and offline
+history failures must fall back to the ordinary timeline without a retry loop.
+Switch rooms or follow another event while restoration is loading: stale results
+must not move the replacement conversation. These connected restore checks remain
+manual; automated tests cover encrypted snapshots, anchor layout, and fallback state.
+
+Back/forward history has automated coverage for nested navigation, room/thread
+selection, draft/offset preservation, missing rooms, account changes, and bounded
+stacks. In a connected profile, follow reply/search/saved-message destinations,
+then go back and forward after history loads: check event-relative restoration,
+thread composer focus, and unchanged space filter. Desktop acceptance remains
+manual. Confirm new navigation after Back clears Forward and dialogs/IME prevent
+history shortcuts from changing the covered conversation.
 
 ### Links, pills, and permalinks
 
@@ -269,7 +284,8 @@ activity. Loading older may reveal it; thread panes have no room divider.
 Use an isolated connected profile to restore distinct room/thread drafts with
 Plain/Markdown mode, emoji/mention bindings, and text or empty reply intent. Sent
 message edits preserve the original unsent draft on cancel/restart. Attachments
-and scroll positions do not persist; demo drafts stay in memory.
+do not persist; event-anchored reading positions share encrypted draft storage.
+Demo drafts and reading positions stay in memory.
 
 Quit during a save and confirm the newest snapshot flushes. With an unwritable or
 malformed store, check Retry, Keep open, and explicit Close without saving while

@@ -100,7 +100,7 @@ impl App {
             .or_else(|| {
                 source
                     .thread
-                    .then(|| self.selection.thread.as_ref())
+                    .then_some(self.selection.thread.as_ref())
                     .flatten()
                     .filter(|(_, root)| root != &event)
                     .map(|(_, root)| root.clone())

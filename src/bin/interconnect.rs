@@ -23,6 +23,8 @@ mod composer_mentions;
 mod composer_picker;
 #[path = "interconnect/context_menu.rs"]
 mod context_menu;
+#[path = "interconnect/conversation_history.rs"]
+mod conversation_history;
 #[path = "interconnect/create_room.rs"]
 mod create_room;
 #[path = "interconnect/demo.rs"]
@@ -99,6 +101,8 @@ mod presentation;
 mod reaction_picker;
 #[path = "interconnect/reactions.rs"]
 mod reactions;
+#[path = "interconnect/reading_positions.rs"]
+mod reading_positions;
 #[path = "interconnect/receipts.rs"]
 mod receipts;
 #[path = "interconnect/recovery.rs"]
@@ -216,7 +220,9 @@ struct App {
     demo: Option<demo::Demo>,
     preferences_ready: bool,
     pending_navigation: Option<Preferences>,
+    conversation_history: conversation_history::State,
     scroll_positions: HashMap<DraftKey, f32>,
+    reading_positions: reading_positions::State,
     pending_scroll: [Option<f32>; 2],
     timeline_metrics: [Option<(u64, u64, timeline::Metrics)>; 2],
     thread_activity: thread_activity::State,
@@ -318,6 +324,7 @@ enum Message {
     SearchFocus,
     SearchOpen,
     AdjacentRoom(bool),
+    ConversationHistory(bool),
     OpenLastThread,
     ToggleNavigation,
     Focus(bool),
@@ -344,6 +351,12 @@ enum Message {
     WindowFocused(bool),
     WindowResized(f32),
     ResizePanel(panel_resize::Target, f32),
+    ReadingPosition {
+        thread: bool,
+        generation: u64,
+        event: Option<String>,
+        offset: i32,
+    },
     TimelineVisible {
         thread: bool,
         generation: u64,
@@ -429,7 +442,9 @@ impl App {
             demo: None,
             preferences_ready: false,
             pending_navigation: None,
+            conversation_history: conversation_history::State::default(),
             scroll_positions: HashMap::new(),
+            reading_positions: Default::default(),
             pending_scroll: [None, None],
             timeline_metrics: [None, None],
             thread_activity: thread_activity::State::default(),
@@ -502,7 +517,33 @@ impl App {
         self.update(Message::Room("studio".into()))
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        let depth = self.conversation_history.depth;
+        let outermost = depth == 0;
+        let track = outermost && conversation_history::tracks(&message);
+        let before = track.then(|| self.history_place()).flatten();
+        let account = self.account_id.clone();
+        self.conversation_history.depth += 1;
+        let task = self.update_dispatch(message);
+        // Sign-out can replace App, including its history state.
+        self.conversation_history.depth = depth;
+        if outermost {
+            if account != self.account_id
+                || (self.demo.is_none() && self.model.authentication.is_some())
+            {
+                self.conversation_history = conversation_history::State::default();
+            } else if track {
+                let after = self.history_place();
+                self.conversation_history.record(before, after);
+            }
+        }
+        task
+    }
+    fn update_dispatch(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if let Message::Settings(settings::Event::SystemTheme(mode)) = &message {
+            self.settings.system_theme = *mode;
+            return Task::none();
+        }
         if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_recovery() {
             return Task::none();
         }
@@ -521,6 +562,7 @@ impl App {
                 Message::Room(_)
                     | Message::Space(_)
                     | Message::AdjacentRoom(_)
+                    | Message::ConversationHistory(_)
                     | Message::SpaceNavigation(space_navigation::Event::Choose(_))
                     | Message::GlobalSearch(global_search::Event::Open)
                     | Message::Bookmark(bookmarks::Event::Open)
@@ -1041,6 +1083,7 @@ impl App {
             Message::Room(_)
                 | Message::Thread(_)
                 | Message::CloseThread
+                | Message::ConversationHistory(_)
                 | Message::Members(_)
                 | Message::AdjacentRoom(_)
                 | Message::OpenLastThread
@@ -1231,6 +1274,7 @@ impl App {
                 | Message::Notification(_)
                 | Message::Thread(_)
                 | Message::CloseThread
+                | Message::ConversationHistory(_)
                 | Message::Members(
                     members::Event::Open | members::Event::Close | members::Event::Retry
                 )
@@ -1404,6 +1448,14 @@ impl App {
                 }
             }
             Message::ResizePanel(target, width) => self.resize_panel(target, width),
+            Message::ReadingPosition {
+                thread,
+                generation,
+                event,
+                offset,
+            } => {
+                self.remember_reading_anchor(thread, generation, event, offset);
+            }
             Message::TimelineVisible {
                 thread,
                 generation,
@@ -1609,6 +1661,9 @@ impl App {
                     let task = self.update(Message::Room(id));
                     return task.chain(iced::widget::operation::focus("room-composer"));
                 }
+            }
+            Message::ConversationHistory(backwards) => {
+                action_task = self.navigate_history(backwards);
             }
             Message::AdjacentRoom(previous) => {
                 let rooms = self.visible_rooms();
@@ -2038,6 +2093,7 @@ impl App {
                     {
                         self.drafts.clear();
                         self.scroll_positions.clear();
+                        self.reading_positions = Default::default();
                         self.pending_scroll = [None, None];
                         self.selection.room = None;
                         self.selection.thread = None;
@@ -2084,6 +2140,7 @@ impl App {
                 }
                 self.model = *state;
                 self.restore_persistent_drafts();
+                self.fallback_reading_anchors();
                 if bookmarks_changed && self.bookmarks.open {
                     action_task = self.load_bookmark_previews();
                 }
@@ -2544,6 +2601,7 @@ impl App {
         self.selection.room = Some((self.generation, id));
         self.selection.thread = None;
         self.pending_scroll = [Some(self.saved_scroll(false)), None];
+        self.restore_saved_reading_anchor(false);
         self.drafts
             .entry(self.draft_key(false).unwrap())
             .or_default();
@@ -2559,6 +2617,7 @@ impl App {
         self.selection.thread = Some((self.generation, id));
         self.pending_thread_focus = Some(self.generation);
         self.pending_scroll[1] = Some(self.saved_scroll(true));
+        self.restore_saved_reading_anchor(true);
         if let Some(key) = self.draft_key(true) {
             self.drafts.entry(key).or_default();
         }
@@ -2687,6 +2746,8 @@ impl App {
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
+            iced::system::theme_changes()
+                .map(|mode| Message::Settings(settings::Event::SystemTheme(mode))),
             self.section_drag_subscription(),
             self.image_subscription(),
             if self.demo.is_some() {
@@ -2833,7 +2894,13 @@ impl App {
                             ..
                         }) = event
                         {
-                            if repeat && space_navigation::is_toggle_shortcut(&key, modifiers) {
+                            if repeat
+                                && (space_navigation::is_toggle_shortcut(&key, modifiers)
+                                    || matches!(
+                                        shell_shortcut(&key, modifiers),
+                                        Some(Message::ConversationHistory(_))
+                                    ))
+                            {
                                 return None;
                             }
                             shell_shortcut(&key, modifiers)
@@ -3161,7 +3228,7 @@ impl App {
                                 generation: *generation,
                             }
                         }),
-                        self.settings.current.appearance.theme
+                        self.effective_theme()
                     ),
                 ]
                 .spacing(4)
@@ -3326,6 +3393,7 @@ impl App {
                 header = header.push(self.presence_refresh_control());
             }
             header = header
+                .push(self.history_controls())
                 .push(self.room_search_button())
                 .push(self.member_badge())
                 .push(self.room_settings_button(selected_id));
@@ -3557,7 +3625,7 @@ impl App {
                         generation: *generation,
                     }),
                     (!thread).then(|| self.room_search_query()).flatten(),
-                    self.settings.current.appearance.theme,
+                    self.effective_theme(),
                 )
             };
             let body: Element<'_, Message> =
@@ -3777,7 +3845,7 @@ impl App {
         // state and a zero distance from the bottom follows loaded history.
         let keys = rows.iter().map(|row| Some(row.key())).collect();
         let focus = event_focus;
-        let observed = timeline::focused_history_view(
+        let observed = timeline::reading_history_view(
             *generation,
             keys,
             timeline.into(),
@@ -3790,6 +3858,7 @@ impl App {
                 && self.pending_scroll[usize::from(thread)].is_none()
                 && !matches!(history, History::Loading),
             focus.clone(),
+            self.reading_anchor(thread),
         );
         let mut message_area = iced::widget::stack![observed];
         if rows.is_empty() {
@@ -4161,6 +4230,9 @@ fn shell_shortcut(
     modifiers: iced::keyboard::Modifiers,
 ) -> Option<Message> {
     use iced::keyboard::{Key, key::Named};
+    if let Some(backwards) = conversation_history::shortcut(key, modifiers) {
+        return Some(Message::ConversationHistory(backwards));
+    }
     if create_room::is_shortcut(key, modifiers) {
         return Some(Message::CreateRoom(create_room::Event::Open));
     }
@@ -4330,7 +4402,8 @@ fn main() -> anyhow::Result<()> {
             App::view,
         )
         .title("Interconnect")
-        .theme(|app: &App| appearance::theme(app.settings.current.appearance.theme))
+        .theme(|app: &App| appearance::theme(app.effective_theme()))
+        .scale_factor(|app: &App| app.settings.current.appearance.interface_scale.factor())
         .default_font(iced::Font::with_name("Inter"))
         .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())
         .font(include_bytes!("../../assets/fonts/Inter-SemiBold.otf").as_slice())

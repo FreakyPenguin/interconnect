@@ -17,6 +17,7 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 | Ctrl+F / Ctrl+Shift+F | Search loaded room messages / account-wide messages. |
 | Ctrl+, | Settings. |
 | Alt+Up / Alt+Down | Previous/next visible room, wrapping. |
+| Alt+Left / Alt+Right (macOS: Command+[ / Command+]) | Back/forward through conversation history. |
 | Alt+T | Thread on latest non-thread room message; focus thread composer. |
 | Tab / Shift+Tab | Traverse focusable controls; dialogs cycle within their active form. |
 | Escape | Dismiss overlay/search/filter, cancel reply, then close People/thread and focus room composer. |
@@ -24,6 +25,10 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 Received reply previews are focusable buttons: Enter/Space opens the original
 message, loading older history when necessary. Thread replies open in their thread;
 its original root opens in the room timeline.
+
+Back/forward restores the room, open thread, and reading location without changing
+the selected space filter. History keeps up to 64 locations per direction during
+the session; opening another conversation after Back clears Forward.
 
 Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
 the previous match; account-search Enter submits.
@@ -125,4 +130,5 @@ creation is in its sidebar actions (⋯) menu; creation shortcuts still work.
 | Verification | Escape closes and cancels active exchange. |
 | Saved messages / image viewer | Escape returns to conversation. |
 
-Text drafts survive restart; reading positions last only within the session.
+Text drafts and room/thread reading positions survive restart. Reading-position
+restoration needs available history/keys and falls back to newest if unavailable.

@@ -51,8 +51,9 @@ builds are experimental.
 - No standalone sticker sending, bulk emoji import/export, or animated custom
   emoji. Received emoji retain sender dimensions after SDK sanitization.
 - Keyboard traversal/focus restoration remains incomplete; see [shortcuts](keyboard.md).
-- Text drafts persist encrypted. Attachments, unfinished edits, and scroll positions
-  do not survive restart. No complete offline history, timeline virtualization,
-  or configurable storage retention.
+- Text drafts and event-anchored reading positions persist encrypted. Attachments
+  and unfinished edits do not survive restart. Restoring an old position requires
+  available history/keys; unavailable anchors fall back to the newest timeline. No complete offline
+  history, timeline virtualization, or configurable storage retention.
 
 See [ideas](todo.md) and [validation boundaries](validation/connected-ui.md#validation-scope).
