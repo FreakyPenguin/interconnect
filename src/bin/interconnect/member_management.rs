@@ -480,27 +480,29 @@ impl App {
         .style(shell::muted_text)
         .into()
     }
-    pub(crate) fn member_sidebar_feedback(&self) -> Element<'_, Message> {
-        let mut content = column![].spacing(8);
-        if let Some(panel) = &self.space_settings.sidebar {
-            if let Some(error) = &panel.error {
-                content = content.push(text(error).size(12));
-            }
-            if panel.pending {
-                content = content.push(
-                    text(if panel.load.is_some() || panel.members.load.is_some() {
-                        "Loading member controls…"
-                    } else {
-                        "Saving…"
-                    })
-                    .size(12),
-                );
-            }
-            if let Some(feedback) = &panel.members.feedback {
-                content = content.push(text(feedback).size(12).style(shell::muted_text));
-            }
+    pub(crate) fn member_sidebar_feedback(&self) -> Option<Element<'_, Message>> {
+        let panel = self.space_settings.sidebar.as_ref()?;
+        if panel.error.is_none() && !panel.pending && panel.members.feedback.is_none() {
+            return None;
         }
-        content.into()
+        let mut content = column![].spacing(8);
+        if let Some(error) = &panel.error {
+            content = content.push(text(error).size(12));
+        }
+        if panel.pending {
+            content = content.push(
+                text(if panel.load.is_some() || panel.members.load.is_some() {
+                    "Loading member controls…"
+                } else {
+                    "Saving…"
+                })
+                .size(12),
+            );
+        }
+        if let Some(feedback) = &panel.members.feedback {
+            content = content.push(text(feedback).size(12).style(shell::muted_text));
+        }
+        Some(content.into())
     }
     pub(crate) fn member_sidebar_confirmation(&self, user: &str) -> Option<Element<'_, Message>> {
         let panel = self.space_settings.sidebar.as_ref()?;
@@ -725,10 +727,22 @@ pub(crate) fn member_controls<'a>(
         iced::widget::space().into()
     };
 
-    row![container(role).width(128), container(removal).width(32)]
-        .spacing(12)
+    if matches!(host, Host::Sidebar) {
+        row![
+            container(role).width(128),
+            iced::widget::space().width(Length::Fill),
+            container(removal).width(32),
+        ]
+        .spacing(8)
+        .width(Length::Fill)
         .align_y(iced::Alignment::Center)
         .into()
+    } else {
+        row![container(role).width(128), container(removal).width(32)]
+            .spacing(12)
+            .align_y(iced::Alignment::Center)
+            .into()
+    }
 }
 #[derive(Clone, PartialEq, Eq)]
 struct RoleChoice {

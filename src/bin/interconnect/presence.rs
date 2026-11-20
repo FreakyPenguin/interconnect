@@ -1,9 +1,6 @@
 //! Presence demand follows the current view and optional navigator-wide polling.
-use super::{App, Message, shell};
-use iced::{
-    Element,
-    widget::{button, container, text, tooltip},
-};
+use super::{App, Message};
+use iced::{Element, widget::container};
 
 impl App {
     pub(super) fn refresh_presence_demand(&mut self) {
@@ -156,25 +153,16 @@ impl App {
                 room: *room,
                 members: self.selection.members,
             });
-        let control = button(
-            text(if self.model.presence_loading {
-                "Checking…"
+        let control = super::tooltips::icon_button(
+            super::icons::Kind::Refresh,
+            if self.model.presence_loading {
+                "Checking online status…"
             } else {
-                "Refresh status"
-            })
-            .size(11),
-        )
-        .padding([5, 6])
-        .style(shell::quiet_button)
-        .on_press_maybe(
+                "Refresh online status"
+            },
             action.filter(|_| self.presence_controls_allowed() && !self.model.presence_loading),
         );
-        super::tooltips::tooltip(
-            container(control).id("presence-refresh"),
-            "Statuses are last-checked snapshots. Refresh to check again.",
-            tooltip::Position::Bottom,
-        )
-        .into()
+        container(control).id("presence-refresh").into()
     }
 }
 
