@@ -39,7 +39,9 @@ for notice in \
     LICENSE THIRD_PARTY_NOTICES.md \
     assets/fonts/LICENSE \
     assets/licenses/katex/OFL.txt assets/licenses/katex/FONT_NOTICE.txt \
+    assets/licenses/two-face/LICENSE-MIT assets/licenses/two-face/ACKNOWLEDGEMENTS.md \
     vendor/iced_widget/LICENSE \
+    vendor/iced_tiny_skia/LICENSE \
     vendor/cosmic-text/LICENSE-MIT vendor/cosmic-text/LICENSE-APACHE; do
     install -Dm644 "$project_root/$notice" "$archive_root/$notice"
 done

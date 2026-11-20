@@ -7,6 +7,9 @@ assets retain their own copyright notices and licenses.
   Copyright 2019 Héctor Ramón, Iced contributors. See the
   [original license](vendor/iced_widget/LICENSE) and
   [upstream provenance and local patches](vendor/iced_widget/PATCH.md).
+- **Vendored Iced tiny-skia renderer** in `vendor/iced_tiny_skia/` is licensed
+  under MIT. See its [license](vendor/iced_tiny_skia/LICENSE) and
+  [text damage patch](vendor/iced_tiny_skia/PATCH.md).
 - **Vendored Cosmic Text** in `vendor/cosmic-text/` retains its MIT OR Apache-2.0
   licenses. See [MIT](vendor/cosmic-text/LICENSE-MIT),
   [Apache-2.0](vendor/cosmic-text/LICENSE-APACHE), and the
@@ -25,7 +28,7 @@ assets retain their own copyright notices and licenses.
 - **two-face** 0.5.2+bat-0.26.1 bundles bat-curated syntax definitions and themes
   for syntect highlighting. See the copied [MIT license](assets/licenses/two-face/LICENSE-MIT)
   and [bundled asset notices](assets/licenses/two-face/ACKNOWLEDGEMENTS.md).
-  macOS and Debian packages include these notices alongside the font licenses.
+  Release packages include these notices alongside the font licenses.
 
 Other Cargo dependencies retain their upstream licenses. [Cargo.lock](Cargo.lock)
 records the resolved versions; this file highlights copied assets and patched
