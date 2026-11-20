@@ -76,3 +76,25 @@ unit tests do not establish server or platform behavior.
   including metadata, avatar, and member changes. Completion may reload only a
   matching active account/target form with no loaded settings; a loaded draft,
   directory browser, exit confirmation, or other account must remain untouched.
+
+## Channel settings polish
+
+- In the room settings dialog, confirm Room details, Notifications, Security &
+  access, Room addresses, and Membership have distinct headings and spacing.
+  Access and history controls precede the longer address management tools.
+- Edit each field independently. Its full-width value remains readable, the
+  action names the field (for example, Save topic), and saving retains the other
+  drafts. Unchanged fields show a Saved status rather than a disabled action.
+- At 640×480 and desktop sizes, verify the bounded dialog, fixed Close and Reload,
+  scrollable body, and readable feedback. Inspect edited fields and dropdowns,
+  including the longest history option, without horizontal overlap.
+- Published addresses, Local addresses, and Directory listing form separate
+  groups. A long homeserver name wraps below the local input and directory
+  checkbox; it must not consume the input's typing area. Publish/Create actions
+  still apply immediately, and removing an unpublished local address still
+  requires confirmation.
+
+Focused geometry regressions exercise full-width field values with both Save and
+Saved states, plus address input widths with a long server name at 240px and
+560px body widths. Run these with the locked UI suite; desktop appearance and
+native dropdown placement still require the demo acceptance checks above.
