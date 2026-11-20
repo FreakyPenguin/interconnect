@@ -565,17 +565,23 @@ impl App {
         }
     }
     pub(super) fn settings_view(&self) -> Element<'_, Message> {
-        iced::widget::responsive(move |size| self.settings_card(size)).into()
+        super::focus_scope::dismissible(
+            iced::widget::responsive(move |size| self.settings_card(size)),
+            "settings-focus",
+            Message::Escape,
+        )
     }
     fn settings_card(&self, size: iced::Size) -> Element<'_, Message> {
         let draft = self.settings.draft.as_ref().expect("open dialog");
         let available = !self.settings.busy;
         let mut notifications = checkbox(draft.notifications.enabled)
+            .keyboard_navigation(true)
             .label("Enable desktop notifications")
             .size(16)
             .text_size(13)
             .spacing(9);
         let mut previews = checkbox(draft.notifications.show_preview)
+            .keyboard_navigation(true)
             .label("Show room, sender, and message text")
             .size(16)
             .text_size(13)
@@ -595,12 +601,14 @@ impl App {
             })
             .size(13),
         )
+        .keyboard_navigation(true)
         .padding([7, 10])
         .style(shell::quiet_button);
         if !self.settings.notification_test_busy {
             notification_test = notification_test.on_press(message(Event::TestNotification));
         }
         let mut visibility = checkbox(draft.navigation.show_room_list)
+            .keyboard_navigation(true)
             .label("Show room list at startup")
             .size(16)
             .text_size(13)
@@ -609,6 +617,7 @@ impl App {
             visibility = visibility.on_toggle(|show| message(Event::ShowRoomList(show)));
         }
         let mut presence_polling = checkbox(draft.presence.poll_enabled)
+            .keyboard_navigation(true)
             .label("Refresh presence periodically")
             .size(16)
             .text_size(13)
@@ -639,6 +648,7 @@ impl App {
             );
         }
         let mut unread_section = checkbox(draft.navigation.show_unread_section)
+            .keyboard_navigation(true)
             .label("Show unread section")
             .size(16)
             .text_size(13)
@@ -648,6 +658,7 @@ impl App {
                 unread_section.on_toggle(|show| message(Event::ShowUnreadSection(show)));
         }
         let mut unread_first = checkbox(draft.navigation.unread_first)
+            .keyboard_navigation(true)
             .label("Show unread rooms first in each section")
             .size(16)
             .text_size(13)
@@ -656,6 +667,7 @@ impl App {
             unread_first = unread_first.on_toggle(|enabled| message(Event::UnreadFirst(enabled)));
         }
         let mut room_width = checkbox(draft.appearance.limit_room_width)
+            .keyboard_navigation(true)
             .label("Limit room content width")
             .size(16)
             .text_size(13)
@@ -668,15 +680,18 @@ impl App {
             Some(draft.composer.send_shortcut),
             |shortcut| message(Event::SendShortcut(shortcut)),
         )
+        .keyboard_navigation(true)
         .text_size(13)
         .padding([7, 10])
         .style(shell::select_style);
         let mut gpu = checkbox(draft.graphics.gpu_enabled)
+            .keyboard_navigation(true)
             .label("Use GPU rendering")
             .size(16)
             .text_size(13)
             .spacing(9);
         let mut low_power = checkbox(draft.graphics.low_power)
+            .keyboard_navigation(true)
             .label("Prefer a low-power GPU")
             .size(16)
             .text_size(13)
@@ -688,12 +703,15 @@ impl App {
             low_power = low_power.on_toggle(|value| message(Event::LowPower(value)));
         }
         let mut reload = button(text("Reload file").size(13))
+            .keyboard_navigation(true)
             .padding([7, 10])
             .style(shell::quiet_button);
         let mut defaults = button(text("Use defaults").size(13))
+            .keyboard_navigation(true)
             .padding([7, 10])
             .style(shell::quiet_button);
         let mut cancel = button(text("Cancel").size(13))
+            .keyboard_navigation(true)
             .padding([7, 14])
             .style(shell::quiet_button);
         let mut save = button(
@@ -704,6 +722,7 @@ impl App {
             })
             .size(13),
         )
+        .keyboard_navigation(true)
         .padding([7, 18])
         .style(shell::primary_button);
         if available {
@@ -726,6 +745,7 @@ impl App {
             Some(draft.media.gif_playback),
             |value| message(Event::GifPlayback(value)),
         )
+        .keyboard_navigation(true)
         .text_size(13)
         .padding([7, 10])
         .style(shell::select_style);
@@ -734,6 +754,7 @@ impl App {
             .align_y(iced::Alignment::Center);
         if draft.media.gif_playback == GifPlayback::Duration {
             let mut seconds = text_input("1–300", &self.settings.gif_seconds_input)
+                .id("settings-gif-seconds")
                 .cursor_blinking(false)
                 .width(72)
                 .size(13)
@@ -771,7 +792,7 @@ impl App {
                     row![text("Theme").size(13), pick_list(
                         ThemeMode::ALL, Some(draft.appearance.theme),
                         move |mode| message(if available { Event::Theme(mode) } else { Event::Ignore }),
-                    ).text_size(13).padding([7, 10]).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
+                    ).keyboard_navigation(true).text_size(13).padding([7, 10]).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
                     room_width,
                     caption("Center messages and the composer in a readable column."),
                 ].spacing(12),
@@ -808,7 +829,7 @@ impl App {
                 column![
                     shell::title("Custom emoji", 14),
                     caption("Manage your personal emoji and packs shared with rooms."),
-                    button(text("Manage emoji packs…").size(13))
+                    button(text("Manage emoji packs…").size(13)).keyboard_navigation(true)
                         .padding([7, 10])
                         .style(shell::quiet_button)
                         .on_press_maybe((available && (self.demo.is_some() || self.model.emoji_management.is_some()))
@@ -864,6 +885,7 @@ impl App {
             };
             actions = actions.push(
                 button(text(format!("Review invalid values in {}", category.label())).size(12))
+                    .keyboard_navigation(true)
                     .style(shell::quiet_button)
                     .on_press(message(Event::Category(category))),
             );
@@ -884,6 +906,7 @@ impl App {
                 row![
                     iced::widget::space().width(Length::Fill),
                     button(text("Keep editing").size(13))
+                        .keyboard_navigation(true)
                         .padding([7, 14])
                         .style(shell::quiet_button)
                         .on_press(message(Event::KeepEditing(serial))),
@@ -895,6 +918,7 @@ impl App {
                         })
                         .size(13)
                     )
+                    .keyboard_navigation(true)
                     .padding([7, 14])
                     .style(button::danger)
                     .on_press(message(Event::DiscardChanges(serial))),
@@ -907,6 +931,7 @@ impl App {
         }
         let close = super::tooltips::tooltip(
             button(container(icon(Kind::Close)).center_x(28).center_y(28))
+                .keyboard_navigation(true)
                 .padding(0)
                 .style(shell::icon_button)
                 .on_press_maybe((!self.settings.saving).then_some(message(Event::RequestClose))),
@@ -922,7 +947,7 @@ impl App {
                 .align_y(iced::Alignment::Center),
                 caption("Changes apply when you save. Graphics and startup options apply on the next launch."),
                 row(Category::ALL.into_iter().map(|category| {
-                    button(text(category.label()).size(13))
+                    button(text(category.label()).size(13)).keyboard_navigation(true)
                         .padding([7, 10])
                         .style(move |theme, status| shell::navigation_button(theme, self.settings.category == category, status))
                         .on_press_maybe((!self.settings.saving).then_some(message(Event::Category(category))))
@@ -1007,6 +1032,47 @@ mod tests {
             app.settings.draft.is_none(),
             "clean forms close immediately"
         );
+    }
+
+    #[test]
+    fn focused_duration_input_keeps_a_steady_caret_without_redraw_deadlines() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+        let mut app = super::super::tests::demo_app();
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::Category(Category::Media));
+        let _ = app.settings_update(Event::GifPlayback(GifPlayback::Duration));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut view = app.settings_view();
+        let mut tree = widget::Tree::new(&view);
+        let size = iced::Size::new(640.0, 480.0);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        view.as_widget_mut().operate(
+            &mut tree,
+            layout::Layout::new(&node),
+            &renderer,
+            &mut widget::operation::focusable::focus("settings-gif-seconds".into()),
+        );
+        let now = iced::time::Instant::now();
+        for millis in [0, 500, 1000, 1500] {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Window(iced::window::Event::RedrawRequested(
+                    now + std::time::Duration::from_millis(millis),
+                )),
+                layout::Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut shell,
+                &iced::Rectangle::with_size(size),
+            );
+            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+            assert!(messages.is_empty());
+        }
     }
 
     #[test]
@@ -1153,6 +1219,9 @@ mod tests {
         assert!(backend.borrow().notifications.enabled);
         assert!(backend.borrow().notifications.show_preview);
         let _ = app.update(Message::Escape);
+        assert!(app.settings.draft.is_some());
+        let serial = app.settings.confirm_discard.as_ref().unwrap().serial;
+        let _ = app.update(message(Event::DiscardChanges(serial)));
         assert!(backend.borrow().conversation_visible);
         assert!(backend.borrow().notifications.enabled);
         let _ = app.update(message(Event::Open));
@@ -1287,6 +1356,9 @@ mod tests {
         let _ = app.update(Message::ToggleNavigation);
         let _ = app.update(Message::SearchFocus);
         let _ = app.update(Message::Escape);
+        assert!(app.settings.draft.is_some());
+        let serial = app.settings.confirm_discard.as_ref().unwrap().serial;
+        let _ = app.update(message(Event::DiscardChanges(serial)));
         assert!(app.settings.draft.is_none());
         assert_eq!(app.settings.current, Settings::default());
         assert_eq!(app.selection, selection);
