@@ -48,7 +48,7 @@ struct Panel {
     draft: Option<Settings>,
     error: Option<String>,
     success: bool,
-    transition: Option<Box<Message>>,
+    transition: Option<(u64, Box<Message>)>,
 }
 impl Panel {
     fn dirty(&self) -> bool {
@@ -132,7 +132,10 @@ impl App {
         if !panel.dirty() {
             return false;
         }
-        panel.transition.get_or_insert_with(|| Box::new(next));
+        if panel.transition.is_none() {
+            self.generation += 1;
+            panel.transition = Some((self.generation, Box::new(next)));
+        }
         true
     }
     pub(super) fn room_settings_avatar(&self) -> Option<OwnedMxcUri> {
@@ -173,16 +176,22 @@ impl App {
         match event {
             Event::KeepChanges(request) => {
                 if let Some(panel) = &mut self.room_settings.panel
-                    && panel.request == request
+                    && panel
+                        .transition
+                        .as_ref()
+                        .is_some_and(|(serial, _)| *serial == request)
                 {
                     panel.transition = None;
                 }
             }
             Event::DiscardChanges(request) => {
                 if let Some(panel) = &mut self.room_settings.panel
-                    && panel.request == request
+                    && panel
+                        .transition
+                        .as_ref()
+                        .is_some_and(|(serial, _)| *serial == request)
                 {
-                    let Some(next) = panel.transition.take() else {
+                    let Some((_, next)) = panel.transition.take() else {
                         return Task::none();
                     };
                     panel.draft = panel.saved.clone();
@@ -677,13 +686,13 @@ impl App {
     fn room_settings_sized(&self, size: iced::Size) -> Element<'_, Message> {
         let panel = self.room_settings.panel.as_ref().unwrap();
         let busy = panel.pending || self.room_settings.busy.contains(&panel.target.1);
-        if panel.transition.is_some() {
+        if let Some((serial, _)) = &panel.transition {
             return super::focus_scope::dismissible(
                 opaque(
                     mouse_area(
                         container(discard_prompt(
-                            message(Event::KeepChanges(panel.request)),
-                            message(Event::DiscardChanges(panel.request)),
+                            message(Event::KeepChanges(*serial)),
+                            message(Event::DiscardChanges(*serial)),
                         ))
                         .padding(24)
                         .center_x(Length::Fill)
@@ -1110,6 +1119,45 @@ mod tests {
         let room = app.selection.room.as_ref().unwrap().1.clone();
         let _ = app.update(message(Event::Open(room)));
     }
+    fn discard_serial(app: &App) -> u64 {
+        app.room_settings
+            .panel
+            .as_ref()
+            .unwrap()
+            .transition
+            .as_ref()
+            .unwrap()
+            .0
+    }
+    #[test]
+    fn an_old_confirmation_cannot_accept_a_new_prompt_in_the_same_panel() {
+        let mut app = demo_app();
+        open(&mut app);
+        let _ = app.update(message(Event::Name("Keep both edits".into())));
+        let _ = app.update(message(Event::Close));
+        let old = discard_serial(&app);
+        let _ = app.update(message(Event::KeepChanges(old)));
+        let _ = app.update(message(Event::Close));
+        let current = discard_serial(&app);
+        assert_ne!(old, current);
+        let _ = app.update(message(Event::DiscardChanges(old)));
+        let _ = app.update(message(Event::KeepChanges(old)));
+        assert_eq!(discard_serial(&app), current);
+        assert_eq!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .draft
+                .as_ref()
+                .unwrap()
+                .name,
+            "Keep both edits"
+        );
+        let _ = app.update(message(Event::DiscardChanges(current)));
+        assert!(!app.room_settings.is_open());
+    }
+
     #[test]
     fn demo_addresses_preserve_other_drafts_and_require_confirmation_for_removal() {
         use addresses::Event as Edit;
@@ -1245,7 +1293,7 @@ mod tests {
             "Keep this draft"
         );
         let _ = app.update(message(Event::Close));
-        let _ = app.update(message(Event::DiscardChanges(request.wrapping_add(1))));
+        let _ = app.update(message(Event::DiscardChanges(request.wrapping_add(1000))));
         assert!(
             app.room_settings
                 .panel
@@ -1281,9 +1329,7 @@ mod tests {
         assert!(panel.dirty());
         assert_ne!(panel.saved.as_ref().unwrap().name, "Still editing the name");
         let _ = app.update(message(Event::Close));
-        let _ = app.update(message(Event::DiscardChanges(
-            app.room_settings.panel.as_ref().unwrap().request,
-        )));
+        let _ = app.update(message(Event::DiscardChanges(discard_serial(&app))));
         open(&mut app);
         let panel = app.room_settings.panel.as_ref().unwrap();
         assert_eq!(
@@ -1312,9 +1358,7 @@ mod tests {
         let panel = app.room_settings.panel.as_ref().unwrap();
         assert!(panel.transition.is_some());
         assert_eq!(panel.draft.as_ref().unwrap().name, "Uncommitted room name");
-        let _ = app.update(message(Event::KeepChanges(
-            app.room_settings.panel.as_ref().unwrap().request,
-        )));
+        let _ = app.update(message(Event::KeepChanges(discard_serial(&app))));
         assert!(
             app.room_settings
                 .panel
@@ -1332,9 +1376,7 @@ mod tests {
                 .transition
                 .is_some()
         );
-        let _ = app.update(message(Event::DiscardChanges(
-            app.room_settings.panel.as_ref().unwrap().request,
-        )));
+        let _ = app.update(message(Event::DiscardChanges(discard_serial(&app))));
         assert_eq!(
             app.room_settings
                 .panel
@@ -1359,9 +1401,7 @@ mod tests {
                 .is_some()
         );
         assert!(!app.space_settings.is_open());
-        let _ = app.update(message(Event::DiscardChanges(
-            app.room_settings.panel.as_ref().unwrap().request,
-        )));
+        let _ = app.update(message(Event::DiscardChanges(discard_serial(&app))));
         assert!(!app.room_settings.is_open());
         assert!(app.space_settings.is_open());
     }
@@ -1400,7 +1440,7 @@ mod tests {
         let operation = app.generation;
         assert_eq!(app.pending_ops, 1);
         let _ = app.update(message(Event::Close));
-        let _ = app.update(message(Event::DiscardChanges(session)));
+        let _ = app.update(message(Event::DiscardChanges(discard_serial(&app))));
         let url: OwnedMxcUri = "mxc://demo.invalid/saved-avatar".into();
         let _ = app.update(message(Event::AvatarSaved(
             operation,
@@ -1495,8 +1535,7 @@ mod tests {
         assert_eq!(saved.history, HistoryVisibility::Joined);
         let _ = app.update(message(Event::Name("Discarded".into())));
         let _ = app.update(Message::Escape);
-        let request = app.room_settings.panel.as_ref().unwrap().request;
-        let _ = app.update(message(Event::DiscardChanges(request)));
+        let _ = app.update(message(Event::DiscardChanges(discard_serial(&app))));
         open(&mut app);
         assert_eq!(
             app.room_settings

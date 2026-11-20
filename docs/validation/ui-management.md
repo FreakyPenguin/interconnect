@@ -59,3 +59,7 @@ unit tests do not establish server or platform behavior.
 - Discarding an avatar draft must invalidate its picker serial even when a later
   recovery step keeps the panel open. A late picker result must not replace a new
   selection or restore a discarded preview.
+
+- Cancel a discard prompt, reopen another prompt in the same settings panel, and
+  deliver the earlier prompt's Keep/Discard action: only the current prompt token
+  may act. Panel identity alone must not authorize a later confirmation.
