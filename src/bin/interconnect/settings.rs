@@ -1,12 +1,11 @@
-//! Startup settings and asynchronous dialog reload/save tasks. No timers.
-use super::{
-    App, Message,
-    icons::{Kind, icon},
-    shell,
-};
+//! Startup settings and asynchronous panel reload/save tasks. No timers.
+use super::{App, Message, icons::Kind, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, checkbox, column, container, pick_list, row, text, text_input},
+    widget::{
+        button, checkbox, column, container, mouse_area, opaque, pick_list, row, scrollable, text,
+        text_input,
+    },
 };
 use interconnect::settings::{
     self, GifPlayback, Graphics, SendShortcut, Settings, Store, ThemeMode,
@@ -354,7 +353,7 @@ impl App {
                     .poll_interval_seconds
                     .to_string();
                 self.settings.draft = Some(self.settings.current.clone());
-                // Remove focus from composers/search while the modal is visible.
+                // Remove focus from composers/search while preferences cover the workspace.
                 return iced::widget::operation::focus("settings-dialog");
             }
             Event::Cancel if !self.settings.saving => {
@@ -572,13 +571,13 @@ impl App {
     }
     pub(super) fn settings_view(&self) -> Element<'_, Message> {
         super::focus_scope::dismissible(
-            iced::widget::responsive(move |size| self.settings_card(size)),
+            iced::widget::responsive(move |size| self.settings_panel(size)),
             "settings-focus",
             Message::Escape,
         )
     }
-    fn settings_card(&self, size: iced::Size) -> Element<'_, Message> {
-        let draft = self.settings.draft.as_ref().expect("open dialog");
+    fn settings_panel(&self, size: iced::Size) -> Element<'_, Message> {
+        let draft = self.settings.draft.as_ref().expect("open settings");
         let available = !self.settings.busy;
         let mut notifications = checkbox(draft.notifications.enabled)
             .keyboard_navigation(true)
@@ -708,44 +707,31 @@ impl App {
         if available && draft.graphics.gpu_enabled {
             low_power = low_power.on_toggle(|value| message(Event::LowPower(value)));
         }
-        let mut reload = button(text("Reload file").size(13))
+        let reload = super::tooltips::icon_button(
+            Kind::Refresh,
+            "Reload settings file",
+            (available && self.settings.path.is_some()).then_some(message(Event::Reload)),
+        );
+        let defaults = button(text("Use defaults").size(13))
             .keyboard_navigation(true)
             .padding([7, 10])
-            .style(shell::quiet_button);
-        let mut defaults = button(text("Use defaults").size(13))
-            .keyboard_navigation(true)
-            .padding([7, 10])
-            .style(shell::quiet_button);
-        let mut cancel = button(text("Cancel").size(13))
-            .keyboard_navigation(true)
-            .padding([7, 14])
-            .style(shell::quiet_button);
-        let mut save = button(
-            text(if self.settings.saving {
-                "Saving…"
+            .style(shell::quiet_button)
+            .on_press_maybe(available.then_some(message(Event::Defaults)));
+        let save = super::tooltips::icon_action(
+            Kind::Save,
+            if self.settings.saving {
+                "Saving settings…"
             } else {
-                "Save"
-            })
-            .size(13),
-        )
-        .keyboard_navigation(true)
-        .padding([7, 18])
-        .style(shell::primary_button);
-        if available {
-            defaults = defaults.on_press(message(Event::Defaults));
-            if self.settings.path.is_some() {
-                reload = reload.on_press(message(Event::Reload));
-            }
-            if (self.demo.is_some() || self.settings.store.is_some())
+                "Save settings"
+            },
+            (available
+                && self.settings.confirm_discard.is_none()
+                && (self.demo.is_some() || self.settings.store.is_some())
                 && self.valid_gif_seconds()
-                && self.valid_presence_seconds()
-            {
-                save = save.on_press(message(Event::Save));
-            }
-        }
-        if !self.settings.saving {
-            cancel = cancel.on_press(message(Event::Cancel));
-        }
+                && self.valid_presence_seconds())
+            .then_some(message(Event::Save)),
+            shell::primary_button,
+        );
         let playback = pick_list(
             [GifPlayback::Once, GifPlayback::Duration],
             Some(draft.media.gif_playback),
@@ -861,7 +847,7 @@ impl App {
                         gpu,
                         caption("Uses the CPU renderer when disabled. GPU rendering includes a software fallback."),
                         low_power,
-                        caption("Graphics changes apply on the next launch."),
+                        caption("Graphics and room-list startup changes apply on the next launch."),
                     ].spacing(12),
                     iced::widget::rule::horizontal(1),
                     shell::title("Configuration", 14),
@@ -878,10 +864,14 @@ impl App {
         if self.settings.busy && !self.settings.saving {
             content = content.push(caption("Loading settings…"));
         }
-        // Save errors belong next to the persistent actions, rather than below the fold.
-        let mut actions = column![].spacing(10).width(Length::Fill);
+        // Feedback stays near the toolbar, without reserving an empty footer.
+        let mut feedback = column![].spacing(8).width(Length::Fill);
+        let has_feedback = self.settings.error.is_some()
+            || !self.valid_gif_seconds()
+            || !self.valid_presence_seconds()
+            || self.settings.confirm_discard.is_some();
         if let Some(error) = &self.settings.error {
-            actions = actions.push(caption(error).style(shell::danger_text));
+            feedback = feedback.push(caption(error).style(shell::danger_text));
         }
         if !self.valid_gif_seconds() || !self.valid_presence_seconds() {
             let category = if !self.valid_gif_seconds() {
@@ -889,7 +879,7 @@ impl App {
             } else {
                 Category::Advanced
             };
-            actions = actions.push(
+            feedback = feedback.push(
                 button(text(format!("Review invalid values in {}", category.label())).size(12))
                     .keyboard_navigation(true)
                     .style(shell::quiet_button)
@@ -898,7 +888,7 @@ impl App {
         }
         if let Some(confirm) = &self.settings.confirm_discard {
             let serial = confirm.serial;
-            actions = actions.push(
+            feedback = feedback.push(
                 text(match &confirm.action {
                     DiscardAction::Close => "Discard your unsaved settings changes?",
                     DiscardAction::Transition(_) => {
@@ -908,7 +898,7 @@ impl App {
                 })
                 .size(13),
             );
-            actions = actions.push(
+            feedback = feedback.push(
                 row![
                     iced::widget::space().width(Length::Fill),
                     button(text("Keep editing").size(13))
@@ -931,57 +921,101 @@ impl App {
                 ]
                 .spacing(8),
             );
-        } else {
-            actions = actions
-                .push(row![iced::widget::space().width(Length::Fill), cancel, save].spacing(8));
         }
-        let close = super::tooltips::tooltip(
-            button(container(icon(Kind::Close)).center_x(28).center_y(28))
-                .keyboard_navigation(true)
-                .padding(0)
-                .style(shell::icon_button)
-                .on_press_maybe((!self.settings.saving).then_some(message(Event::RequestClose))),
+        let close = super::tooltips::icon_button(
+            Kind::Close,
             "Close settings",
-            iced::widget::tooltip::Position::Bottom,
+            (!self.settings.saving).then_some(message(Event::RequestClose)),
         );
-        let header = column![
-                row![
-                    shell::title("Settings", 20),
-                    iced::widget::space().width(Length::Fill),
-                    close
-                ]
-                .align_y(iced::Alignment::Center),
-                caption("Changes apply when you save. Graphics and startup options apply on the next launch."),
-                row(Category::ALL.into_iter().map(|category| {
-                    button(text(category.label()).size(13)).keyboard_navigation(true)
-                        .padding([7, 10])
-                        .style(move |theme, status| shell::navigation_button(theme, self.settings.category == category, status))
-                        .on_press_maybe((!self.settings.saving).then_some(message(Event::Category(category))))
-                        .into()
-                })).spacing(4).wrap(),
+        let actions = container(
+            row![
+                container(save).id("settings-save"),
+                container(close).id("settings-close"),
             ]
-            .spacing(8).width(Length::Fill);
-        let preferred_height = match self.settings.category {
-            Category::General => 680.0,
-            Category::Notifications => 500.0,
-            Category::Media => 520.0,
-            Category::Advanced => 700.0,
-        } + if self.settings.confirm_discard.is_some() {
-            60.0
+            .spacing(6)
+            .align_y(iced::Alignment::Center),
+        )
+        .id("settings-actions");
+        let categories = row(Category::ALL.into_iter().map(|category| {
+            button(text(category.label()).size(13))
+                .keyboard_navigation(true)
+                .padding([7, 10])
+                .style(move |theme, status| {
+                    shell::navigation_button(theme, self.settings.category == category, status)
+                })
+                .on_press_maybe(
+                    (!self.settings.saving).then_some(message(Event::Category(category))),
+                )
+                .into()
+        }))
+        .spacing(4)
+        .wrap();
+        let title = row![
+            shell::title("Settings", 20),
+            text(if self.settings.saving {
+                "Saving…"
+            } else if self.settings.dirty() {
+                "Unsaved changes"
+            } else {
+                ""
+            })
+            .size(12)
+            .style(shell::muted_text),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        let header: Element<'_, Message> = if size.width >= 900.0 {
+            row![
+                title,
+                iced::widget::space().width(24),
+                categories,
+                iced::widget::space().width(Length::Fill),
+                actions
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
+            .into()
         } else {
-            0.0
+            column![
+                row![title, iced::widget::space().width(Length::Fill), actions]
+                    .align_y(iced::Alignment::Center),
+                categories,
+            ]
+            .spacing(8)
+            .into()
         };
-        super::dialog::modal(
-            super::dialog::frame(
-                size,
-                560.0,
-                preferred_height,
-                "settings",
-                header,
-                content,
-                actions,
-            ),
-            message(Event::Ignore),
+        let mut panel = column![
+            container(header)
+                .padding([12, 20])
+                .width(Length::Fill)
+                .id("settings-header"),
+            iced::widget::rule::horizontal(1),
+        ];
+        if has_feedback {
+            panel = panel
+                .push(container(feedback).padding([10, 20]).width(Length::Fill))
+                .push(iced::widget::rule::horizontal(1));
+        }
+        panel = panel.push(
+            scrollable(container(content).padding(24).width(Length::Fill))
+                .id("settings-body")
+                .direction(shell::scrollbar())
+                .style(shell::scroll_style)
+                .height(Length::Fill),
+        );
+        // Fill the workspace and swallow empty-space input so the retained shell
+        // cannot scroll or receive pointer actions beneath preferences.
+        opaque(
+            mouse_area(
+                container(panel)
+                    .id("settings-dialog")
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .clip(true)
+                    .style(|theme| shell::surface(theme, shell::palette(theme).background)),
+            )
+            .on_press(message(Event::Ignore))
+            .on_scroll(|_| message(Event::Ignore)),
         )
     }
 }
@@ -1606,7 +1640,7 @@ mod tests {
     }
 
     #[test]
-    fn modal_layout_and_backdrop_capture_input_at_minimum_window_size() {
+    fn preferences_panel_fills_window_and_captures_empty_space_at_minimum_size() {
         use iced::advanced::{Shell, layout, mouse, widget};
         let mut app = super::super::tests::demo_app();
         let _ = app.settings_update(Event::Open);
@@ -1621,11 +1655,12 @@ mod tests {
         assert_eq!(node.size(), size);
         #[derive(Default)]
         struct Probe {
+            panel: Option<iced::Rectangle>,
+            header: Option<iced::Rectangle>,
             actions: Option<iced::Rectangle>,
             body: Option<iced::Rectangle>,
-            content: Option<iced::Rectangle>,
             save: Option<iced::Rectangle>,
-            cancel: Option<iced::Rectangle>,
+            close: Option<iced::Rectangle>,
             captions: Vec<iced::Rectangle>,
         }
         impl widget::Operation for Probe {
@@ -1633,50 +1668,62 @@ mod tests {
                 f(self);
             }
             fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
-                if id == Some(&widget::Id::new("settings-actions")) {
-                    self.actions = Some(bounds);
+                match id {
+                    Some(id) if id == &widget::Id::new("settings-dialog") => {
+                        self.panel = Some(bounds)
+                    }
+                    Some(id) if id == &widget::Id::new("settings-header") => {
+                        self.header = Some(bounds)
+                    }
+                    Some(id) if id == &widget::Id::new("settings-actions") => {
+                        self.actions = Some(bounds)
+                    }
+                    Some(id) if id == &widget::Id::new("settings-save") => self.save = Some(bounds),
+                    Some(id) if id == &widget::Id::new("settings-close") => {
+                        self.close = Some(bounds)
+                    }
+                    _ => {}
                 }
             }
             fn scrollable(
                 &mut self,
                 id: Option<&widget::Id>,
                 bounds: iced::Rectangle,
-                content: iced::Rectangle,
+                _: iced::Rectangle,
                 _: iced::Vector,
                 _: &mut dyn widget::operation::Scrollable,
             ) {
                 if id == Some(&widget::Id::new("settings-body")) {
                     self.body = Some(bounds);
-                    self.content = Some(content);
                 }
             }
             fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, value: &str) {
-                match value {
-                    "Save" => self.save = Some(bounds),
-                    "Cancel" => self.cancel = Some(bounds),
-                    value if value.starts_with("The sample uses") => self.captions.push(bounds),
-                    _ => {}
+                if value.starts_with("The sample uses") {
+                    self.captions.push(bounds);
                 }
             }
         }
         let mut probe = Probe::default();
         view.as_widget_mut()
             .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut probe);
+        assert_eq!(probe.panel.unwrap(), iced::Rectangle::with_size(size));
+        let header = probe.header.unwrap();
         let actions = probe.actions.unwrap();
         let body = probe.body.unwrap();
-        assert!(body.height > 100.0);
         assert!(
-            probe.content.unwrap().height > body.height,
-            "only the preferences scroll"
+            header.height <= 100.0,
+            "compact heading and category navigation"
         );
-        assert!(body.y + body.height <= actions.y);
-        for bounds in [probe.save.unwrap(), probe.cancel.unwrap()] {
-            assert!(bounds.y >= actions.y && bounds.y + bounds.height <= size.height - 16.0);
+        assert!(body.height >= 375.0, "the body gets all remaining height");
+        assert_eq!(body.y + body.height, size.height, "no permanent footer");
+        assert!(actions.y + actions.height <= body.y);
+        for bounds in [probe.save.unwrap(), probe.close.unwrap()] {
+            assert!(bounds.y >= actions.y && bounds.y + bounds.height <= body.y);
+            assert!(bounds.width <= 36.0, "routine actions use compact icons");
         }
         assert_eq!(probe.captions.len(), 1);
         let caption = probe.captions[0];
         assert!(caption.x >= body.x && caption.x + caption.width <= body.x + body.width);
-        assert!(caption.height > 20.0, "long descriptions wrap");
         let event = iced::Event::Mouse(mouse::Event::WheelScrolled {
             delta: mouse::ScrollDelta::Lines { x: 0.0, y: -3.0 },
         });
