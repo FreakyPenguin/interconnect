@@ -274,9 +274,9 @@ impl App {
                 actions
             }
             Target::Room(id) => {
-                if !self.model.rooms.iter().any(|room| &room.id == id) {
+                let Some(entry) = self.model.rooms.iter().find(|room| &room.id == id) else {
                     return Vec::new();
-                }
+                };
                 let mut actions = vec![
                     ("Open room", dispatch(Message::Room(id.clone()))),
                     ("Mark as unread", Action::MarkUnread),
@@ -284,10 +284,18 @@ impl App {
                     ("Copy room ID", Action::Copy(id.clone())),
                 ];
                 if let Ok(room) = matrix_sdk::ruma::RoomId::parse(id) {
-                    actions.push((
-                        "Copy room link",
-                        Action::Copy(room.matrix_to_uri().to_string()),
-                    ));
+                    let alias = entry
+                        .canonical_alias
+                        .as_deref()
+                        .and_then(|alias| matrix_sdk::ruma::RoomAliasId::parse(alias).ok());
+                    if let Some(alias) = &alias {
+                        actions.push(("Copy room alias", Action::Copy(alias.to_string())));
+                    }
+                    let link = alias.map_or_else(
+                        || room.matrix_to_uri().to_string(),
+                        |alias| alias.matrix_to_uri().to_string(),
+                    );
+                    actions.push(("Copy room link", Action::Copy(link)));
                 }
                 actions.push((
                     "Add room to space…",
@@ -1129,14 +1137,20 @@ mod tests {
     }
 
     #[test]
-    fn room_and_dm_links_use_the_room_id_and_preserve_conversation_state() {
+    fn room_and_dm_links_prefer_primary_alias_and_preserve_conversation_state() {
         let mut app = demo_app();
         let key = app.draft_key(false).unwrap();
         app.drafts.get_mut(&key).unwrap().content =
             iced::widget::text_editor::Content::with_text("unsent");
         app.scroll_positions.insert(key.clone(), 75.0);
         let selection = app.selection.clone();
-        for direct in [false, true] {
+        for (direct, alias) in [
+            (false, Some("#alias:example.org")),
+            (true, Some("#alias:example.org")),
+            (false, None),
+            (true, None),
+            (false, Some("invalid-alias")),
+        ] {
             let id = if direct {
                 "!dm:example.org"
             } else {
@@ -1146,19 +1160,31 @@ mod tests {
                 interconnect::navigation::RoomEntry {
                     id: id.into(),
                     direct,
-                    canonical_alias: Some("#alias:example.org".into()),
+                    canonical_alias: alias.map(str::to_owned),
                     ..Default::default()
                 },
             );
             let target = Target::Room(id.into());
             open(&mut app, &target);
             let actions = app.context_actions(&target);
+            let valid_alias = alias.filter(|value| value.starts_with('#'));
+            let expected_link = match valid_alias {
+                Some(_) => "https://matrix.to/#/%23alias:example.org".into(),
+                None => format!("https://matrix.to/#/{id}"),
+            };
             assert!(
                 actions
                     .iter()
                     .any(|(label, action)| matches!(action, Action::Copy(value)
-                if *label == "Copy room link" && value == &format!("https://matrix.to/#/{id}")))
+                if *label == "Copy room link" && value == &expected_link))
             );
+            assert!(actions.iter().any(|(label, action)| matches!(action,
+                Action::Copy(value) if *label == "Copy room ID" && value == id)));
+            let copied_alias = actions.iter().find_map(|(label, action)| match action {
+                Action::Copy(value) if *label == "Copy room alias" => Some(value.as_str()),
+                _ => None,
+            });
+            assert_eq!(copied_alias, valid_alias);
             choose(&mut app, &target, "Copy room link");
             assert!(app.context_menu.is_none());
             assert_eq!(app.selection, selection);

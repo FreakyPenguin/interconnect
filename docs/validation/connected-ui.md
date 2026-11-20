@@ -230,9 +230,13 @@ Positions are per-session; loaded history can grow memory without virtualization
 - Test encoded IDs, `via`, `matrix:` and matrix.to, invalid/lookalike hosts,
   unavailable/private/encrypted events, and cancellation or address edits after
   opening Join. No stale event navigation may follow a dismissed/replaced form.
-- Connected **Copy room link** uses the room ID; **Copy message URL** uses the exact
-  event, including thread replies. Synthetic demo IDs and pending events without
-  server IDs omit these actions. Check native clipboard and opening in another client.
+- Connected **Copy room link** prefers the primary room alias, falling back to the
+  room ID when no valid alias is set. **Copy room alias** appears with a valid
+  primary alias; **Copy room ID** always copies the internal ID. **Copy message
+  URL** uses the room ID and exact event, including thread replies. Synthetic demo
+  IDs and pending events without server IDs omit link actions. Unit tests cover
+  alias preference, ID fallback, and preserving conversation state. Check native
+  clipboard and opening in another client manually.
 
 ## Read receipts and unread clearing
 
