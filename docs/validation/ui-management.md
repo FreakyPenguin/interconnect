@@ -40,3 +40,11 @@ unit tests do not establish server or platform behavior.
 - Leave/disband space pages keep Back and the final action visible while their
   consequences scroll, including at 640×480. Disband still requires the exact
   space name and the original asynchronous permission and partial-failure checks.
+
+## Follow-up checks
+
+- An invalid unsaved space name must not prevent saving a separate topic or
+  access change; saving the invalid name itself must still report its validation
+  error and retain the old saved name.
+- A late Discard action from another panel request, or a Discard action without
+  an active confirmation, must preserve the current form draft.

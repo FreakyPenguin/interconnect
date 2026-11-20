@@ -157,6 +157,12 @@ impl App {
         }
     }
     pub(super) fn room_settings_event(&mut self, event: Event) -> Task<Message> {
+        if matches!(event, Event::Close)
+            && let Some(panel) = &mut self.room_settings.panel
+            && panel.transition.take().is_some()
+        {
+            return Task::none();
+        }
         if matches!(
             event,
             Event::Close | Event::Reload | Event::Members | Event::Leave | Event::Open(_)
@@ -1215,6 +1221,45 @@ mod tests {
                 .published
                 .all()
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn stale_or_unrequested_discard_cannot_drop_a_room_draft() {
+        let mut app = demo_app();
+        open(&mut app);
+        let request = app.room_settings.panel.as_ref().unwrap().request;
+        let _ = app.update(message(Event::Name("Keep this draft".into())));
+        let _ = app.update(message(Event::DiscardChanges(request)));
+        assert_eq!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .draft
+                .as_ref()
+                .unwrap()
+                .name,
+            "Keep this draft"
+        );
+        let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::DiscardChanges(request.wrapping_add(1))));
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_some()
+        );
+        let _ = app.update(message(Event::Close));
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_none()
         );
     }
 

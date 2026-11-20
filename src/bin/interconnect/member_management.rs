@@ -340,6 +340,7 @@ impl App {
                     .map(move |picker| host.message(Event::Picker(session, picker)));
             }
             Event::Remove(user) if !panel.pending => {
+                panel.success = false;
                 panel.members.feedback = None;
                 if let Some(member) = panel.members.roster.as_ref().and_then(|r| {
                     r.rows
@@ -353,6 +354,7 @@ impl App {
                 }
             }
             Event::Role(user, role) if !panel.pending => {
+                panel.success = false;
                 panel.members.feedback = None;
                 if let Some(member) = panel.members.roster.as_ref().and_then(|r| {
                     r.rows

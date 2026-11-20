@@ -267,6 +267,12 @@ impl App {
         }
     }
     pub(super) fn space_settings_event(&mut self, event: Event) -> Task<Message> {
+        if matches!(event, Event::Close)
+            && let Some(panel) = &mut self.space_settings.panel
+            && panel.transition.take().is_some()
+        {
+            return Task::none();
+        }
         if matches!(
             event,
             Event::Close
@@ -666,7 +672,7 @@ impl App {
                     ),
                     _ => return Task::none(),
                 };
-                if draft.name.trim().is_empty() || draft.name.len() > 255 {
+                if field == 0 && (draft.name.trim().is_empty() || draft.name.len() > 255) {
                     panel.error = Some("Enter a name within 255 bytes.".into());
                     return Task::none();
                 }
@@ -987,6 +993,61 @@ mod tests {
         let _ = app.update(message(Event::Open("studio-space".into())));
         app.space_settings.panel.as_ref().unwrap().request
     }
+    #[test]
+    fn saving_a_topic_is_independent_of_an_invalid_unsaved_name() {
+        let mut app = demo_app();
+        open(&mut app);
+        let _ = app.update(message(Event::Name(String::new())));
+        let _ = app.update(message(Event::Topic("A useful topic".into())));
+        let _ = app.update(message(Event::Save(1)));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.saved.as_ref().unwrap().topic, "A useful topic");
+        assert!(panel.draft.as_ref().unwrap().name.is_empty());
+        assert!(panel.error.is_none());
+        let _ = app.update(message(Event::Save(0)));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert!(panel.error.is_some());
+        assert!(!panel.saved.as_ref().unwrap().name.is_empty());
+    }
+
+    #[test]
+    fn stale_or_unrequested_discard_cannot_drop_a_space_draft() {
+        let mut app = demo_app();
+        let request = open(&mut app);
+        let _ = app.update(message(Event::Name("Keep this draft".into())));
+        let _ = app.update(message(Event::DiscardChanges(request)));
+        assert_eq!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .draft
+                .as_ref()
+                .unwrap()
+                .name,
+            "Keep this draft"
+        );
+        let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::DiscardChanges(request.wrapping_add(1))));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_some()
+        );
+        let _ = app.update(message(Event::Close));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_none()
+        );
+    }
+
     #[test]
     fn multiline_space_topic_stays_separate_from_an_unsaved_name() {
         let mut app = demo_app();
