@@ -76,6 +76,48 @@ SSO requires localhost port **8765** forwarded to the browser's host. See
    permits cancellation; local cleanup retry must not revoke again. Retained SDK
    stores must not resume the revoked session.
 
+### Registration
+
+Headless mock-server tests cover direct/dummy registration, native registration
+tokens and invalid-token retries, multiple browser stages, premature Continue,
+cancellation/dropped attempts, malformed challenges, and common server errors.
+UI tests cover confirmation, mode changes, token/password redaction and clearing,
+duplicate/stale replies, and minimum-window idle layout.
+These fixtures do not establish live server, browser, or native keyring acceptance.
+
+With an authorized disposable account on a server offering native Matrix
+registration and sliding sync, use a new, dedicated profile:
+
+- Select **New to Matrix? Create an account**. Confirm mismatched passwords and
+  a full Matrix ID prevent submission; switching back to sign-in clears passwords.
+- Submit a username and matching passwords. Check unavailable registration,
+  taken/invalid usernames, weak passwords, and errors retain homeserver/username
+  while clearing passwords for an explicit retry.
+- When the server requests a registration token, enter the administrator-provided
+  token in the masked **Registration token** field and select **Continue**. This
+  submits `m.login.registration_token` directly with the current registration
+  session; it must not open a browser or require SSO. Check invalid/expired tokens
+  show a retry prompt with an empty field. A later terms/browser step must retain
+  the session without resending the token. Cancel, expiry, prompt replacement,
+  and quit must clear the token; stale inputs/submissions cannot reach a new prompt.
+- For CAPTCHA, email, or terms stages, open/copy the server's
+  browser link, complete the step, and select **Continue**. Terms must require the
+  user's acceptance. A premature Continue must show the unfinished step again;
+  multiple steps must use the same registration session. No polling is used.
+- Cancel at a token/browser step or quit while waiting; no later prompt reply may
+  advance another attempt. Registration expires after fifteen minutes overall.
+  Cancellation stops the local attempt; it cannot undo a server-created account.
+- Successful registration should open the account and device verification flow.
+  Quit/resume the dedicated profile and verify account/device/crypto identity is
+  reused. If account creation succeeded but session saving failed or the response
+  was lost, return to sign-in rather than creating another account.
+- Check scrolling/tab navigation at 640×480 and with long errors. Static form
+  and token/browser-wait states must settle without periodic redraws.
+
+OAuth-only/delegated account creation is not implemented by this native
+registration form. Use the homeserver's own account creation page, then return
+to sign in using its supported method.
+
 ## Native macOS account storage
 
 Use the [native bundle](../development.md#macos-builds). Check Keychain allow/deny/

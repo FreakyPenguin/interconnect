@@ -689,6 +689,7 @@ pub enum Authentication {
     Checking,
     SignIn { error: Option<String> },
     Waiting { url: Option<String> },
+    Registration(crate::session::RegistrationChallenge),
     Failed(String),
 }
 
@@ -848,13 +849,17 @@ pub async fn run(
                     request = login.recv() => match request { Some(LoginRequest::SignIn { homeserver, method }) => (homeserver, method), None => return Ok(()) },
                     _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
                 };
+                let registering = matches!(method, crate::session::LoginMethod::Register { .. });
                 state.send_modify(|s| {
                     s.authentication = Some(Authentication::Waiting { url: None })
                 });
                 let result = tokio::select! {
-                    result = tokio::time::timeout(Duration::from_secs(180), desktop.sign_in(&homeserver, method, |url| {
-                        state.send_modify(|s| s.authentication = Some(Authentication::Waiting { url: Some(url) }));
-                    })) => result.context("Sign-in timed out after three minutes").and_then(|r| r),
+                    result = tokio::time::timeout(Duration::from_secs(if registering { 900 } else { 180 }), desktop.sign_in(&homeserver, method, |progress| {
+                        state.send_modify(|s| s.authentication = Some(match progress {
+                            crate::session::LoginProgress::Browser(url) => Authentication::Waiting { url: Some(url) },
+                            crate::session::LoginProgress::Registration(challenge) => Authentication::Registration(challenge),
+                        }));
+                    })) => result.context(if registering { "Registration timed out after fifteen minutes" } else { "Sign-in timed out after three minutes" }).and_then(|r| r),
                     _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
 
                 };
@@ -862,8 +867,12 @@ pub async fn run(
                 while login.try_recv().is_ok() {}
                 match result {
                     Ok(()) => break,
-                    Err(_) => state.send_modify(|s| s.authentication = Some(Authentication::SignIn {
-                        error: Some("Sign-in could not finish. Check your credentials, homeserver, and system keyring, then try again. For browser sign-in, check the callback connection. If you approved a device, remove the abandoned Interconnect device in another client.".into()),
+                    Err(error) => state.send_modify(|s| s.authentication = Some(Authentication::SignIn {
+                        error: if error.is::<crate::session::RegistrationCancelled>() { None }
+                        else if let Some(failure) = error.downcast_ref::<crate::session::RegistrationFailure>() { Some(failure.to_string()) }
+                        else if registering && error.is::<tokio::time::error::Elapsed>() { Some("Registration expired after fifteen minutes. If your account was created, return to sign in instead of registering again.".into()) }
+                        else if registering { Some("Registration could not finish. Check your homeserver and system keyring. If your account was created, return to sign in. Remove any abandoned Interconnect device in another client.".into()) }
+                        else { Some("Sign-in could not finish. Check your credentials, homeserver, and system keyring, then try again. For browser sign-in, check the callback connection. If you approved a device, remove the abandoned Interconnect device in another client.".into()) },
                     })),
                 }
             }

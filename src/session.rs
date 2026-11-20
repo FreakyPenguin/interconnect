@@ -18,6 +18,12 @@ use zeroize::Zeroizing;
 
 mod credentials;
 mod presence_cursor;
+mod registration;
+
+pub use registration::{
+    RegistrationCancelled, RegistrationChallenge, RegistrationFailure, RegistrationReply,
+    RegistrationStep,
+};
 
 use credentials::CredentialStore;
 
@@ -397,14 +403,24 @@ pub enum LoginMethod {
         username: String,
         password: Zeroizing<String>,
     },
+    Register {
+        username: String,
+        password: Zeroizing<String>,
+    },
 }
 impl std::fmt::Debug for LoginMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Browser => f.write_str("Browser"),
             Self::Password { .. } => f.write_str("Password(<redacted>)"),
+            Self::Register { .. } => f.write_str("Register(<redacted>)"),
         }
     }
+}
+
+pub enum LoginProgress {
+    Browser(String),
+    Registration(RegistrationChallenge),
 }
 
 /// Owns the profile throughout restoration and all login attempts.
@@ -532,7 +548,7 @@ impl DesktopSession {
         &mut self,
         homeserver: &str,
         method: LoginMethod,
-        browser_url: impl FnOnce(String) + Send,
+        progress: impl FnMut(LoginProgress) + Send,
     ) -> anyhow::Result<()> {
         // Discover before reserving keys or creating a device.
         let discovered = Client::builder()
@@ -564,7 +580,7 @@ impl DesktopSession {
         // Never reuse a retained store for a new device.
         self.profile.save(service, &saved).await?;
         let client = client(&self.profile, &saved).await?;
-        authenticate(&client, method, browser_url).await?;
+        authenticate(&client, method, progress).await?;
         let auth = client.matrix_auth();
         saved.device_key = Some(device_key(&client).await?);
         saved.session = Some(auth.session().context("SDK did not return a session")?);
@@ -602,13 +618,13 @@ async fn revoke_session(client: &Client) -> anyhow::Result<()> {
 async fn authenticate(
     client: &Client,
     method: LoginMethod,
-    browser_url: impl FnOnce(String) + Send,
+    mut progress: impl FnMut(LoginProgress) + Send,
 ) -> anyhow::Result<()> {
     let auth = client.matrix_auth();
     match method {
         LoginMethod::Browser => {
             auth.login_sso(|url| async move {
-                browser_url(url);
+                progress(LoginProgress::Browser(url));
                 Ok(())
             })
             .server_builder(
@@ -625,6 +641,9 @@ async fn authenticate(
                 .initial_device_display_name("Interconnect")
                 .send()
                 .await?;
+        }
+        LoginMethod::Register { username, password } => {
+            registration::register(client, username, password, progress).await?;
         }
     }
     Ok(())

@@ -1,11 +1,13 @@
-//! Event-driven password and browser sign-in. SDK work stays in the connection owner.
+//! Event-driven sign-in and registration. SDK work stays in the connection owner.
 use super::{App, Message, branding, shell};
 use iced::{
     Element, Length, Task,
     widget::{button, column, container, row, scrollable, text, text_input},
 };
 use interconnect::connected::{Authentication, LoginRequest};
-use interconnect::session::LoginMethod;
+use interconnect::session::{
+    LoginMethod, RegistrationChallenge, RegistrationReply, RegistrationStep,
+};
 use zeroize::Zeroizing;
 
 #[derive(Default)]
@@ -13,6 +15,10 @@ pub struct State {
     pub homeserver: String,
     pub username: String,
     pub password: Zeroizing<String>,
+    pub confirm_password: Zeroizing<String>,
+    pub registering: bool,
+    registration_token: Zeroizing<String>,
+    token_prompt: Option<RegistrationChallenge>,
     pub sender: Option<tokio::sync::mpsc::Sender<LoginRequest>>,
     pub browser_error: Option<String>,
     verify_after_login: bool,
@@ -24,6 +30,12 @@ pub enum Event {
     Homeserver(String),
     Username(String),
     Password(Zeroizing<String>),
+    ConfirmPassword(Zeroizing<String>),
+    ToggleRegistration,
+    SubmitRegistration,
+    RegistrationResponse(RegistrationChallenge, RegistrationReply),
+    RegistrationToken(RegistrationChallenge, Zeroizing<String>),
+    SubmitToken(RegistrationChallenge),
     SubmitPassword,
     Submit,
     OpenBrowser,
@@ -38,6 +50,12 @@ impl std::fmt::Debug for Event {
             Self::Homeserver(_) => "Homeserver",
             Self::Username(_) => "Username",
             Self::Password(_) => "Password(<redacted>)",
+            Self::ConfirmPassword(_) => "ConfirmPassword(<redacted>)",
+            Self::ToggleRegistration => "ToggleRegistration",
+            Self::SubmitRegistration => "SubmitRegistration",
+            Self::RegistrationResponse(_, _) => "RegistrationResponse",
+            Self::RegistrationToken(_, _) => "RegistrationToken(<redacted>)",
+            Self::SubmitToken(_) => "SubmitToken",
             Self::SubmitPassword => "SubmitPassword",
             Self::Submit => "Submit",
             Self::OpenBrowser => "OpenBrowser",
@@ -52,6 +70,20 @@ impl App {
     pub fn login_update(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::Ready(sender) => self.login.sender = Some(sender),
+            Event::ToggleRegistration
+                if !self.closing
+                    && matches!(
+                        self.model.authentication,
+                        Some(Authentication::SignIn { .. })
+                    ) =>
+            {
+                self.login.registering = !self.login.registering;
+                self.login.password = Zeroizing::new(String::new());
+                self.login.confirm_password = Zeroizing::new(String::new());
+                self.login.clear_registration_token();
+                self.login.browser_error = None;
+                self.model.authentication = Some(Authentication::SignIn { error: None });
+            }
             Event::Homeserver(value)
                 if matches!(
                     self.model.authentication,
@@ -76,7 +108,17 @@ impl App {
             {
                 self.login.password = password
             }
-            Event::Submit | Event::SubmitPassword
+            Event::ConfirmPassword(password)
+                if !self.closing
+                    && self.login.registering
+                    && matches!(
+                        self.model.authentication,
+                        Some(Authentication::SignIn { .. })
+                    ) =>
+            {
+                self.login.confirm_password = password;
+            }
+            Event::Submit | Event::SubmitPassword | Event::SubmitRegistration
                 if !self.closing
                     && matches!(
                         self.model.authentication,
@@ -84,7 +126,17 @@ impl App {
                     ) =>
             {
                 let homeserver = self.login.homeserver.trim();
-                let method = if matches!(event, Event::SubmitPassword) {
+                let method = if matches!(event, Event::SubmitRegistration) {
+                    if !self.login.registering || !self.login.registration_ready() {
+                        return Task::none();
+                    }
+                    LoginMethod::Register {
+                        username: self.login.username.trim().to_owned(),
+                        password: self.login.password.clone(),
+                    }
+                } else if self.login.registering {
+                    return Task::none();
+                } else if matches!(event, Event::SubmitPassword) {
                     if self.login.username.trim().is_empty() || self.login.password.is_empty() {
                         return Task::none();
                     }
@@ -105,15 +157,57 @@ impl App {
                     })
                 {
                     self.login.password = Zeroizing::new(String::new());
+                    self.login.confirm_password = Zeroizing::new(String::new());
                     self.login.browser_error = None;
                     self.login.verify_after_login = true;
                     self.model.authentication = Some(Authentication::Waiting { url: None });
                 }
             }
+            Event::RegistrationToken(challenge, token)
+                if !self.closing
+                    && matches!(&self.model.authentication, Some(Authentication::Registration(current)) if current == &challenge && matches!(current.step, RegistrationStep::Token { .. })) =>
+            {
+                self.login.token_prompt = Some(challenge);
+                self.login.registration_token = token;
+            }
+            Event::SubmitToken(challenge)
+                if !self.closing
+                    && matches!(&self.model.authentication, Some(Authentication::Registration(current)) if current == &challenge)
+                    && !self
+                        .login
+                        .registration_token_for(&challenge)
+                        .trim()
+                        .is_empty() =>
+            {
+                let token = std::mem::take(&mut self.login.registration_token);
+                return self.login_update(Event::RegistrationResponse(
+                    challenge,
+                    RegistrationReply::Token(token),
+                ));
+            }
+            Event::RegistrationResponse(challenge, reply)
+                if !self.closing
+                    && matches!(&self.model.authentication, Some(Authentication::Registration(current)) if current == &challenge) =>
+            {
+                let valid = match &reply {
+                    RegistrationReply::Cancel => true,
+                    RegistrationReply::Continue => {
+                        matches!(challenge.step, RegistrationStep::Browser(_))
+                    }
+                    RegistrationReply::Token(token) => {
+                        matches!(challenge.step, RegistrationStep::Token { .. })
+                            && !token.trim().is_empty()
+                    }
+                };
+                if valid && challenge.response.try_send(reply).is_ok() {
+                    self.login.clear_registration_token();
+                    self.login.browser_error = None;
+                    self.model.authentication = Some(Authentication::Waiting { url: None });
+                }
+            }
             Event::OpenBrowser => {
-                if let Some(Authentication::Waiting { url: Some(url) }) = &self.model.authentication
-                {
-                    let url = url.clone();
+                if let Some(url) = authentication_url(self.model.authentication.as_ref()) {
+                    let url = url.to_owned();
                     let opened_url = url.clone();
                     return Task::perform(
                         async move {
@@ -145,14 +239,14 @@ impl App {
                     );
                 }
             }
-            Event::BrowserOpened(url, result) if matches!(&self.model.authentication, Some(Authentication::Waiting { url: Some(current) }) if current == &url) =>
+            Event::BrowserOpened(url, result)
+                if authentication_url(self.model.authentication.as_ref()) == Some(url.as_str()) =>
             {
                 self.login.browser_error = result.err();
             }
             Event::CopyLink => {
-                if let Some(Authentication::Waiting { url: Some(url) }) = &self.model.authentication
-                {
-                    return iced::clipboard::write(url.clone());
+                if let Some(url) = authentication_url(self.model.authentication.as_ref()) {
+                    return iced::clipboard::write(url.to_owned());
                 }
             }
             _ => {}
@@ -161,6 +255,11 @@ impl App {
     }
 
     pub(super) fn finish_login(&mut self) -> Task<Message> {
+        if self.closing || self.login.token_prompt.as_ref().is_some_and(|prompt| {
+            !matches!(&self.model.authentication, Some(Authentication::Registration(current)) if current == prompt)
+        }) {
+            self.login.clear_registration_token();
+        }
         if !self.login.verify_after_login {
             return Task::none();
         }
@@ -212,14 +311,31 @@ impl App {
         match authentication {
             Authentication::Checking => content = content.push(text("Opening your profile…")),
             Authentication::SignIn { error } => {
-                content = content.push(shell::title("Sign in to Matrix", 20));
+                let registering = self.login.registering;
+                let submit = if registering {
+                    Event::SubmitRegistration
+                } else {
+                    Event::SubmitPassword
+                };
+                content = content.push(shell::title(
+                    if registering {
+                        "Create a Matrix account"
+                    } else {
+                        "Sign in to Matrix"
+                    },
+                    20,
+                ));
                 if let Some(error) = error {
                     content = content.push(text(error.clone()).size(13));
                 }
                 content = content.push(text("Homeserver").size(13));
                 let input = text_input("https://matrix.org", &self.login.homeserver)
                     .on_input(|value| Message::Login(Event::Homeserver(value)))
-                    .on_submit(Message::Login(Event::Submit))
+                    .on_submit(Message::Login(if registering {
+                        Event::SubmitRegistration
+                    } else {
+                        Event::Submit
+                    }))
                     .padding(12);
                 let enabled = !self.login.homeserver.trim().is_empty()
                     && self.login.sender.is_some()
@@ -227,9 +343,16 @@ impl App {
                 content = content
                     .push(input)
                     .push(
-                        text_input("Username or Matrix ID", &self.login.username)
-                            .on_input(|value| Message::Login(Event::Username(value)))
-                            .padding(12),
+                        text_input(
+                            if registering {
+                                "Username (without @ or server)"
+                            } else {
+                                "Username or Matrix ID"
+                            },
+                            &self.login.username,
+                        )
+                        .on_input(|value| Message::Login(Event::Username(value)))
+                        .padding(12),
                     )
                     .push(
                         text_input("Password", &self.login.password)
@@ -237,21 +360,62 @@ impl App {
                             .on_input(|value| {
                                 Message::Login(Event::Password(Zeroizing::new(value)))
                             })
-                            .on_submit(Message::Login(Event::SubmitPassword))
+                            .on_submit(Message::Login(submit.clone()))
                             .padding(12),
-                    )
-                    .push(
-                        button("Sign in").padding([10, 16]).on_press_maybe(
-                            (enabled
-                                && !self.login.username.trim().is_empty()
-                                && !self.login.password.is_empty())
-                            .then_some(Message::Login(Event::SubmitPassword)),
-                        ),
-                    )
-                    .push(
+                    );
+                if registering {
+                    content = content.push(
+                        text_input("Confirm password", &self.login.confirm_password)
+                            .secure(true)
+                            .on_input(|value| {
+                                Message::Login(Event::ConfirmPassword(Zeroizing::new(value)))
+                            })
+                            .on_submit(Message::Login(Event::SubmitRegistration))
+                            .padding(12),
+                    );
+                    if !self.login.confirm_password.is_empty()
+                        && self.login.password != self.login.confirm_password
+                    {
+                        content = content.push(text("Passwords must match.").size(13));
+                    }
+                    if self.login.username.contains(['@', ':']) {
+                        content = content
+                            .push(text("Enter a username without @ or a server name.").size(13));
+                    }
+                }
+                content = content.push(
+                    button(if registering {
+                        "Create account"
+                    } else {
+                        "Sign in"
+                    })
+                    .padding([10, 16])
+                    .on_press_maybe(
+                        (enabled
+                            && !self.login.username.trim().is_empty()
+                            && !self.login.password.is_empty()
+                            && (!registering || self.login.registration_ready()))
+                        .then_some(Message::Login(submit)),
+                    ),
+                );
+                if !registering {
+                    content = content.push(
                         button("Continue in browser")
                             .padding([10, 16])
                             .on_press_maybe(enabled.then_some(Message::Login(Event::Submit))),
+                    );
+                }
+                content = content
+                    .push(
+                        button(if registering {
+                            "Already have an account? Sign in"
+                        } else {
+                            "New to Matrix? Create an account"
+                        })
+                        .style(button::text)
+                        .on_press_maybe(
+                            (!self.closing).then_some(Message::Login(Event::ToggleRegistration)),
+                        ),
                     )
                     .push(
                         text("Your session is saved securely in your system keyring.")
@@ -260,7 +424,14 @@ impl App {
                     );
             }
             Authentication::Waiting { url } => {
-                content = content.push(shell::title("Signing in", 20));
+                content = content.push(shell::title(
+                    if self.login.registering {
+                        "Creating your account"
+                    } else {
+                        "Signing in"
+                    },
+                    20,
+                ));
                 if url.is_some() {
                     content = content.push(text("Open the sign-in page and return here when you're done."))
                         .push(row![button("Open browser").on_press(Message::Login(Event::OpenBrowser)).padding(10),
@@ -269,6 +440,71 @@ impl App {
                 } else {
                     content = content.push(text("Connecting to your homeserver…"));
                 }
+            }
+            Authentication::Registration(challenge) => {
+                content = content
+                    .push(shell::title("Finish creating your account", 20))
+                    .push(text(challenge.stage.clone()));
+                match &challenge.step {
+                    RegistrationStep::Token { rejected } => {
+                        let token = self.login.registration_token_for(challenge);
+                        content = content.push(
+                            text(
+                                "Use the registration token provided by your server administrator.",
+                            )
+                            .size(14),
+                        );
+                        if *rejected {
+                            content = content.push(text("The token was not accepted. Check it with your server administrator and try again.").size(13));
+                        }
+                        let prompt = challenge.clone();
+                        content = content
+                            .push(
+                                text_input("Registration token", token)
+                                    .secure(true)
+                                    .on_input(move |value| {
+                                        Message::Login(Event::RegistrationToken(
+                                            prompt.clone(),
+                                            Zeroizing::new(value),
+                                        ))
+                                    })
+                                    .on_submit(Message::Login(Event::SubmitToken(
+                                        challenge.clone(),
+                                    )))
+                                    .padding(12),
+                            )
+                            .push(button("Continue").padding(10).on_press_maybe(
+                                (!self.closing && !token.trim().is_empty()).then_some(
+                                    Message::Login(Event::SubmitToken(challenge.clone())),
+                                ),
+                            ));
+                    }
+                    RegistrationStep::Browser(_) => {
+                        content = content
+                    .push(text("Complete this step in your browser, then return here and continue. The server may ask for more than one step.").size(14))
+                    .push(row![
+                        button("Open browser").on_press(Message::Login(Event::OpenBrowser)).padding(10),
+                        button("Copy link").on_press(Message::Login(Event::CopyLink)).padding(10),
+                    ].spacing(12))
+                    .push(button("Continue").on_press_maybe((!self.closing).then_some(Message::Login(Event::RegistrationResponse(challenge.clone(), RegistrationReply::Continue)))).padding(10));
+                    }
+                }
+                content = content
+                    .push(
+                        button("Cancel")
+                            .on_press_maybe((!self.closing).then_some(Message::Login(
+                                Event::RegistrationResponse(
+                                    challenge.clone(),
+                                    RegistrationReply::Cancel,
+                                ),
+                            )))
+                            .padding(10),
+                    )
+                    .push(
+                        text("Registration expires after fifteen minutes.")
+                            .size(12)
+                            .style(shell::muted_text),
+                    );
             }
             Authentication::Failed(error) => {
                 content = content
@@ -293,6 +529,39 @@ impl App {
         .center_x(Length::Fill)
         .center_y(Length::Fill)
         .into()
+    }
+}
+
+impl State {
+    fn clear_registration_token(&mut self) {
+        self.registration_token = Zeroizing::new(String::new());
+        self.token_prompt = None;
+    }
+
+    fn registration_token_for(&self, prompt: &RegistrationChallenge) -> &str {
+        if self.token_prompt.as_ref() == Some(prompt) {
+            &self.registration_token
+        } else {
+            ""
+        }
+    }
+
+    fn registration_ready(&self) -> bool {
+        !self.username.trim().is_empty()
+            && !self.username.contains(['@', ':'])
+            && !self.password.is_empty()
+            && self.password == self.confirm_password
+    }
+}
+
+fn authentication_url(authentication: Option<&Authentication>) -> Option<&str> {
+    match authentication {
+        Some(Authentication::Waiting { url: Some(url) }) => Some(url),
+        Some(Authentication::Registration(RegistrationChallenge {
+            step: RegistrationStep::Browser(url),
+            ..
+        })) => Some(url),
+        _ => None,
     }
 }
 
@@ -506,6 +775,208 @@ mod tests {
     }
 
     #[test]
+    fn registration_requires_confirmation_and_clears_secrets_on_submit_or_mode_change() {
+        let (mut app, mut requests) = form();
+        let _ = app.login_update(Event::ToggleRegistration);
+        let _ = app.login_update(Event::Homeserver(" https://matrix.example ".into()));
+        let _ = app.login_update(Event::Username(" fixture ".into()));
+        let _ = app.login_update(Event::Password(Zeroizing::new("fixture-secret".into())));
+        let confirmation = Event::ConfirmPassword(Zeroizing::new("other-secret".into()));
+        assert!(!format!("{confirmation:?}").contains("other-secret"));
+        let _ = app.login_update(confirmation);
+        for event in [
+            Event::Submit,
+            Event::SubmitPassword,
+            Event::SubmitRegistration,
+        ] {
+            let _ = app.login_update(event);
+            assert!(requests.try_recv().is_err());
+        }
+        let _ = app.login_update(Event::ConfirmPassword(Zeroizing::new(
+            "fixture-secret".into(),
+        )));
+        let _ = app.login_update(Event::Username("@fixture:example.org".into()));
+        let _ = app.login_update(Event::SubmitRegistration);
+        assert!(requests.try_recv().is_err());
+        let _ = app.login_update(Event::Username(" fixture ".into()));
+        let _ = app.login_update(Event::SubmitRegistration);
+        let request = requests.try_recv().unwrap();
+        let debug = format!("{request:?}");
+        assert!(!debug.contains("fixture"));
+        assert!(matches!(request, LoginRequest::SignIn {
+            homeserver, method: LoginMethod::Register { username, password }
+        } if homeserver == "https://matrix.example" && username == "fixture" && password.as_str() == "fixture-secret"));
+        assert!(app.login.password.is_empty());
+        assert!(app.login.confirm_password.is_empty());
+        assert!(app.login.verify_after_login);
+        let _ = app.login_update(Event::SubmitRegistration);
+        let _ = app.login_update(Event::ToggleRegistration);
+        assert!(requests.try_recv().is_err());
+        assert!(app.login.registering);
+        app.model.authentication = Some(Authentication::SignIn {
+            error: Some("Try again".into()),
+        });
+        let _ = app.login_update(Event::Password(Zeroizing::new("fixture-secret".into())));
+        let _ = app.login_update(Event::ConfirmPassword(Zeroizing::new(
+            "fixture-secret".into(),
+        )));
+        let _ = app.login_update(Event::ToggleRegistration);
+        assert!(!app.login.registering);
+        assert!(app.login.password.is_empty());
+        assert!(app.login.confirm_password.is_empty());
+        assert_eq!(
+            app.model.authentication,
+            Some(Authentication::SignIn { error: None })
+        );
+    }
+
+    fn challenge() -> (
+        RegistrationChallenge,
+        tokio::sync::mpsc::Receiver<RegistrationReply>,
+    ) {
+        let (response, replies) = tokio::sync::mpsc::channel(1);
+        (RegistrationChallenge {
+            step: RegistrationStep::Browser("https://matrix.example/_matrix/client/v3/auth/m.login.terms/fallback/web?session=fixture".into()),
+            stage: "Review the server's terms".into(),
+            response,
+        }, replies)
+    }
+
+    fn token_challenge(
+        rejected: bool,
+    ) -> (
+        RegistrationChallenge,
+        tokio::sync::mpsc::Receiver<RegistrationReply>,
+    ) {
+        let (mut prompt, replies) = challenge();
+        prompt.step = RegistrationStep::Token { rejected };
+        prompt.stage = "Enter your registration token".into();
+        (prompt, replies)
+    }
+
+    #[test]
+    fn token_submission_is_native_redacted_and_scoped_to_the_current_prompt() {
+        let (mut app, _) = form();
+        let (current, mut replies) = token_challenge(false);
+        let (old, mut old_replies) = token_challenge(false);
+        app.model.authentication = Some(Authentication::Registration(current.clone()));
+        assert!(authentication_url(app.model.authentication.as_ref()).is_none());
+        let _ = app.login_update(Event::SubmitToken(current.clone()));
+        let _ = app.login_update(Event::RegistrationResponse(
+            current.clone(),
+            RegistrationReply::Continue,
+        ));
+        assert!(replies.try_recv().is_err());
+        let event = Event::RegistrationToken(
+            current.clone(),
+            Zeroizing::new("fixture-token-secret".into()),
+        );
+        assert!(!format!("{event:?}").contains("fixture-token-secret"));
+        let _ = app.login_update(event);
+        let _ = app.login_update(Event::RegistrationToken(
+            old.clone(),
+            Zeroizing::new("stale-secret".into()),
+        ));
+        let _ = app.login_update(Event::SubmitToken(old));
+        assert!(old_replies.try_recv().is_err());
+        assert_eq!(
+            app.login.registration_token_for(&current),
+            "fixture-token-secret"
+        );
+        let _ = app.login_update(Event::SubmitToken(current.clone()));
+        let reply = replies.try_recv().unwrap();
+        assert!(!format!("{reply:?}").contains("fixture-token-secret"));
+        assert!(
+            matches!(reply, RegistrationReply::Token(token) if token.as_str() == "fixture-token-secret")
+        );
+        assert!(app.login.registration_token.is_empty());
+        assert!(app.login.token_prompt.is_none());
+        let _ = app.login_update(Event::SubmitToken(current));
+        assert!(replies.try_recv().is_err());
+    }
+
+    #[test]
+    fn tokens_clear_when_cancelled_replaced_or_closing() {
+        for action in 0..4 {
+            let (mut app, _) = form();
+            let (prompt, mut replies) = token_challenge(false);
+            app.model.authentication = Some(Authentication::Registration(prompt.clone()));
+            let _ = app.update(Message::Login(Event::RegistrationToken(
+                prompt.clone(),
+                Zeroizing::new("fixture-token-secret".into()),
+            )));
+            assert!(!app.login.registration_token.is_empty());
+            match action {
+                0 => {
+                    let _ = app.update(Message::Login(Event::RegistrationResponse(
+                        prompt,
+                        RegistrationReply::Cancel,
+                    )));
+                    assert!(matches!(replies.try_recv(), Ok(RegistrationReply::Cancel)));
+                }
+                1 | 2 => {
+                    let authentication = if action == 1 {
+                        Authentication::Registration(token_challenge(true).0)
+                    } else {
+                        Authentication::SignIn {
+                            error: Some("Expired".into()),
+                        }
+                    };
+                    let _ = app.update(Message::State(Box::new(Model {
+                        authentication: Some(authentication),
+                        ..Model::default()
+                    })));
+                }
+                _ => {
+                    let _ = app.update(Message::Close);
+                }
+            }
+            assert!(app.login.registration_token.is_empty());
+            assert!(app.login.token_prompt.is_none());
+        }
+    }
+
+    #[test]
+    fn registration_replies_are_single_flight_and_reject_stale_prompts() {
+        let (mut app, _) = form();
+        let (old, mut old_replies) = challenge();
+        let (current, mut replies) = challenge();
+        app.model.authentication = Some(Authentication::Registration(current.clone()));
+        let _ = app.login_update(Event::RegistrationResponse(
+            old,
+            RegistrationReply::Continue,
+        ));
+        assert!(old_replies.try_recv().is_err());
+        assert!(replies.try_recv().is_err());
+        let _ = app.login_update(Event::RegistrationResponse(
+            current.clone(),
+            RegistrationReply::Continue,
+        ));
+        assert!(matches!(
+            replies.try_recv(),
+            Ok(RegistrationReply::Continue)
+        ));
+        let _ = app.login_update(Event::RegistrationResponse(
+            current.clone(),
+            RegistrationReply::Cancel,
+        ));
+        assert!(replies.try_recv().is_err());
+        app.model.authentication = Some(Authentication::Registration(current.clone()));
+        app.closing = true;
+        let _ = app.login_update(Event::RegistrationResponse(
+            current.clone(),
+            RegistrationReply::Continue,
+        ));
+        assert!(replies.try_recv().is_err());
+        app.closing = false;
+        let _ = app.login_update(Event::RegistrationResponse(
+            current,
+            RegistrationReply::Cancel,
+        ));
+        assert!(matches!(replies.try_recv(), Ok(RegistrationReply::Cancel)));
+    }
+
+    #[test]
     fn new_account_clears_previous_drafts_but_same_account_keeps_them() {
         use super::super::{Draft, DraftKey};
         let (mut app, _) = form();
@@ -534,14 +1005,22 @@ mod tests {
         use iced::advanced::{Shell, layout, mouse, widget};
         let (mut app, _) = form();
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
-        for authentication in [
+        for (registering, authentication) in [
+            (true, Authentication::SignIn { error: None }),
+            (true, Authentication::SignIn { error: Some("Registration could not finish. Check your homeserver and system keyring. If your account was created, return to sign in.".into()) }),
+            (true, Authentication::Waiting { url: None }),
+            (true, Authentication::Registration(challenge().0)),
+            (true, Authentication::Registration(token_challenge(false).0)),
+            (true, Authentication::Registration(token_challenge(true).0)),
+        ].into_iter().chain([
             Authentication::Checking,
             Authentication::SignIn { error: None },
             Authentication::SignIn { error: Some("Sign-in could not finish. Check your credentials and homeserver, then try again.".into()) },
             Authentication::Waiting { url: None },
             Authentication::Waiting { url: Some("https://matrix.example/login".into()) },
             Authentication::Failed("System keyring is unavailable.".into()),
-        ] {
+        ].into_iter().map(|authentication| (false, authentication))) {
+            app.login.registering = registering;
             app.model.authentication = Some(authentication);
             let mut view = app.view();
             let mut tree = widget::Tree::new(&view);
