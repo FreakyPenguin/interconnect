@@ -25,6 +25,8 @@ mod context_menu;
 mod create_room;
 #[path = "interconnect/demo.rs"]
 mod demo;
+#[path = "interconnect/dialog.rs"]
+mod dialog;
 #[path = "interconnect/downloads.rs"]
 mod downloads;
 #[path = "interconnect/draft_persistence.rs"]

@@ -6,10 +6,7 @@ use super::{
 };
 use iced::{
     Element, Length, Task,
-    widget::{
-        button, checkbox, column, container, mouse_area, opaque, pick_list, row, scrollable, text,
-        text_input,
-    },
+    widget::{button, checkbox, column, container, pick_list, row, text, text_input},
 };
 use interconnect::settings::{
     self, GifPlayback, Graphics, SendShortcut, Settings, Store, ThemeMode,
@@ -34,10 +31,52 @@ pub struct State {
     presence_seconds_input: String,
     notification_test_busy: bool,
     notification_test_result: Option<Result<(), String>>,
+    category: Category,
+    confirm_discard: Option<DiscardAction>,
 }
 impl State {
     pub(super) fn graphics_restart_required(&self) -> bool {
         self.current.graphics != self.launched_graphics
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Category {
+    #[default]
+    General,
+    Notifications,
+    Media,
+    Advanced,
+}
+impl Category {
+    const ALL: [Self; 4] = [
+        Self::General,
+        Self::Notifications,
+        Self::Media,
+        Self::Advanced,
+    ];
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Notifications => "Notifications",
+            Self::Media => "Media & emoji",
+            Self::Advanced => "Advanced",
+        }
+    }
+}
+#[derive(Clone, Copy, Debug)]
+enum DiscardAction {
+    Close,
+    Reload,
+}
+impl State {
+    fn dirty(&self) -> bool {
+        self.draft.as_ref().is_some_and(|draft| {
+            draft != &self.current
+                || self.gif_seconds_input != self.current.media.gif_seconds.to_string()
+                || self.presence_seconds_input
+                    != self.current.presence.poll_interval_seconds.to_string()
+        })
     }
 }
 
@@ -79,6 +118,10 @@ impl Startup {
 pub enum Event {
     Open,
     Cancel,
+    RequestClose,
+    KeepEditing,
+    DiscardChanges,
+    Category(Category),
     ShowRoomList(bool),
     ShowUnreadSection(bool),
     UnreadFirst(bool),
@@ -239,7 +282,31 @@ impl App {
                 self.settings.notification_test_busy = false;
                 self.settings.notification_test_result = Some(result);
             }
+            Event::Category(category) if self.settings.draft.is_some() && !self.settings.saving => {
+                self.settings.category = category;
+                return iced::widget::operation::snap_to(
+                    "settings-body",
+                    iced::widget::operation::RelativeOffset::START,
+                );
+            }
+            Event::RequestClose if !self.settings.saving => {
+                if self.settings.dirty() {
+                    self.settings.confirm_discard = Some(DiscardAction::Close);
+                } else {
+                    return self.settings_update(Event::Cancel);
+                }
+            }
+            Event::KeepEditing => self.settings.confirm_discard = None,
+            Event::DiscardChanges if !self.settings.busy => {
+                match self.settings.confirm_discard.take() {
+                    Some(DiscardAction::Close) => return self.settings_update(Event::Cancel),
+                    Some(DiscardAction::Reload) => return self.load_settings(),
+                    None => {}
+                }
+            }
             Event::Open if self.settings.draft.is_none() && !self.closing => {
+                self.settings.category = Category::General;
+                self.settings.confirm_discard = None;
                 self.settings.gif_seconds_input =
                     self.settings.current.media.gif_seconds.to_string();
                 self.settings.presence_seconds_input = self
@@ -254,6 +321,7 @@ impl App {
             }
             Event::Cancel if !self.settings.saving => {
                 self.settings.draft = None;
+                self.settings.confirm_discard = None;
                 return iced::widget::operation::focus(if self.selection.thread.is_some() {
                     "thread-composer"
                 } else {
@@ -340,7 +408,13 @@ impl App {
                         draft.presence.poll_interval_seconds.to_string();
                 }
             }
-            Event::Reload if self.settings.draft.is_some() => return self.load_settings(),
+            Event::Reload if self.settings.draft.is_some() && !self.settings.busy => {
+                if self.settings.dirty() {
+                    self.settings.confirm_discard = Some(DiscardAction::Reload);
+                } else {
+                    return self.load_settings();
+                }
+            }
             Event::Loaded(request, result)
                 if request == self.settings.request
                     && self.settings.busy
@@ -363,7 +437,11 @@ impl App {
                                 settings.presence.poll_interval_seconds.to_string();
                             self.settings.draft = Some(settings.clone());
                         }
-                        self.settings.current = settings;
+                        // Reload fills the form. Save is the only operation that
+                        // applies an open form, so Cancel remains meaningful.
+                        if initial || self.settings.draft.is_none() {
+                            self.settings.current = settings;
+                        }
                         self.settings.store = Some(store);
                         self.settings.error = None;
                     }
@@ -456,7 +534,9 @@ impl App {
         if available {
             notifications =
                 notifications.on_toggle(|value| message(Event::NotificationsEnabled(value)));
-            previews = previews.on_toggle(|value| message(Event::NotificationPreview(value)));
+            if draft.notifications.enabled {
+                previews = previews.on_toggle(|value| message(Event::NotificationPreview(value)));
+            }
         }
         let mut notification_test = button(
             text(if self.settings.notification_test_busy {
@@ -605,6 +685,7 @@ impl App {
             .align_y(iced::Alignment::Center);
         if draft.media.gif_playback == GifPlayback::Duration {
             let mut seconds = text_input("1–300", &self.settings.gif_seconds_input)
+                .cursor_blinking(false)
                 .width(72)
                 .size(13)
                 .padding([7, 10])
@@ -622,88 +703,102 @@ impl App {
             caption("The sample uses no account or message content. On macOS, allow notifications when prompted."),
         ].spacing(12).width(Length::Fill);
         if let Some(result) = &self.settings.notification_test_result {
-            notification_controls = notification_controls.push(caption(match result {
-                Ok(()) => "Sample accepted by the desktop. Check your notification center.",
-                Err(error) => error.as_str(),
-            }));
+            notification_controls = notification_controls.push(match result {
+                Ok(()) => {
+                    caption("Sample accepted by the desktop. Check your notification center.")
+                }
+                Err(error) => caption(format!("Sample notification failed: {error}"))
+                    .style(shell::danger_text),
+            });
         }
         if let Some(error) = &self.model.notification_error {
             notification_controls =
                 notification_controls.push(caption(error).style(shell::danger_text));
         }
-        let mut content = column![
-            column![shell::title("Notifications", 14), notification_controls].spacing(12),
-            iced::widget::rule::horizontal(1),
-            column![
-                shell::title("Presence", 14),
-                presence_controls,
-                caption(if self.valid_presence_seconds() {
-                    "Refresh all DM contacts, visible message senders, and the People page while focused. Choose 15–3600 seconds; 60 is the default."
-                } else {
-                    "Enter a whole number from 15 to 3600 seconds to save."
-                }),
-            ].spacing(12),
-            iced::widget::rule::horizontal(1),
-            column![
-                shell::title("Navigation", 14),
-                visibility,
-                unread_section,
-                caption("Show unread rooms at the top, in addition to their usual sections. Follows the selected space and room filter."),
-                unread_first,
-                caption("Place unread rooms and direct messages before read ones within their sections. Keep each group in alphabetical order."),
-                button(text("Manage emoji packs…").size(13))
-                    .padding([7, 10])
-                    .style(shell::quiet_button)
-                    .on_press_maybe((available && (self.demo.is_some() || self.model.emoji_management.is_some()))
-                        .then_some(Message::EmojiManagement(super::emoji_management::Event::Open))),
-            ].spacing(12),
-            iced::widget::rule::horizontal(1),
-            column![
-                shell::title("Appearance", 14),
-                row![text("Theme").size(13), pick_list(
-                    ThemeMode::ALL, Some(draft.appearance.theme),
-                    move |mode| message(if available { Event::Theme(mode) } else { Event::Ignore }),
-                ).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
-                caption("Apply light or dark colors when you save. No restart required."),
-                room_width,
-                caption("Center headers, messages, and the composer in a readable column. Disable to use the full pane width."),
-            ].spacing(12),
-            iced::widget::rule::horizontal(1),
-            column![
-                shell::title("Messages", 14),
-                row![text("Send with").size(13), shortcut].spacing(16).align_y(iced::Alignment::Center),
-                caption("With Enter to send, use Shift+Enter for a new line. Ctrl+Enter always sends."),
-            ].spacing(12),
-            iced::widget::rule::horizontal(1),
-            column![
-                shell::title("GIF playback", 14),
-                caption("GIFs stay still until you click Play on a preview or in the image viewer."),
-                gif_controls,
-                caption(if self.valid_gif_seconds() {
-                    "Duration repeats the GIF for 1–300 whole seconds. Once plays one loop."
-                } else {
-                    "Enter a whole number from 1 to 300 seconds to save."
-                }),
-            ].spacing(12),
-            iced::widget::rule::horizontal(1),
-            column![
-                row![shell::title("Graphics", 14), text("Restart required").size(11).style(shell::muted_text)]
-                    .spacing(10).align_y(iced::Alignment::Center),
-                gpu,
-                caption("Uses the CPU renderer when disabled. GPU rendering includes a software fallback."),
-                low_power,
-                caption("Selects a lower-power adapter when GPU rendering is enabled. Changes apply on the next launch."),
-            ].spacing(12),
-            iced::widget::rule::horizontal(1),
-        ].spacing(20).width(Length::Fill);
-        if self.demo.is_some() {
-            content = content.push(caption(
-                "Demo settings stay in memory and disappear on exit.",
-            ));
-        } else if let Some(path) = &self.settings.path {
-            content = content.push(caption(path.display().to_string()).wrapping(text::Wrapping::Glyph))
-                .push(caption("Edit this TOML file, then reload to apply it. Reload discards unsaved changes."));
-        }
+        let mut content = match self.settings.category {
+            Category::General => column![
+                column![
+                    shell::title("Appearance", 14),
+                    row![text("Theme").size(13), pick_list(
+                        ThemeMode::ALL, Some(draft.appearance.theme),
+                        move |mode| message(if available { Event::Theme(mode) } else { Event::Ignore }),
+                    ).text_size(13).padding([7, 10]).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
+                    room_width,
+                    caption("Center messages and the composer in a readable column."),
+                ].spacing(12),
+                iced::widget::rule::horizontal(1),
+                column![
+                    shell::title("Messages", 14),
+                    row![text("Send with").size(13), shortcut].spacing(16).align_y(iced::Alignment::Center),
+                    caption("With Enter to send, use Shift+Enter for a new line. Ctrl+Enter always sends."),
+                ].spacing(12),
+                iced::widget::rule::horizontal(1),
+                column![
+                    shell::title("Room list", 14),
+                    visibility,
+                    unread_section,
+                    caption("Show unread rooms at the top, as well as in their usual sections."),
+                    unread_first,
+                ].spacing(12),
+            ],
+            Category::Notifications => column![
+                shell::title("Desktop notifications", 14), notification_controls,
+            ],
+            Category::Media => column![
+                column![
+                    shell::title("GIF playback", 14),
+                    caption("GIFs stay still until you choose Play on a preview or in the image viewer."),
+                    gif_controls,
+                    caption(if self.valid_gif_seconds() {
+                        "Duration repeats the GIF for 1–300 whole seconds. Once plays one loop."
+                    } else {
+                        "Enter a whole number from 1 to 300 seconds to save."
+                    }).style(if self.valid_gif_seconds() { shell::muted_text } else { shell::danger_text }),
+                ].spacing(12),
+                iced::widget::rule::horizontal(1),
+                column![
+                    shell::title("Custom emoji", 14),
+                    caption("Manage your personal emoji and packs shared with rooms."),
+                    button(text("Manage emoji packs…").size(13))
+                        .padding([7, 10])
+                        .style(shell::quiet_button)
+                        .on_press_maybe((available && (self.demo.is_some() || self.model.emoji_management.is_some()))
+                            .then_some(Message::EmojiManagement(super::emoji_management::Event::Open))),
+                    caption("Emoji pack changes are saved separately from these preferences."),
+                ].spacing(12),
+            ],
+            Category::Advanced => {
+                let mut advanced = column![
+                    column![
+                        shell::title("Presence refresh", 14),
+                        presence_controls,
+                        caption(if self.valid_presence_seconds() {
+                            "Refresh contacts and visible people while focused. Choose 15–3600 seconds; 60 is the default."
+                        } else {
+                            "Enter a whole number from 15 to 3600 seconds to save."
+                        }).style(if self.valid_presence_seconds() { shell::muted_text } else { shell::danger_text }),
+                    ].spacing(12),
+                    iced::widget::rule::horizontal(1),
+                    column![
+                        row![shell::title("Graphics", 14), text("Restart required").size(11).style(shell::muted_text)]
+                            .spacing(10).align_y(iced::Alignment::Center),
+                        gpu,
+                        caption("Uses the CPU renderer when disabled. GPU rendering includes a software fallback."),
+                        low_power,
+                        caption("Graphics changes apply on the next launch."),
+                    ].spacing(12),
+                    iced::widget::rule::horizontal(1),
+                    shell::title("Configuration", 14),
+                ].spacing(20);
+                if self.demo.is_some() {
+                    advanced = advanced.push(caption("Demo settings stay in memory and disappear on exit."));
+                } else if let Some(path) = &self.settings.path {
+                    advanced = advanced.push(caption(path.display().to_string()).wrapping(text::Wrapping::Glyph))
+                        .push(caption("Reload fills this form from the TOML file. Choose Save to apply it."));
+                }
+                advanced.push(row![defaults, reload].spacing(8))
+            }
+        }.spacing(20).width(Length::Fill);
         if self.settings.busy && !self.settings.saving {
             content = content.push(caption("Loading settings…"));
         }
@@ -712,74 +807,96 @@ impl App {
         if let Some(error) = &self.settings.error {
             actions = actions.push(caption(error).style(shell::danger_text));
         }
-        actions =
-            actions.push(row![iced::widget::space().width(Length::Fill), cancel, save].spacing(8));
-        let footer = container(actions)
-            .padding([14, 24])
-            .width(Length::Fill)
-            .id("settings-actions");
+        if !self.valid_gif_seconds() || !self.valid_presence_seconds() {
+            let category = if !self.valid_gif_seconds() {
+                Category::Media
+            } else {
+                Category::Advanced
+            };
+            actions = actions.push(
+                button(text(format!("Review invalid values in {}", category.label())).size(12))
+                    .style(shell::quiet_button)
+                    .on_press(message(Event::Category(category))),
+            );
+        }
+        if let Some(action) = self.settings.confirm_discard {
+            actions = actions.push(
+                text(match action {
+                    DiscardAction::Close => "Discard your unsaved settings changes?",
+                    DiscardAction::Reload => "Reload the file and discard your unsaved changes?",
+                })
+                .size(13),
+            );
+            actions = actions.push(
+                row![
+                    iced::widget::space().width(Length::Fill),
+                    button(text("Keep editing").size(13))
+                        .padding([7, 14])
+                        .style(shell::quiet_button)
+                        .on_press(message(Event::KeepEditing)),
+                    button(
+                        text(match action {
+                            DiscardAction::Close => "Discard changes",
+                            DiscardAction::Reload => "Reload file",
+                        })
+                        .size(13)
+                    )
+                    .padding([7, 14])
+                    .style(button::danger)
+                    .on_press(message(Event::DiscardChanges)),
+                ]
+                .spacing(8),
+            );
+        } else {
+            actions = actions
+                .push(row![iced::widget::space().width(Length::Fill), cancel, save].spacing(8));
+        }
         let close = super::tooltips::tooltip(
             button(container(icon(Kind::Close)).center_x(28).center_y(28))
                 .padding(0)
                 .style(shell::icon_button)
-                .on_press_maybe((!self.settings.saving).then_some(message(Event::Cancel))),
+                .on_press_maybe((!self.settings.saving).then_some(message(Event::RequestClose))),
             "Close settings",
             iced::widget::tooltip::Position::Bottom,
         );
-        let header = container(
-            column![
+        let header = column![
                 row![
                     shell::title("Settings", 20),
                     iced::widget::space().width(Length::Fill),
                     close
                 ]
                 .align_y(iced::Alignment::Center),
-                caption("Changes apply when you save. Startup options apply on the next launch."),
+                caption("Changes apply when you save. Graphics and startup options apply on the next launch."),
+                row(Category::ALL.into_iter().map(|category| {
+                    button(text(category.label()).size(13))
+                        .padding([7, 10])
+                        .style(move |theme, status| shell::navigation_button(theme, self.settings.category == category, status))
+                        .on_press_maybe((!self.settings.saving).then_some(message(Event::Category(category))))
+                        .into()
+                })).spacing(4).wrap(),
             ]
-            .spacing(8),
-        )
-        .padding([18, 24])
-        .width(Length::Fill);
-        content = content.push(row![defaults, reload].spacing(8));
-        // Constrain content before laying out text so captions wrap within the card.
-        let body = scrollable(container(content).padding(24).width(Length::Fill))
-            .id("settings-body")
-            .direction(shell::scrollbar())
-            .style(shell::scroll_style)
-            .height(Length::Fill);
-        let card = container(
-            column![
+            .spacing(8).width(Length::Fill);
+        let preferred_height = match self.settings.category {
+            Category::General => 680.0,
+            Category::Notifications => 500.0,
+            Category::Media => 520.0,
+            Category::Advanced => 700.0,
+        } + if self.settings.confirm_discard.is_some() {
+            60.0
+        } else {
+            0.0
+        };
+        super::dialog::modal(
+            super::dialog::frame(
+                size,
+                560.0,
+                preferred_height,
+                "settings",
                 header,
-                iced::widget::rule::horizontal(1),
-                body,
-                iced::widget::rule::horizontal(1),
-                footer,
-            ]
-            .spacing(0),
-        )
-        .width((size.width - 32.0).clamp(1.0, 560.0))
-        .height((size.height - 32.0).clamp(1.0, 760.0))
-        .clip(true)
-        .style(|theme| container::Style {
-            // Large shadows in tiny-skia 0.14 repaint outside the damage region.
-            // A border gives the card separation without darkening on scroll.
-            border: iced::Border {
-                color: shell::palette(theme).line,
-                width: 1.0,
-                radius: 12.0.into(),
-            },
-            ..shell::surface(theme, shell::palette(theme).background)
-        });
-        opaque(
-            mouse_area(
-                container(card)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .padding(16)
-                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
-            )
-            .on_scroll(|_| message(Event::Ignore))
-            .on_press(message(Event::Ignore)),
+                content,
+                actions,
+            ),
+            message(Event::Ignore),
         )
     }
 }
@@ -794,6 +911,73 @@ fn caption<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn category_changes_preserve_drafts_and_dirty_close_requires_a_choice() {
+        let mut app = super::super::tests::demo_app();
+        let selection = app.selection.clone();
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::Theme(ThemeMode::Dark));
+        let _ = app.settings_update(Event::Category(Category::Media));
+        let _ = app.settings_update(Event::GifPlayback(GifPlayback::Duration));
+        let _ = app.settings_update(Event::GifSeconds("invalid".into()));
+        let draft = app.settings.draft.clone();
+        let _ = app.settings_update(Event::Category(Category::General));
+        assert_eq!(app.settings.draft, draft);
+        assert_eq!(app.settings.gif_seconds_input, "invalid");
+        let _ = app.settings_update(Event::RequestClose);
+        assert!(app.settings.draft.is_some());
+        assert!(matches!(
+            app.settings.confirm_discard,
+            Some(DiscardAction::Close)
+        ));
+        let _ = app.settings_update(Event::KeepEditing);
+        assert!(app.settings.confirm_discard.is_none());
+        assert_eq!(app.settings.draft, draft);
+        let _ = app.settings_update(Event::RequestClose);
+        let _ = app.settings_update(Event::DiscardChanges);
+        assert!(app.settings.draft.is_none());
+        assert_eq!(app.settings.current, Settings::default());
+        assert_eq!(app.selection, selection);
+        let _ = app.settings_update(Event::Open);
+        assert_eq!(app.settings.category, Category::General);
+        let _ = app.settings_update(Event::RequestClose);
+        assert!(
+            app.settings.draft.is_none(),
+            "clean forms close immediately"
+        );
+    }
+
+    #[test]
+    fn reloading_an_open_form_requires_discard_and_stages_until_save() {
+        let (_directory, mut app) = loaded_app();
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::Theme(ThemeMode::Dark));
+        let _ = app.settings_update(Event::Reload);
+        assert!(!app.settings.busy);
+        assert!(matches!(
+            app.settings.confirm_discard,
+            Some(DiscardAction::Reload)
+        ));
+        let _ = app.settings_update(Event::KeepEditing);
+        assert_eq!(
+            app.settings.draft.as_ref().unwrap().appearance.theme,
+            ThemeMode::Dark
+        );
+        let _ = app.settings_update(Event::Reload);
+        let _ = app.settings_update(Event::DiscardChanges);
+        assert!(app.settings.busy);
+        let request = app.settings.request;
+        let mut file_settings = Settings::default();
+        file_settings.composer.send_shortcut = SendShortcut::Enter;
+        let mut store = app.settings.store.clone().unwrap();
+        store.save(&file_settings).unwrap();
+        let _ = app.settings_update(Event::Loaded(request, Ok((store, file_settings.clone()))));
+        assert_eq!(app.settings.draft, Some(file_settings));
+        assert_eq!(app.settings.current, Settings::default());
+        let _ = app.settings_update(Event::Cancel);
+        assert_eq!(app.settings.current, Settings::default());
+    }
 
     #[test]
     fn theme_changes_apply_on_save_and_preserve_conversation_state() {
@@ -1215,6 +1399,7 @@ mod tests {
         use iced::advanced::{Shell, layout, mouse, widget};
         let mut app = super::super::tests::demo_app();
         let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::Category(Category::Notifications));
         let mut view = app.view();
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         let mut tree = widget::Tree::new(&view);
