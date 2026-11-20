@@ -645,7 +645,7 @@ impl App {
                     border: iced::Border::default().rounded(12),
                     ..shell::surface(theme, shell::palette(theme).background)
                 });
-            super::focus_scope::view(
+            super::focus_scope::dismissible(
                 opaque(
                     mouse_area(
                         container(card)
@@ -659,6 +659,7 @@ impl App {
                     .on_scroll(|_| Message::Image(Event::Ignore)),
                 ),
                 "image-viewer",
+                Message::Escape,
             )
         })
         .into()

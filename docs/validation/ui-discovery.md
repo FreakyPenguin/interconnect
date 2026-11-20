@@ -18,6 +18,11 @@ for sample content. Check light and dark themes at 1400×900 and 640×480.
 - Add/edit an emoji: Choose image is the primary path; existing MXC URLs are in
   an explicit optional section. A prepared file is uploaded only when saved.
   Check cancellation, read-only packs, errors, and an invalid image URL.
+- Change a pack name, new-pack name, or emoji description/shortcode/image. Close
+  or Reload must offer Keep editing / Discard changes. Escape cancels that
+  confirmation; explicit Cancel in the editor discards the edit. An unchanged
+  existing emoji closes directly. Closing during file preparation cancels the
+  read and rejects its late result while retaining the entered fields.
 - Check room/space quick-open and New conversation with empty results, one
   result, many results, and long names. Short results use a compact card; longer
   lists scroll within the available window. Arrow/Enter navigation and Escape

@@ -32,6 +32,7 @@ pub struct State {
     image_query: String,
     image_page: usize,
     advanced_uri: bool,
+    discard: Option<Discard>,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Editor {
@@ -40,6 +41,11 @@ enum Editor {
     Rename,
     Create,
     Image,
+}
+#[derive(Clone, Copy, Debug)]
+enum Discard {
+    Close,
+    Reload,
 }
 
 impl State {
@@ -54,6 +60,7 @@ impl State {
             .map(|p| p.name.clone())
             .unwrap_or_default();
         self.previous = None;
+        self.create_name.clear();
         self.shortcode.clear();
         self.description.clear();
         self.uri.clear();
@@ -61,6 +68,36 @@ impl State {
         self.confirm = None;
         self.editor = Editor::Browse;
         self.advanced_uri = false;
+        self.discard = None;
+    }
+    fn dirty(&self) -> bool {
+        let pack = self.listing.packs.get(self.selected);
+        match self.editor {
+            Editor::Browse => false,
+            Editor::Rename => pack.is_some_and(|pack| self.name != pack.name),
+            Editor::Create => !self.create_name.is_empty(),
+            Editor::Image => {
+                if self.upload.is_some() {
+                    return true;
+                }
+                match self.previous.as_ref().and_then(|key| {
+                    pack.and_then(|pack| pack.content.as_ref())
+                        .and_then(|content| content["images"].get(key))
+                        .map(|image| (key, image))
+                }) {
+                    Some((key, image)) => {
+                        self.shortcode != *key
+                            || self.description != image["body"].as_str().unwrap_or("")
+                            || self.uri != image["url"].as_str().unwrap_or("")
+                    }
+                    None => {
+                        !self.shortcode.is_empty()
+                            || !self.description.is_empty()
+                            || !self.uri.is_empty()
+                    }
+                }
+            }
+        }
     }
     fn filtered_images(&self) -> Vec<(&str, &serde_json::Value)> {
         let query = self.image_query.trim().to_lowercase();
@@ -115,6 +152,8 @@ pub enum Event {
     FilterImages(String),
     ImagePage(bool),
     AdvancedUri,
+    KeepChanges,
+    DiscardChanges,
     Saved(u64, Option<String>, bool, Result<Pack, String>),
 }
 fn message(event: Event) -> Message {
@@ -211,6 +250,7 @@ impl App {
                     image_query: String::new(),
                     image_page: 0,
                     advanced_uri: false,
+                    discard: None,
                 });
                 return self.load_emoji_management();
             }
@@ -303,6 +343,23 @@ impl App {
                 if self
                     .emoji_management
                     .as_ref()
+                    .is_some_and(|state| state.discard.is_some())
+                {
+                    return self.emoji_management_event(Event::KeepChanges);
+                }
+                if let Some(state) = &mut self.emoji_management
+                    && !state.pending
+                    && state.dirty()
+                {
+                    self.generation += 1;
+                    state.request = self.generation;
+                    state.task = None;
+                    state.discard = Some(Discard::Close);
+                    return Task::none();
+                }
+                if self
+                    .emoji_management
+                    .as_ref()
                     .is_some_and(|state| !state.pending)
                 {
                     self.emoji_management = None;
@@ -327,7 +384,42 @@ impl App {
                     .as_ref()
                     .is_some_and(|state| !state.pending) =>
             {
+                if let Some(state) = &mut self.emoji_management
+                    && state.dirty()
+                {
+                    self.generation += 1;
+                    state.request = self.generation;
+                    state.task = None;
+                    state.discard = Some(Discard::Reload);
+                    return Task::none();
+                }
                 return self.load_emoji_management();
+            }
+            Event::KeepChanges => {
+                if let Some(state) = &mut self.emoji_management {
+                    state.discard = None;
+                    return iced::widget::operation::focus(match state.editor {
+                        Editor::Rename => "emoji-pack-name",
+                        Editor::Create => "emoji-pack-create",
+                        Editor::Image => "emoji-shortcode",
+                        Editor::Browse => "emoji-pack-filter",
+                    });
+                }
+            }
+            Event::DiscardChanges => {
+                let action = self.emoji_management.as_mut().and_then(|state| {
+                    if state.pending {
+                        return None;
+                    }
+                    let action = state.discard.take()?;
+                    state.reset_editor();
+                    Some(action)
+                });
+                return match action {
+                    Some(Discard::Close) => self.emoji_management_event(Event::Close),
+                    Some(Discard::Reload) => self.emoji_management_event(Event::Reload),
+                    None => Task::none(),
+                };
             }
             event => {
                 let Some(state) = &mut self.emoji_management else {
@@ -335,6 +427,7 @@ impl App {
                 };
                 if state.loading
                     || state.pending
+                    || state.discard.is_some()
                     || state.account != self.account_id
                     || self.closing
                     || self.stopped
@@ -682,11 +775,15 @@ impl App {
         let header = row![
             shell::title("Emoji packs", 20),
             iced::widget::space().width(Length::Fill),
-            quiet("Reload", Event::Reload, available),
+            quiet(
+                "Reload",
+                Event::Reload,
+                available && state.discard.is_none()
+            ),
             super::tooltips::icon_button(
                 super::icons::Kind::Close,
                 "Close emoji packs",
-                (!state.pending).then_some(message(Event::Close)),
+                (!state.pending && state.discard.is_none()).then_some(message(Event::Close)),
             ),
         ]
         .spacing(8)
@@ -695,7 +792,20 @@ impl App {
         let writable = available && pack.is_some_and(|pack| pack.writable);
         let mut body = column![].spacing(12).width(Length::Fill);
         let mut actions = row![].spacing(8).align_y(iced::Alignment::Center);
-        if let Some(edit) = &state.confirm {
+        if state.discard.is_some() {
+            body = body.push(shell::title("Discard unsaved emoji changes?", 16))
+                .push(text("Your changes have not been saved. Keep editing to finish them, or discard them to continue.").size(13));
+            actions = actions
+                .push(iced::widget::space().width(Length::Fill))
+                .push(quiet("Keep editing", Event::KeepChanges, available))
+                .push(
+                    button(text("Discard changes").size(13))
+                        .keyboard_navigation(true)
+                        .padding([7, 14])
+                        .style(button::danger)
+                        .on_press_maybe(available.then_some(message(Event::DiscardChanges))),
+                );
+        } else if let Some(edit) = &state.confirm {
             let (title, explanation) = if matches!(edit, Edit::Delete) {
                 (
                     "Remove this pack?",
@@ -1112,7 +1222,11 @@ impl App {
         if state.pending {
             footer = footer.push(text("Saving…").size(12).style(shell::muted_text));
         }
-        if self.demo.is_some() && state.confirm.is_none() && state.editor == Editor::Browse {
+        if self.demo.is_some()
+            && state.confirm.is_none()
+            && state.discard.is_none()
+            && state.editor == Editor::Browse
+        {
             body = body.push(
                 text("Demo changes stay in memory.")
                     .size(11)
@@ -1120,7 +1234,7 @@ impl App {
             );
         }
         footer = footer.push(actions);
-        let cap = if state.confirm.is_some() {
+        let cap = if state.confirm.is_some() || state.discard.is_some() {
             340.0
         } else if matches!(
             state.editor,
@@ -1131,9 +1245,14 @@ impl App {
             640.0
         };
         let card = super::dialog::frame(size, 700.0, cap, "emoji-management", header, body, footer);
-        super::focus_scope::view(
+        super::focus_scope::dismissible(
             super::dialog::modal(card, message(Event::Ignore)),
-            "emoji-management",
+            if state.discard.is_some() {
+                "emoji-management-discard"
+            } else {
+                "emoji-management"
+            },
+            Message::Escape,
         )
     }
 }
@@ -1218,6 +1337,74 @@ mod tests {
         assert_eq!(app.emoji_management.as_ref().unwrap().image_page, 0);
         event(&mut app, Event::Close);
         assert!(app.emoji_management_images().is_empty());
+    }
+    #[test]
+    fn closing_or_reloading_an_emoji_editor_requires_an_explicit_discard() {
+        for (begin, edit) in [
+            (Event::BeginRename, Event::Name("Unsent pack name".into())),
+            (
+                Event::BeginCreate,
+                Event::CreateName("Unsent new pack".into()),
+            ),
+            (Event::NewImage, Event::Shortcode("unsent_emoji".into())),
+        ] {
+            let mut app = crate::tests::demo_app();
+            open(&mut app);
+            event(&mut app, begin);
+            event(&mut app, edit);
+            event(&mut app, Event::Close);
+            assert!(matches!(
+                app.emoji_management.as_ref().unwrap().discard,
+                Some(Discard::Close)
+            ));
+            event(&mut app, Event::KeepChanges);
+            assert!(app.emoji_management.as_ref().unwrap().dirty());
+            event(&mut app, Event::Close);
+            event(&mut app, Event::Close); // Escape cancels the discard prompt.
+            assert!(app.emoji_management.as_ref().unwrap().discard.is_none());
+            assert!(app.emoji_management.as_ref().unwrap().dirty());
+            event(&mut app, Event::Reload);
+            assert!(matches!(
+                app.emoji_management.as_ref().unwrap().discard,
+                Some(Discard::Reload)
+            ));
+            assert!(!app.emoji_management.as_ref().unwrap().loading);
+            event(&mut app, Event::DiscardChanges);
+            assert!(app.emoji_management.as_ref().unwrap().loading);
+            assert!(!app.emoji_management.as_ref().unwrap().dirty());
+        }
+        let mut app = crate::tests::demo_app();
+        open(&mut app);
+        event(&mut app, Event::ChooseImage("wave".into()));
+        assert!(!app.emoji_management.as_ref().unwrap().dirty());
+        event(&mut app, Event::Close);
+        assert!(app.emoji_management.is_none());
+    }
+
+    #[test]
+    fn close_confirmation_cancels_image_preparation_and_rejects_its_old_result() {
+        let mut app = crate::tests::demo_app();
+        open(&mut app);
+        event(&mut app, Event::NewImage);
+        event(&mut app, Event::Shortcode("keep_me".into()));
+        let state = app.emoji_management.as_mut().unwrap();
+        let old = state.request;
+        let (_, handle) =
+            Task::<Message>::perform(std::future::pending::<()>(), |_| message(Event::Ignore))
+                .abortable();
+        state.task = Some(handle.abort_on_drop());
+        event(&mut app, Event::Close);
+        assert!(app.emoji_management.as_ref().unwrap().task.is_none());
+        event(
+            &mut app,
+            Event::FilePicked(old, None, Err("late error".into())),
+        );
+        assert!(app.emoji_management.as_ref().unwrap().error.is_none());
+        event(&mut app, Event::KeepChanges);
+        assert_eq!(app.emoji_management.as_ref().unwrap().shortcode, "keep_me");
+        event(&mut app, Event::Close);
+        event(&mut app, Event::DiscardChanges);
+        assert!(app.emoji_management.is_none());
     }
     fn finish(app: &mut App, baseline: Pack, edit: Edit) -> Pack {
         let state = app.emoji_management.as_ref().unwrap();
