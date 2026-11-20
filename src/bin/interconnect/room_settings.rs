@@ -138,6 +138,24 @@ impl App {
         }
         true
     }
+    /// A reopened panel waits behind an admitted write instead of starting a
+    /// competing settings read. Its completion is the event that resumes loading.
+    fn reload_waiting_room_settings(&mut self, room: &str) -> Task<Message> {
+        if !self.closing
+            && !self.stopped
+            && !self.room_settings.busy.contains(room)
+            && self.room_settings.panel.as_ref().is_some_and(|panel| {
+                panel.target.1 == room
+                    && self.selection.room.as_ref() == Some(&panel.target)
+                    && panel.saved.is_none()
+                    && panel.load.is_none()
+                    && !panel.pending
+            })
+        {
+            return self.room_settings_event(Event::Reload);
+        }
+        Task::none()
+    }
     pub(super) fn room_settings_avatar(&self) -> Option<OwnedMxcUri> {
         self.room_settings
             .panel
@@ -312,13 +330,14 @@ impl App {
                             if self.demo.is_some()
                                 && let Some(saved) = &panel.saved
                             {
-                                self.room_settings.demo.insert(id, saved.clone());
+                                self.room_settings.demo.insert(id.clone(), saved.clone());
                             }
                             panel.success = true;
                         }
                         Err(error) => panel.error = Some(error),
                     }
                 }
+                return self.reload_waiting_room_settings(&id);
             }
 
             Event::Open(id) => {
@@ -486,6 +505,7 @@ impl App {
                         Err(error) => panel.error = Some(error),
                     }
                 }
+                return self.reload_waiting_room_settings(&target.1);
             }
             Event::Save(field) => {
                 let Some(panel) = &mut self.room_settings.panel else {
@@ -1129,6 +1149,80 @@ mod tests {
             .unwrap()
             .0
     }
+    #[test]
+    fn reopening_settings_resumes_loading_when_an_old_metadata_write_finishes() {
+        let mut app = demo_app();
+        open(&mut app);
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        let target = panel.target.clone();
+        let request = panel.request;
+        let before = panel.saved.as_ref().unwrap().name.clone();
+        app.room_settings.panel.as_mut().unwrap().pending = true;
+        app.room_settings.busy.insert(target.1.clone());
+        app.pending_ops = 1;
+        let _ = app.update(message(Event::Close));
+        open(&mut app);
+        let reopened = app.room_settings.panel.as_ref().unwrap().request;
+        assert_ne!(request, reopened);
+        assert!(app.room_settings.panel.as_ref().unwrap().saved.is_none());
+        let _ = app.update(message(Event::Saved(
+            target.clone(),
+            request,
+            Change::Name(before, "Updated".into()),
+            Ok(()),
+        )));
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.target, target);
+        assert!(panel.saved.is_some());
+        assert!(
+            panel.request > reopened,
+            "completion starts a fresh settings load"
+        );
+        assert!(!app.room_settings.busy.contains(&target.1));
+        assert_eq!(app.pending_ops, 0);
+    }
+
+    #[tokio::test]
+    async fn reopening_settings_resumes_loading_after_an_old_avatar_write() {
+        let mut app = demo_app();
+        open(&mut app);
+        let session = app.room_settings.panel.as_ref().unwrap().request;
+        let room = app.room_settings.panel.as_ref().unwrap().target.1.clone();
+        let upload = avatar_editor::test_upload().await;
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Pick)));
+        let _ = app.update(message(Event::Avatar(
+            session,
+            avatar_editor::Event::Picked(1, Ok(Some(upload.clone()))),
+        )));
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Save)));
+        let operation = app.generation;
+        let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::DiscardChanges(discard_serial(&app))));
+        open(&mut app);
+        assert!(app.room_settings.panel.as_ref().unwrap().saved.is_none());
+        let url: OwnedMxcUri = "mxc://demo.invalid/old-avatar-write".into();
+        let _ = app.update(message(Event::AvatarSaved(
+            operation,
+            Some(upload.clone()),
+            Ok(Some(url.clone())),
+        )));
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.saved.as_ref().unwrap().avatar.url, Some(url.clone()));
+        assert!(!app.room_settings.busy.contains(&room));
+        assert_eq!(app.pending_ops, 0);
+        let current = panel.request;
+        let _ = app.update(message(Event::Name("Keep this new draft".into())));
+        let _ = app.update(message(Event::AvatarSaved(
+            operation,
+            Some(upload),
+            Ok(Some(url)),
+        )));
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.request, current);
+        assert_eq!(panel.draft.as_ref().unwrap().name, "Keep this new draft");
+        assert_eq!(app.pending_ops, 0);
+    }
+
     #[test]
     fn an_old_confirmation_cannot_accept_a_new_prompt_in_the_same_panel() {
         let mut app = demo_app();

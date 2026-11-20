@@ -63,3 +63,8 @@ unit tests do not establish server or platform behavior.
 - Cancel a discard prompt, reopen another prompt in the same settings panel, and
   deliver the earlier prompt's Keep/Discard action: only the current prompt token
   may act. Panel identity alone must not authorize a later confirmation.
+
+- Start a metadata/avatar save, close the panel, then reopen it while the admitted
+  write is pending. Its completion must start one fresh load for the matching
+  reopened room panel, without a timer or manual Reload. A duplicate old avatar
+  completion must not reload or overwrite a new draft.
