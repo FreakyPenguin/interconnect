@@ -123,7 +123,7 @@ pub(super) const DARK: Palette = Palette {
 };
 pub(super) fn colors(mode: ThemeMode) -> &'static Palette {
     match mode {
-        ThemeMode::Light => &LIGHT,
+        ThemeMode::Light | ThemeMode::System => &LIGHT,
         ThemeMode::Dark => &DARK,
     }
 }
@@ -140,8 +140,20 @@ pub(super) fn theme(mode: ThemeMode) -> Theme {
     static LIGHT_THEME: LazyLock<Theme> = LazyLock::new(|| make_theme(ThemeMode::Light));
     static DARK_THEME: LazyLock<Theme> = LazyLock::new(|| make_theme(ThemeMode::Dark));
     match mode {
-        ThemeMode::Light => LIGHT_THEME.clone(),
+        ThemeMode::Light | ThemeMode::System => LIGHT_THEME.clone(),
         ThemeMode::Dark => DARK_THEME.clone(),
+    }
+}
+impl super::App {
+    /// Resolve once for all custom message renderers as well as native widgets.
+    pub(super) fn effective_theme(&self) -> ThemeMode {
+        match self.settings.current.appearance.theme {
+            ThemeMode::System => match self.settings.system_theme {
+                iced::theme::Mode::Dark => ThemeMode::Dark,
+                iced::theme::Mode::Light | iced::theme::Mode::None => ThemeMode::Light,
+            },
+            mode => mode,
+        }
     }
 }
 fn make_theme(mode: ThemeMode) -> Theme {

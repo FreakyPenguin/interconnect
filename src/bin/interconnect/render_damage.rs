@@ -18,7 +18,7 @@ fn draw_app(app: &App, tree: &mut widget::Tree, renderer: &mut iced::Renderer, s
     view.as_widget().draw(
         tree,
         renderer,
-        &super::appearance::theme(app.settings.current.appearance.theme),
+        &super::appearance::theme(app.effective_theme()),
         &renderer::Style::default(),
         Layout::new(&node),
         mouse::Cursor::Unavailable,

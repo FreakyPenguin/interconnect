@@ -1,7 +1,7 @@
 # Preferences and account dialogs
 
 Run the locked build and UI tests, then use `cargo run --locked --bin interconnect -- --demo`.
-Check Light/Dark at 1400×900 and 640×480. Connected checks need a dedicated profile;
+Check Light/Dark/System at 1400×900 and 640×480. Connected checks need a dedicated profile;
 see [account validation](connected-ui.md#desktop-login).
 
 ## Preferences
@@ -23,6 +23,15 @@ see [account validation](connected-ui.md#desktop-login).
   notification feedback only when desktop-service interaction is intended.
 - Focus numeric fields and leave Settings idle: carets remain static, with no
   periodic redraws. Measure [resources](idle-resources.md) separately.
+- General → Interface size: stage each size, cancel, then save. Save must scale
+  room/thread messages, formatted code, composer text, controls, and hit targets
+  together; retain drafts and the selected conversation. Resize for larger sizes
+  and verify Settings remains reachable to return to 100%.
+- Select System and change desktop appearance while reading and while Settings
+  has unsaved edits. All message/code/topic and widget colors follow the native
+  event without changing the draft. Explicit Light/Dark ignore desktop changes.
+  An unavailable desktop preference resolves to Light. Verify no polling appears
+  in idle resource measurements.
 
 ## Account profile
 
@@ -57,5 +66,7 @@ see [account validation](connected-ui.md#desktop-login).
 - Failure retains server/username and clears secrets. Cancelling registration or
   browser approval must not claim to delete an account/device created on the server.
 
-Automated state/layout tests cover these transitions and idle deadlines. Native
+Automated state/layout tests cover preference staging, theme resolution, native
+appearance event handling, and idle deadlines. Native appearance delivery and
+interface scaling still need the desktop checks above. Native
 prompts, IME, clipboard, browser callbacks, and server writes require desktop checks.

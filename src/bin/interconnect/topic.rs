@@ -396,7 +396,7 @@ impl App {
             .filter(|p| !p.snippet.is_empty())
             .map_or_else(
                 || super::single_line::label(label, 12).into(),
-                |p| super::topic_snippet::view(&p.snippet, self.settings.current.appearance.theme),
+                |p| super::topic_snippet::view(&p.snippet, self.effective_theme()),
             );
         let summary = super::tooltips::tooltip(
             button(
@@ -442,7 +442,7 @@ impl App {
                 topic,
                 presentation.and_then(|p| p.document.as_ref()),
                 Default::default(),
-                self.settings.current.appearance.theme
+                self.effective_theme()
             )]
             .spacing(8);
             if presentation.is_some_and(|p| p.fallback) {

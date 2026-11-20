@@ -324,7 +324,8 @@ impl State {
                     // Split at grapheme boundaries so syntax colors never break emoji.
                     let text = run.content.text();
                     let syntax = block.syntax.as_ref().map(|syntax| match self.mode {
-                        interconnect::settings::ThemeMode::Light => &syntax.light,
+                        interconnect::settings::ThemeMode::Light
+                        | interconnect::settings::ThemeMode::System => &syntax.light,
                         interconnect::settings::ThemeMode::Dark => &syntax.dark,
                     });
                     let run_start = canonical_offset - text_len;

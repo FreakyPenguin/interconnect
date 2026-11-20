@@ -43,12 +43,14 @@ impl Default for Settings {
 #[serde(default)]
 pub struct Appearance {
     pub theme: ThemeMode,
+    pub interface_scale: InterfaceScale,
     pub limit_room_width: bool,
 }
 impl Default for Appearance {
     fn default() -> Self {
         Self {
             theme: ThemeMode::Light,
+            interface_scale: InterfaceScale::default(),
             limit_room_width: true,
         }
     }
@@ -60,13 +62,15 @@ pub enum ThemeMode {
     #[default]
     Light,
     Dark,
+    System,
 }
 impl ThemeMode {
-    pub const ALL: [Self; 2] = [Self::Light, Self::Dark];
+    pub const ALL: [Self; 3] = [Self::Light, Self::Dark, Self::System];
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Light => "light",
             Self::Dark => "dark",
+            Self::System => "system",
         }
     }
 }
@@ -75,6 +79,51 @@ impl std::fmt::Display for ThemeMode {
         f.write_str(match self {
             Self::Light => "Light",
             Self::Dark => "Dark",
+            Self::System => "System",
+        })
+    }
+}
+/// Scale the whole interface so text, controls, and hit targets grow together.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InterfaceScale {
+    #[default]
+    Normal,
+    Comfortable,
+    Large,
+    ExtraLarge,
+}
+impl InterfaceScale {
+    pub const ALL: [Self; 4] = [
+        Self::Normal,
+        Self::Comfortable,
+        Self::Large,
+        Self::ExtraLarge,
+    ];
+    pub fn factor(self) -> f32 {
+        match self {
+            Self::Normal => 1.0,
+            Self::Comfortable => 1.15,
+            Self::Large => 1.3,
+            Self::ExtraLarge => 1.5,
+        }
+    }
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Comfortable => "comfortable",
+            Self::Large => "large",
+            Self::ExtraLarge => "extra_large",
+        }
+    }
+}
+impl std::fmt::Display for InterfaceScale {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Normal => "100%",
+            Self::Comfortable => "115%",
+            Self::Large => "130%",
+            Self::ExtraLarge => "150%",
         })
     }
 }
@@ -281,6 +330,10 @@ impl Store {
             settings.appearance.theme.as_str().into(),
         );
         replace(
+            &mut document["appearance"]["interface_scale"],
+            settings.appearance.interface_scale.as_str().into(),
+        );
+        replace(
             &mut document["appearance"]["limit_room_width"],
             settings.appearance.limit_room_width.into(),
         );
@@ -397,7 +450,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn theme_defaults_support_old_files_and_both_variants() {
+    fn theme_defaults_support_old_files_and_all_variants() {
         assert_eq!(decode("").unwrap().appearance.theme, ThemeMode::Light);
         assert_eq!(
             decode("[appearance]\nlimit_room_width = false")
@@ -420,6 +473,35 @@ mod tests {
                 .theme,
             ThemeMode::Light
         );
+        assert_eq!(
+            decode("[appearance]\ntheme = 'system'")
+                .unwrap()
+                .appearance
+                .theme,
+            ThemeMode::System
+        );
+    }
+
+    #[test]
+    fn interface_scale_defaults_and_round_trips_with_system_appearance() {
+        assert_eq!(
+            decode("").unwrap().appearance.interface_scale,
+            InterfaceScale::Normal
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.toml");
+        let (mut store, mut settings) = Store::load(path.clone()).unwrap();
+        settings.appearance.theme = ThemeMode::System;
+        let mut previous = 0.0;
+        for scale in InterfaceScale::ALL {
+            assert!(scale.factor() > previous);
+            previous = scale.factor();
+            settings.appearance.interface_scale = scale;
+            store.save(&settings).unwrap();
+            assert_eq!(Store::load(path.clone()).unwrap().1, settings);
+        }
+        assert!(decode("[appearance]\ninterface_scale = 2").is_err());
+        assert!(decode("[appearance]\ninterface_scale = 'tiny'").is_err());
     }
 
     #[test]

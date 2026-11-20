@@ -164,7 +164,7 @@ impl App {
                             message,
                             self.inline_assets(),
                             None,
-                            self.settings.current.appearance.theme
+                            self.effective_theme()
                         ),
                     ]
                     .spacing(4)

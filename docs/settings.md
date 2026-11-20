@@ -75,8 +75,14 @@ Override with `--config /path/to/settings.toml`. Legacy settings files require
 manual copying or `--config`. [config.example.toml](../config.example.toml)
 is the complete key/default reference.
 
-- Theme and room-width preferences apply immediately on Save. System appearance
-  matching and custom palettes are unsupported.
+- Theme, interface size, and room-width preferences apply immediately on Save.
+  Light/Dark override desktop appearance; System follows native appearance changes
+  without polling, falling back to Light when the platform has no preference.
+  Existing files retain the Light default. Custom palettes are unsupported.
+- Interface size offers 100%, 115%, 130%, and 150%, in addition to desktop scaling.
+  It enlarges all text and controls together, including message formatting,
+  composers, and dialogs. Larger sizes leave less content visible; resize the
+  window as needed.
 - Composer defaults to Ctrl+Enter to send; Enter-to-send is optional.
 - Presence polling defaults off (60-second interval; allowed range 15–3600).
   On-demand snapshots use a 60-second cache; polling runs only while focused.

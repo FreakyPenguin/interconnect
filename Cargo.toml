@@ -10,7 +10,7 @@ license = "MIT"
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 emojis = "=0.9.1"
-iced = { version = "=0.14.0", default-features = false, features = ["tokio", "wayland", "wgpu", "tiny-skia", "advanced", "canvas", "image-without-codecs"] }
+iced = { version = "=0.14.0", default-features = false, features = ["tokio", "wayland", "wgpu", "tiny-skia", "advanced", "canvas", "image-without-codecs", "linux-theme-detection"] }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
 matrix-sdk = { version = "=0.19.1", default-features = false, features = ["e2e-encryption", "automatic-room-key-forwarding", "sqlite", "rustls-aws-lc-rs", "sso-login", "socks"] }
 matrix-sdk-common = { version = "=0.19.1", default-features = false }

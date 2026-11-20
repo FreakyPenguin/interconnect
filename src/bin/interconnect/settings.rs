@@ -8,7 +8,7 @@ use iced::{
     },
 };
 use interconnect::settings::{
-    self, GifPlayback, Graphics, SendShortcut, Settings, Store, ThemeMode,
+    self, GifPlayback, Graphics, InterfaceScale, SendShortcut, Settings, Store, ThemeMode,
 };
 use std::path::PathBuf;
 
@@ -16,6 +16,7 @@ use std::path::PathBuf;
 pub struct State {
     pub(super) profile: super::account_profile::State,
     pub current: Settings,
+    pub system_theme: iced::theme::Mode,
     pub draft: Option<Settings>,
     pub path: Option<PathBuf>,
     store: Option<Store>,
@@ -149,6 +150,8 @@ pub enum Event {
     UnreadFirst(bool),
     LimitRoomWidth(bool),
     Theme(ThemeMode),
+    SystemTheme(iced::theme::Mode),
+    InterfaceScale(InterfaceScale),
     SendShortcut(SendShortcut),
     GifPlayback(GifPlayback),
     GifSeconds(String),
@@ -253,15 +256,16 @@ impl App {
         } else {
             Task::none()
         };
+        let system_theme = iced::system::theme().map(|mode| message(Event::SystemTheme(mode)));
         let Some(loaded) = startup.loaded else {
-            return (app, Task::batch([demo_topic, demo_code]));
+            return (app, Task::batch([demo_topic, demo_code, system_theme]));
         };
         app.settings.initial_load = true;
         app.settings.path = startup.path;
         app.settings.busy = true;
         let task = app.settings_update(Event::Loaded(0, loaded));
         app.update_notification_context();
-        (app, Task::batch([task, demo_code]))
+        (app, Task::batch([task, demo_code, system_theme]))
     }
     fn load_settings(&mut self) -> Task<Message> {
         if self.settings.busy {
@@ -285,6 +289,12 @@ impl App {
     }
     pub(super) fn settings_update(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::SystemTheme(mode) => self.settings.system_theme = mode,
+            Event::InterfaceScale(scale) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.appearance.interface_scale = scale;
+                }
+            }
             Event::NotificationsEnabled(enabled) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     draft.notifications.enabled = enabled;
@@ -828,6 +838,11 @@ impl App {
                         ThemeMode::ALL, Some(draft.appearance.theme),
                         move |mode| message(if available { Event::Theme(mode) } else { Event::Ignore }),
                     ).keyboard_navigation(true).text_size(13).padding([7, 10]).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
+                    row![text("Interface size").size(13), pick_list(
+                        InterfaceScale::ALL, Some(draft.appearance.interface_scale),
+                        move |scale| message(if available { Event::InterfaceScale(scale) } else { Event::Ignore }),
+                    ).keyboard_navigation(true).text_size(13).padding([7, 10]).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
+                    caption("Enlarge text and controls together. Applies when you save."),
                     room_width,
                     caption("Center messages and the composer in a readable column."),
                 ].spacing(12),
@@ -1291,6 +1306,65 @@ mod tests {
         let _ = app.update(Message::Settings(Event::Defaults));
         let _ = app.update(Message::Settings(Event::Save));
         assert_eq!(app.settings.current.appearance.theme, ThemeMode::Light);
+    }
+
+    #[test]
+    fn system_appearance_events_do_not_change_explicit_themes_or_unsaved_preferences() {
+        let mut app = crate::tests::demo_app();
+        let selection = app.selection.clone();
+        let _ = app.update(Message::Settings(Event::SystemTheme(
+            iced::theme::Mode::Dark,
+        )));
+        assert_eq!(app.effective_theme(), ThemeMode::Light);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::Theme(ThemeMode::System)));
+        let _ = app.update(Message::Settings(Event::InterfaceScale(
+            InterfaceScale::Large,
+        )));
+        let _ = app.update(Message::Settings(Event::SystemTheme(
+            iced::theme::Mode::Light,
+        )));
+        assert_eq!(app.effective_theme(), ThemeMode::Light);
+        assert_eq!(
+            app.settings.current.appearance.interface_scale,
+            InterfaceScale::Normal
+        );
+        assert_eq!(
+            app.settings
+                .draft
+                .as_ref()
+                .unwrap()
+                .appearance
+                .interface_scale,
+            InterfaceScale::Large
+        );
+        let _ = app.update(Message::Settings(Event::Cancel));
+        assert_eq!(app.settings.current.appearance.theme, ThemeMode::Light);
+        assert_eq!(
+            app.settings.current.appearance.interface_scale,
+            InterfaceScale::Normal
+        );
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::Theme(ThemeMode::System)));
+        let _ = app.update(Message::Settings(Event::InterfaceScale(
+            InterfaceScale::ExtraLarge,
+        )));
+        let _ = app.update(Message::Settings(Event::Save));
+        assert_eq!(
+            app.settings.current.appearance.interface_scale,
+            InterfaceScale::ExtraLarge
+        );
+        let _ = app.update(Message::Settings(Event::SystemTheme(
+            iced::theme::Mode::Dark,
+        )));
+        assert_eq!(app.effective_theme(), ThemeMode::Dark);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::SystemTheme(
+            iced::theme::Mode::None,
+        )));
+        assert_eq!(app.effective_theme(), ThemeMode::Light);
+        assert_eq!(app.settings.draft.as_ref().unwrap(), &app.settings.current);
+        assert_eq!(app.selection, selection);
     }
 
     #[test]

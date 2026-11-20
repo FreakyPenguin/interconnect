@@ -335,7 +335,7 @@ impl App {
                 &prepared.source,
                 prepared.document.as_ref(),
                 self.inline_assets(),
-                self.settings.current.appearance.theme,
+                self.effective_theme(),
             ),
         };
         Some(
