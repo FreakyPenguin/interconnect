@@ -41,8 +41,8 @@ native macOS or connected-server run record.
   outdated Create subspace action.
 - Right-click a message and use Save message, then Remove saved message. Verify
   the actions have the same permission/pending checks as the message toolbar.
-- Search results, saved messages, and pins provide a labeled Go to message/reply
-  action without making the selectable text itself navigate. Open an older pin
+- Search results, saved messages, and pins provide an icon action with a
+  contextual Go to message/reply tooltip; selectable text itself does not navigate. Open an older pin
   and a pinned thread reply; reject a stale room-generation action.
 - Saved messages show the time they were saved and a persistent range and
   Previous/Next controls. Remove the last item on the last page: pagination
@@ -62,7 +62,8 @@ and saved-message navigation behavior.
   long filenames at 640×480.
 - Tab through viewer controls and return to the conversation with Escape. Check
   that panning cannot scroll the covered conversation.
-- Open and Save as have visible labels on attachments and in the viewer. Native
+- Open and Save as use distinct icons with action tooltips on attachments and in
+  the viewer. Native
   file selection/opening needs a desktop service; demo captures do not validate
   host portal access or native macOS file behavior.
 - Zooming/panning a still image must not add an animation subscription or a
