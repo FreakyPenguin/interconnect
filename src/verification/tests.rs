@@ -30,6 +30,9 @@ struct Pair {
 }
 impl Pair {
     async fn new() -> Self {
+        Self::with_start_barrier(false).await
+    }
+    async fn with_start_barrier(simultaneous_starts: bool) -> Self {
         let servers = [MockServer::start().await, MockServer::start().await];
         let mut clients = Vec::new();
         for (index, server) in servers.iter().enumerate() {
@@ -73,6 +76,7 @@ impl Pair {
             Arc::new(Mutex::new(Vec::<Value>::new())),
         ];
         let notices = [Arc::new(Notify::new()), Arc::new(Notify::new())];
+        let held_starts = Arc::new(Mutex::new(Vec::new()));
         let stop = CancellationToken::new();
         let mut workers = Vec::new();
         let mut states = Vec::new();
@@ -88,6 +92,9 @@ impl Pair {
                 .await;
             let queue = queues[1 - index].clone();
             let notice = notices[1 - index].clone();
+            let start_notices = notices.clone();
+            let start_queues = queues.clone();
+            let held_starts = held_starts.clone();
             Mock::given(method("PUT"))
                 .and(path_regex("/_matrix/client/v3/sendToDevice/.*"))
                 .respond_with(move |request: &wiremock::Request| {
@@ -98,11 +105,30 @@ impl Pair {
                         .unwrap()
                         .values()
                     {
-                        queue.lock().unwrap().push(
-                            json!({"type":kind, "sender":"@verify:example.org", "content":content}),
-                        );
+                        let event =
+                            json!({"type":kind, "sender":"@verify:example.org", "content":content});
+                        if simultaneous_starts && kind == "m.key.verification.start" {
+                            held_starts.lock().unwrap().push((1 - index, event));
+                        } else {
+                            queue.lock().unwrap().push(event);
+                        }
                     }
-                    notice.notify_one();
+                    // Deliver ready immediately, but hold start events until both
+                    // clients have created a SAS. This exercises SDK tie-breaking
+                    // independently of HTTP/sync scheduling.
+                    if simultaneous_starts && kind == "m.key.verification.start" {
+                        let mut held = held_starts.lock().unwrap();
+                        if held.len() == 2 {
+                            for (target, event) in held.drain(..) {
+                                start_queues[target].lock().unwrap().push(event);
+                            }
+                            for notice in &start_notices {
+                                notice.notify_one();
+                            }
+                        }
+                    } else {
+                        notice.notify_one();
+                    }
                     ResponseTemplate::new(200).set_body_json(json!({}))
                 })
                 .mount(server)
@@ -192,6 +218,9 @@ impl Pair {
             Phase::Idle
         ));
         self.send(1, Action::Accept(incoming.flow));
+        self.comparisons().await
+    }
+    async fn comparisons(&mut self) -> (Comparison, Comparison) {
         let first = self
             .wait(0, |s| matches!(s.phase, Phase::Compare { .. }))
             .await;
@@ -223,6 +252,89 @@ impl Pair {
                 .unwrap();
         }
     }
+}
+
+#[tokio::test]
+async fn simultaneous_sas_starts_follow_the_sdk_winning_exchange() {
+    let mut pair = Pair::with_start_barrier(true).await;
+    let (comparison, _) = pair.compare().await;
+    pair.send(0, Action::Confirm(comparison.decimals));
+    pair.send(1, Action::Confirm(comparison.decimals));
+    pair.wait(0, |s| s.phase == Phase::Complete).await;
+    pair.wait(1, |s| s.phase == Phase::Complete).await;
+    for (index, expected) in [(0, 1), (1, 0)] {
+        let requests = pair.servers[index].received_requests().await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r
+                    .url
+                    .path()
+                    .contains("sendToDevice/m.key.verification.request/"))
+                .count(),
+            expected,
+            "accepting must reuse the incoming transaction"
+        );
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| r
+                    .url
+                    .path()
+                    .contains("sendToDevice/m.key.verification.start/"))
+                .count(),
+            1,
+            "the fixture must force both peers to start SAS"
+        );
+    }
+    pair.close().await;
+}
+
+#[tokio::test]
+async fn incoming_request_survives_device_discovery_and_blocks_a_reverse_request() {
+    let mut pair = Pair::new().await;
+    let mut keys = serde_json::Map::new();
+    for client in &pair.clients {
+        let device = client.encryption().get_own_device().await.unwrap().unwrap();
+        keys.insert(
+            device.device_id().to_string(),
+            serde_json::to_value(device.as_device_keys()).unwrap(),
+        );
+    }
+    Mock::given(method("POST"))
+        .and(path("/_matrix/client/v3/keys/query"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"device_keys":{"@verify:example.org":keys}}))
+                .set_delay(Duration::from_secs(1)),
+        )
+        .with_priority(1)
+        .mount(&pair.servers[1])
+        .await;
+    pair.send(0, Action::Refresh);
+    pair.wait(0, |s| matches!(s.phase, Phase::Devices(_))).await;
+    pair.send(1, Action::Refresh);
+    pair.wait(1, |s| s.phase == Phase::Loading).await;
+    pair.send(0, Action::Start("SECOND".into()));
+    let incoming = pair
+        .wait(1, |s| s.incoming.is_some())
+        .await
+        .incoming
+        .unwrap();
+    pair.wait(1, |s| matches!(s.phase, Phase::Devices(_))).await;
+    // Clicks queued from before the incoming request must not create a second
+    // transaction or invalidate the explicit acceptance with a new revision.
+    pair.send(1, Action::Refresh);
+    pair.send(1, Action::Start("FIRST".into()));
+    pair.send(1, Action::Accept(incoming.flow));
+    pair.comparisons().await;
+    let requests = pair.servers[1].received_requests().await.unwrap();
+    assert!(!requests.iter().any(|r| {
+        r.url
+            .path()
+            .contains("sendToDevice/m.key.verification.request/")
+    }));
+    pair.close().await;
 }
 
 #[tokio::test]

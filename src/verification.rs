@@ -8,7 +8,7 @@ use std::{
 
 use crate::connected::Model;
 use anyhow::{Context, bail, ensure};
-use iced::futures::{StreamExt, stream};
+use iced::futures::{Stream, StreamExt, stream};
 use matrix_sdk::{
     Client,
     encryption::{
@@ -239,7 +239,8 @@ impl Service {
                 }
                 request = self.incoming.recv(), if !stopping => {
                     if let Some(request) = request
-                        && !busy && incoming.is_none()
+                        && (!busy || matches!(state.borrow().verification.phase, Phase::Loading))
+                        && incoming.is_none()
                         && let Some(summary) = incoming_summary(&request)
                     {
                         let monitored = request.clone();
@@ -294,7 +295,7 @@ impl Service {
                             };
                             if allowed && let Some(sender) = &decisions { let _ = sender.try_send(command.action); }
                         }
-                        Action::Refresh if !busy => {
+                        Action::Refresh if !busy && incoming.is_none() => {
                             revision += 1;
                             cancel = CancellationToken::new();
                             let cancelled = cancel.clone();
@@ -311,7 +312,7 @@ impl Service {
                             busy = true;
                             state.send_modify(|s| { s.verification.revision = revision; s.verification.phase = Phase::Loading; });
                         }
-                        Action::Start(device) if !busy => {
+                        Action::Start(device) if !busy && incoming.is_none() => {
                             let allowed = matches!(&state.borrow().verification.phase, Phase::Devices(devices) if devices.iter().any(|d| d.id == device));
                             if !allowed { continue; }
                             interactive = true;
@@ -442,9 +443,10 @@ async fn run_flow(
         biased;
         _ = cancel.cancelled() => Err(anyhow::anyhow!("Verification cancelled.")),
         result = tokio::time::timeout(FLOW_TIMEOUT, async {
+            let mut changes = Box::pin(stream::once(std::future::ready(request.0.state())).chain(request.0.changes()));
             if !request.0.we_started() { request.0.accept_with_methods(vec![VerificationMethod::SasV1]).await?; }
-            let sas = wait_for_sas(&request.0).await?;
-            compare(&sas, &mut commands, &state, revision).await
+            let sas = wait_for_sas(&request.0, &mut changes).await?;
+            compare(sas, &mut changes, &mut commands, &state, revision).await
         }) => result.context("Verification timed out. No automatic confirmation was sent.").and_then(|r| r),
     };
     if result.is_err() {
@@ -457,15 +459,14 @@ async fn run_flow(
     }
 }
 
-async fn wait_for_sas(request: &VerificationRequest) -> anyhow::Result<SasVerification> {
-    let mut changes =
-        Box::pin(stream::once(std::future::ready(request.state())).chain(request.changes()));
+async fn wait_for_sas(
+    request: &VerificationRequest,
+    changes: &mut (impl Stream<Item = VerificationRequestState> + Unpin),
+) -> anyhow::Result<SasVerification> {
     while let Some(state) = changes.next().await {
         match state {
             VerificationRequestState::Ready { .. } => {
-                if let Some(sas) = request.start_sas().await? {
-                    return Ok(sas);
-                }
+                request.start_sas().await?;
             }
             VerificationRequestState::Transitioned { verification } => {
                 return verification
@@ -495,7 +496,8 @@ fn publish(state: &watch::Sender<Model>, revision: u64, phase: Phase) {
 }
 
 async fn compare(
-    sas: &SasVerification,
+    mut sas: SasVerification,
+    request_changes: &mut (impl Stream<Item = VerificationRequestState> + Unpin),
     commands: &mut mpsc::Receiver<Action>,
     state: &watch::Sender<Model>,
     revision: u64,
@@ -504,6 +506,20 @@ async fn compare(
     let mut gate = Confirmation::default();
     loop {
         tokio::select! {
+            biased;
+            value = request_changes.next() => match value.context("Verification request ended before completion.")? {
+                VerificationRequestState::Transitioned { verification } => {
+                    // Both peers may send SAS start after ready. SDK tie-breaking
+                    // replaces one SAS handle; keep following the same request
+                    // rather than waiting forever on the superseded exchange.
+                    sas = verification.sas().context("The other device chose an unsupported verification method.")?;
+                    changes = Box::pin(stream::once(std::future::ready(sas.state())).chain(sas.changes()));
+                    gate = Confirmation::default();
+                    publish(state, revision, Phase::Waiting { device: sas.other_device().device_id().to_string() });
+                }
+                VerificationRequestState::Cancelled(_) => bail!("Verification was cancelled by the other device."),
+                _ => {}
+            },
             value = changes.next() => match value.context("Verification ended before completion.")? {
                 SasState::Started { .. } => sas.accept().await?,
                 SasState::KeysExchanged { decimals, .. } if !gate.confirmed => {

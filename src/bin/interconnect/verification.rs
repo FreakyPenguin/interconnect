@@ -116,10 +116,12 @@ impl App {
                         revision: self.verification.demo.revision + 1,
                         ..Snapshot::default()
                     };
-                } else if matches!(
-                    self.model.verification.phase,
-                    Phase::Idle | Phase::Cancelled | Phase::Complete | Phase::Failed(_)
-                ) {
+                } else if self.model.verification.incoming.is_none()
+                    && matches!(
+                        self.model.verification.phase,
+                        Phase::Idle | Phase::Cancelled | Phase::Complete | Phase::Failed(_)
+                    )
+                {
                     self.verification.error = self
                         .model
                         .verification
@@ -252,10 +254,12 @@ impl App {
                     .style(shell::accent_text),
             );
         }
-        if matches!(
-            snapshot.phase,
-            Phase::Idle | Phase::Loading | Phase::Devices(_)
-        ) {
+        if snapshot.incoming.is_none()
+            && matches!(
+                snapshot.phase,
+                Phase::Idle | Phase::Loading | Phase::Devices(_)
+            )
+        {
             content = content.push(
                 text("Verify this device by comparing emojis or numbers with another Matrix app where you're already signed in. You can also verify later from the account menu.")
                     .size(13),
@@ -268,16 +272,20 @@ impl App {
             )));
         }
         match &snapshot.phase {
-            Phase::Idle | Phase::Loading => content = content.push(text("Loading your devices…")),
+            Phase::Idle | Phase::Loading => {
+                if snapshot.incoming.is_none() { content = content.push(text("Loading your devices…")); }
+            }
             Phase::Devices(devices) => {
-                content = content.push(text("Open your other Matrix app, keep it open, and choose that device below."));
-                if devices.is_empty() { content = content.push(text("No other devices found. Sign in on another Matrix client, then refresh.")); }
-                for device in devices {
-                    content = content.push(button(column![
-                        text(device.name.clone()).size(15),
-                        text(format!("{} · {}", device.id, if device.verified { "Verified" } else { "Unverified" })).size(12),
-                    ].spacing(4)).width(Length::Fill).padding(12).style(shell::quiet_button)
-                        .on_press(action(Action::Start(device.id.clone()))));
+                if snapshot.incoming.is_none() {
+                    content = content.push(text("Open your other Matrix app, keep it open, and choose that device below."));
+                    if devices.is_empty() { content = content.push(text("No other devices found. Sign in on another Matrix client, then refresh.")); }
+                    for device in devices {
+                        content = content.push(button(column![
+                            text(device.name.clone()).size(15),
+                            text(format!("{} · {}", device.id, if device.verified { "Verified" } else { "Unverified" })).size(12),
+                        ].spacing(4)).width(Length::Fill).padding(12).style(shell::quiet_button)
+                            .on_press(action(Action::Start(device.id.clone()))));
+                    }
                 }
             }
             Phase::Waiting { device } => content = content.push(text(format!("Waiting for {device}. Accept the request on your other client.")))
@@ -315,6 +323,7 @@ impl App {
         }
         let mut buttons = row![].spacing(8).align_y(iced::Alignment::Center);
         if !snapshot.phase.active()
+            && snapshot.incoming.is_none()
             && (self.demo.is_some() || self.model.recovery.control.is_some())
         {
             buttons = buttons.push(
@@ -324,6 +333,7 @@ impl App {
             );
         }
         if !snapshot.phase.active()
+            && snapshot.incoming.is_none()
             && snapshot.phase != Phase::Complete
             && self.demo.is_none()
             && snapshot.control.is_some()
@@ -535,6 +545,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reviewing_an_incoming_request_does_not_refresh_or_change_its_revision() {
+        let client = matrix_sdk::Client::builder()
+            .homeserver_url("https://example.org")
+            .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+            .build()
+            .await
+            .unwrap();
+        let (state, snapshots) =
+            tokio::sync::watch::channel(interconnect::connected::Model::default());
+        let stop = tokio_util::sync::CancellationToken::new();
+        let mut worker = Box::pin(
+            interconnect::verification::Service::new(client).run(state.clone(), stop.clone()),
+        );
+        assert!(iced::futures::poll!(&mut worker).is_pending());
+        let incoming = interconnect::verification::Incoming {
+            flow: "existing-transaction".into(),
+            device: "OTHER".into(),
+        };
+        state.send_modify(|s| s.verification.incoming = Some(incoming.clone()));
+        let mut app = super::super::tests::demo_app();
+        app.demo = None;
+        app.model = snapshots.borrow().clone();
+        let revision = app.model.verification.revision;
+        let _ = app.update(message(Event::Open));
+        assert!(app.verification.open);
+        assert!(iced::futures::poll!(&mut worker).is_pending());
+        let snapshot = snapshots.borrow().verification.clone();
+        assert_eq!(snapshot.revision, revision);
+        assert_eq!(snapshot.phase, Phase::Idle);
+        assert_eq!(snapshot.incoming, Some(incoming));
+        stop.cancel();
+        worker.await;
+    }
+
+    #[tokio::test]
     async fn closing_the_final_dialog_submits_the_checkbox_choice() {
         for choice in [false, true] {
             // Only exercise the local command channel. SAS completion itself is
@@ -593,6 +638,7 @@ mod tests {
             actions: Vec<(String, iced::Rectangle)>,
             prefetch: Option<iced::Rectangle>,
             body_translation: iced::Vector,
+            device_visible: bool,
         }
         impl widget::Operation for Bounds {
             fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
@@ -620,6 +666,9 @@ mod tests {
                 }
             }
             fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, value: &str) {
+                if value == "Example phone" {
+                    self.device_visible = true;
+                }
                 if value == "Request room keys in the background" {
                     self.prefetch = Some(bounds);
                 }
@@ -639,7 +688,11 @@ mod tests {
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         for phase in [
             Phase::Loading,
-            Phase::Devices(Vec::new()),
+            Phase::Devices(vec![Device {
+                id: "OTHER-DEMO".into(),
+                name: "Example phone".into(),
+                verified: false,
+            }]),
             Phase::Waiting {
                 device: "OTHER-DEMO".into(),
             },
@@ -686,11 +739,37 @@ mod tests {
             }
             if app.verification.demo.incoming.is_some() {
                 assert!(
-                    bounds
-                        .actions
-                        .iter()
-                        .any(|(name, _)| name == "Accept request")
+                    !bounds.device_visible,
+                    "incoming review must hide outgoing device buttons"
                 );
+                let (_, accept) = bounds
+                    .actions
+                    .iter()
+                    .find(|(name, _)| name == "Accept request")
+                    .unwrap();
+                let mut messages = Vec::new();
+                for event in [
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ] {
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &iced::Event::Mouse(event),
+                        layout::Layout::new(&node),
+                        mouse::Cursor::Available(accept.center()),
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &iced::Rectangle::with_size(size),
+                    );
+                }
+                assert!(messages.iter().any(|message| matches!(message,
+                    Message::Verification(Event::Action(_, Action::Accept(flow))) if flow == "sample-flow"
+                )), "Accept request must retain the incoming transaction");
+                assert!(!messages.iter().any(|message| matches!(
+                    message,
+                    Message::Verification(Event::Action(_, Action::Start(_)))
+                )));
             }
             if matches!(app.verification.demo.phase, Phase::Compare { .. }) {
                 assert!(

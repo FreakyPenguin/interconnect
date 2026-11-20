@@ -17,6 +17,11 @@ restore secrets on a new device as an alternative to comparing with another app.
 
 Account menu → Verify device… selects another device on the same account. For
 incoming SAS, explicitly Accept request; requests never auto-accept or steal focus.
+Reviewing an incoming request keeps its transaction and revision, skips automatic
+device discovery, and hides device-selection/refresh/recovery actions until the
+request is accepted or dismissed. An incoming request received during device
+discovery remains available after discovery finishes. Stale device-row clicks
+cannot start an outgoing request while an incoming request is pending.
 Other users and QR verification are unsupported.
 
 While Matrix reports this session as Unverified and verification is available,
@@ -67,13 +72,21 @@ Deadlines: discovery/request 30 seconds, exchange three minutes, best-effort can
 five seconds. Close/session replacement/shutdown cancels; interrupted HTTP may
 remain on the peer until SDK timeout. Flow/session revisions and displayed values
 reject stale/duplicate confirmations. SDK alone checks crypto and changes trust.
+If both peers start SAS after acceptance, follow the SDK's selected exchange on
+the existing transaction, including replacement of the superseded SAS handle.
+Replacement clears the previous comparison and its confirmation gate; only the
+current exchange's displayed values can be confirmed. This uses request-state
+events without polling or additional timers.
 
 ## Acceptance
 
 Use a dedicated account with a trusted second client:
 
 1. Confirm device IDs; initiate each direction, accept explicitly, compare fully,
-   confirm both sides, and wait for completion.
+   confirm both sides, and wait for completion. Repeat between two Interconnect
+   sessions; reviewing/accepting must retain the original request, without sending
+   a request back or leaving both waiting. Also receive a request during device
+   discovery and accept it after discovery finishes.
 2. Test mismatch, either side cancelling, timeout, close during creation/exchange,
    and late confirmation.
 3. Check 640×480, scrolling, missing emoji/numeric fallback, Escape, drafts, and
@@ -107,6 +120,14 @@ not perform live sign-in or verification.
 Crypto fixtures exchange real SDK messages between in-memory clients via mock
 servers. They establish local SAS/MAC/cancellation behavior, not live cross-signing,
 server interoperability, key recovery, native fonts, or CPU/wakeups.
+They force both peers to send SAS start before either start is delivered, then
+check matching comparisons, explicit completion on both sides, and one original
+request with no reverse request. They also cover receiving during discovery and
+rejecting a stale device-selection command while an incoming request is pending.
+UI fixtures check that opening an incoming request leaves its revision unchanged,
+hides outgoing device buttons, and that clicking Accept request at 640×480 emits
+acceptance for the existing transaction. These checks do not establish live-server
+or desktop acceptance.
 
 Background-key fixtures use isolated mock homeservers and real SDK cryptography.
 They cover verification/discovery/choice ordering, skipping an unchecked pass,
