@@ -2,7 +2,7 @@
 use super::{App, Message, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, row, scrollable, text, text_input},
+    widget::{button, column, container, row, text, text_input},
 };
 use interconnect::{connected::Model, navigation::Scope, room_membership::Joined};
 
@@ -114,6 +114,8 @@ pub enum Event {
     Join,
     Leave(String),
     ReloadLeave,
+    ReviewMembers,
+    Ignore,
     LeavePrepared(
         u64,
         Option<String>,
@@ -138,6 +140,16 @@ fn message(event: Event) -> Message {
 impl App {
     pub(super) fn membership_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::ReviewMembers if self.membership.open && self.membership.pending.is_none() => {
+                let Mode::Leave(room) = &self.membership.mode else {
+                    return Task::none();
+                };
+                let room = room.clone();
+                let _ = self.membership_event(Event::Close);
+                return self.update(Message::SpaceSettings(
+                    super::space_settings::Event::OpenMembers(room),
+                ));
+            }
             Event::ReloadLeave
                 if self.membership.open
                     && self.membership.pending.is_none()
@@ -521,68 +533,236 @@ impl App {
     }
 
     pub(super) fn membership_view(&self) -> Element<'_, Message> {
-        iced::widget::responsive(|size| {
+        let modal = iced::widget::responsive(|size| {
             let busy = self.membership.pending.is_some();
-            let mut entries = column![].spacing(12);
+            let mut entries = column![].spacing(14).width(Length::Fill);
             let title = match &self.membership.mode {
                 Mode::Invitations => {
                     for invitation in self.model.invitations.iter() {
-                        let mut entry = column![shell::title(&invitation.name, 15), text(&invitation.id).size(11).style(shell::muted_text)].spacing(6);
-                        if let Some(inviter) = &invitation.inviter { entry = entry.push(text(format!("Invited by {inviter}")).size(12)); }
-                        if invitation.space { entry = entry.push(text("Space invitation").size(12)); }
-                        entry = entry.push(row![
-                            button(text("Decline").size(13)).style(shell::quiet_button)
-                                .on_press_maybe((!busy).then(|| message(Event::Respond(invitation.id.clone(), false)))),
-                            button(text("Accept").size(13)).style(shell::primary_button)
-                                .on_press_maybe((!busy).then(|| message(Event::Respond(invitation.id.clone(), true)))),
-                        ].spacing(8));
-                        entries = entries.push(container(entry).padding(12).width(Length::Fill).style(shell::result_row));
+                        let mut entry = column![
+                            shell::title(&invitation.name, 15),
+                            text(&invitation.id)
+                                .size(11)
+                                .style(shell::muted_text)
+                                .wrapping(text::Wrapping::Glyph),
+                        ]
+                        .spacing(8);
+                        if let Some(inviter) = &invitation.inviter {
+                            entry = entry.push(text(format!("Invited by {inviter}")).size(12));
+                        }
+                        if invitation.space {
+                            entry = entry.push(text("Space invitation").size(12));
+                        }
+                        entry = entry.push(
+                            row![
+                                button(text("Decline").size(13))
+                                    .keyboard_navigation(true)
+                                    .padding([7, 10])
+                                    .style(shell::quiet_button)
+                                    .on_press_maybe((!busy).then(|| message(Event::Respond(
+                                        invitation.id.clone(),
+                                        false
+                                    )))),
+                                button(text("Accept invitation").size(13))
+                                    .keyboard_navigation(true)
+                                    .padding([7, 10])
+                                    .style(shell::primary_button)
+                                    .on_press_maybe((!busy).then(|| message(Event::Respond(
+                                        invitation.id.clone(),
+                                        true
+                                    )))),
+                            ]
+                            .spacing(8),
+                        );
+                        entries = entries.push(
+                            container(entry)
+                                .padding(14)
+                                .width(Length::Fill)
+                                .style(shell::result_row),
+                        );
                     }
-                    if self.model.invitations.is_empty() { entries = entries.push(text("No pending invitations.").size(13)); }
+                    if self.model.invitations.is_empty() {
+                        entries = entries.push(shell::empty_state(
+                            "No invitations",
+                            "New room and space invitations will appear here.",
+                        ));
+                    }
                     "Invitations"
                 }
                 Mode::Join => {
                     entries = entries.push(text("Room address or link").size(13));
-                    let input = text_input("#room:example.org or room link", &self.membership.input)
-                        .id("join-room-address").cursor_blinking(false).size(13).padding(10);
-                    entries = entries.push(if busy { input } else { input.on_input(|value| message(Event::Input(value))).on_submit(message(Event::Submit)) });
+                    let input =
+                        text_input("#room:example.org or room link", &self.membership.input)
+                            .id("join-room-address")
+                            .cursor_blinking(false)
+                            .style(shell::search_style)
+                            .size(13)
+                            .padding([7, 10]);
+                    entries = entries.push(if busy {
+                        input
+                    } else {
+                        input
+                            .on_input(|value| message(Event::Input(value)))
+                            .on_submit(message(Event::Submit))
+                    });
                     entries = entries.push(text("Use a room alias, room ID, matrix.to link or matrix: link. Private rooms may require an invitation.").size(12).style(shell::muted_text));
                     "Join a room"
                 }
                 Mode::Leave(id) => {
-                    let name = self.model.rooms.iter().find(|r| &r.id == id).map_or(id.as_str(), |r| r.name.as_str());
+                    let name = self
+                        .model
+                        .rooms
+                        .iter()
+                        .find(|r| &r.id == id)
+                        .map_or(id.as_str(), |r| r.name.as_str());
                     entries = entries.push(shell::title(name, 16));
                     if let Some(plan) = &self.membership.leave_plan {
-                        for warning in plan.warnings() { entries = entries.push(text(warning).size(13)); }
+                        let concern = if plan.last_admin {
+                            Some("You are the last member who can manage permissions.")
+                        } else if plan.last_member {
+                            Some(
+                                "You are the last joined member. This room may become inaccessible.",
+                            )
+                        } else if plan.no_remaining_inviter {
+                            Some("No remaining member can invite you back to this room.")
+                        } else {
+                            None
+                        };
+                        if let Some(concern) = concern {
+                            entries = entries.push(
+                                container(
+                                    column![
+                                        shell::title("Before you leave", 14)
+                                            .style(shell::danger_text),
+                                        text(concern).size(13),
+                                        button(text("Review members & permissions").size(13))
+                                            .keyboard_navigation(true)
+                                            .padding([7, 10])
+                                            .style(shell::quiet_button)
+                                            .on_press_maybe(
+                                                (!busy).then_some(message(Event::ReviewMembers))
+                                            ),
+                                    ]
+                                    .spacing(8),
+                                )
+                                .padding(12)
+                                .width(Length::Fill)
+                                .style(|theme| {
+                                    shell::surface(theme, shell::palette(theme).error_surface)
+                                }),
+                            );
+                        }
+                        for warning in plan.warnings() {
+                            entries = entries.push(text(warning).size(13));
+                        }
                     } else if self.membership.leave_load.is_some() {
-                        entries = entries.push(text("Checking encryption, permissions, and remaining members…").size(13));
+                        entries = entries.push(
+                            text("Checking encryption, permissions, and remaining members…")
+                                .size(13),
+                        );
                     }
-                    entries = entries.push(super::tooltips::icon_button(
-                        super::icons::Kind::Refresh, "Reload leave consequences",
-                        (!busy && self.membership.leave_load.is_none()).then_some(message(Event::ReloadLeave))
-                    ));
+                    entries = entries.push(
+                        button(text("Refresh leave details").size(13))
+                            .keyboard_navigation(true)
+                            .padding([7, 10])
+                            .style(shell::quiet_button)
+                            .on_press_maybe(
+                                (!busy && self.membership.leave_load.is_none())
+                                    .then_some(message(Event::ReloadLeave)),
+                            ),
+                    );
                     "Leave this room?"
                 }
             };
-            if busy { entries = entries.push(text("Updating membership…").size(12)); }
-            if let Some(error) = &self.membership.error { entries = entries.push(text(error).size(13)); }
-            let mut actions = row![button(text(if matches!(self.membership.mode, Mode::Invitations) { "Close" } else { "Cancel" }).size(13)).style(shell::quiet_button).on_press(message(Event::Close)), iced::widget::space().width(Length::Fill)].spacing(12);
+            let mut actions = column![].spacing(8).width(Length::Fill);
+            if busy {
+                actions = actions.push(
+                    text("Updating membership…")
+                        .size(12)
+                        .style(shell::muted_text),
+                );
+            }
+            if let Some(error) = &self.membership.error {
+                actions = actions.push(text(error).size(13).style(shell::danger_text));
+            }
+            let mut buttons = row![
+                iced::widget::space().width(Length::Fill),
+                button(
+                    text(if matches!(self.membership.mode, Mode::Invitations) {
+                        "Close"
+                    } else {
+                        "Cancel"
+                    })
+                    .size(13)
+                )
+                .keyboard_navigation(true)
+                .padding([7, 14])
+                .style(shell::quiet_button)
+                .on_press(message(Event::Close)),
+            ]
+            .spacing(8);
             if !matches!(self.membership.mode, Mode::Invitations) {
                 let leaving = matches!(self.membership.mode, Mode::Leave(_));
-                actions = actions.push(button(text(if leaving { "Leave room" } else { "Join room" }).size(13))
-                    .style(if leaving { button::danger } else { shell::primary_button })
-                    .on_press_maybe((!busy && !self.closing && (if leaving { self.membership.leave_plan.is_some() && self.membership.leave_load.is_none() } else { !self.membership.input.trim().is_empty() })).then_some(message(Event::Submit))));
+                buttons = buttons.push(
+                    button(text(if leaving { "Leave room" } else { "Join room" }).size(13))
+                        .keyboard_navigation(true)
+                        .padding([7, 14])
+                        .style(if leaving {
+                            button::danger
+                        } else {
+                            shell::primary_button
+                        })
+                        .on_press_maybe(
+                            (!busy
+                                && !self.closing
+                                && (if leaving {
+                                    self.membership.leave_plan.is_some()
+                                        && self.membership.leave_load.is_none()
+                                } else {
+                                    !self.membership.input.trim().is_empty()
+                                }))
+                            .then_some(message(Event::Submit)),
+                        ),
+                );
             }
+            actions = actions.push(buttons);
             let heading = if matches!(self.membership.mode, Mode::Leave(_)) {
                 shell::title(title, 20).style(shell::danger_text)
-            } else { shell::title(title, 20) };
-            let card = column![heading,
-                scrollable(entries).height(Length::Fill).direction(shell::scrollbar()).style(shell::scroll_style), actions,
-            ].spacing(18);
-            container(container(card).id("membership-dialog").padding(20).width(520)
-                .height((size.height - 48.0).clamp(1.0, if matches!(self.membership.mode, Mode::Invitations) { 560.0 } else if matches!(self.membership.mode, Mode::Join) { 320.0 } else { 640.0 })).style(|theme| shell::surface(theme, shell::palette(theme).background)))
-                .padding(24).center_x(Length::Fill).center_y(Length::Fill).style(|theme| shell::surface(theme, shell::palette(theme).sidebar)).into()
-        }).into()
+            } else {
+                shell::title(title, 20)
+            };
+            let header = row![
+                heading,
+                iced::widget::space().width(Length::Fill),
+                button(super::icons::icon(super::icons::Kind::Close))
+                    .keyboard_navigation(true)
+                    .padding(6)
+                    .style(shell::icon_button)
+                    .on_press(message(Event::Close)),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center);
+            let preferred_height = match self.membership.mode {
+                Mode::Invitations => {
+                    (160.0 + self.model.invitations.len() as f32 * 144.0).clamp(260.0, 620.0)
+                }
+                Mode::Join => 310.0,
+                Mode::Leave(_) => 680.0,
+            };
+            super::dialog::modal(
+                super::dialog::frame(
+                    size,
+                    560.0,
+                    preferred_height,
+                    "membership",
+                    header,
+                    entries,
+                    actions,
+                ),
+                message(Event::Ignore),
+            )
+        });
+        super::focus_scope::dismissible(modal, "membership-focus", Message::Escape)
     }
 }
 

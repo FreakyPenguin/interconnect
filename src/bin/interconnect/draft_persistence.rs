@@ -2,7 +2,7 @@
 use super::{App, Draft, DraftKey, Message, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, row, text},
+    widget::{button, column, row, text},
 };
 use interconnect::drafts::{Entry, Snapshot, Store};
 use std::sync::Arc;
@@ -47,6 +47,7 @@ pub enum Event {
     Retry,
     CancelClose,
     DiscardClose,
+    Ignore,
 }
 fn message(event: Event) -> Message {
     Message::DraftPersistence(event)
@@ -336,56 +337,82 @@ impl App {
     }
 
     pub(super) fn draft_close_view(&self) -> Element<'_, Message> {
-        let failed = self.draft_persistence.error.is_some();
-        let mut content = column![shell::title(
-            if failed {
+        let modal = iced::widget::responsive(|size| {
+            let failed = self.draft_persistence.error.is_some();
+            let title = if failed {
                 "Drafts could not be saved"
             } else {
                 "Saving drafts before closing…"
-            },
-            20
-        )]
-        .spacing(16);
-        if let Some(error) = &self.draft_persistence.error {
-            content = content.push(text(error).size(13));
-        }
-        let mut actions = row![
-            button(text("Keep open").size(13))
-                .style(shell::quiet_button)
-                .on_press(message(Event::CancelClose))
-        ]
-        .spacing(12);
-        if failed {
-            if self.draft_persistence.store.is_some() {
+            };
+            let mut content = column![text(if failed {
+                "Keep Interconnect open to retain your drafts, retry saving, or explicitly close without saving."
+            } else {
+                "Your unsent drafts are being saved. Interconnect will close when saving finishes."
+            }).size(13)].spacing(14).width(Length::Fill);
+            if let Some(error) = &self.draft_persistence.error {
+                content = content.push(text(error).size(13).style(shell::danger_text));
+            }
+            let mut actions = row![
+                iced::widget::space().width(Length::Fill),
+                button(text("Keep open").size(13))
+                    .keyboard_navigation(true)
+                    .padding([7, 14])
+                    .style(shell::quiet_button)
+                    .on_press(message(Event::CancelClose)),
+            ]
+            .spacing(8);
+            if failed {
+                if self.draft_persistence.store.is_some() {
+                    actions = actions.push(
+                        button(text("Retry save").size(13))
+                            .keyboard_navigation(true)
+                            .padding([7, 14])
+                            .style(shell::primary_button)
+                            .on_press(message(Event::Retry)),
+                    );
+                }
                 actions = actions.push(
-                    button(text("Retry save").size(13))
-                        .style(shell::primary_button)
-                        .on_press(message(Event::Retry)),
+                    button(text("Close without saving").size(13))
+                        .keyboard_navigation(true)
+                        .padding([7, 14])
+                        .style(button::danger)
+                        .on_press_maybe(
+                            self.draft_persistence
+                                .pending
+                                .is_none()
+                                .then_some(message(Event::DiscardClose)),
+                        ),
                 );
             }
-            actions = actions.push(
-                button(text("Close without saving").size(13))
-                    .style(button::danger)
-                    .on_press_maybe(
-                        self.draft_persistence
-                            .pending
-                            .is_none()
-                            .then_some(message(Event::DiscardClose)),
-                    ),
-            );
-        }
-        content = content.push(actions);
-        container(
-            container(content)
-                .padding(24)
-                .max_width(520)
-                .style(|theme| shell::surface(theme, shell::palette(theme).background)),
+            let header = row![
+                shell::title(title, 20),
+                iced::widget::space().width(Length::Fill),
+                button(super::icons::icon(super::icons::Kind::Close))
+                    .keyboard_navigation(true)
+                    .padding(6)
+                    .style(shell::icon_button)
+                    .on_press(message(Event::CancelClose)),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center);
+            super::dialog::modal(
+                super::dialog::frame(
+                    size,
+                    580.0,
+                    if failed { 360.0 } else { 280.0 },
+                    "draft-close",
+                    header,
+                    content,
+                    actions.wrap(),
+                ),
+                message(Event::Ignore),
+            )
+        });
+        super::focus_scope::dismissible(
+            modal,
+            "draft_persistence-focus",
+            message(Event::CancelClose),
         )
-        .padding(24)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .style(|theme| shell::surface(theme, shell::palette(theme).sidebar))
-        .into()
     }
 }
 

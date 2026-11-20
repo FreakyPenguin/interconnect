@@ -2,7 +2,7 @@
 use super::{App, Message, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, checkbox, column, container, mouse_area, opaque, row, scrollable, text},
+    widget::{button, checkbox, column, container, row, text},
 };
 use interconnect::verification::{Action, Comparison, Device, Phase, Snapshot};
 use matrix_sdk::encryption::VerificationState;
@@ -231,28 +231,37 @@ impl App {
         if self.verification.recovery.open {
             return self.recovery_view();
         }
-        iced::widget::responsive(move |size| self.verification_card(size)).into()
+        super::focus_scope::dismissible(
+            iced::widget::responsive(move |size| self.verification_card(size)),
+            "verification-focus",
+            Message::Escape,
+        )
     }
     fn verification_card(&self, size: iced::Size) -> Element<'_, Message> {
         let snapshot = self.verification_snapshot();
         let action = |action| message(Event::Action(snapshot.revision, action));
-        let mut content = column![
-            text(snapshot.user.clone()).size(13),
-            text(format!(
-                "This device: {} · Trust: {}",
-                snapshot.device,
-                trust_label(snapshot.trust)
-            ))
-            .size(12)
-            .style(shell::muted_text),
-        ]
-        .spacing(16);
-        if self.demo.is_some() {
-            content = content.push(
-                text("Design preview · sample comparison only. No device or keys are verified.")
+        let compact_comparison =
+            size.height < 640.0 && matches!(snapshot.phase, Phase::Compare { .. });
+        let mut content = column![].spacing(if compact_comparison { 10 } else { 16 });
+        if !compact_comparison {
+            content = content.push(text(snapshot.user.clone()).size(13)).push(
+                text(format!(
+                    "This device: {} · Trust: {}",
+                    snapshot.device,
+                    trust_label(snapshot.trust)
+                ))
+                .size(12)
+                .style(shell::muted_text),
+            );
+            if self.demo.is_some() {
+                content = content.push(
+                    text(
+                        "Design preview · sample comparison only. No device or keys are verified.",
+                    )
                     .size(12)
                     .style(shell::accent_text),
-            );
+                );
+            }
         }
         if snapshot.incoming.is_none()
             && matches!(
@@ -283,7 +292,7 @@ impl App {
                         content = content.push(button(column![
                             text(device.name.clone()).size(15),
                             text(format!("{} · {}", device.id, if device.verified { "Verified" } else { "Unverified" })).size(12),
-                        ].spacing(4)).width(Length::Fill).padding(12).style(shell::quiet_button)
+                        ].spacing(4)).keyboard_navigation(true).width(Length::Fill).padding(12).style(shell::quiet_button)
                             .on_press(action(Action::Start(device.id.clone()))));
                     }
                 }
@@ -291,35 +300,37 @@ impl App {
             Phase::Waiting { device } => content = content.push(text(format!("Waiting for {device}. Accept the request on your other client.")))
                 .push(text("Verification expires after three minutes. You can cancel at any time.").size(12).style(shell::muted_text)),
             Phase::Compare { device, comparison } => {
-                content = content.push(shell::title("Compare with your other device", 19))
-                    .push(text(format!("Other device: {device}" )).size(13))
-                    .push(text("Check all seven emojis, or all three numbers, on both clients."));
+                if !compact_comparison {
+                    content = content.push(shell::title("Compare with your other device", 19));
+                }
+                content = content.push(text(format!("Other device: {device}" )).size(13))
+                    .push(text("Check all seven emojis or all three numbers on both devices.").size(13));
                 if comparison.emojis.len() == 7 {
                     let mut emojis = row![].spacing(8);
                     for (symbol, description) in &comparison.emojis {
                         emojis = emojis.push(column![
-                            text(symbol.clone()).size(28).font(super::emoji::font().unwrap_or_default()),
+                            text(symbol.clone()).size(if compact_comparison { 26 } else { 28 }).font(super::emoji::font().unwrap_or_default()),
                             text(description.clone()).size(10),
                         ].spacing(4).width(Length::Fill).align_x(iced::Alignment::Center));
                     }
                     content = content.push(emojis);
                 }
                 let (a, b, c) = comparison.decimals;
-                content = content.push(container(text(format!("{a}    {b}    {c}")).size(26)).center_x(Length::Fill).padding(12));
+                content = content.push(container(text(format!("{a}    {b}    {c}")).size(if compact_comparison { 24 } else { 26 })).center_x(Length::Fill).padding(if compact_comparison { 6 } else { 12 }));
             }
             Phase::Confirmed { device } => content = content.push(text(format!("Confirmed here. Waiting for {device} to confirm…"))),
             Phase::Complete => content = content.push(shell::title(if self.demo.is_some() { "Demo comparison complete" } else { "Comparison complete on both devices" }, 19))
                 .push(text("Device trust above is reported by Matrix. Historical message keys may still need to be shared by your trusted client.").size(13))
-                .push(checkbox(self.verification.prefetch_keys)
+                .push(checkbox(self.verification.prefetch_keys).keyboard_navigation(true)
                     .label("Request room keys in the background")
                     .size(16).text_size(13).spacing(9)
                     .on_toggle(move |value| message(Event::PrefetchKeys(snapshot.revision, value))))
                 .push(text("After closing, prepare recent encrypted messages across your rooms. Keep your other trusted client online.").size(12).style(shell::muted_text)),
             Phase::Cancelled => content = content.push(text("Verification cancelled. No automatic confirmation was sent.")),
-            Phase::Failed(error) => content = content.push(text(error.clone()).size(13)),
+            Phase::Failed(error) => content = content.push(text(error.clone()).size(13).style(shell::danger_text)),
         }
         if let Some(error) = &self.verification.error {
-            content = content.push(text(error).size(12));
+            content = content.push(text(error).size(12).style(shell::danger_text));
         }
         let mut buttons = row![].spacing(8).align_y(iced::Alignment::Center);
         if !snapshot.phase.active()
@@ -328,6 +339,7 @@ impl App {
         {
             buttons = buttons.push(
                 button(text("Recovery…").size(13))
+                    .keyboard_navigation(true)
                     .on_press(message(Event::OpenRecovery))
                     .style(shell::quiet_button),
             );
@@ -340,6 +352,7 @@ impl App {
         {
             buttons = buttons.push(
                 button(text("Refresh devices").size(13))
+                    .keyboard_navigation(true)
                     .on_press(action(Action::Refresh))
                     .style(shell::quiet_button),
             );
@@ -358,6 +371,7 @@ impl App {
                     })
                     .size(13),
                 )
+                .keyboard_navigation(true)
                 .on_press(message(Event::Close))
                 .padding([7, 10])
                 .style(shell::quiet_button),
@@ -367,12 +381,14 @@ impl App {
             buttons = buttons
                 .push(
                     button(text("They don't match").size(13))
+                        .keyboard_navigation(true)
                         .on_press(action(Action::Mismatch))
                         .padding([7, 10])
                         .style(shell::quiet_button),
                 )
                 .push(
                     button(text("They match").size(13))
+                        .keyboard_navigation(true)
                         .style(shell::primary_button)
                         .on_press_maybe(
                             (self.verification.confirming
@@ -386,24 +402,37 @@ impl App {
         {
             buttons = buttons.push(
                 button(text("Accept request").size(13))
+                    .keyboard_navigation(true)
                     .style(shell::primary_button)
                     .on_press(action(Action::Accept(incoming.flow.clone())))
                     .padding([7, 10]),
             );
         }
-        let header = container(shell::title("Verify this device", 20))
-            .padding([18, 24])
-            .width(Length::Fill)
-            .id("verification-header");
-        let body = scrollable(container(content).padding(24).width(Length::Fill))
-            .id("verification-body")
-            .direction(shell::scrollbar())
-            .style(shell::scroll_style)
-            .height(Length::Fill);
-        let footer = container(buttons)
-            .padding([14, 24])
-            .width(Length::Fill)
-            .id("verification-actions");
+        let mut heading = column![shell::title(
+            if compact_comparison {
+                "Compare your devices"
+            } else {
+                "Verify this device"
+            },
+            20
+        )]
+        .spacing(6);
+        if compact_comparison {
+            heading = heading.push(
+                text(format!(
+                    "{} · This device: {}{}",
+                    snapshot.user,
+                    snapshot.device,
+                    if self.demo.is_some() {
+                        " · Demo only"
+                    } else {
+                        ""
+                    }
+                ))
+                .size(11)
+                .style(shell::muted_text),
+            );
+        }
         // Keep short phases compact while allowing a bounded, scrolling device
         // list or comparison. The footer always gets its space before the body.
         let preferred_height = match &snapshot.phase {
@@ -417,37 +446,17 @@ impl App {
         } else {
             0.0
         };
-        let card = container(
-            column![
-                header,
-                iced::widget::rule::horizontal(1),
-                body,
-                iced::widget::rule::horizontal(1),
-                footer
-            ]
-            .spacing(0),
-        )
-        .width((size.width - 32.0).clamp(1.0, 580.0))
-        .height((size.height - 32.0).clamp(1.0, preferred_height))
-        .clip(true)
-        .style(|theme| container::Style {
-            border: iced::Border {
-                color: shell::palette(theme).line,
-                width: 1.0,
-                radius: 12.0.into(),
-            },
-            ..shell::surface(theme, shell::palette(theme).background)
-        });
-        opaque(
-            mouse_area(
-                container(card)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .padding(16)
-                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
-            )
-            .on_press(message(Event::Ignore))
-            .on_scroll(|_| message(Event::Ignore)),
+        super::dialog::modal(
+            super::dialog::frame(
+                size,
+                580.0,
+                preferred_height,
+                "verification",
+                heading,
+                content,
+                buttons,
+            ),
+            message(Event::Ignore),
         )
     }
 }
@@ -639,6 +648,7 @@ mod tests {
             prefetch: Option<iced::Rectangle>,
             body_translation: iced::Vector,
             device_visible: bool,
+            comparison_numbers: Option<iced::Rectangle>,
         }
         impl widget::Operation for Bounds {
             fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
@@ -666,6 +676,9 @@ mod tests {
                 }
             }
             fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, value: &str) {
+                if value == "1234    5678    9012" {
+                    self.comparison_numbers = Some(bounds);
+                }
                 if value == "Example phone" {
                     self.device_visible = true;
                 }
@@ -729,7 +742,11 @@ mod tests {
             let footer = bounds.footer.unwrap();
             assert!(header.y >= 16.0 && header.y + header.height <= body.y);
             assert!(body.y + body.height <= footer.y);
-            assert!(footer.y + footer.height <= size.height - 16.0);
+            assert!(
+                footer.y + footer.height <= size.height - 16.0 + 0.1,
+                "phase {:?}: footer {footer:?}, header {header:?}, body {body:?}",
+                app.verification.demo.phase
+            );
             assert!(!bounds.actions.is_empty());
             for (_, action) in &bounds.actions {
                 assert!(action.x >= footer.x && action.x + action.width <= footer.x + footer.width);
@@ -773,8 +790,13 @@ mod tests {
             }
             if matches!(app.verification.demo.phase, Phase::Compare { .. }) {
                 assert!(
-                    body_content.height > body.height,
-                    "comparison body must scroll in a short window"
+                    body_content.height <= body.height + 1.0,
+                    "the complete comparison fits without scrolling in a short window"
+                );
+                let numbers = bounds.comparison_numbers.expect("comparison numbers");
+                assert!(
+                    numbers.y >= body.y && numbers.y + numbers.height <= body.y + body.height,
+                    "all three numbers must be visible before scrolling"
                 );
                 assert!(bounds.actions.iter().any(|(name, _)| name == "They match"));
                 assert!(

@@ -12,6 +12,7 @@ pub enum Event {
     Recovery,
     Confirm,
     Cancel,
+    Ignore,
 }
 
 impl App {
@@ -91,77 +92,110 @@ impl App {
     }
 
     pub(super) fn sign_out_view(&self) -> Element<'_, Message> {
-        let busy = matches!(self.model.sign_out, SignOut::Running);
-        let revoked = matches!(self.model.sign_out, SignOut::Failed { revoked: true, .. });
-        let mut content = column![
-            shell::title("Sign out of Interconnect?", 20),
-            text("This signs out this device. You may need another verified device or your recovery key to read encrypted history after signing in again.").size(13),
-            text("Unsent drafts on this device will be removed after sign-out.").size(13),
-        ].spacing(16);
-        if self.demo.is_some() {
-            content = content.push(text("Demo only · no account is signed out.").size(12));
-        }
-        if !busy && !revoked && (self.demo.is_some() || self.model.recovery.control.is_some()) {
-            if self.model.recovery.recovery
-                != matrix_sdk::encryption::recovery::RecoveryState::Enabled
-            {
-                content = content.push(text("Recovery is not ready on this device. Set it up or check your existing recovery key before signing out.").size(13));
+        let modal = iced::widget::responsive(|size| {
+            let busy = matches!(self.model.sign_out, SignOut::Running);
+            let revoked = matches!(self.model.sign_out, SignOut::Failed { revoked: true, .. });
+            let available = !busy && !revoked;
+            let mut content = column![
+                text("This signs out this device. You may need another verified device or your recovery key to read encrypted history after signing in again.").size(13),
+                text("Unsent drafts on this device will be removed after sign-out.").size(13),
+            ].spacing(14).width(Length::Fill);
+            if self.demo.is_some() {
+                content = content.push(
+                    text("Demo only · no account is signed out.")
+                        .size(12)
+                        .style(shell::muted_text),
+                );
             }
-            content = content.push(
-                button(text("Check key backup & recovery…").size(13))
-                    .on_press(Message::SignOut(Event::Recovery))
-                    .style(shell::quiet_button),
+            let recovery_available = self.demo.is_some() || self.model.recovery.control.is_some();
+            if available && recovery_available {
+                if self.model.recovery.recovery
+                    != matrix_sdk::encryption::recovery::RecoveryState::Enabled
+                {
+                    content = content.push(container(column![
+                        shell::title("Check your recovery access", 14),
+                        text("Recovery is not ready on this device. Set it up or check your existing key before signing out.").size(13),
+                    ].spacing(8)).padding(12).width(Length::Fill)
+                        .style(|theme| shell::surface(theme, shell::palette(theme).error_surface)));
+                }
+                content = content.push(
+                    button(text("Check key backup & recovery…").size(13))
+                        .keyboard_navigation(true)
+                        .padding([7, 10])
+                        .on_press(Message::SignOut(Event::Recovery))
+                        .style(shell::quiet_button),
+                );
+            }
+            let mut footer = column![].spacing(8).width(Length::Fill);
+            if let Some(error) = &self.draft_persistence.error {
+                footer = footer
+                    .push(text(error).size(12).style(shell::danger_text))
+                    .push(
+                        button(text("Retry draft save").size(12))
+                            .keyboard_navigation(true)
+                            .padding([7, 10])
+                            .style(shell::quiet_button)
+                            .on_press_maybe(self.draft_persistence.can_retry().then_some(
+                                Message::DraftPersistence(super::draft_persistence::Event::Retry),
+                            )),
+                    );
+            }
+            if let SignOut::Failed { error, .. } = &self.model.sign_out {
+                footer = footer.push(text(error).size(13).style(shell::danger_text));
+            }
+            let cancel = button(text("Cancel").size(13))
+                .keyboard_navigation(true)
+                .padding([7, 14])
+                .style(shell::quiet_button)
+                .on_press_maybe(available.then_some(Message::SignOut(Event::Cancel)));
+            let confirm = button(
+                text(if busy {
+                    "Signing out…"
+                } else if revoked {
+                    "Retry cleanup"
+                } else {
+                    "Sign out"
+                })
+                .size(13),
+            )
+            .keyboard_navigation(true)
+            .padding([7, 14])
+            .style(button::danger)
+            .on_press_maybe(
+                (!busy
+                    && self.pending_ops == 0
+                    && !self.closing
+                    && !self.draft_persistence.blocks_sign_out())
+                .then_some(Message::SignOut(Event::Confirm)),
             );
-        }
-        if let Some(error) = &self.draft_persistence.error {
-            content = content.push(text(error).size(12)).push(
-                button(text("Retry draft save").size(12)).on_press_maybe(
-                    self.draft_persistence
-                        .can_retry()
-                        .then_some(Message::DraftPersistence(
-                            super::draft_persistence::Event::Retry,
-                        )),
+            footer = footer
+                .push(row![iced::widget::space().width(Length::Fill), cancel, confirm].spacing(8));
+            let header = row![
+                shell::title("Sign out of Interconnect?", 20),
+                iced::widget::space().width(Length::Fill),
+                button(super::icons::icon(super::icons::Kind::Close))
+                    .keyboard_navigation(true)
+                    .padding(6)
+                    .style(shell::icon_button)
+                    .on_press_maybe(available.then_some(Message::SignOut(Event::Cancel))),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center);
+            let preferred_height = if recovery_available { 500.0 } else { 380.0 };
+            super::dialog::modal(
+                super::dialog::frame(
+                    size,
+                    560.0,
+                    preferred_height,
+                    "sign-out",
+                    header,
+                    content,
+                    footer,
                 ),
-            );
-        }
-        if let SignOut::Failed { error, .. } = &self.model.sign_out {
-            content = content.push(text(error).size(13));
-        }
-        let cancel = button(text("Cancel").size(13))
-            .style(shell::quiet_button)
-            .on_press_maybe((!busy && !revoked).then_some(Message::SignOut(Event::Cancel)));
-        let confirm = button(
-            text(if busy {
-                "Signing out…"
-            } else if revoked {
-                "Retry cleanup"
-            } else {
-                "Sign out"
-            })
-            .size(13),
-        )
-        .style(button::danger)
-        .on_press_maybe(
-            (!busy
-                && self.pending_ops == 0
-                && !self.closing
-                && !self.draft_persistence.blocks_sign_out())
-            .then_some(Message::SignOut(Event::Confirm)),
-        );
-        content = content
-            .push(row![cancel, iced::widget::space().width(Length::Fill), confirm].spacing(12));
-        container(
-            container(content)
-                .id("sign-out-dialog")
-                .padding(24)
-                .max_width(460)
-                .style(|theme| shell::surface(theme, shell::palette(theme).background)),
-        )
-        .padding(24)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .style(|theme| shell::surface(theme, shell::palette(theme).sidebar))
-        .into()
+                Message::SignOut(Event::Ignore),
+            )
+        });
+        super::focus_scope::dismissible(modal, "sign_out-focus", Message::Escape)
     }
 }
 

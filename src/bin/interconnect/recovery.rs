@@ -2,7 +2,7 @@
 use super::{App, Message, shell, verification};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, mouse_area, opaque, row, scrollable, text, text_input},
+    widget::{button, column, container, row, text, text_input},
 };
 use interconnect::recovery::{Action, Secret, Snapshot};
 use matrix_sdk::encryption::{backups::BackupState, recovery::RecoveryState};
@@ -176,11 +176,12 @@ impl App {
     }
 
     pub(super) fn recovery_view(&self) -> Element<'_, Message> {
-        iced::widget::responsive(move |size| {
-            let snapshot = self.recovery_snapshot();
-            let revision = snapshot.revision;
-            let ready = !snapshot.busy && self.verification.recovery.pending != Some(revision);
-            let mut content = column![
+        super::focus_scope::dismissible(
+            iced::widget::responsive(move |size| {
+                let snapshot = self.recovery_snapshot();
+                let revision = snapshot.revision;
+                let ready = !snapshot.busy && self.verification.recovery.pending != Some(revision);
+                let mut content = column![
                 text("Keep access to your encrypted conversations if you lose a device. Your homeserver stores encrypted room keys; your recovery key unlocks your backup and encryption identity.").size(13),
                 text(match snapshot.recovery {
                     RecoveryState::Unknown => "Recovery: status not yet available",
@@ -196,65 +197,150 @@ impl App {
                     BackupState::Disabling => "Key backup: disabling…",
                 }).size(13).style(shell::muted_text),
             ].spacing(16);
-            if self.demo.is_some() {
-                content = content.push(text("Design preview · no account, backup, or secrets are changed.").size(12).style(shell::accent_text));
-            }
-            let mut footer = row![].spacing(8);
-            if let Some(key) = &snapshot.key {
-                content = content.push(shell::title("Save your recovery key", 18))
+                if self.demo.is_some() {
+                    content = content.push(
+                        text("Design preview · no account, backup, or secrets are changed.")
+                            .size(12)
+                            .style(shell::accent_text),
+                    );
+                }
+                let mut footer = row![].spacing(8);
+                if let Some(key) = &snapshot.key {
+                    content = content.push(shell::title("Save your recovery key", 18))
                     .push(text("Store this in a password manager or another safe place. Anyone with this key can unlock your encrypted history. This key is shown until you confirm it is saved.").size(13))
                     .push(container(text(key.expose()).font(iced::Font::MONOSPACE).size(16)).padding(16).width(Length::Fill).style(|theme| shell::surface(theme, shell::palette(theme).sidebar)))
-                    .push(button("Copy recovery key").on_press(message(Event::Copy(revision))).style(shell::quiet_button))
+                    .push(button("Copy recovery key").keyboard_navigation(true).on_press(message(Event::Copy(revision))).style(shell::quiet_button))
                     .push(text("Copying puts the key on your system clipboard. Clear it after saving.").size(12).style(shell::muted_text));
-                footer = footer.push(button("I've saved my key").on_press_maybe(ready.then_some(message(Event::Saved(revision)))).style(shell::primary_button));
-            } else if self.verification.recovery.replace {
-                content = content.push(shell::title("Replace your recovery key?", 18))
+                    footer = footer.push(
+                        button("I've saved my key")
+                            .keyboard_navigation(true)
+                            .on_press_maybe(ready.then_some(message(Event::Saved(revision))))
+                            .style(shell::primary_button),
+                    );
+                } else if self.verification.recovery.replace {
+                    content = content.push(shell::title("Replace your recovery key?", 18))
                     .push(text("The previous key will no longer unlock recovery. Your existing message backup is kept. Save the new key before leaving this screen.").size(13));
-                footer = footer.push(button("Cancel").on_press(message(Event::CancelReplace)).style(shell::quiet_button))
-                    .push(button("Replace recovery key").on_press_maybe(ready.then_some(message(Event::ConfirmReplace(revision)))).style(button::danger));
-            } else {
-                match snapshot.recovery {
-                    RecoveryState::Unknown | RecoveryState::Disabled => {
-                        content = content.push(button("Set up recovery").on_press_maybe(ready.then_some(message(Event::Create(revision)))).style(shell::primary_button));
+                    footer = footer
+                        .push(
+                            button("Cancel")
+                                .keyboard_navigation(true)
+                                .on_press(message(Event::CancelReplace))
+                                .style(shell::quiet_button),
+                        )
+                        .push(
+                            button("Replace recovery key")
+                                .keyboard_navigation(true)
+                                .on_press_maybe(
+                                    ready.then_some(message(Event::ConfirmReplace(revision))),
+                                )
+                                .style(button::danger),
+                        );
+                } else {
+                    match snapshot.recovery {
+                        RecoveryState::Unknown | RecoveryState::Disabled => {
+                            content = content.push(
+                                button("Set up recovery")
+                                    .keyboard_navigation(true)
+                                    .on_press_maybe(
+                                        ready.then_some(message(Event::Create(revision))),
+                                    )
+                                    .style(shell::primary_button),
+                            );
+                        }
+                        RecoveryState::Enabled => {
+                            content = content.push(text("Your existing recovery key cannot be displayed here. If you no longer have it, create a replacement while your secrets are available on this device.").size(13))
+                            .push(button("Replace recovery key…").keyboard_navigation(true).on_press_maybe(ready.then_some(message(Event::Replace(revision)))).style(shell::quiet_button));
+                        }
+                        _ => {}
                     }
-                    RecoveryState::Enabled => {
-                        content = content.push(text("Your existing recovery key cannot be displayed here. If you no longer have it, create a replacement while your secrets are available on this device.").size(13))
-                            .push(button("Replace recovery key…").on_press_maybe(ready.then_some(message(Event::Replace(revision)))).style(shell::quiet_button));
+                    content = content.push(shell::title("Use an existing recovery key", 16));
+                    let mut input = text_input(
+                        "Recovery key or passphrase",
+                        &self.verification.recovery.input,
+                    )
+                    .id("recovery-key-input")
+                    .cursor_blinking(false)
+                    .style(shell::search_style)
+                    .secure(true)
+                    .padding(10);
+                    if ready {
+                        input = input
+                            .on_input(move |value| {
+                                message(Event::Input(revision, Secret::new(value)))
+                            })
+                            .on_submit(message(Event::Recover(revision)));
                     }
-                    _ => {}
+                    content = content
+                        .push(text("Recovery key or passphrase").size(13))
+                        .push(input)
+                        .push(
+                            button("Recover encrypted history")
+                                .keyboard_navigation(true)
+                                .on_press_maybe(
+                                    (ready && !self.verification.recovery.input.trim().is_empty())
+                                        .then_some(message(Event::Recover(revision))),
+                                )
+                                .style(shell::primary_button),
+                        );
+                    if snapshot.backup == BackupState::Enabled {
+                        content = content.push(
+                            button("Back up now")
+                                .keyboard_navigation(true)
+                                .on_press_maybe(ready.then_some(message(Event::Upload(revision))))
+                                .style(shell::quiet_button),
+                        );
+                    }
+                    footer =
+                        footer
+                            .push(
+                                button("Close")
+                                    .keyboard_navigation(true)
+                                    .on_press_maybe(ready.then_some(Message::Verification(
+                                        verification::Event::Close,
+                                    )))
+                                    .style(shell::quiet_button),
+                            )
+                            .push(
+                                button("Verify with another device…")
+                                    .keyboard_navigation(true)
+                                    .on_press_maybe(ready.then_some(Message::Verification(
+                                        verification::Event::Open,
+                                    )))
+                                    .style(shell::quiet_button),
+                            );
                 }
-                content = content.push(shell::title("Use an existing recovery key", 16));
-                let mut input = text_input("Recovery key or passphrase", &self.verification.recovery.input).secure(true).padding(10);
-                if ready {
-                    input = input.on_input(move |value| message(Event::Input(revision, Secret::new(value))))
-                        .on_submit(message(Event::Recover(revision)));
+                if !ready {
+                    content =
+                        content.push(text("Working… Stay signed in while this finishes.").size(13));
                 }
-                content = content.push(input).push(button("Recover encrypted history").on_press_maybe((ready && !self.verification.recovery.input.trim().is_empty()).then_some(message(Event::Recover(revision)))).style(shell::primary_button));
-                if snapshot.backup == BackupState::Enabled {
-                    content = content.push(button("Back up now").on_press_maybe(ready.then_some(message(Event::Upload(revision)))).style(shell::quiet_button));
+                if let Some(notice) = &snapshot.notice {
+                    content = content.push(text(notice).size(13));
                 }
-                footer = footer.push(button("Close").on_press_maybe(ready.then_some(Message::Verification(verification::Event::Close))).style(shell::quiet_button))
-                    .push(button("Verify with another device…").on_press_maybe(ready.then_some(Message::Verification(verification::Event::Open))).style(shell::quiet_button));
-            }
-            if !ready { content = content.push(text("Working… Stay signed in while this finishes.").size(13)); }
-            if let Some(notice) = &snapshot.notice { content = content.push(text(notice).size(13)); }
-            if let Some(error) = self.verification.recovery.error.as_ref().or(snapshot.error.as_ref()) {
-                content = content.push(text(error).size(13));
-            }
-            let card = container(column![
-                container(shell::title("Key backup & recovery", 20)).padding([18, 24]),
-                iced::widget::rule::horizontal(1),
-                scrollable(container(content).padding(24).width(Length::Fill)).height(Length::Fill).direction(shell::scrollbar()).style(shell::scroll_style),
-                iced::widget::rule::horizontal(1),
-                container(footer).padding([14, 24]),
-            ]).width((size.width - 32.0).clamp(1.0, 580.0))
-                .height((size.height - 32.0).clamp(1.0, 650.0)).clip(true)
-                .style(|theme| shell::surface(theme, shell::palette(theme).background));
-            opaque(mouse_area(container(card).padding(16).center_x(Length::Fill).center_y(Length::Fill)
-                .style(|theme| shell::surface(theme, shell::palette(theme).scrim)))
-                .on_press(Message::Verification(verification::Event::Ignore))
-                .on_scroll(|_| Message::Verification(verification::Event::Ignore)))
-        }).into()
+                if let Some(error) = self
+                    .verification
+                    .recovery
+                    .error
+                    .as_ref()
+                    .or(snapshot.error.as_ref())
+                {
+                    content = content.push(text(error).size(13).style(shell::danger_text));
+                }
+                super::dialog::modal(
+                    super::dialog::frame(
+                        size,
+                        580.0,
+                        650.0,
+                        "recovery",
+                        shell::title("Key backup & recovery", 20),
+                        content,
+                        footer.wrap(),
+                    ),
+                    Message::Verification(verification::Event::Ignore),
+                )
+            }),
+            "recovery-focus",
+            Message::Escape,
+        )
     }
 }
 
