@@ -5,8 +5,22 @@ use iced::{
     Element, Length,
     widget::{button, column, container, row, text},
 };
+use matrix_sdk::encryption::VerificationState;
 
 impl App {
+    fn verification_notice(&self) -> Option<&'static str> {
+        let snapshot = &self.model.verification;
+        if self.demo.is_none() && snapshot.control.is_none() {
+            return None;
+        }
+        if snapshot.incoming.is_some() {
+            Some("Verification requested · Review")
+        } else if snapshot.trust == VerificationState::Unverified {
+            Some("Unverified session · Verify device…")
+        } else {
+            None
+        }
+    }
     pub(super) fn account_label(&self) -> &str {
         if self.demo.is_some() {
             "Jamie Davis"
@@ -16,7 +30,7 @@ impl App {
     }
     pub(super) fn utilities_need_attention(&self) -> bool {
         self.draft_persistence.error.is_some()
-            || self.model.verification.incoming.is_some()
+            || self.verification_notice().is_some()
             || self.settings.error.is_some()
             || self.model.notification_error.is_some()
             || self.model.media_error.is_some()
@@ -61,13 +75,14 @@ impl App {
             }
             items = items.push(status);
         }
-        let verification = self.model.verification.incoming.is_some()
-            && (self.demo.is_some() || self.model.verification.control.is_some());
-        if verification {
+        let verification = self.verification_notice();
+        if let Some(notice) = verification {
             items = items.push(
-                button(text("Verification requested · Review").size(11))
-                    .style(shell::quiet_button)
-                    .on_press(Message::Verification(verification::Event::Open)),
+                button(text(notice).size(11).style(|theme| text::Style {
+                    color: Some(shell::palette(theme).warning),
+                }))
+                .style(shell::quiet_button)
+                .on_press(Message::Verification(verification::Event::Open)),
             );
         }
         if let Some(error) = &self.draft_persistence.error {
@@ -108,7 +123,7 @@ impl App {
         if self.draft_persistence.error.is_none()
             && !connection
             && !self.stopped
-            && !verification
+            && verification.is_none()
             && !settings_error
             && self.model.media_error.is_none()
         {
@@ -189,13 +204,32 @@ mod tests {
         let mut app = crate::tests::demo_app();
         assert!(app.utility_banner().is_none());
         assert!(!app.utilities_need_attention());
+        app.model.verification.trust = VerificationState::Unverified;
+        assert_eq!(
+            app.verification_notice(),
+            Some("Unverified session · Verify device…")
+        );
+        assert!(app.utility_banner().is_some());
+        assert!(app.utilities_need_attention());
+        // Completing a comparison is not itself a trust update from Matrix.
+        app.model.verification.phase = interconnect::verification::Phase::Complete;
+        assert!(app.verification_notice().is_some());
         app.model.verification.incoming = Some(interconnect::verification::Incoming {
             flow: "sample".into(),
             device: "sample".into(),
         });
+        assert_eq!(
+            app.verification_notice(),
+            Some("Verification requested · Review")
+        );
         assert!(app.utility_banner().is_some());
         assert!(app.utilities_need_attention());
         app.model.verification.incoming = None;
+        for trust in [VerificationState::Verified, VerificationState::Unknown] {
+            app.model.verification.trust = trust;
+            assert!(app.utility_banner().is_none());
+            assert!(!app.utilities_need_attention());
+        }
         for kind in 0..3 {
             let error = match kind {
                 0 => &mut app.settings.error,
@@ -211,6 +245,10 @@ mod tests {
         }
         app.demo = None;
         app.model.status = "Connected".into();
+        assert!(app.utility_banner().is_none());
+        assert!(!app.utilities_need_attention());
+        // Startup and a stopped verification worker offer no actionable reminder.
+        app.model.verification.trust = VerificationState::Unverified;
         assert!(app.utility_banner().is_none());
         assert!(!app.utilities_need_attention());
         app.model.status = "Offline — reconnecting automatically".into();
@@ -321,7 +359,11 @@ mod tests {
         let mut tree = widget::Tree::empty();
         let mut reading_position = None;
         for step in 0..3 {
-            app.model.notification_error = (step == 1).then(|| "fixture error".into());
+            app.model.verification.trust = if step == 1 {
+                VerificationState::Unverified
+            } else {
+                VerificationState::Verified
+            };
             let mut view = app.view();
             tree.diff(view.as_widget());
             let node =

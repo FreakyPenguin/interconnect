@@ -6,6 +6,13 @@ Account menu → Verify device… selects another device on the same account. Fo
 incoming SAS, explicitly Accept request; requests never auto-accept or steal focus.
 Other users and QR verification are unsupported.
 
+While Matrix reports this session as Unverified and verification is available,
+an amber **Unverified session · Verify device…** reminder appears in the status
+banner and the account avatar shows its attention indicator. The reminder opens
+the existing verification dialog without changing conversations. Incoming requests
+take priority; Unknown/Verified sessions have no reminder. Matrix trust updates
+clear it, rather than comparison completion alone. No timer or polling is added.
+
 Compare all seven emojis or three numbers before **They match**; mismatch/cancel
 otherwise. Completion requires SDK done after both confirmations. Escape cancels;
 conversation/drafts survive. Demo is local and changes no trust.
@@ -32,6 +39,10 @@ Use a dedicated account with a trusted second client:
 3. Check 640×480, scrolling, missing emoji/numeric fallback, Escape, drafts, and
    [settled resources](idle-resources.md).
 4. Check encrypted history, reporting keys separately from device trust/verification.
+5. Check the reminder on an unverified session, including with the sidebar hidden;
+   open/cancel verification and confirm it remains. Incoming requests should replace
+   its wording; an SDK Verified update should remove it without losing drafts or
+   the reading position. Check both themes and offline/reconnect states.
 
 Fixtures exchange real SDK crypto messages between in-memory clients via mock
 servers. They establish local SAS/MAC/cancellation behavior, not live cross-signing,
