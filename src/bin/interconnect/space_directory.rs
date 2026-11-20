@@ -496,9 +496,30 @@ impl App {
         } else {
             iced::widget::space().width(0).into()
         };
-        let mut content = column![row![icons::icon(Kind::Compass), shell::title("Find rooms to join", 22), iced::widget::space().width(Length::Fill),
-            icon_button(Kind::Refresh, "Reload rooms", state.loading.is_none().then_some(event(Event::Reload))),
-            icon_button(Kind::Close, "Close room browser", Some(message(PanelEvent::Close)))].spacing(8).align_y(iced::Alignment::Center),
+        let header = container(
+            row![
+                icons::icon(Kind::Compass),
+                shell::title("Find rooms to join", 22).width(Length::Fill),
+                container(icon_button(
+                    Kind::Refresh,
+                    "Reload rooms",
+                    state.loading.is_none().then_some(event(Event::Reload)),
+                ))
+                .id("space-room-browser-reload"),
+                container(icon_button(
+                    Kind::Close,
+                    "Close room browser",
+                    Some(message(PanelEvent::Close)),
+                ))
+                .id("space-room-browser-close")
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding([18, 24])
+        .width(Length::Fill)
+        .id("space-room-browser-header");
+        let mut content = column![
             row![
                 button(row![icons::icon(Kind::Space), text("Current space").size(13)].spacing(6)).padding([8, 12]).style(move |theme, status| if state.tab == Tab::Space { shell::primary_button(theme, status) } else { shell::quiet_button(theme, status) })
                     .on_press_maybe((!panel.id.is_empty()).then_some(event(Event::Tab(Tab::Space)))),
@@ -648,12 +669,15 @@ impl App {
         if let Some(error) = &panel.error {
             content = content.push(text(error).size(13).style(shell::accent_text));
         }
-        container(
-            scrollable(container(content).padding(28).max_width(850))
+        column![
+            header,
+            rule::horizontal(1),
+            scrollable(container(content).padding(24).max_width(850))
                 .id("space-room-browser")
+                .height(Length::Fill)
                 .direction(shell::scrollbar())
                 .style(shell::scroll_style),
-        )
+        ]
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -1207,6 +1231,112 @@ mod tests {
         }));
         assert_eq!(app.pending_ops, 0);
         assert!(app.selection.shutdown);
+    }
+    #[test]
+    fn browser_header_actions_stay_visible_when_small_window_results_scroll() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Probe {
+            header: Option<iced::Rectangle>,
+            reload: Option<iced::Rectangle>,
+            close: Option<iced::Rectangle>,
+            body: Option<iced::Rectangle>,
+            offset: f32,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                for (name, target) in [
+                    ("space-room-browser-header", &mut self.header),
+                    ("space-room-browser-reload", &mut self.reload),
+                    ("space-room-browser-close", &mut self.close),
+                ] {
+                    if id == Some(&widget::Id::new(name)) {
+                        *target = Some(bounds);
+                    }
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("space-room-browser")) {
+                    self.body = Some(bounds);
+                    self.offset = translation.y;
+                }
+            }
+        }
+        let mut app = demo_app();
+        open(&mut app);
+        app.space_settings
+            .panel
+            .as_mut()
+            .unwrap()
+            .directory
+            .as_mut()
+            .unwrap()
+            .rows = (0..40)
+            .map(|i| {
+                let mut room = entry();
+                room.id = format!("!room{i}:example.org");
+                room
+            })
+            .collect();
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        for width in [320.0, 640.0] {
+            let size = iced::Size::new(width, 480.0);
+            let mut view = app.space_directory_view();
+            let mut tree = widget::Tree::new(&view);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            let mut before = Probe::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut before,
+            );
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut widget::operation::scrollable::scroll_to::<()>(
+                    widget::Id::new("space-room-browser"),
+                    iced::widget::operation::AbsoluteOffset {
+                        x: None,
+                        y: Some(500.0),
+                    },
+                ),
+            );
+            let mut after = Probe::default();
+            view.as_widget_mut().operate(
+                &mut tree,
+                layout::Layout::new(&node),
+                &renderer,
+                &mut after,
+            );
+            assert!(after.offset > before.offset);
+            assert_eq!(before.header, after.header);
+            assert_eq!(before.reload, after.reload);
+            assert_eq!(before.close, after.close);
+            let header = after.header.unwrap();
+            let body = after.body.unwrap();
+            assert!(header.y >= 0.0 && header.y + header.height <= body.y);
+            assert!(body.height > 0.0 && body.y + body.height <= size.height);
+            for action in [after.reload.unwrap(), after.close.unwrap()] {
+                assert!(action.width > 0.0 && action.height > 0.0);
+                assert!(action.x >= 0.0 && action.x + action.width <= size.width);
+                assert!(action.y >= header.y);
+                assert!(action.y + action.height <= header.y + header.height);
+            }
+        }
     }
     #[test]
     fn browser_layout_fits_narrow_windows_and_has_no_idle_timer() {
