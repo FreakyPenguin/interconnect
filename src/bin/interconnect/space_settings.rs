@@ -122,6 +122,43 @@ impl App {
         }
         true
     }
+    /// Resume an unopened form only after its captured account/target write has
+    /// released admission. Never refresh over an already loaded or edited form.
+    fn reload_waiting_space_settings(
+        &mut self,
+        account: &Option<String>,
+        id: &str,
+    ) -> Task<Message> {
+        if !self.closing
+            && !self.stopped
+            && account == &self.account_id
+            && !self
+                .space_settings
+                .writes
+                .values()
+                .any(|(pending_account, pending_id)| pending_account == account && pending_id == id)
+            && self.space_settings.panel.as_ref().is_some_and(|panel| {
+                &panel.account == account
+                    && panel.id == id
+                    && panel.saved.is_none()
+                    && panel.load.is_none()
+                    && !panel.pending
+                    && panel.directory.is_none()
+                    && !panel.exit.is_open()
+                    && if panel.space {
+                        matches!(&self.shell.space, Scope::Space(current) if current == id)
+                    } else {
+                        self.selection
+                            .room
+                            .as_ref()
+                            .is_some_and(|(_, room)| room == id)
+                    }
+            })
+        {
+            return self.space_settings_event(Event::Reload);
+        }
+        Task::none()
+    }
     pub(super) fn space_settings_avatar(&self) -> Option<OwnedMxcUri> {
         self.space_settings
             .panel
@@ -447,13 +484,14 @@ impl App {
                             if self.demo.is_some()
                                 && let Some(saved) = &panel.saved
                             {
-                                self.space_settings.demo.insert(id, saved.clone());
+                                self.space_settings.demo.insert(id.clone(), saved.clone());
                             }
                             panel.success = true;
                         }
                         Err(error) => panel.error = Some(error),
                     }
                 }
+                return self.reload_waiting_space_settings(&account, &id);
             }
 
             Event::FindRooms => {
@@ -713,9 +751,9 @@ impl App {
                 }
             }
             Event::Saved(request, change, result) => {
-                if self.space_settings.writes.remove(&request).is_none() {
+                let Some((account, id)) = self.space_settings.writes.remove(&request) else {
                     return Task::none();
-                }
+                };
                 self.pending_ops = self.pending_ops.saturating_sub(1);
                 if let Some(panel) = &mut self.space_settings.panel
                     && panel.request == request
@@ -731,6 +769,7 @@ impl App {
                         Err(error) => panel.error = Some(error),
                     }
                 }
+                return self.reload_waiting_space_settings(&account, &id);
             }
             edit => {
                 if let Some(panel) = &mut self.space_settings.panel
@@ -1014,6 +1053,70 @@ mod tests {
             .unwrap()
             .0
     }
+    #[test]
+    fn reopening_a_space_form_waits_for_old_metadata_then_loads_once() {
+        let mut app = demo_app();
+        let request = open(&mut app);
+        let id = app.space_settings.panel.as_ref().unwrap().id.clone();
+        let account = app.account_id.clone();
+        app.space_settings.panel.as_mut().unwrap().pending = true;
+        app.space_settings
+            .writes
+            .insert(request, (account.clone(), id.clone()));
+        app.pending_ops = 1;
+        let _ = app.update(message(Event::Close));
+        let reopened = open(&mut app);
+        assert!(app.space_settings.panel.as_ref().unwrap().saved.is_none());
+        let _ = app.update(message(Event::Saved(
+            request,
+            Change::Topic(String::new(), "Updated".into()),
+            Ok(()),
+        )));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.id, id);
+        assert_eq!(panel.account, account);
+        assert!(panel.saved.is_some());
+        assert!(panel.request > reopened);
+        assert_eq!(app.pending_ops, 0);
+        let current = panel.request;
+        let _ = app.update(message(Event::Name("Keep the loaded draft".into())));
+        let _ = app.update(message(Event::Saved(
+            request,
+            Change::Topic(String::new(), "Updated".into()),
+            Ok(()),
+        )));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.request, current);
+        assert_eq!(panel.draft.as_ref().unwrap().name, "Keep the loaded draft");
+    }
+
+    #[tokio::test]
+    async fn reopening_a_space_form_resumes_after_an_old_avatar_write() {
+        let mut app = demo_app();
+        let session = open(&mut app);
+        let upload = avatar_editor::test_upload().await;
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Pick)));
+        let _ = app.update(message(Event::Avatar(
+            session,
+            avatar_editor::Event::Picked(1, Ok(Some(upload.clone()))),
+        )));
+        let _ = app.update(message(Event::Avatar(session, avatar_editor::Event::Save)));
+        let operation = app.generation;
+        let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::DiscardChanges(discard_serial(&app))));
+        open(&mut app);
+        assert!(app.space_settings.panel.as_ref().unwrap().saved.is_none());
+        let url: OwnedMxcUri = "mxc://demo.invalid/old-space-avatar".into();
+        let _ = app.update(message(Event::AvatarSaved(
+            operation,
+            Some(upload),
+            Ok(Some(url.clone())),
+        )));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.saved.as_ref().unwrap().avatar.url, Some(url));
+        assert_eq!(app.pending_ops, 0);
+    }
+
     #[test]
     fn an_old_confirmation_cannot_accept_a_new_prompt_in_the_same_panel() {
         let mut app = demo_app();

@@ -68,3 +68,8 @@ unit tests do not establish server or platform behavior.
   write is pending. Its completion must start one fresh load for the matching
   reopened room panel, without a timer or manual Reload. A duplicate old avatar
   completion must not reload or overwrite a new draft.
+
+- Repeat the pending-write close/reopen check for Space settings and Room members,
+  including metadata, avatar, and member changes. Completion may reload only a
+  matching active account/target form with no loaded settings; a loaded draft,
+  directory browser, exit confirmation, or other account must remain untouched.

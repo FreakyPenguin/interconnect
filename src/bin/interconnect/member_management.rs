@@ -195,7 +195,7 @@ impl App {
                     Err(error) => panel.error = Some(error),
                 }
             }
-            return Task::none();
+            return self.reload_waiting_space_settings(&account, &room);
         }
         let Some(panel) = (match host {
             Host::Panel => &mut self.space_settings.panel,
@@ -855,6 +855,38 @@ mod tests {
         let _ = app.update(Message::Members(crate::members::Event::Open));
         app.space_settings.sidebar.as_ref().unwrap().request
     }
+    #[test]
+    fn reopening_room_members_resumes_after_an_old_member_write_finishes() {
+        let mut app = demo_app();
+        let session = open(&mut app, false);
+        let id = app.space_settings.panel.as_ref().unwrap().id.clone();
+        app.generation += 1;
+        let operation = app.generation;
+        app.space_settings
+            .writes
+            .insert(operation, (app.account_id.clone(), id.clone()));
+        app.space_settings.panel.as_mut().unwrap().pending = true;
+        app.pending_ops = 1;
+        let _ = app.update(message(PanelEvent::Close));
+        let reopened = open(&mut app, false);
+        assert!(app.space_settings.panel.as_ref().unwrap().saved.is_none());
+        let _ = app.update(event(Event::Saved(
+            session,
+            operation,
+            MemberChange::Remove {
+                user: "@maya:example.org".into(),
+                invited: false,
+            },
+            Ok(()),
+        )));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.id, id);
+        assert!(panel.saved.is_some());
+        assert!(panel.members.roster.is_some());
+        assert!(panel.request > reopened);
+        assert_eq!(app.pending_ops, 0);
+    }
+
     #[test]
     fn member_confirmations_do_not_survive_a_filter_or_page_change() {
         let mut app = demo_app();
