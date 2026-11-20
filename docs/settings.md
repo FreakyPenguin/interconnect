@@ -76,6 +76,25 @@ unknown keys. Invalid/unsupported TOML, non-UTF-8, files over 64 KiB, and symlin
 block saving; the last valid settings remain active. External edits require Reload
 before Save. There is no file watcher or filesystem compare-and-swap guarantee.
 
+## Network proxies
+
+Set proxy environment variables before launching Interconnect. Matrix requests
+honor `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` (or their lowercase
+forms). Protocol-specific variables take precedence over `ALL_PROXY`.
+HTTP/HTTPS and SOCKS proxies are supported; there is no proxy field in Settings.
+
+For a local SOCKS5 proxy with destination DNS resolved by the proxy:
+
+```sh
+HTTP_PROXY=socks5h://127.0.0.1:1080 \
+HTTPS_PROXY=socks5h://127.0.0.1:1080 \
+cargo run --locked --bin interconnect
+```
+
+Use `socks5://` for local destination DNS resolution. `NO_PROXY` excludes matching
+hosts from proxying. Browser SSO uses the browser's own proxy configuration.
+See [proxy validation](validation/connected-ui.md#network-proxies) for acceptance checks.
+
 ## Home and room organization
 
 Home shows rooms outside joined spaces. **Include subspaces** beside the room

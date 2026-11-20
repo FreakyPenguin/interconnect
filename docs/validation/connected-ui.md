@@ -60,6 +60,26 @@ Use dedicated accounts/profiles and disposable rooms/spaces for connected or
 destructive checks. Do not send messages, restart the user's connected client,
 or revoke its session without authorization.
 
+## Network proxies
+
+With an authorized dedicated profile and a controlled proxy, use the
+[proxy environment variables](../settings.md#network-proxies) before launch:
+
+- Verify HTTP/HTTPS proxying and SOCKS5 proxying cover discovery/sign-in, resumed
+  sync, and media downloads. Inspect proxy activity without retaining credentials
+  or private message content.
+- With `socks5h://`, use a homeserver hostname resolvable only by the proxy and
+  verify discovery succeeds. With `socks5://`, destination DNS resolves locally.
+- Check `HTTP_PROXY`/`HTTPS_PROXY` override `ALL_PROXY` and `NO_PROXY` bypasses
+  the proxy for a controlled host. Check the lowercase environment forms too.
+- Make the proxy unavailable: requests must fail without silently connecting
+  directly; cancellation and shutdown must remain responsive.
+- Configure the browser separately for SSO and preserve the localhost callback.
+  Demo must still work without contacting the proxy or opening an account.
+
+These are manual acceptance checks. Dependency-feature inspection and workspace
+tests alone do not establish live proxy or DNS behavior.
+
 ## Desktop login
 
 Use a homeserver with native sliding sync and working native credential storage.
