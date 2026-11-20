@@ -42,10 +42,11 @@ enum Editor {
     Create,
     Image,
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Discard {
     Close,
     Reload,
+    Transition(Box<Message>),
 }
 
 impl State {
@@ -152,8 +153,8 @@ pub enum Event {
     FilterImages(String),
     ImagePage(bool),
     AdvancedUri,
-    KeepChanges,
-    DiscardChanges,
+    KeepChanges(u64),
+    DiscardChanges(u64),
     Saved(u64, Option<String>, bool, Result<Pack, String>),
 }
 fn message(event: Event) -> Message {
@@ -161,10 +162,36 @@ fn message(event: Event) -> Message {
 }
 
 impl App {
+    /// Application exit handles the topmost editor before any covered Settings
+    /// form. Writes already admitted keep their independent completion tracking.
+    pub(super) fn guard_emoji_management_transition(&mut self, next: Message) -> bool {
+        let Some(state) = &mut self.emoji_management else {
+            return false;
+        };
+        let deferred = if !state.pending && state.dirty() {
+            if !matches!(&state.discard, Some(Discard::Transition(_))) {
+                self.generation += 1;
+                state.request = self.generation;
+                state.task = None;
+                state.discard = Some(Discard::Transition(Box::new(next)));
+            }
+            true
+        } else {
+            self.emoji_management = None;
+            false
+        };
+        self.refresh_media_demand();
+        self.publish_notification_context();
+        deferred
+    }
+
     pub(super) fn emoji_management_images(&self) -> Vec<interconnect::image_media::Key> {
         let Some(state) = &self.emoji_management else {
             return Vec::new();
         };
+        if state.discard.is_some() {
+            return Vec::new();
+        }
         if state.editor == Editor::Browse {
             let images = state.filtered_images();
             let page = state
@@ -345,7 +372,8 @@ impl App {
                     .as_ref()
                     .is_some_and(|state| state.discard.is_some())
                 {
-                    return self.emoji_management_event(Event::KeepChanges);
+                    let request = self.emoji_management.as_ref().unwrap().request;
+                    return self.emoji_management_event(Event::KeepChanges(request));
                 }
                 if let Some(state) = &mut self.emoji_management
                     && !state.pending
@@ -395,8 +423,11 @@ impl App {
                 }
                 return self.load_emoji_management();
             }
-            Event::KeepChanges => {
-                if let Some(state) = &mut self.emoji_management {
+            Event::KeepChanges(request) => {
+                if let Some(state) = &mut self.emoji_management
+                    && state.request == request
+                    && state.discard.is_some()
+                {
                     state.discard = None;
                     return iced::widget::operation::focus(match state.editor {
                         Editor::Rename => "emoji-pack-name",
@@ -406,9 +437,9 @@ impl App {
                     });
                 }
             }
-            Event::DiscardChanges => {
+            Event::DiscardChanges(request) => {
                 let action = self.emoji_management.as_mut().and_then(|state| {
-                    if state.pending {
+                    if state.pending || state.request != request {
                         return None;
                     }
                     let action = state.discard.take()?;
@@ -418,6 +449,12 @@ impl App {
                 return match action {
                     Some(Discard::Close) => self.emoji_management_event(Event::Close),
                     Some(Discard::Reload) => self.emoji_management_event(Event::Reload),
+                    Some(Discard::Transition(next)) => {
+                        self.emoji_management = None;
+                        self.refresh_media_demand();
+                        self.publish_notification_context();
+                        self.update(*next)
+                    }
                     None => Task::none(),
                 };
             }
@@ -792,18 +829,28 @@ impl App {
         let writable = available && pack.is_some_and(|pack| pack.writable);
         let mut body = column![].spacing(12).width(Length::Fill);
         let mut actions = row![].spacing(8).align_y(iced::Alignment::Center);
-        if state.discard.is_some() {
+        if let Some(discard) = &state.discard {
             body = body.push(shell::title("Discard unsaved emoji changes?", 16))
-                .push(text("Your changes have not been saved. Keep editing to finish them, or discard them to continue.").size(13));
+                .push(text(if matches!(discard, Discard::Transition(_)) {
+                    "Keep editing your emoji changes, or discard them and continue closing Interconnect. Other unsaved preferences will be reviewed next."
+                } else {
+                    "Your changes have not been saved. Keep editing to finish them, or discard them to continue."
+                }).size(13));
             actions = actions
                 .push(iced::widget::space().width(Length::Fill))
-                .push(quiet("Keep editing", Event::KeepChanges, available))
+                .push(quiet(
+                    "Keep editing",
+                    Event::KeepChanges(state.request),
+                    available,
+                ))
                 .push(
                     button(text("Discard changes").size(13))
                         .keyboard_navigation(true)
                         .padding([7, 14])
                         .style(button::danger)
-                        .on_press_maybe(available.then_some(message(Event::DiscardChanges))),
+                        .on_press_maybe(
+                            available.then_some(message(Event::DiscardChanges(state.request))),
+                        ),
                 );
         } else if let Some(edit) = &state.confirm {
             let (title, explanation) = if matches!(edit, Edit::Delete) {
@@ -1310,6 +1357,14 @@ mod tests {
     fn event(app: &mut App, event: Event) {
         let _ = app.update(message(event));
     }
+    fn keep_changes(app: &mut App) {
+        let request = app.emoji_management.as_ref().unwrap().request;
+        event(app, Event::KeepChanges(request));
+    }
+    fn discard_changes(app: &mut App) {
+        let request = app.emoji_management.as_ref().unwrap().request;
+        event(app, Event::DiscardChanges(request));
+    }
     fn open(app: &mut App) {
         event(app, Event::Open);
         let state = app.emoji_management.as_ref().unwrap();
@@ -1319,6 +1374,93 @@ mod tests {
             Event::Loaded(request, account, Ok(demo_listing(&room))),
         );
     }
+    #[test]
+    fn application_close_reviews_emoji_before_covered_preferences() {
+        let mut app = crate::tests::demo_app();
+        let _ = app.update(Message::Settings(crate::settings::Event::Open));
+        let _ = app.update(Message::Settings(crate::settings::Event::Theme(
+            interconnect::settings::ThemeMode::Dark,
+        )));
+        let preferences = app.settings.draft.clone();
+        open(&mut app);
+        event(&mut app, Event::BeginRename);
+        event(&mut app, Event::Name("Unsaved emoji name".into()));
+        let _ = app.update(Message::Close);
+        let first = app.emoji_management.as_ref().unwrap().request;
+        assert!(matches!(&app.emoji_management.as_ref().unwrap().discard,
+            Some(Discard::Transition(next)) if matches!(next.as_ref(), Message::Close)));
+        assert_eq!(app.settings.draft, preferences);
+        assert!(!app.closing);
+        keep_changes(&mut app);
+        assert!(app.emoji_management.as_ref().unwrap().dirty());
+        let _ = app.update(Message::Close);
+        let current = app.emoji_management.as_ref().unwrap().request;
+        assert_ne!(first, current);
+        event(&mut app, Event::DiscardChanges(first));
+        assert!(app.emoji_management.as_ref().unwrap().discard.is_some());
+        event(&mut app, Event::DiscardChanges(current));
+        assert!(
+            app.emoji_management.is_none(),
+            "parent prompt must be visible"
+        );
+        assert_eq!(app.settings.draft, preferences);
+        assert!(!app.closing);
+        assert_eq!(
+            app.settings.current.appearance.theme,
+            interconnect::settings::ThemeMode::Light
+        );
+    }
+
+    #[test]
+    fn application_close_detaches_admitted_writes_without_releasing_them_early() {
+        let mut app = crate::tests::demo_app();
+        open(&mut app);
+        event(&mut app, Event::Name("Submitted name".into()));
+        event(&mut app, Event::Rename);
+        let request = app.emoji_management.as_ref().unwrap().request;
+        assert_eq!(app.pending_ops, 1);
+        assert!(!app.guard_emoji_management_transition(Message::Close));
+        assert!(app.emoji_management.is_none());
+        assert_eq!(app.pending_ops, 1);
+        app.demo = None;
+        let _ = app.update(Message::Close);
+        assert!(!app.selection.shutdown);
+        event(
+            &mut app,
+            Event::Saved(request, None, false, Err("fixture failure".into())),
+        );
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.selection.shutdown);
+    }
+
+    #[test]
+    fn old_discard_and_keep_actions_cannot_target_replaced_or_reopened_editors() {
+        let mut app = crate::tests::demo_app();
+        open(&mut app);
+        event(&mut app, Event::BeginRename);
+        event(&mut app, Event::Name("Keep this name".into()));
+        event(&mut app, Event::Close);
+        let old = app.emoji_management.as_ref().unwrap().request;
+        keep_changes(&mut app);
+        event(&mut app, Event::Close);
+        let current = app.emoji_management.as_ref().unwrap().request;
+        assert_ne!(old, current);
+        event(&mut app, Event::KeepChanges(old));
+        event(&mut app, Event::DiscardChanges(old));
+        assert!(app.emoji_management.as_ref().unwrap().discard.is_some());
+        discard_changes(&mut app);
+        assert!(app.emoji_management.is_none());
+        open(&mut app);
+        event(&mut app, Event::BeginCreate);
+        event(&mut app, Event::CreateName("New pack draft".into()));
+        event(&mut app, Event::Close);
+        event(&mut app, Event::KeepChanges(current));
+        event(&mut app, Event::DiscardChanges(current));
+        let state = app.emoji_management.as_ref().unwrap();
+        assert!(state.discard.is_some());
+        assert_eq!(state.create_name, "New pack draft");
+    }
+
     #[test]
     fn browse_thumbnails_follow_only_the_filtered_page_and_stop_on_close() {
         let mut app = crate::tests::demo_app();
@@ -1357,7 +1499,7 @@ mod tests {
                 app.emoji_management.as_ref().unwrap().discard,
                 Some(Discard::Close)
             ));
-            event(&mut app, Event::KeepChanges);
+            keep_changes(&mut app);
             assert!(app.emoji_management.as_ref().unwrap().dirty());
             event(&mut app, Event::Close);
             event(&mut app, Event::Close); // Escape cancels the discard prompt.
@@ -1369,7 +1511,7 @@ mod tests {
                 Some(Discard::Reload)
             ));
             assert!(!app.emoji_management.as_ref().unwrap().loading);
-            event(&mut app, Event::DiscardChanges);
+            discard_changes(&mut app);
             assert!(app.emoji_management.as_ref().unwrap().loading);
             assert!(!app.emoji_management.as_ref().unwrap().dirty());
         }
@@ -1400,10 +1542,10 @@ mod tests {
             Event::FilePicked(old, None, Err("late error".into())),
         );
         assert!(app.emoji_management.as_ref().unwrap().error.is_none());
-        event(&mut app, Event::KeepChanges);
+        keep_changes(&mut app);
         assert_eq!(app.emoji_management.as_ref().unwrap().shortcode, "keep_me");
         event(&mut app, Event::Close);
-        event(&mut app, Event::DiscardChanges);
+        discard_changes(&mut app);
         assert!(app.emoji_management.is_none());
     }
     fn finish(app: &mut App, baseline: Pack, edit: Edit) -> Pack {

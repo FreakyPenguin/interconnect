@@ -71,3 +71,10 @@ and saved-message navigation behavior.
 
 Automated regressions cover bounded zoom, reset on reopening, minimum-window
 layout, backdrop scroll capture, existing download cancellation, and GIF timing.
+
+Application Close/Exit must review the topmost dirty emoji editor before any
+covered application Settings form. Keep editing cancels the transition. After
+explicit discard, remove the emoji dialog before replaying the captured exit so
+that a parent Settings confirmation is visible. Clean dialogs close immediately;
+already-admitted writes keep their independent shutdown bookkeeping. Buffered
+Keep/Discard actions from replaced or reopened confirmations must be ignored.
