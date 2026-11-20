@@ -17,6 +17,7 @@
 //! }
 //! ```
 use crate::core::border::{self, Border};
+use crate::core::keyboard::{self, Key, key::Named};
 use crate::core::layout;
 use crate::core::mouse;
 use crate::core::overlay;
@@ -81,6 +82,7 @@ where
     clip: bool,
     class: Theme::Class<'a>,
     status: Option<Status>,
+    keyboard_navigation: bool,
 }
 
 enum OnPress<'a, Message> {
@@ -118,6 +120,7 @@ where
             clip: false,
             class: Theme::default(),
             status: None,
+            keyboard_navigation: false,
         }
     }
 
@@ -179,6 +182,12 @@ where
         self
     }
 
+    /// Enables focus operations and Enter/Space activation without timers.
+    pub fn keyboard_navigation(mut self, enabled: bool) -> Self {
+        self.keyboard_navigation = enabled;
+        self
+    }
+
     /// Sets the style of the [`Button`].
     #[must_use]
     pub fn style(mut self, style: impl Fn(&Theme, Status) -> Style + 'a) -> Self
@@ -201,6 +210,19 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 struct State {
     is_pressed: bool,
+    is_focused: bool,
+}
+
+impl crate::core::widget::operation::Focusable for State {
+    fn is_focused(&self) -> bool {
+        self.is_focused
+    }
+    fn focus(&mut self) {
+        self.is_focused = true;
+    }
+    fn unfocus(&mut self) {
+        self.is_focused = false;
+    }
 }
 
 impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
@@ -223,6 +245,9 @@ where
     }
 
     fn diff(&self, tree: &mut Tree) {
+        if !self.keyboard_navigation || self.on_press.is_none() {
+            tree.state.downcast_mut::<State>().is_focused = false;
+        }
         tree.diff_children(std::slice::from_ref(&self.content));
     }
 
@@ -261,6 +286,13 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
+        if self.keyboard_navigation && self.on_press.is_some() {
+            operation.focusable(
+                None,
+                layout.bounds(),
+                tree.state.downcast_mut::<State>(),
+            );
+        }
         operation.container(None, layout.bounds());
         operation.traverse(&mut |operation| {
             self.content.as_widget_mut().operate(
@@ -299,8 +331,29 @@ where
         }
 
         match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key,
+                modifiers,
+                repeat,
+                ..
+            }) if self.keyboard_navigation
+                && tree.state.downcast_ref::<State>().is_focused
+                && modifiers.is_empty()
+                && matches!(key, Key::Named(Named::Enter | Named::Space)) =>
+            {
+                if !repeat && let Some(on_press) = &self.on_press {
+                    shell.publish(on_press.get());
+                }
+                shell.capture_event();
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
+                if self.keyboard_navigation {
+                    tree.state.downcast_mut::<State>().is_focused =
+                        self.on_press.is_some()
+                            && cursor.is_over(layout.bounds())
+                            && cursor.is_over(*viewport);
+                }
                 if self.on_press.is_some() {
                     let bounds = layout.bounds();
 
@@ -372,8 +425,15 @@ where
     ) {
         let bounds = layout.bounds();
         let content_layout = layout.children().next().unwrap();
-        let style =
+        let mut style =
             theme.style(&self.class, self.status.unwrap_or(Status::Disabled));
+        if self.keyboard_navigation
+            && self.on_press.is_some()
+            && tree.state.downcast_ref::<State>().is_focused
+        {
+            style.border.color = style.text_color;
+            style.border.width = style.border.width.max(1.5);
+        }
 
         if style.background.is_some()
             || style.border.width > 0.0

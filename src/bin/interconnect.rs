@@ -39,6 +39,8 @@ mod emoji_management;
 mod emoji_picker;
 #[path = "interconnect/file_drop.rs"]
 mod file_drop;
+#[path = "interconnect/focus_scope.rs"]
+mod focus_scope;
 #[path = "interconnect/formatted.rs"]
 mod formatted;
 #[path = "interconnect/global_search.rs"]

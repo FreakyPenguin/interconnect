@@ -173,6 +173,7 @@ pub struct PickList<
     menu_class: <Theme as menu::Catalog>::Class<'a>,
     last_status: Option<Status>,
     menu_height: Length,
+    keyboard_navigation: bool,
 }
 
 impl<'a, T, L, V, Message, Theme, Renderer>
@@ -210,7 +211,14 @@ where
             menu_class: <Theme as Catalog>::default_menu(),
             last_status: None,
             menu_height: Length::Shrink,
+            keyboard_navigation: false,
         }
+    }
+
+    /// Enables focus operations and keyboard selection without timers.
+    pub fn keyboard_navigation(mut self, enabled: bool) -> Self {
+        self.keyboard_navigation = enabled;
+        self
     }
 
     /// Sets the placeholder of the [`PickList`].
@@ -433,6 +441,22 @@ where
         layout::Node::new(size)
     }
 
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        _renderer: &Renderer,
+        operation: &mut dyn crate::core::widget::Operation,
+    ) {
+        if self.keyboard_navigation {
+            operation.focusable(
+                None,
+                layout.bounds(),
+                tree.state.downcast_mut::<State<Renderer::Paragraph>>(),
+            );
+        }
+    }
+
     fn update(
         &mut self,
         tree: &mut Tree,
@@ -447,8 +471,97 @@ where
         let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
 
         match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key,
+                modifiers,
+                repeat,
+                ..
+            }) if self.keyboard_navigation
+                && state.is_focused
+                && !modifiers.command()
+                && !modifiers.alt() =>
+            {
+                use keyboard::{Key, key::Named};
+                let options = self.options.borrow();
+                let selected = self.selected.as_ref().map(Borrow::borrow);
+                match key {
+                    Key::Named(Named::Enter | Named::Space) if !repeat => {
+                        if state.is_open {
+                            if let Some(option) = state
+                                .hovered_option
+                                .and_then(|i| options.get(i))
+                            {
+                                shell.publish((self.on_select)(option.clone()));
+                            }
+                            state.is_open = false;
+                            if let Some(on_close) = &self.on_close {
+                                shell.publish(on_close.clone());
+                            }
+                        } else {
+                            state.is_open = !options.is_empty();
+                            state.hovered_option = options
+                                .iter()
+                                .position(|o| Some(o) == selected)
+                                .or((!options.is_empty()).then_some(0));
+                            if state.is_open
+                                && let Some(on_open) = &self.on_open
+                            {
+                                shell.publish(on_open.clone());
+                            }
+                        }
+                        shell.capture_event();
+                        shell.request_redraw();
+                    }
+                    Key::Named(
+                        Named::ArrowDown
+                        | Named::ArrowUp
+                        | Named::Home
+                        | Named::End,
+                    ) if !options.is_empty() => {
+                        let current = if state.is_open {
+                            state.hovered_option
+                        } else {
+                            options.iter().position(|o| Some(o) == selected)
+                        };
+                        let next = match key {
+                            Key::Named(Named::Home) => 0,
+                            Key::Named(Named::End) => options.len() - 1,
+                            Key::Named(Named::ArrowUp) => current
+                                .map_or(options.len() - 1, |i| {
+                                    i.saturating_sub(1)
+                                }),
+                            _ => current
+                                .map_or(0, |i| (i + 1).min(options.len() - 1)),
+                        };
+                        if state.is_open {
+                            state.hovered_option = Some(next);
+                        } else {
+                            shell.publish((self.on_select)(
+                                options[next].clone(),
+                            ));
+                        }
+                        shell.capture_event();
+                        shell.request_redraw();
+                    }
+                    Key::Named(Named::Escape) if state.is_open => {
+                        state.is_open = false;
+                        if let Some(on_close) = &self.on_close {
+                            shell.publish(on_close.clone());
+                        }
+                        shell.capture_event();
+                        shell.request_redraw();
+                    }
+                    Key::Named(Named::Tab) => {
+                        state.is_open = false;
+                    }
+                    _ => {}
+                }
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
+                if self.keyboard_navigation {
+                    state.is_focused = cursor.is_over(layout.bounds());
+                }
                 if state.is_open {
                     // Event wasn't processed by overlay, so cursor was clicked either outside its
                     // bounds or on the drop-down, either way we close the overlay.
@@ -580,12 +693,16 @@ where
 
         let bounds = layout.bounds();
 
-        let style = Catalog::style(
+        let mut style = Catalog::style(
             theme,
             &self.class,
             self.last_status.unwrap_or(Status::Active),
         );
 
+        if self.keyboard_navigation && state.is_focused {
+            style.border.color = style.text_color;
+            style.border.width = style.border.width.max(1.5);
+        }
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
@@ -763,6 +880,7 @@ struct State<P: text::Paragraph> {
     menu: menu::State,
     keyboard_modifiers: keyboard::Modifiers,
     is_open: bool,
+    is_focused: bool,
     hovered_option: Option<usize>,
     options: Vec<paragraph::Plain<P>>,
     placeholder: paragraph::Plain<P>,
@@ -775,10 +893,26 @@ impl<P: text::Paragraph> State<P> {
             menu: menu::State::default(),
             keyboard_modifiers: keyboard::Modifiers::default(),
             is_open: bool::default(),
+            is_focused: false,
             hovered_option: Option::default(),
             options: Vec::new(),
             placeholder: paragraph::Plain::default(),
         }
+    }
+}
+
+impl<P: text::Paragraph> crate::core::widget::operation::Focusable
+    for State<P>
+{
+    fn is_focused(&self) -> bool {
+        self.is_focused
+    }
+    fn focus(&mut self) {
+        self.is_focused = true;
+    }
+    fn unfocus(&mut self) {
+        self.is_focused = false;
+        self.is_open = false;
     }
 }
 

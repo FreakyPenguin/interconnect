@@ -32,6 +32,7 @@
 //! ```
 //! ![Checkbox drawn by `iced_wgpu`](https://github.com/iced-rs/iced/blob/7760618fb112074bc40b148944521f312152012a/docs/images/checkbox.png?raw=true)
 use crate::core::alignment;
+use crate::core::keyboard::{self, Key, key::Named};
 use crate::core::layout;
 use crate::core::mouse;
 use crate::core::renderer;
@@ -102,6 +103,7 @@ pub struct Checkbox<
     icon: Icon<Renderer::Font>,
     class: Theme::Class<'a>,
     last_status: Option<Status>,
+    keyboard_navigation: bool,
 }
 
 impl<'a, Message, Theme, Renderer> Checkbox<'a, Message, Theme, Renderer>
@@ -138,7 +140,14 @@ where
             },
             class: Theme::default(),
             last_status: None,
+            keyboard_navigation: false,
         }
+    }
+
+    /// Enables focus operations and Enter/Space activation without timers.
+    pub fn keyboard_navigation(mut self, enabled: bool) -> Self {
+        self.keyboard_navigation = enabled;
+        self
     }
 
     /// Sets the label of the [`Checkbox`].
@@ -250,6 +259,23 @@ where
     }
 }
 
+#[derive(Default)]
+struct State<P: text::Paragraph> {
+    label: widget::text::State<P>,
+    is_focused: bool,
+}
+impl<P: text::Paragraph> widget::operation::Focusable for State<P> {
+    fn is_focused(&self) -> bool {
+        self.is_focused
+    }
+    fn focus(&mut self) {
+        self.is_focused = true;
+    }
+    fn unfocus(&mut self) {
+        self.is_focused = false;
+    }
+}
+
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for Checkbox<'_, Message, Theme, Renderer>
 where
@@ -257,11 +283,11 @@ where
     Theme: Catalog,
 {
     fn tag(&self) -> tree::Tag {
-        tree::Tag::of::<widget::text::State<Renderer::Paragraph>>()
+        tree::Tag::of::<State<Renderer::Paragraph>>()
     }
 
     fn state(&self) -> tree::State {
-        tree::State::new(widget::text::State::<Renderer::Paragraph>::default())
+        tree::State::new(State::<Renderer::Paragraph>::default())
     }
 
     fn size(&self) -> Size<Length> {
@@ -287,12 +313,11 @@ where
             |_| layout::Node::new(Size::new(self.size, self.size)),
             |limits| {
                 if let Some(label) = self.label.as_deref() {
-                    let state = tree
-                    .state
-                    .downcast_mut::<widget::text::State<Renderer::Paragraph>>();
+                    let state =
+                        tree.state.downcast_mut::<State<Renderer::Paragraph>>();
 
                     widget::text::layout(
-                        state,
+                        &mut state.label,
                         renderer,
                         limits,
                         label,
@@ -317,19 +342,43 @@ where
 
     fn update(
         &mut self,
-        _tree: &mut Tree,
+        tree: &mut Tree,
         event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &Renderer,
         _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
         match event {
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                key,
+                modifiers,
+                repeat,
+                ..
+            }) if self.keyboard_navigation
+                && tree
+                    .state
+                    .downcast_ref::<State<Renderer::Paragraph>>()
+                    .is_focused
+                && modifiers.is_empty()
+                && matches!(key, Key::Named(Named::Enter | Named::Space)) =>
+            {
+                if !repeat && let Some(toggle) = &self.on_toggle {
+                    shell.publish(toggle(!self.is_checked));
+                }
+                shell.capture_event();
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
-                let mouse_over = cursor.is_over(layout.bounds());
+                let mouse_over = cursor.is_over(layout.bounds())
+                    && cursor.is_over(*viewport);
+                if self.keyboard_navigation {
+                    tree.state
+                        .downcast_mut::<State<Renderer::Paragraph>>()
+                        .is_focused = mouse_over && self.on_toggle.is_some();
+                }
 
                 if mouse_over && let Some(on_toggle) = &self.on_toggle {
                     shell.publish((on_toggle)(!self.is_checked));
@@ -390,13 +439,24 @@ where
     ) {
         let mut children = layout.children();
 
-        let style = theme.style(
+        let mut style = theme.style(
             &self.class,
             self.last_status.unwrap_or(Status::Disabled {
                 is_checked: self.is_checked,
             }),
         );
 
+        if self.keyboard_navigation
+            && self.on_toggle.is_some()
+            && tree
+                .state
+                .downcast_ref::<State<Renderer::Paragraph>>()
+                .is_focused
+        {
+            style.border.color =
+                style.text_color.unwrap_or(defaults.text_color);
+            style.border.width = style.border.width.max(1.5);
+        }
         {
             let layout = children.next().unwrap();
             let bounds = layout.bounds();
@@ -445,8 +505,10 @@ where
 
         {
             let label_layout = children.next().unwrap();
-            let state: &widget::text::State<Renderer::Paragraph> =
-                tree.state.downcast_ref();
+            let state = &tree
+                .state
+                .downcast_ref::<State<Renderer::Paragraph>>()
+                .label;
 
             crate::text::draw(
                 renderer,
@@ -463,11 +525,22 @@ where
 
     fn operate(
         &mut self,
-        _tree: &mut Tree,
+        tree: &mut Tree,
         layout: Layout<'_>,
         _renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
+        if self.keyboard_navigation && self.on_toggle.is_some() {
+            operation.focusable(
+                None,
+                layout.bounds(),
+                tree.state.downcast_mut::<State<Renderer::Paragraph>>(),
+            );
+        } else {
+            tree.state
+                .downcast_mut::<State<Renderer::Paragraph>>()
+                .is_focused = false;
+        }
         if let Some(label) = self.label.as_deref() {
             operation.text(None, layout.bounds(), label);
         }

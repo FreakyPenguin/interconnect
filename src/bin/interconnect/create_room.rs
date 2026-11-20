@@ -66,6 +66,9 @@ pub fn shortcut(
     status: iced::event::Status,
     _: iced::window::Id,
 ) -> Option<Message> {
+    if status == iced::event::Status::Captured {
+        return None;
+    }
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event
     else {
         return None;
@@ -437,6 +440,7 @@ impl App {
             })
             .text_size(13)
             .padding([7, 10])
+            .keyboard_navigation(true)
             .style(shell::select_style)
             .width(Length::Fill)
             .into()
@@ -469,11 +473,13 @@ impl App {
             message(Event::History(v))
         });
         let mut encrypted = checkbox(options.encrypted)
+            .keyboard_navigation(true)
             .label("Encrypt messages")
             .text_size(13)
             .size(16)
             .spacing(9);
         let mut listed = checkbox(options.listed)
+            .keyboard_navigation(true)
             .label("List in the homeserver's public room directory")
             .text_size(13)
             .size(16)
@@ -563,6 +569,7 @@ impl App {
         }
         let close = button(text(if busy { "Cancel creation" } else { "Cancel" }).size(13))
             .padding([7, 14])
+            .keyboard_navigation(true)
             .style(shell::quiet_button)
             .on_press(message(Event::Close));
         let submit_label = text(if busy {
@@ -586,6 +593,7 @@ impl App {
                 .align_y(iced::Alignment::Center),
         )
         .padding([7, 14])
+        .keyboard_navigation(true)
         .style(shell::primary_button);
         if !busy && !options.name.trim().is_empty() {
             submit = submit.on_press(message(Event::Submit));
@@ -602,6 +610,7 @@ impl App {
                     .size(13),
                 )
                 .padding([7, 14])
+                .keyboard_navigation(true)
                 .style(shell::quiet_button)
                 .on_press(message(Event::OpenCreated)),
             );
@@ -625,16 +634,19 @@ impl App {
             border: iced::Border::default().rounded(12),
             ..shell::surface(theme, shell::palette(theme).background)
         });
-        opaque(
-            mouse_area(
-                container(card)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .padding(16)
-                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
-            )
-            .on_press(message(Event::Ignore))
-            .on_scroll(|_| message(Event::Ignore)),
+        super::focus_scope::view(
+            opaque(
+                mouse_area(
+                    container(card)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill)
+                        .padding(16)
+                        .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
+                )
+                .on_press(message(Event::Ignore))
+                .on_scroll(|_| message(Event::Ignore)),
+            ),
+            "create-room-focus",
         )
     }
 }
@@ -648,6 +660,7 @@ fn select<'a, T: Clone + Eq + std::fmt::Display + 'a>(
         pick_list(values.to_vec(), Some(selected), on_select)
             .text_size(13)
             .padding([7, 10])
+            .keyboard_navigation(true)
             .style(shell::select_style)
             .width(Length::Fill)
             .into()

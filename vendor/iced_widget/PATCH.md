@@ -1,5 +1,15 @@
 # Iced widget patches
 
+`button.rs`, `checkbox.rs`, and `pick_list.rs` expose opt-in
+`keyboard_navigation(bool)` (default false). Enabled controls participate in
+focus operations, draw a static focus border, and accept Enter/Space; pick lists
+also accept arrows/Home/End and Escape. Disabled controls do not participate.
+The app confines traversal to active dialog content with `focus_scope.rs`,
+preserving IME precedence and scrolling focused controls into view. Existing
+navigation wrappers retain their original focus behavior. These additions have
+no subscriptions or animation deadlines; focused-widget interaction and idle
+regressions live in the application's focus-scope tests.
+
 Upstream: crates.io `iced_widget` 0.14.2, repository commit
 `54abf81d13fec06d4d9ac754b03ce2c3313e8a1f`, `widget/`.
 Published-crate checksum: `b1596afa0d3109c2618e8bc12bae6c11d3064df8f95c42dfce570397dbe957ab`.
