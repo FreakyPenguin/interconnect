@@ -165,6 +165,9 @@ impl App {
     }
     pub(super) fn boot(startup: Startup) -> (Self, Task<Message>) {
         let mut app = Self::new();
+        if startup.loaded.is_none() {
+            app.enable_demo();
+        }
         let demo_code = if app.demo.is_some() {
             Task::perform(
                 async {
@@ -927,6 +930,10 @@ mod tests {
         let demo = Startup::load(Some(path), true);
         assert!(demo.path.is_none() && demo.loaded.is_none());
         assert_eq!(demo.graphics(), Graphics::default());
+        let (app, _) = App::boot(demo);
+        assert!(app.demo.is_some());
+        assert!(!app.model.rooms.is_empty());
+        assert!(app.settings.path.is_none() && app.settings.store.is_none());
     }
 
     #[test]

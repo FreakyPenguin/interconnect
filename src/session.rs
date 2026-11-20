@@ -23,7 +23,13 @@ use credentials::CredentialStore;
 
 /// Resolve the default account directory without accessing the filesystem.
 pub fn default_profile_directory() -> anyhow::Result<String> {
-    default_profile_path_from(
+    named_profile_directory("default")
+}
+
+/// Resolve a named account under the platform data directory without filesystem access.
+pub fn named_profile_directory(name: &str) -> anyhow::Result<String> {
+    profile_path_from(
+        name,
         std::env::var_os("XDG_DATA_HOME").map(PathBuf::from),
         std::env::var_os("HOME").map(PathBuf::from),
     )?
@@ -32,14 +38,19 @@ pub fn default_profile_directory() -> anyhow::Result<String> {
     .map_err(|_| anyhow::anyhow!("profile path must be UTF-8"))
 }
 
-fn default_profile_path_from(
+fn profile_path_from(
+    name: &str,
     xdg: Option<PathBuf>,
     home: Option<PathBuf>,
 ) -> anyhow::Result<PathBuf> {
+    ensure!(
+        !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', '\0']),
+        "profile name must be a single directory name; use --profile-path for a path"
+    );
     #[cfg(target_os = "macos")]
     let root = home
         .filter(|path| path.is_absolute())
-        .context("HOME is unavailable; supply a profile-directory argument")?
+        .context("HOME is unavailable; supply an explicit profile path")?
         .join("Library/Application Support");
     #[cfg(not(target_os = "macos"))]
     let root = xdg
@@ -48,10 +59,10 @@ fn default_profile_path_from(
             home.filter(|path| path.is_absolute())
                 .map(|path| path.join(".local/share"))
         })
-        .context("No data directory is available; supply a profile-directory argument")?;
+        .context("No data directory is available; supply an explicit profile path")?;
     #[cfg(target_os = "macos")]
     let _ = xdg;
-    Ok(root.join("interconnect/profiles/default"))
+    Ok(root.join("interconnect/profiles").join(name))
 }
 
 // Never derive Debug: this object contains bearer tokens and an encryption key.
@@ -693,6 +704,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn named_profiles_stay_under_the_platform_profiles_directory() {
+        let xdg = Some(PathBuf::from("/data"));
+        let home = Some(PathBuf::from("/users/me"));
+        let default = profile_path_from("default", xdg.clone(), home.clone()).unwrap();
+        for name in ["work", "personal-2", "with spaces", "büro"] {
+            assert_eq!(
+                profile_path_from(name, xdg.clone(), home.clone()).unwrap(),
+                default.parent().unwrap().join(name)
+            );
+        }
+        for name in [
+            "",
+            ".",
+            "..",
+            "../work",
+            "/work",
+            "work/",
+            "work/other",
+            "work\\other",
+            "nul\0",
+        ] {
+            assert!(
+                profile_path_from(name, xdg.clone(), home.clone()).is_err(),
+                "{name:?}"
+            );
+        }
+    }
+
+    #[test]
     #[cfg(not(target_os = "macos"))]
     fn default_profile_uses_xdg_data_and_absolute_home_fallback() {
         for (xdg, home, expected) in [
@@ -714,13 +754,14 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                default_profile_path_from(xdg.map(PathBuf::from), home.map(PathBuf::from)).unwrap(),
+                profile_path_from("default", xdg.map(PathBuf::from), home.map(PathBuf::from))
+                    .unwrap(),
                 PathBuf::from(expected)
             );
         }
-        assert!(default_profile_path_from(None, None).is_err());
+        assert!(profile_path_from("default", None, None).is_err());
         assert!(
-            default_profile_path_from(Some("relative".into()), Some("relative".into())).is_err()
+            profile_path_from("default", Some("relative".into()), Some("relative".into())).is_err()
         );
     }
 
@@ -728,10 +769,11 @@ mod tests {
     #[cfg(target_os = "macos")]
     fn default_profile_uses_application_support_on_macos() {
         assert_eq!(
-            default_profile_path_from(Some("/ignored".into()), Some("/users/me".into())).unwrap(),
+            profile_path_from("default", Some("/ignored".into()), Some("/users/me".into()))
+                .unwrap(),
             PathBuf::from("/users/me/Library/Application Support/interconnect/profiles/default")
         );
-        assert!(default_profile_path_from(Some("/ignored".into()), None).is_err());
+        assert!(profile_path_from("default", Some("/ignored".into()), None).is_err());
     }
 
     #[test]

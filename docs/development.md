@@ -44,6 +44,10 @@ profile or opens sign-in. Use a dedicated test profile for connected validation;
 see [profiles](settings.md#account-profiles) and [UI checks](validation/connected-ui.md).
 Do not send test messages or restart an existing connected client without authorization.
 
+Use `cargo run --locked --bin interconnect -- --help` to list startup options.
+`--profile work` selects a named profile in the regular data directory;
+`--profile-path /path/to/test-profile` selects an explicit directory.
+
 ### README screenshots
 
 The images in `docs/images/` are captures of the running demo, using a 1440×960

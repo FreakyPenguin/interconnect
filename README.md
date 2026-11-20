@@ -86,6 +86,10 @@ to sign in; the homeserver must support native sliding sync. Account storage
 requires Linux Secret Service or macOS Keychain. One account is supported per
 process; calls and recovery/key-backup UI are not available yet.
 
+Use `--help` to list options, `--profile work` for a named profile in the regular
+data directory, or `--profile-path /path/to/profile` for an explicit directory.
+See [account profiles](docs/settings.md#account-profiles) for storage details.
+
 Tagged GitHub Releases provide an amd64 Debian package, a Linux tarball, an
 Apple Silicon macOS app, and checksums. See [release downloads and installation](docs/development.md#tagged-releases).
 Experimental [Debian packages](docs/development.md#debian-package-automation) and

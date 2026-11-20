@@ -11,11 +11,25 @@ the file. Demo ignores saved settings/accounts, including `--config`.
 | Linux | `$XDG_DATA_HOME/interconnect/profiles/default` or `~/.local/share/interconnect/profiles/default` |
 | macOS | `~/Library/Application Support/interconnect/profiles/default` |
 
-Use a separate profile with a positional directory argument:
+Use `--profile NAME` for a separate profile under the same platform directory
+(for example, `~/.local/share/interconnect/profiles/work` on Linux):
 
 ```sh
-cargo run --locked --bin interconnect -- /path/to/test-profile
+cargo run --locked --bin interconnect -- --profile work
 ```
+
+Names must be a single directory name, excluding `.` and `..`. Omit the option
+to use `default`. To choose a directory elsewhere, use `--profile-path PATH`;
+relative paths resolve from the current working directory:
+
+```sh
+cargo run --locked --bin interconnect -- --profile-path /path/to/test-profile
+```
+
+The existing positional directory argument remains supported. Choose only one
+of `--profile`, `--profile-path`, or a positional directory. Run with `--help`
+for all options, including `--config`, `--demo`, and `--version`. Demo ignores
+profile selection and does not resolve or open an account directory.
 
 Profiles contain encrypted SDK stores, [text drafts](architecture/drafts.md), and
 navigation preferences. Directories use `0700`; an OS lock permits one process.

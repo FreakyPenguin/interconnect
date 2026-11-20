@@ -9,6 +9,8 @@ mod avatar_editor;
 mod bookmarks;
 #[path = "interconnect/branding.rs"]
 mod branding;
+#[path = "interconnect/cli.rs"]
+mod cli;
 #[path = "interconnect/composer.rs"]
 mod composer;
 #[path = "interconnect/composer_editor.rs"]
@@ -139,6 +141,7 @@ mod verification;
 #[path = "interconnect/space_settings.rs"]
 mod space_settings;
 
+use clap::Parser;
 use context_menu::space_management;
 use iced::{
     Element, Length, Subscription, Task,
@@ -378,7 +381,7 @@ enum Message {
 }
 impl App {
     fn new() -> Self {
-        let mut app = Self {
+        Self {
             bookmarks: bookmarks::State::default(),
             global_search: global_search::State::default(),
             settings: settings::State::default(),
@@ -455,29 +458,28 @@ impl App {
             direct_request: None,
             creation_cancel: None,
             pending_created_room: None,
-        };
-        if std::env::args().any(|arg| arg == "--demo") {
-            app.model.authentication = None;
-            app.model.bookmarks.complete = true;
-            app.demo = Some(demo::Demo::default());
-            app.model.rooms = demo::rooms().into();
-            app.model.presence = demo::presence().into();
-            app.model.sections = demo::sections().into();
-            app.model.spaces = demo::spaces().into();
-            app.model.invitations = vec![interconnect::room_membership::Invitation {
-                id: "!invitation:example.org".into(),
-                name: "Weekend plans".into(),
-                inviter: Some("@maya:example.org".into()),
-                space: false,
-            }]
-            .into();
-            app.shell.space = Scope::Space("studio-space".into());
-            app.model.status = "Design preview · local sample data".into();
-            app.model.images = demo::images();
-            app.local_inline = demo::inline_assets();
-            let _ = app.update(Message::Room("studio".into()));
         }
-        app
+    }
+    fn enable_demo(&mut self) {
+        self.model.authentication = None;
+        self.model.bookmarks.complete = true;
+        self.demo = Some(demo::Demo::default());
+        self.model.rooms = demo::rooms().into();
+        self.model.presence = demo::presence().into();
+        self.model.sections = demo::sections().into();
+        self.model.spaces = demo::spaces().into();
+        self.model.invitations = vec![interconnect::room_membership::Invitation {
+            id: "!invitation:example.org".into(),
+            name: "Weekend plans".into(),
+            inviter: Some("@maya:example.org".into()),
+            space: false,
+        }]
+        .into();
+        self.shell.space = Scope::Space("studio-space".into());
+        self.model.status = "Design preview · local sample data".into();
+        self.model.images = demo::images();
+        self.local_inline = demo::inline_assets();
+        let _ = self.update(Message::Room("studio".into()));
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
@@ -4091,36 +4093,10 @@ fn run_ui(run: impl FnOnce() -> iced::Result) -> anyhow::Result<()> {
     cleanup
 }
 
-fn profile_argument(arguments: impl Iterator<Item = String>) -> anyhow::Result<String> {
-    let mut arguments = arguments;
-    while let Some(argument) = arguments.next() {
-        if argument == "--config" {
-            arguments.next();
-        } else if !argument.starts_with("--") {
-            return Ok(argument);
-        }
-    }
-    interconnect::session::default_profile_directory()
-}
-
 fn main() -> anyhow::Result<()> {
-    let mut arguments = std::env::args().skip(1);
-    let mut config = None;
-    while let Some(argument) = arguments.next() {
-        if argument == "--config" {
-            config =
-                Some(std::path::PathBuf::from(arguments.next().ok_or_else(
-                    || anyhow::anyhow!("--config requires a file path"),
-                )?));
-        }
-    }
-    let demo = std::env::args().any(|argument| argument == "--demo");
-    let profile = if demo {
-        String::new()
-    } else {
-        profile_argument(std::env::args().skip(1))?
-    };
-    let startup = settings::Startup::load(config, demo);
+    let arguments = cli::Arguments::parse();
+    let profile = arguments.profile_directory()?;
+    let startup = settings::Startup::load(arguments.config, arguments.demo);
     configure_graphics_environment(&startup.graphics())?;
     interconnect::init_tracing();
     run_ui(|| {
@@ -4187,24 +4163,6 @@ fn test_renderer(font: iced::Font, size: iced::Pixels) -> iced::Renderer {
 mod tests {
     use super::*;
     use std::sync::Arc;
-
-    #[test]
-    fn profile_argument_preserves_explicit_paths_and_skips_config_values() {
-        for args in [
-            vec!["/custom/profile"],
-            vec!["--config", "/settings.toml", "/custom/profile"],
-            vec!["/custom/profile", "--config", "/settings.toml"],
-        ] {
-            assert_eq!(
-                profile_argument(args.into_iter().map(String::from)).unwrap(),
-                "/custom/profile"
-            );
-        }
-        assert_eq!(
-            profile_argument(["--config", "/settings.toml"].into_iter().map(String::from)).unwrap(),
-            interconnect::session::default_profile_directory().unwrap()
-        );
-    }
 
     #[test]
     fn graphics_environment_child() {

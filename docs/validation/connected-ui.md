@@ -3,6 +3,23 @@
 Run the [development checks](../development.md#build-and-checks) and a locked desktop
 build first. These are acceptance procedures, not completed-run records.
 
+## Command-line startup
+
+- Run `target/debug/interconnect --help` (or `-h`) and `--version` without a
+  display, `HOME`, or XDG directories: exit successfully without reading settings,
+  creating profiles, opening credential storage, or starting the UI.
+- Check missing option values, unknown flags, multiple profile selectors, and
+  extra positional arguments: fail before startup with a useful error.
+- Named-profile resolution and invalid names are covered by headless unit tests:
+  `--profile work` uses the platform profiles directory, retaining the XDG/HOME
+  fallback and macOS Application Support behavior. Paths containing separators,
+  empty names, `.` and `..` must not escape that directory.
+- With an authorized test account, verify `--profile-path PATH` and the legacy
+  positional directory select the same profile, including relative paths and
+  paths with spaces. `--config FILE` must remain independent of profile selection.
+- Demo must ignore profile/configuration paths and use sample data without
+  resolving account storage, including when `HOME` and XDG directories are absent.
+
 ## Demo checks
 
 ```sh
