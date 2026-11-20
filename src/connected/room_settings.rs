@@ -1,4 +1,5 @@
 //! On-demand room settings. Explicit writes retain their runtime-owned room.
+pub mod addresses;
 use super::{Composer, RuntimeOwned};
 use matrix_sdk::{
     RoomState,
@@ -51,6 +52,7 @@ impl std::fmt::Debug for Control {
 #[derive(Clone, Debug)]
 pub struct Settings {
     pub avatar: crate::room_avatar::Details,
+    pub addresses: Result<addresses::Addresses, String>,
     pub control: Option<Control>,
     pub name: String,
     pub topic: String,
@@ -63,6 +65,7 @@ pub struct Settings {
 }
 #[derive(Clone, Debug)]
 pub enum Change {
+    Address(addresses::Change),
     Name(String, String),
     Topic(String, String),
     Notifications(Notifications, Notifications),
@@ -74,6 +77,7 @@ impl Composer {
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
             let mut settings = self.read_room_settings(control).await?;
             settings.avatar.url = crate::room_avatar::current(self.0.room()).await?;
+            settings.addresses = addresses::read(self.0.room()).await;
             Ok(settings)
         })
         .await
@@ -101,6 +105,7 @@ impl Composer {
             )
             .await;
         Ok(Settings {
+            addresses: Err("Addresses have not loaded. Try Reload.".into()),
             avatar: crate::room_avatar::Details {
                 url: room.avatar_url(),
                 editable: levels
@@ -141,10 +146,14 @@ impl Composer {
         change: Change,
         control: Option<Control>,
     ) -> Result<(), String> {
+        if let Change::Address(change) = change {
+            return addresses::save(self.0.room(), change).await;
+        }
         let update = async {
             let current = self.read_room_settings(control).await?;
             let room = self.0.room();
             let (unchanged, allowed) = match &change {
+                Change::Address(_) => unreachable!(),
                 Change::Name(before, _) => (current.name == *before, current.editable[0]),
                 Change::Topic(before, _) => (current.topic == *before, current.editable[1]),
                 Change::Notifications(before, _) => (current.notifications == *before, true),
@@ -158,6 +167,7 @@ impl Composer {
                 return Err("This setting changed. Reload before saving again.".into());
             }
             match change {
+                Change::Address(_) => unreachable!(),
                 Change::Name(_, value) => {
                     room.set_name(value).await.map_err(|e| e.to_string())?;
                 }
@@ -290,10 +300,278 @@ mod tests {
             )
             .mount(&server)
             .await;
+        for (endpoint, content) in [
+            (".*/state/m.room.canonical_alias/?", json!({})),
+            (".*/aliases", json!({"aliases":[]})),
+            (".*/directory/list/room/.*", json!({"visibility":"private"})),
+            (
+                ".*/state/m.room.power_levels/?",
+                json!({"users":{"@test:example.org":power},"state_default":50}),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path_regex(endpoint))
+                .respond_with(ResponseTemplate::new(200).set_body_json(content))
+                .with_priority(10)
+                .mount(&server)
+                .await;
+        }
         let composer = Composer(RuntimeOwned::new(Arc::new(
             TimelineBuilder::new(&room).build().await.unwrap(),
         )));
         (server, composer)
+    }
+
+    #[tokio::test]
+    async fn address_writes_preserve_alternatives_and_use_separate_directory_endpoints() {
+        use addresses::{Change as Edit, Published};
+        let (server, composer) = fixture(100).await;
+        let alias = matrix_sdk::ruma::owned_room_alias_id!("#friendly:example.org");
+        let other = matrix_sdk::ruma::owned_room_alias_id!("#other:example.org");
+        let snapshot = composer.clone().room_settings(None).await.unwrap();
+        let loaded = snapshot.addresses.unwrap();
+        assert!(loaded.editable);
+        assert_eq!(loaded.server, "example.org");
+        assert_eq!(loaded.directory, Ok(false));
+        assert_eq!(loaded.local, Ok(vec![]));
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/directory/room/.*"))
+            .and(body_json(json!({"room_id":"!room:example.org"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        composer
+            .clone()
+            .change_room_setting(Change::Address(Edit::AddLocal(alias.clone())), None)
+            .await
+            .unwrap();
+        Mock::given(method("GET"))
+            .and(path_regex(".*/directory/room/.*"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!({"room_id":"!room:example.org","servers":["example.org"]}),
+                ),
+            )
+            .mount(&server)
+            .await;
+        let before = Published {
+            main: Some(other.clone()),
+            alternatives: vec![],
+        };
+        let after = Published {
+            main: Some(alias.clone()),
+            alternatives: vec![other.clone()],
+        };
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.canonical_alias/?"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"alias":other})))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/state/m.room.canonical_alias/?"))
+            .and(body_json(json!({"alias":alias,"alt_aliases":[other]})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id":"$alias"})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        composer
+            .clone()
+            .change_room_setting(Change::Address(Edit::Published(before, after)), None)
+            .await
+            .unwrap();
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/directory/list/room/.*"))
+            .and(body_json(json!({"visibility":"public"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        composer
+            .clone()
+            .change_room_setting(Change::Address(Edit::Directory(false, true)), None)
+            .await
+            .unwrap();
+        // Deletion is allowed only after the address has been unpublished and still resolves here.
+        Mock::given(method("DELETE"))
+            .and(path_regex(".*/directory/room/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        composer
+            .change_room_setting(Change::Address(Edit::RemoveLocal(alias)), None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn address_conflicts_permissions_and_wrong_room_prevent_writes() {
+        use addresses::{Change as Edit, Published};
+        let (server, composer) = fixture(100).await;
+        let alias = matrix_sdk::ruma::owned_room_alias_id!("#friendly:example.org");
+        let value = Published {
+            main: Some(alias.clone()),
+            alternatives: vec![],
+        };
+        Mock::given(method("GET"))
+            .and(path_regex(".*/directory/room/.*"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"room_id":"!room:example.org","servers":[]})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.power_levels/?"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"users":{"@test:example.org":0},"state_default":50})),
+            )
+            .with_priority(3)
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        assert!(
+            composer
+                .clone()
+                .change_room_setting(
+                    Change::Address(Edit::Published(Published::default(), value.clone())),
+                    None
+                )
+                .await
+                .unwrap_err()
+                .contains("permission")
+        );
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.power_levels/?"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"users":{"@test:example.org":100}})),
+            )
+            .mount(&server)
+            .await;
+        assert!(
+            composer
+                .clone()
+                .change_room_setting(
+                    Change::Address(Edit::Published(value.clone(), Published::default())),
+                    None
+                )
+                .await
+                .unwrap_err()
+                .contains("Reload")
+        );
+        assert!(
+            composer
+                .clone()
+                .change_room_setting(Change::Address(Edit::Directory(true, false)), None)
+                .await
+                .unwrap_err()
+                .contains("Reload")
+        );
+        Mock::given(method("GET"))
+            .and(path_regex(".*/directory/room/.*"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"room_id":"!elsewhere:example.org","servers":[]})),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        assert!(
+            composer
+                .clone()
+                .change_room_setting(
+                    Change::Address(Edit::Published(Published::default(), value.clone())),
+                    None
+                )
+                .await
+                .unwrap_err()
+                .contains("another room")
+        );
+        assert!(
+            composer
+                .clone()
+                .change_room_setting(Change::Address(Edit::RemoveLocal(alias.clone())), None)
+                .await
+                .unwrap_err()
+                .contains("another room")
+        );
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.canonical_alias/?"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"alias":alias})))
+            .mount(&server)
+            .await;
+        assert!(
+            composer
+                .change_room_setting(Change::Address(Edit::RemoveLocal(alias)), None)
+                .await
+                .unwrap_err()
+                .contains("Unpublish")
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| r.url.path().contains("/directory/")
+                    || r.url.path().contains("/state/m.room.canonical_alias"))
+                .all(|r| r.method == "GET")
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_address_endpoints_do_not_block_metadata_and_writes_do_not_retry() {
+        use addresses::Change as Edit;
+        let (server, composer) = fixture(100).await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*/aliases"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({"errcode":"M_FORBIDDEN","error":"Denied"})),
+            )
+            .mount(&server)
+            .await;
+        let settings = composer.clone().room_settings(None).await.unwrap();
+        assert_eq!(settings.name, "Original");
+        let loaded = settings.addresses.unwrap();
+        assert!(loaded.local.is_err());
+        assert_eq!(loaded.directory, Ok(false));
+        Mock::given(method("GET"))
+            .and(path_regex(".*/state/m.room.canonical_alias/?"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({"errcode":"M_FORBIDDEN","error":"Denied"})),
+            )
+            .mount(&server)
+            .await;
+        assert!(
+            composer
+                .clone()
+                .room_settings(None)
+                .await
+                .unwrap()
+                .addresses
+                .is_err()
+        );
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/directory/list/room/.*"))
+            .respond_with(
+                ResponseTemplate::new(500)
+                    .set_body_json(json!({"errcode":"M_UNKNOWN","error":"Failed"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(
+            composer
+                .change_room_setting(Change::Address(Edit::Directory(false, true)), None)
+                .await
+                .unwrap_err()
+                .contains("Reload before retrying")
+        );
     }
 
     #[tokio::test]

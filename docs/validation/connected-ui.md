@@ -341,6 +341,43 @@ stay read-only. Room notification overrides sync across clients; returning to
 account defaults works. History visibility must not promise old keys. Hidden
 conversation panes must not issue read receipts or demand visible-message media.
 
+Room settings also manage **Published Addresses** and **Local Addresses**:
+
+- Both address inputs show a fixed `#` prefix outside the text box, with no hash
+  in the placeholder. Typing or pasting a leading hash must not duplicate it.
+- Add a local address using a localpart or full alias. The suffix comes from the
+  account's Matrix server name, including any port, rather than its API URL.
+  Reject foreign-server aliases, empty/invalid input, and duplicates. Check an
+  occupied address, server policy denial, and offline failure with a test server.
+- Publish an existing alias, choose/clear the main address, and unpublish it.
+  Publishing resolves every retained address to this room and checks fresh
+  canonical-alias permissions/state before writing. Preserve other published
+  aliases when changing the main address. An alias on another server must first
+  be created there; publishing never creates or deletes an alias mapping.
+- Toggle this account server's public directory listing independently of join
+  rules, history visibility, and aliases. Server policy authorizes directory and
+  local-alias writes; canonical-alias power levels authorize publication.
+- Unpublish a local address before removing it. Removal requires an explicit
+  confirmation explaining that existing links will stop working. Cancel must not
+  delete anything. Recheck that the alias still resolves to this room before
+  deletion. Matrix offers no compare-and-swap for alias mappings or room state;
+  changes between the check and write remain possible.
+- Deny alias/directory reads: unavailable controls show an error while other room
+  settings remain usable. Close/switch during reads and saves; late results must
+  not replace another panel. Keep unrelated unsaved settings and conversation
+  drafts/scroll positions. Address writes have a 30-second deadline and disable
+  automatic retries; after an uncertain response, Reload before retrying.
+- Demo: add `friendly` locally, publish it, select it as the main address, toggle
+  the directory, and reopen. Changes persist per room for the demo session only.
+  Unpublish, then confirm local removal. Demo rejects publishing an address that
+  has not been created in its in-memory local list and performs no network calls.
+
+Automated fixtures cover parsing (including ports), permission loss, conflicting
+state, aliases resolving elsewhere, preserved alternatives, distinct Matrix
+write endpoints, unavailable reads, no write retries, demo state/confirmation,
+keyboard focus, and static carets. Live-server policy/federation, native desktop,
+macOS layout, and CPU/wakeup measurements remain dedicated-profile checks.
+
 ### Conversation and space creation
 
 - From Home, create private/public root spaces with no parent/link writes; from a

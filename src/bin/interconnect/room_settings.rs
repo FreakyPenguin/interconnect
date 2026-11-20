@@ -1,4 +1,6 @@
 //! Room-bound settings with bounded asynchronous loads and serialized writes.
+#[path = "room_settings/addresses.rs"]
+mod addresses;
 use super::avatar_editor;
 use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
 use iced::{
@@ -7,7 +9,10 @@ use iced::{
         button, column, container, mouse_area, opaque, pick_list, row, scrollable, text, text_input,
     },
 };
-use interconnect::connected::room_settings::{Change, Control, Notifications, Settings};
+use interconnect::connected::room_settings::{
+    Change, Control, Notifications, Settings,
+    addresses::{Addresses, Change as AddressChange},
+};
 use interconnect::room_avatar::{Details, Upload};
 use matrix_sdk::ruma::OwnedMxcUri;
 use matrix_sdk::ruma::events::room::{history_visibility::HistoryVisibility, join_rules::JoinRule};
@@ -32,6 +37,7 @@ impl State {
 }
 struct Panel {
     avatar: avatar_editor::State,
+    addresses: addresses::Editor,
     target: (u64, String),
     request: u64,
     pending: bool,
@@ -43,6 +49,8 @@ struct Panel {
 }
 #[derive(Clone, Debug)]
 pub enum Event {
+    Addresses(addresses::Event),
+    Commit(Change),
     Avatar(u64, avatar_editor::Event),
     AvatarSaved(u64, Option<Upload>, Result<Option<OwnedMxcUri>, String>),
     Open(String),
@@ -66,6 +74,11 @@ fn message(event: Event) -> Message {
 }
 fn apply(settings: &mut Settings, change: &Change) {
     match change {
+        Change::Address(change) => {
+            if let Ok(addresses) = &mut settings.addresses {
+                addresses.apply(change);
+            }
+        }
         Change::Name(_, value) => settings.name = value.clone(),
         Change::Topic(_, value) => settings.topic = value.clone(),
         Change::Notifications(_, value) => settings.notifications = *value,
@@ -229,6 +242,7 @@ impl App {
                 self.generation += 1;
                 self.room_settings.panel = Some(Panel {
                     avatar: avatar_editor::State::default(),
+                    addresses: addresses::Editor::default(),
                     target: self.selection.room.clone().unwrap(),
                     request: self.generation,
                     pending: false,
@@ -276,6 +290,7 @@ impl App {
                 self.generation += 1;
                 panel.request = self.generation;
                 panel.avatar = avatar_editor::State::default();
+                panel.addresses = addresses::Editor::default();
                 panel.error = None;
                 panel.success = false;
                 if self.demo.is_some() {
@@ -291,6 +306,7 @@ impl App {
                             .get(&room.id)
                             .cloned()
                             .unwrap_or(Settings {
+                                addresses: Ok(Addresses::demo(room.can_edit_topic)),
                                 avatar: Details {
                                     url: None,
                                     editable: room.can_edit_topic,
@@ -362,6 +378,12 @@ impl App {
                             if let Some(saved) = &mut panel.saved {
                                 apply(saved, &change);
                             }
+                            if let Change::Address(address) = &change {
+                                if let Some(draft) = &mut panel.draft {
+                                    apply(draft, &change);
+                                }
+                                panel.addresses.saved(address);
+                            }
                             panel.success = true;
                         }
                         Err(error) => panel.error = Some(error),
@@ -401,10 +423,71 @@ impl App {
                     }
                     _ => return Task::none(),
                 };
+                return self.room_settings_event(Event::Commit(change));
+            }
+            Event::Addresses(event) => {
+                let Some(panel) = &mut self.room_settings.panel else {
+                    return Task::none();
+                };
+                if panel.pending
+                    || panel.avatar.is_picking()
+                    || self.room_settings.busy.contains(&panel.target.1)
+                    || self.pending_ops >= MAX_PENDING_OPERATIONS
+                {
+                    return Task::none();
+                }
+                let Some(Ok(saved)) = panel.saved.as_ref().map(|s| &s.addresses) else {
+                    return Task::none();
+                };
+                panel.success = false;
+                panel.error = None;
+                match panel.addresses.update(saved, event) {
+                    Ok(Some(change)) => {
+                        return self.room_settings_event(Event::Commit(Change::Address(change)));
+                    }
+                    Err(error) => panel.error = Some(error),
+                    Ok(None) => {}
+                }
+            }
+            Event::Commit(change) => {
+                let Some(panel) = &mut self.room_settings.panel else {
+                    return Task::none();
+                };
+                if panel.pending
+                    || panel.avatar.is_picking()
+                    || self.room_settings.busy.contains(&panel.target.1)
+                    || self.pending_ops >= MAX_PENDING_OPERATIONS
+                    || panel.saved.is_none()
+                {
+                    return Task::none();
+                }
                 panel.error = None;
                 panel.success = false;
                 if self.demo.is_some() {
+                    if let Change::Address(AddressChange::Published(_, after)) = &change
+                        && panel
+                            .saved
+                            .as_ref()
+                            .and_then(|s| s.addresses.as_ref().ok())
+                            .is_some_and(|s| {
+                                after
+                                    .all()
+                                    .iter()
+                                    .any(|a| !s.local.as_ref().is_ok_and(|l| l.contains(a)))
+                            })
+                    {
+                        panel.error = Some(
+                            "Add this address locally before publishing it in the demo.".into(),
+                        );
+                        return Task::none();
+                    }
                     apply(panel.saved.as_mut().unwrap(), &change);
+                    if let Change::Address(address) = &change {
+                        if let Some(draft) = &mut panel.draft {
+                            apply(draft, &change);
+                        }
+                        panel.addresses.saved(address);
+                    }
                     let settings = panel.saved.as_ref().unwrap();
                     self.room_settings
                         .demo
@@ -565,6 +648,14 @@ impl App {
                 content = content
                     .push(text("Desktop alerts are disabled in application Settings.").size(12));
             }
+            content = content.push(match &saved.addresses {
+                Ok(addresses) => panel
+                    .addresses
+                    .view(addresses, enabled && !panel.avatar.is_picking()),
+                Err(error) => column![shell::title("Room addresses", 15), text(error).size(13)]
+                    .spacing(8)
+                    .into(),
+            });
             content = content.push(shell::title("Security & access", 15));
             content = content.push(text(format!("Encryption: {}", draft.encryption)).size(13));
             let supported = matches!(saved.access, Some(JoinRule::Invite | JoinRule::Public));
@@ -799,6 +890,34 @@ impl std::fmt::Display for History {
     }
 }
 
+fn focus_index<T>(target: usize) -> impl iced::advanced::widget::Operation<T> {
+    struct FocusIndex {
+        target: usize,
+        current: usize,
+    }
+    impl<T> iced::advanced::widget::Operation<T> for FocusIndex {
+        fn focusable(
+            &mut self,
+            _: Option<&iced::advanced::widget::Id>,
+            _: iced::Rectangle,
+            state: &mut dyn iced::advanced::widget::operation::focusable::Focusable,
+        ) {
+            if self.current == self.target {
+                state.focus();
+            } else {
+                state.unfocus();
+            }
+            self.current += 1;
+        }
+        fn traverse(
+            &mut self,
+            operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation<T>),
+        ) {
+            operate(self);
+        }
+    }
+    FocusIndex { target, current: 0 }
+}
 fn focus_step<T: Send + 'static>(backwards: bool) -> impl iced::advanced::widget::Operation<T> {
     use iced::advanced::widget::{
         Operation,
@@ -807,7 +926,7 @@ fn focus_step<T: Send + 'static>(backwards: bool) -> impl iced::advanced::widget
     let next: fn(focusable::Count) -> Box<dyn Operation<T>> = if backwards {
         |count| {
             if count.focused == Some(0) {
-                Box::new(focusable::focus("room-settings-topic".into()))
+                Box::new(focus_index(count.total.saturating_sub(1)))
             } else {
                 Box::new(focusable::focus_previous())
             }
@@ -853,6 +972,122 @@ mod tests {
         let room = app.selection.room.as_ref().unwrap().1.clone();
         let _ = app.update(message(Event::Open(room)));
     }
+    #[test]
+    fn demo_addresses_preserve_other_drafts_and_require_confirmation_for_removal() {
+        use addresses::Event as Edit;
+        let mut app = demo_app();
+        let key = app.draft_key(false).unwrap();
+        app.scroll_positions.insert(key.clone(), 123.0);
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Unsent");
+        open(&mut app);
+        let _ = app.update(message(Event::Name("Unsaved name".into())));
+        let alias = matrix_sdk::ruma::owned_room_alias_id!("#friendly:demo.invalid");
+        // The demo never resolves addresses on the network.
+        for edit in [Edit::Published("friendly".into()), Edit::Publish] {
+            let _ = app.update(message(Event::Addresses(edit)));
+        }
+        assert!(app.room_settings.panel.as_ref().unwrap().error.is_some());
+        for edit in [
+            Edit::Local("friendly".into()),
+            Edit::AddLocal,
+            Edit::Publish,
+            Edit::Main(Some(alias.clone())),
+            Edit::Directory(true),
+        ] {
+            let _ = app.update(message(Event::Addresses(edit)));
+        }
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        let saved = panel.saved.as_ref().unwrap().addresses.as_ref().unwrap();
+        assert_eq!(saved.published.main.as_ref(), Some(&alias));
+        assert_eq!(saved.local, Ok(vec![alias.clone()]));
+        assert_eq!(saved.directory, Ok(true));
+        assert_eq!(panel.draft.as_ref().unwrap().name, "Unsaved name");
+        let _ = app.update(message(Event::Close));
+        open(&mut app);
+        let saved = app
+            .room_settings
+            .panel
+            .as_ref()
+            .unwrap()
+            .saved
+            .as_ref()
+            .unwrap()
+            .addresses
+            .as_ref()
+            .unwrap();
+        assert_eq!(saved.published.main.as_ref(), Some(&alias));
+        assert_eq!(saved.directory, Ok(true));
+        // Published mappings cannot be removed, even by an injected action.
+        for edit in [Edit::Remove(alias.clone()), Edit::ConfirmRemove] {
+            let _ = app.update(message(Event::Addresses(edit)));
+        }
+        assert_eq!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .addresses
+                .as_ref()
+                .unwrap()
+                .local,
+            Ok(vec![alias.clone()])
+        );
+        let _ = app.update(message(Event::Addresses(Edit::Unpublish(alias.clone()))));
+        let _ = app.update(message(Event::Addresses(Edit::Remove(alias.clone()))));
+        assert_eq!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .addresses
+                .as_ref()
+                .unwrap()
+                .local,
+            Ok(vec![alias.clone()])
+        );
+        let _ = app.update(message(Event::Addresses(Edit::ConfirmRemove)));
+        assert_eq!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .addresses
+                .as_ref()
+                .unwrap()
+                .local,
+            Ok(vec![])
+        );
+        assert_eq!(app.drafts[&key].content.text(), "Unsent");
+        assert_eq!(app.scroll_positions[&key], 123.0);
+        let _ = app.update(Message::Room("release".into()));
+        open(&mut app);
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .addresses
+                .as_ref()
+                .unwrap()
+                .published
+                .all()
+                .is_empty()
+        );
+    }
+
     #[tokio::test]
     async fn avatar_drafts_save_separately_and_late_results_release_once() {
         let mut app = demo_app();
@@ -1110,11 +1345,11 @@ mod layout_tests {
                 &renderer,
                 &mut operation::focusable::focus::<()>("room-settings-name".into()),
             );
-            for expected in [Some(0), Some(1), Some(0)] {
+            for expected in [Some(0), Some(1), Some(2), Some(3), Some(0)] {
                 let mut count = operation::map(
                     operation::scope("room-settings-dialog".into(), operation::focusable::count()),
                     move |count| {
-                        assert_eq!(count.total, 2);
+                        assert_eq!(count.total, 4);
                         assert_eq!(count.focused, expected);
                     },
                 );
@@ -1138,6 +1373,32 @@ mod layout_tests {
                         _ => break,
                     }
                 }
+            }
+            for expected in [Some(0), Some(3)] {
+                let mut previous: Box<dyn Operation<()>> = Box::new(focus_step(true));
+                loop {
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        layout::Layout::new(&node),
+                        &renderer,
+                        previous.as_mut(),
+                    );
+                    match previous.finish() {
+                        Outcome::Chain(op) => previous = op,
+                        _ => break,
+                    }
+                }
+                let mut count = operation::map(
+                    operation::scope("room-settings-dialog".into(), operation::focusable::count()),
+                    move |count| assert_eq!(count.focused, expected),
+                );
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut count,
+                );
+                assert!(matches!(count.finish(), Outcome::Some(())));
             }
             let now = iced::time::Instant::now();
             for millis in [0, 750, 1250] {
