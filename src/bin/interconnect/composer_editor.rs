@@ -603,6 +603,75 @@ mod tests {
     use super::*;
     use iced::advanced::{Renderer as _, Widget};
 
+    #[test]
+    fn long_words_wrap_in_room_and_thread_composers_without_changing_drafts() {
+        use interconnect::composition::Format;
+
+        let renderer = crate::test_renderer(iced::Font::with_name("Inter"), iced::Pixels(14.0));
+        for thread in [false, true] {
+            for format in [Format::Plain, Format::Markdown] {
+                for source in [
+                    "abcdefgh0123456789".repeat(24),
+                    format!("Some words before {}", "abcdefgh0123456789".repeat(24)),
+                    "e\u{301}".repeat(200),
+                ] {
+                    let mut app = crate::tests::demo_app();
+                    let _ = app.update(Message::Thread("review".into()));
+                    let key = app.draft_key(thread).unwrap();
+                    app.drafts.get_mut(&key).unwrap().markdown.format = format;
+                    let _ = app.update(Message::Edit(
+                        key.clone(),
+                        text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
+                            source.clone(),
+                        ))),
+                    ));
+                    let _ = app.update(Message::Edit(key.clone(), text_editor::Action::SelectAll));
+                    let content = &app.drafts[&key].content;
+                    let cursor = content.cursor();
+                    let mut tree = Tree::empty();
+                    for width in [300.0, 720.0, 300.0] {
+                        let size = Size::new(width, 480.0);
+                        let mut view = app.pane(thread);
+                        tree.diff(view.as_widget());
+                        view.as_widget_mut().layout(
+                            &mut tree,
+                            &renderer,
+                            &layout::Limits::new(size, size),
+                        );
+                        content.with_editor(|editor| {
+                            let buffer = editor.buffer();
+                            let available = buffer.size().0.unwrap();
+                            let rows = buffer.lines[0].layout_opt().unwrap();
+                            assert!(rows.len() > 1, "long words must wrap: {thread} {format:?}");
+                            let mut covered = vec![false; source.len()];
+                            for row in rows {
+                                assert!(row.w <= available + 0.5, "{row:?} > {available}");
+                                for glyph in &row.glyphs {
+                                    assert!(glyph.x >= -0.5);
+                                    assert!(glyph.x + glyph.w <= available + 0.5);
+                                    covered[glyph.start..glyph.end].fill(true);
+                                }
+                            }
+                            assert!(
+                                source.char_indices().all(|(index, character)| {
+                                    character.is_whitespace()
+                                        || covered[index..index + character.len_utf8()]
+                                            .iter()
+                                            .all(|covered| *covered)
+                                }),
+                                "every character must remain in the wrapped layout"
+                            );
+                            assert!(buffer.layout_runs().any(|run| !run.glyphs.is_empty()));
+                        });
+                        assert_eq!(content.text(), source);
+                        assert_eq!(content.selection().as_deref(), Some(source.as_str()));
+                        assert_eq!(content.cursor(), cursor);
+                    }
+                }
+            }
+        }
+    }
+
     fn editor<'a>(content: &'a text_editor::Content) -> Editor<'a> {
         let key = DraftKey {
             room: "room".into(),

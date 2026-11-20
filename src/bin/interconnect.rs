@@ -3716,6 +3716,7 @@ impl App {
                 .cursor_blinking(false)
                 .height(Length::Fill)
                 .size(14)
+                .wrapping(text::Wrapping::WordOrGlyph)
                 .padding(editor_padding)
                 .style(shell::composer_editor_style)
                 .placeholder(if !draft.attachments.is_empty() {

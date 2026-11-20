@@ -243,6 +243,13 @@ remote sign-out retains them. See [storage boundaries](../architecture/drafts.md
 
 ## Composition and formatting
 
+- In room and thread composers, type/paste words wider than the field, including
+  long identifiers and combining Unicode characters, in Plain text and Markdown
+  modes. They should wrap within the field; resize narrower/wider, scroll through
+  the draft, and select/copy it without losing text or adding hard line breaks.
+  Automated layout coverage checks both panes/modes, glyph bounds/completeness,
+  resizing, and unchanged draft text/selection. Native typing/scrolling acceptance
+  remains a desktop check.
 - Toggle themes with pending drafts/older positions. Check Save/Cancel/Defaults,
   persistence/Reload in a test profile, legacy missing theme, and invalid theme
   retaining the last valid settings. Demo never writes settings.
