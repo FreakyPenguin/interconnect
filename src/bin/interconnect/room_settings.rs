@@ -1002,10 +1002,11 @@ fn setting<'a>(
         _ => unreachable!(),
     };
     let action: Element<'a, Message> = if changed {
-        super::tooltips::icon_button(
-            super::icons::Kind::Check,
+        super::tooltips::icon_action(
+            super::icons::Kind::Save,
             save_label,
             Some(message(Event::Save(field))),
+            shell::primary_button,
         )
         .into()
     } else {
