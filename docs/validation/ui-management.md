@@ -26,3 +26,17 @@ unit tests do not establish server or platform behavior.
   the editor retains its line breaks, and the footer still reports unsaved changes.
 - Confirm error and save messages remain beside the fixed actions rather than
   disappearing below the form. Read-only fields retain readable values.
+
+## Members and destructive actions
+
+- Member-role dropdowns display the current role as a value, including custom
+  roles. Selecting the current role is a no-op; permitted changes require an
+  explicit Change role confirmation.
+- Remove/revoke confirmations appear beside the affected person and use specific
+  action labels. Changing the member filter or page cancels a hidden confirmation.
+- Avatar controls use labeled Choose/Change image and Remove image actions.
+  Discard change and Save image appear only after preparation; selection never
+  uploads until Save image is chosen.
+- Leave/disband space pages keep Back and the final action visible while their
+  consequences scroll, including at 640×480. Disband still requires the exact
+  space name and the original asynchronous permission and partial-failure checks.

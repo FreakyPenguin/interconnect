@@ -339,9 +339,9 @@ impl App {
             shell::title("Destructive actions", 16).style(shell::danger_text),
             text("Leave this space for your account, or disband it for its members. Rooms and subspaces are kept.").size(13),
             row![
-                button(row![icons::icon(Kind::ArrowLeft), text("Leave space…").size(13)].spacing(7)).padding([8, 12]).style(button::danger)
+                button(row![icons::icon(Kind::ArrowLeft), text("Leave space…").size(13)].spacing(7)).padding([8, 12]).style(button::danger).keyboard_navigation(true)
                     .on_press_maybe(available.then_some(event(Event::Prepare(Action::Leave)))),
-                button(row![icons::icon(Kind::Delete), text("Disband space…").size(13)].spacing(7)).padding([8, 12]).style(button::danger)
+                button(row![icons::icon(Kind::Delete), text("Disband space…").size(13)].spacing(7)).padding([8, 12]).style(button::danger).keyboard_navigation(true)
                     .on_press_maybe((available && self.space_can_disband()).then_some(event(Event::Prepare(Action::Disband))))
             ].spacing(10).wrap(),
             text("Disbanding requires permission to close access, unlink rooms, and remove every other member. Protected creators or other administrators can prevent it.").size(12).style(shell::muted_text)
@@ -352,44 +352,55 @@ impl App {
         let state = &panel.exit;
         let action = state.action.unwrap();
         let disband = action == Action::Disband;
-        let mut body = column![
-            row![
-                icons::icon(if disband {
-                    Kind::Delete
+        let title = if disband {
+            "Disband this space?"
+        } else {
+            "Leave this space?"
+        };
+        let header = row![
+            shell::title(title, 20).style(shell::danger_text),
+            iced::widget::space().width(Length::Fill),
+            button(
+                text(if state.pending || state.left {
+                    "Close"
                 } else {
-                    Kind::ArrowLeft
-                }),
-                shell::title(
-                    if disband {
-                        "Disband this space?"
-                    } else {
-                        "Leave this space?"
-                    },
-                    22
-                )
-                .style(shell::danger_text)
-            ]
-            .spacing(10)
-            .align_y(iced::Alignment::Center),
-            text(&panel.id).size(12).style(shell::muted_text),
-            rule::horizontal(1)
+                    "Back to settings"
+                })
+                .size(13)
+            )
+            .padding([7, 10])
+            .style(shell::quiet_button)
+            .keyboard_navigation(true)
+            .on_press(event(Event::Cancel))
         ]
-        .spacing(16);
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        let mut body = column![
+            text(&panel.id)
+                .size(11)
+                .style(shell::muted_text)
+                .wrapping(text::Wrapping::Glyph)
+        ]
+        .spacing(14);
         if let Some(plan) = &state.plan {
             body = body.push(text(&plan.name).size(18));
             if disband {
                 body = body.push(text(format!("This affects {} other joined members, {} pending invitations, {} join requests, and {} direct child links.", plan.members, plan.invitations, plan.knocks, plan.children)).size(13));
+                body = body.push(shell::title("What changes", 15));
                 for explanation in [
                     "• Close public/restricted access and remove this space from your homeserver’s public directory.",
                     "• Remove every other member and revoke pending invitations and join requests in this space.",
                     "• Unlink its direct rooms and subspaces. Those rooms, their messages, and their memberships are preserved.",
                     "• Leave and forget this space for your account after verifying that no other members or active child links remain.",
-                    "Matrix history is retained. References from parent spaces, aliases, and listings on other servers may remain.",
-                    "This cannot be undone as a single action. A failure can leave access, memberships, or links partially changed; reload and review before retrying.",
                 ] {
                     body = body.push(text(explanation).size(13));
                 }
+                body = body.push(shell::title("What stays", 15))
+                    .push(text("Matrix history is retained. References from parent spaces, aliases, and listings on other servers may remain.").size(13))
+                    .push(shell::title("Before you continue", 15))
+                    .push(text("This cannot be undone as a single action. A failure can leave access, memberships, or links partially changed; reload and review before retrying.").size(13));
             } else {
+                body = body.push(shell::title("What changes", 15));
                 for explanation in [
                     "You will leave and forget this space. It will disappear from your joined spaces.",
                     "Other members remain. Child rooms, subspaces, their messages, and your memberships in them are preserved.",
@@ -440,6 +451,7 @@ impl App {
             )
             .padding([8, 12])
             .style(shell::quiet_button)
+            .keyboard_navigation(true)
             .on_press(event(Event::Cancel))
         ]
         .spacing(10);
@@ -448,6 +460,7 @@ impl App {
                 button(text("Retry forgetting").size(13))
                     .padding([8, 12])
                     .style(button::danger)
+                    .keyboard_navigation(true)
                     .on_press_maybe(enabled.then_some(event(Event::RetryForget(state.request)))),
             );
         } else if state.plan.is_none() && !state.pending {
@@ -455,6 +468,7 @@ impl App {
                 button("Reload confirmation")
                     .padding([8, 12])
                     .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press(event(Event::Reload)),
             );
         } else {
@@ -469,6 +483,7 @@ impl App {
                     )
                     .padding([8, 12])
                     .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press(event(Event::Reload)),
                 );
             }
@@ -491,19 +506,26 @@ impl App {
                 )
                 .padding([8, 12])
                 .style(button::danger)
+                .keyboard_navigation(true)
                 .on_press_maybe((enabled && valid).then_some(event(Event::Confirm(state.request)))),
             );
         }
-        body = body.push(actions.wrap());
-        container(
-            scrollable(danger_card(body.into()))
-                .direction(shell::scrollbar())
-                .style(shell::scroll_style),
+        crate::focus_scope::view(
+            column![
+                container(header).padding([18, 24]),
+                rule::horizontal(1),
+                scrollable(container(danger_card(body.into())).padding(24))
+                    .id("space-exit-body")
+                    .height(Length::Fill)
+                    .direction(shell::scrollbar())
+                    .style(shell::scroll_style),
+                rule::horizontal(1),
+                container(actions.wrap()).padding([14, 24]),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill),
+            "space-exit-scope",
         )
-        .padding(28)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
     }
 }
 fn danger_card(content: Element<'_, Message>) -> iced::widget::Container<'_, Message> {

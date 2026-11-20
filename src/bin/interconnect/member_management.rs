@@ -25,6 +25,7 @@ pub(super) struct State {
     load: Option<iced::task::Handle>,
     picker: people_picker::State,
     confirm: Option<MemberChange>,
+    feedback: Option<String>,
 }
 impl State {
     pub(super) fn can_remove_others(&self, own: &str) -> bool {
@@ -62,6 +63,7 @@ pub enum Event {
     Role(String, Role),
     Confirm,
     Cancel,
+    Ignore,
     Loaded(u64, u64, Box<Result<Roster, String>>),
     Saved(u64, u64, MemberChange, Result<(), String>),
 }
@@ -187,6 +189,7 @@ impl App {
                             apply(roster, &change);
                         }
                         panel.members.picker.clear();
+                        panel.members.feedback = Some(change_feedback(&change));
                         panel.success = true;
                     }
                     Err(error) => panel.error = Some(error),
@@ -241,6 +244,7 @@ impl App {
                     return Task::none();
                 }
                 panel.error = None;
+                panel.members.feedback = None;
                 panel.members.confirm = None;
                 self.generation += 1;
                 panel.members.request = self.generation;
@@ -304,10 +308,14 @@ impl App {
                 }
             }
             Event::Search(query) => {
+                panel.members.confirm = None;
                 panel.members.query = query;
                 panel.members.page = 0;
             }
-            Event::Page(page) => panel.members.page = page,
+            Event::Page(page) => {
+                panel.members.confirm = None;
+                panel.members.page = page;
+            }
             Event::Picker(request, picker) if request == session && !panel.pending => {
                 if matches!(picker, people_picker::Event::Submit) {
                     return self.member_management_event(host, Event::Invite);
@@ -332,6 +340,7 @@ impl App {
                     .map(move |picker| host.message(Event::Picker(session, picker)));
             }
             Event::Remove(user) if !panel.pending => {
+                panel.members.feedback = None;
                 if let Some(member) = panel.members.roster.as_ref().and_then(|r| {
                     r.rows
                         .iter()
@@ -344,6 +353,7 @@ impl App {
                 }
             }
             Event::Role(user, role) if !panel.pending => {
+                panel.members.feedback = None;
                 if let Some(member) = panel.members.roster.as_ref().and_then(|r| {
                     r.rows
                         .iter()
@@ -418,6 +428,7 @@ impl App {
                         apply_snapshot(snapshot, &change);
                     }
                     panel.members.picker.clear();
+                    panel.members.feedback = Some(change_feedback(&change));
                     panel.success = true;
                 } else if let Some(control) = panel.control.clone() {
                     self.generation += 1;
@@ -483,16 +494,20 @@ impl App {
                     .size(12),
                 );
             }
-            if panel.success {
-                content = content.push(
-                    text("Saved. Reload permissions before making another role change.").size(12),
-                );
-            }
-            if let Some(change) = &panel.members.confirm {
-                content = content.push(confirmation(change, false, panel.pending, Host::Sidebar));
+            if let Some(feedback) = &panel.members.feedback {
+                content = content.push(text(feedback).size(12).style(shell::muted_text));
             }
         }
         content.into()
+    }
+    pub(crate) fn member_sidebar_confirmation(&self, user: &str) -> Option<Element<'_, Message>> {
+        let panel = self.space_settings.sidebar.as_ref()?;
+        let change = panel
+            .members
+            .confirm
+            .as_ref()
+            .filter(|change| change_user(change) == user)?;
+        Some(confirmation(change, false, panel.pending, Host::Sidebar))
     }
     pub(crate) fn member_management_avatars(&self) -> Vec<matrix_sdk::ruma::OwnedMxcUri> {
         self.space_settings
@@ -552,9 +567,6 @@ impl App {
                 .spacing(8),
             );
         }
-        if let Some(change) = &state.confirm {
-            content = content.push(confirmation(change, panel.space, busy, Host::Panel));
-        }
         content = content.push(
             text_input("Find a member…", &state.query)
                 .cursor_blinking(false)
@@ -584,23 +596,29 @@ impl App {
         for managed in rows.iter().skip(page * PAGE).take(PAGE) {
             let member = &managed.member;
             let identity = column![
-                text(&member.name).size(14).wrapping(text::Wrapping::None),
-                text(&member.user_id)
-                    .size(11)
-                    .style(shell::muted_text)
-                    .wrapping(text::Wrapping::None),
+                super::super::single_line::label(&member.name, 14),
+                super::super::single_line::label(&member.user_id, 11).style(shell::muted_text),
             ]
             .spacing(3)
             .width(Length::Fill);
-            content = content.push(
-                column![
-                    row![identity, member_controls(managed, busy, Host::Panel)]
-                        .spacing(12)
-                        .align_y(iced::Alignment::Center),
-                    rule::horizontal(1),
-                ]
-                .spacing(8),
-            );
+            let mut entry = column![
+                row![identity, member_controls(managed, busy, Host::Panel)]
+                    .spacing(12)
+                    .align_y(iced::Alignment::Center)
+            ]
+            .spacing(10);
+            if let Some(change) = state
+                .confirm
+                .as_ref()
+                .filter(|change| change_user(change) == member.user_id)
+            {
+                entry = entry.push(confirmation(change, panel.space, busy, Host::Panel));
+            }
+            entry = entry.push(rule::horizontal(1));
+            content = content.push(entry);
+        }
+        if let Some(feedback) = &state.feedback {
+            content = content.push(text(feedback).size(13).style(shell::muted_text));
         }
         if rows.is_empty() {
             content = content.push(text("No matching members.").size(13));
@@ -635,15 +653,29 @@ pub(crate) fn member_controls<'a>(
     let member = &managed.member;
     let role: Element<'_, Message> = if !managed.roles.is_empty() && !busy {
         let user = member.user_id.clone();
-        pick_list(managed.roles.clone(), None::<Role>, move |role| {
-            host.message(Event::Role(user.clone(), role))
-        })
-        .placeholder(if member.role.is_empty() {
-            "Member".to_owned()
-        } else {
-            member.role.clone()
+        let current = RoleChoice {
+            label: if member.role.is_empty() {
+                "Member".into()
+            } else {
+                member.role.clone()
+            },
+            role: None,
+        };
+        let choices = std::iter::once(current.clone())
+            .chain(managed.roles.iter().map(|role| RoleChoice {
+                label: role.to_string(),
+                role: Some(*role),
+            }))
+            .collect::<Vec<_>>();
+        pick_list(choices, Some(current), move |choice| {
+            host.message(
+                choice
+                    .role
+                    .map_or(Event::Ignore, |role| Event::Role(user.clone(), role)),
+            )
         })
         .style(shell::select_style)
+        .keyboard_navigation(true)
         .padding([6, 8])
         .width(Length::Fill)
         .text_size(12)
@@ -684,6 +716,39 @@ pub(crate) fn member_controls<'a>(
         .align_y(iced::Alignment::Center)
         .into()
 }
+#[derive(Clone, PartialEq, Eq)]
+struct RoleChoice {
+    label: String,
+    role: Option<Role>,
+}
+impl std::fmt::Display for RoleChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+fn change_user(change: &MemberChange) -> &str {
+    match change {
+        MemberChange::Invite(user)
+        | MemberChange::Remove { user, .. }
+        | MemberChange::Role { user, .. } => user,
+    }
+}
+fn change_feedback(change: &MemberChange) -> String {
+    match change {
+        MemberChange::Invite(user) => format!("Invitation sent to {user}."),
+        MemberChange::Remove {
+            user,
+            invited: true,
+        } => format!("Invitation for {user} revoked."),
+        MemberChange::Remove {
+            user,
+            invited: false,
+        } => format!("{user} removed."),
+        MemberChange::Role { user, role, .. } => {
+            format!("{user} is now {role}. Reload permissions before another role change.")
+        }
+    }
+}
 fn confirmation(
     change: &MemberChange,
     space: bool,
@@ -702,6 +767,13 @@ fn confirmation(
         MemberChange::Role { user, role, .. } => format!("Make {user} {role}?"),
         _ => String::new(),
     };
+    let label = match change {
+        MemberChange::Remove { invited: true, .. } => "Revoke invitation",
+        MemberChange::Remove { invited: false, .. } => "Remove member",
+        MemberChange::Role { .. } => "Change role",
+        MemberChange::Invite(_) => "Send invitation",
+    };
+    let destructive = matches!(change, MemberChange::Remove { .. });
     container(
         column![
             text(description).size(14),
@@ -714,19 +786,25 @@ fn confirmation(
             .style(shell::muted_text),
             row![
                 button(
-                    row![icons::icon(Kind::Check), text("Confirm")]
+                    row![icons::icon(Kind::Check), text(label).size(13)]
                         .spacing(6)
                         .align_y(iced::Alignment::Center)
                 )
-                .style(shell::primary_button)
+                .style(if destructive {
+                    button::danger
+                } else {
+                    shell::primary_button
+                })
+                .keyboard_navigation(true)
                 .on_press_maybe((!busy).then_some(host.message(Event::Confirm))),
-                icon_button(
-                    Kind::Close,
-                    "Cancel change",
-                    (!busy).then_some(host.message(Event::Cancel))
-                )
+                button(text("Cancel").size(13))
+                    .padding([7, 10])
+                    .style(shell::quiet_button)
+                    .keyboard_navigation(true)
+                    .on_press_maybe((!busy).then_some(host.message(Event::Cancel)))
             ]
             .spacing(8)
+            .wrap()
         ]
         .spacing(10),
     )
@@ -763,6 +841,43 @@ mod tests {
         let _ = app.update(Message::Members(crate::members::Event::Open));
         app.space_settings.sidebar.as_ref().unwrap().request
     }
+    #[test]
+    fn member_confirmations_do_not_survive_a_filter_or_page_change() {
+        let mut app = demo_app();
+        open(&mut app, true);
+        let _ = app.update(event(Event::Remove("@maya:example.org".into())));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .members
+                .confirm
+                .is_some()
+        );
+        let _ = app.update(event(Event::Search("Jamie".into())));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .members
+                .confirm
+                .is_none()
+        );
+        let _ = app.update(event(Event::Remove("@maya:example.org".into())));
+        let _ = app.update(event(Event::Page(0)));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .members
+                .confirm
+                .is_none()
+        );
+    }
+
     #[test]
     fn people_sidebar_shares_role_removal_and_invitation_confirmations() {
         let mut app = demo_app();
