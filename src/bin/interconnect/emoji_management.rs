@@ -1883,10 +1883,19 @@ mod tests {
         let _ = app.update(Message::Settings(
             super::super::settings::Event::ShowRoomList(false),
         ));
+        // Keep the fixture scrollable even when Settings uses the larger page
+        // layout. Advanced with presence controls exceeds the small viewport.
+        let _ = app.update(Message::Settings(super::super::settings::Event::Category(
+            super::super::settings::Category::Advanced,
+        )));
+        let _ = app.update(Message::Settings(
+            super::super::settings::Event::PresencePolling(true),
+        ));
         let draft = app.settings.draft.clone();
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         let size = iced::Size::new(640.0, 480.0);
         let mut tree = widget::Tree::empty();
+        let mut saved_offset = None;
         for stage in 0..3 {
             if stage == 1 {
                 open(&mut app);
@@ -1926,7 +1935,13 @@ mod tests {
                     "covered Settings must not expose operations"
                 );
             } else {
-                assert!((read.0.unwrap() - 180.0).abs() < 1.0);
+                let offset = read.0.expect("Settings exposes its scroll position");
+                if stage == 0 {
+                    assert!(offset > 0.0, "fixture must scroll before being covered");
+                    saved_offset = Some(offset);
+                } else {
+                    assert!((offset - saved_offset.unwrap()).abs() < 1.0);
+                }
             }
             assert_eq!(app.settings.draft, draft);
         }
