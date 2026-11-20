@@ -1048,22 +1048,32 @@ pub(super) fn setting_field<'a>(
     save: Message,
     changed: bool,
 ) -> Element<'a, Message> {
+    let action: Element<'a, Message> = if changed {
+        super::tooltips::icon_action(
+            super::icons::Kind::Save,
+            match label {
+                "Name" => "Save name",
+                "Topic" => "Save topic",
+                "Who can join" => "Save access",
+                _ => "Save changes",
+            },
+            Some(save),
+            shell::primary_button,
+        )
+        .into()
+    } else {
+        text("Saved").size(12).style(shell::muted_text).into()
+    };
     column![
         text(label).size(12).style(shell::muted_text),
-        row![
-            container(control).width(Length::Fill),
-            button(text(if changed { "Save" } else { "Saved" }).size(12))
-                .padding([7, 10])
-                .style(shell::quiet_button)
-                .keyboard_navigation(true)
-                .on_press_maybe(changed.then_some(save))
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center)
+        row![container(control).width(Length::Fill), action]
+            .spacing(8)
+            .align_y(iced::Alignment::Center)
     ]
     .spacing(5)
     .into()
 }
+
 fn select<'a, T: Clone + Eq + std::fmt::Display + 'a>(
     values: Vec<T>,
     selected: T,

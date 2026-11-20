@@ -3,6 +3,7 @@ use super::{App, Event as PanelEvent, MAX_PENDING_OPERATIONS, Message, message};
 use crate::{
     icons::{self, Kind},
     shell,
+    tooltips::{icon_action, icon_button},
 };
 use iced::{
     Element, Length, Task,
@@ -358,20 +359,22 @@ impl App {
             "Leave this space?"
         };
         let header = row![
-            shell::title(title, 20).style(shell::danger_text),
-            iced::widget::space().width(Length::Fill),
-            button(
-                text(if state.pending || state.left {
-                    "Close"
+            shell::title(title, 20)
+                .style(shell::danger_text)
+                .width(Length::Fill),
+            icon_button(
+                if state.pending || state.left {
+                    Kind::Close
                 } else {
-                    "Back to settings"
-                })
-                .size(13)
-            )
-            .padding([7, 10])
-            .style(shell::quiet_button)
-            .keyboard_navigation(true)
-            .on_press(event(Event::Cancel))
+                    Kind::ArrowLeft
+                },
+                if state.pending || state.left {
+                    "Close space exit confirmation"
+                } else {
+                    "Back to space settings"
+                },
+                Some(event(Event::Cancel)),
+            ),
         ]
         .spacing(12)
         .align_y(iced::Alignment::Center);
@@ -440,52 +443,38 @@ impl App {
             .as_ref()
             .is_some_and(|p| p.blocked.is_none() && (!disband || state.input == p.name));
         let enabled = !state.pending && !panel.pending && self.pending_ops < MAX_PENDING_OPERATIONS;
-        let mut actions = row![
-            button(
-                text(if state.pending || state.left {
-                    "Close"
-                } else {
-                    "Cancel"
-                })
-                .size(13)
-            )
-            .padding([8, 12])
-            .style(shell::quiet_button)
-            .keyboard_navigation(true)
-            .on_press(event(Event::Cancel))
-        ]
+        let mut actions = row![icon_button(
+            Kind::Close,
+            if state.pending || state.left {
+                "Close space exit confirmation"
+            } else if disband {
+                "Cancel disbanding space"
+            } else {
+                "Cancel leaving space"
+            },
+            Some(event(Event::Cancel)),
+        )]
         .spacing(10);
         if state.left {
-            actions = actions.push(
-                button(text("Retry forgetting").size(13))
-                    .padding([8, 12])
-                    .style(button::danger)
-                    .keyboard_navigation(true)
-                    .on_press_maybe(enabled.then_some(event(Event::RetryForget(state.request)))),
-            );
+            actions = actions.push(icon_action(
+                Kind::Refresh,
+                "Retry forgetting this space",
+                enabled.then_some(event(Event::RetryForget(state.request))),
+                button::danger,
+            ));
         } else if state.plan.is_none() && !state.pending {
-            actions = actions.push(
-                button("Reload confirmation")
-                    .padding([8, 12])
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press(event(Event::Reload)),
-            );
+            actions = actions.push(icon_button(
+                Kind::Refresh,
+                "Reload space exit confirmation",
+                Some(event(Event::Reload)),
+            ));
         } else {
             if !state.pending {
-                actions = actions.push(
-                    button(
-                        row![
-                            icons::icon(Kind::Refresh),
-                            text("Reload confirmation").size(13)
-                        ]
-                        .spacing(6),
-                    )
-                    .padding([8, 12])
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press(event(Event::Reload)),
-                );
+                actions = actions.push(icon_button(
+                    Kind::Refresh,
+                    "Reload space exit confirmation",
+                    Some(event(Event::Reload)),
+                ));
             }
             actions = actions.push(
                 button(
