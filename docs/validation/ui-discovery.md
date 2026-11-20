@@ -1,142 +1,54 @@
 # Discovery and media interface checks
 
-Run the locked desktop build and UI tests before these demo checks. Use
-`cargo run --locked --bin interconnect -- --demo`; do not use a connected account
-for sample content. Check light and dark themes at 1400×900 and 640×480.
+Run the locked build and UI tests, then use demo mode. Check Light/Dark at
+1400×900 and 640×480. Preserve room/thread drafts and older reading positions.
 
 ## Emoji and conversation pickers
 
-- Open the composer or reaction emoji picker. Common emoji and the first custom
-  pack entries appear initially; searching from this category searches all emoji.
-  Choosing a named category limits the search to that category.
-- Check the complete rightmost emoji column at narrow widths. Scroll and page
-  through All emoji, search an exact shortcode or skin-tone sequence, and select
-  without moving focus to an underlying composer or sending a message.
-- Open Emoji packs, filter the selected pack, and change pages. Thumbnail demand
-  is bounded to the current 48 entries and is released on close. Filtering and
-  paging must not schedule animation or polling timers.
-- Add/edit an emoji: Choose image is the primary path; existing MXC URLs are in
-  an explicit optional section. A prepared file is uploaded only when saved.
-  Check cancellation, read-only packs, errors, and an invalid image URL.
-- Change a pack name, new-pack name, or emoji description/shortcode/image. Close
-  or Reload must offer Keep editing / Discard changes. Escape cancels that
-  confirmation; explicit Cancel in the editor discards the edit. An unchanged
-  existing emoji closes directly. Closing during file preparation cancels the
-  read and rejects its late result while retaining the entered fields.
-- Check room/space quick-open and New conversation with empty results, one
-  result, many results, and long names. Short results use a compact card; longer
-  lists scroll within the available window. Arrow/Enter navigation and Escape
-  dismissal retain the conversation's draft and reading position.
-
-Automated regressions exercise emoji-column bounds, exact-key search/selection,
-filtered thumbnail demand, stale picker results, and existing account/cancellation
-behavior. The steps above are manual acceptance procedures, not a completed
-native macOS or connected-server run record.
+- Initial emoji view shows common emoji/custom entries; search covers all emoji.
+  Selecting a category limits search. Check the last column at narrow widths,
+  paging, exact shortcodes, skin tones, keyboard selection, and Escape.
+- Emoji packs filter/page with thumbnail demand limited to the visible 48 entries.
+  Closing releases demand; browsing must not add animation/polling timers.
+- Add/edit using Choose image or optional MXC URL. Only Save uploads. Test invalid
+  URLs, read-only packs, preparation errors/cancellation, and late file results.
+- Dirty Close/Reload/application exit asks Keep editing or Discard changes.
+  Escape keeps editing; explicit Cancel discards the current editor. Nested emoji
+  edits are reviewed before covered Settings. Old prompt actions cannot act again.
+- Room/space pickers and New conversation fit empty, short, long, and Unicode
+  results. Arrow/Enter/Escape preserve conversation state.
 
 ## Search, saved messages, pins, and menus
 
-- Use the sidebar's separate New chat (+) and Create room icons and their
-  Ctrl+N / Ctrl+Shift+N shortcuts (Command on macOS). Hover hints identify each.
-  Tab/Shift+Tab and Enter/Space activate each independently. Space/subspace
-  creation remains in sidebar actions (⋯); Escape returns to that trigger.
-  Removing space-management permission while this menu is open must reject an
-  outdated Create subspace action.
-- Right-click a message and use Save message, then Remove saved message. Verify
-  the actions have the same permission/pending checks as the message toolbar.
-- Search results, saved messages, and pins provide an icon action with a
-  contextual Go to message/reply tooltip; selectable text itself does not navigate. Open an older pin
-  and a pinned thread reply; reject a stale room-generation action.
-- Saved messages show the time they were saved and a persistent range and
-  Previous/Next controls. Remove the last item on the last page: pagination
-  should clamp to the remaining entries rather than show an empty stale page.
-- Create/rename/remove a sidebar section. Inputs and action styling match other
-  forms, and keyboard focus stays inside the popup.
+- New chat and Create room have separate sidebar icons, tooltips, and keyboard
+  actions (Ctrl+N/Ctrl+Shift+N; Command on macOS). Space creation remains in (⋯).
+  Permission loss invalidates an already-open Create subspace action.
+- Context-menu Save/Remove saved message follows toolbar permissions/pending state.
+  Search, saved messages, and pins use explicit Go to message/reply actions;
+  selecting text must not navigate. Open older pins and pinned thread replies.
+- Saved-message paging stays visible; removing the last item clamps the page.
+  Section create/rename/remove keeps focus in its popup.
 
-Automated tests cover pin target validation and draft retention, creation-menu
-permission changes, saving/removing from the context menu, and existing search
-and saved-message navigation behavior.
+## Images and attachments
 
-## Image inspection and attachment actions
+- Open a still/GIF, zoom to 2×/4× fit, pan both ways, then Fit. Reopen fitted.
+  At 640×480, long filenames must not displace zoom and Close controls.
+- Keyboard traversal and Escape return to the conversation. Viewer scrolling
+  must not reach the covered timeline. Open and Save as have distinct tooltips.
+- Still-image inspection adds no periodic deadline. Only explicit GIF Play uses
+  animation deadlines; stop/close/unfocus/navigation cancel playback.
+- Native file picking/opening, clipboard formats, and host portal paths need a
+  desktop-service check; demo screenshots do not establish those integrations.
 
-- Open a still image and an explicitly played GIF. Zoom in to 2× and 4× the fit
-  size, pan with wheel/scrollbars in both directions, then choose Fit. Reopening
-  the viewer starts fitted again. Zoom controls and Close remain visible with
-  long filenames at 640×480.
-- Tab through viewer controls and return to the conversation with Escape. Check
-  that panning cannot scroll the covered conversation.
-- Open and Save as use distinct icons with action tooltips on attachments and in
-  the viewer. Native
-  file selection/opening needs a desktop service; demo captures do not validate
-  host portal access or native macOS file behavior.
-- Zooming/panning a still image must not add an animation subscription or a
-  periodic redraw deadline. GIF playback continues to use only its existing
-  explicit Play/Stop deadlines.
+## Software redraw regression
 
-Automated regressions cover bounded zoom, reset on reopening, minimum-window
-layout, backdrop scroll capture, existing download cancellation, and GIF timing.
+`cargo test --locked --bin interconnect render_damage::` compares incremental
+search-caption rendering with full redraws at 1400×900 and 640×480. It covers
+translated/scaled text groups, empty cached icons replaced by text, and zero
+unchanged-frame damage; see [the renderer patch](../../vendor/iced_tiny_skia/PATCH.md).
+The comparison excludes a separate upstream antialias rounding difference on
+input borders (at most 3/255 per channel). Native/GPU rendering needs its own check.
 
-Application Close/Exit must review the topmost dirty emoji editor before any
-covered application Settings form. Keep editing cancels the transition. After
-explicit discard, remove the emoji dialog before replaying the captured exit so
-that a parent Settings confirmation is visible. Clean dialogs close immediately;
-already-admitted writes keep their independent shutdown bookkeeping. Buffered
-Keep/Discard actions from replaced or reopened confirmations must be ignored.
-
-## Software text redraw regression
-
-`cargo test --locked --bin interconnect render_damage::` checks real software
-renderer layer diffs against a full redraw for search-caption pixels at
-1400×900 and 640×480, including reopening search after changing conversations.
-It also checks text-group translation/scaling, empty cached icon replacement,
-and zero damage for unchanged text. The unchanged-version tiny-skia override
-is documented in `vendor/iced_tiny_skia/PATCH.md`.
-
-The caption regression reproduced missing suffixes before the transform fix and
-passes with the fix. A broader exploratory whole-frame pixel comparison also
-found independent antialias rounding on the search-input perimeter: 1,388
-pixels differed by at most 3/255 per channel, with 1,371 differing by just 1/255.
-Text and input interiors matched. Source inspection points to upstream masked
-versus unmasked blending arithmetic; this is not missing invalidation or text.
-The text regression excludes these borders. Outward pixel rounding did not
-resolve that separate issue and was not included in the patch. Native desktop
-confirmation belongs to the integrated review, not this offscreen test.
-
-## Compact routine actions
-
-Emoji pack editors, room/space creation, section editing, space settings and the
-shared avatar editor use the existing outline icons for routine reload, save,
-cancel, edit, file selection and paging actions. Each icon retains an action
-specific tooltip and opt-in keyboard traversal. Dirty/discard and destructive
-confirmation choices retain explicit text; creation submits and room-pack
-sharing choices also retain wording. Availability and request handling are
-unchanged. Source formatting was checked; integrated Cargo and native checks
-must confirm the compact controls at both window sizes.
-
-The media/search follow-up uses the shared Save glyph for actual writes, keeps
-primary save emphasis, and uses Zoom in/Zoom out/Fit controls in the viewer.
-Attachment Open/Save as actions, saved-message paging and result jumps also use
-icons with contextual tooltips. Search-history choices retain their wording
-because they determine what additional encrypted history is loaded.
-
-The final routine-action audit covers message-edit/reply cancellation, topic
-Save/Cancel, people-search retries, busy chat cancellation, verification device
-refresh/close, recovery close, sign-out draft-save retry, and directory loading.
-Security decisions (matching verification codes, deferring verification,
-recovery-key acknowledgment/replacement), authentication steps, destructive
-confirmation submits and named room-directory tabs keep explicit labels.
-Ordinary cancellation in deletion, sign-out and recovery forms uses a Close
-icon with a contextual tooltip. Login cancellation keeps explicit wording
-because it cancels an external browser/server authentication flow.
-Existing cancel, stale-result and availability guards are preserved.
-
-Source formatting and diff checks pass for the compact-action changes. Cargo
-checks and the integrated desktop review are run by the coordinating agent;
-this isolated action pass did not run Cargo concurrently with that validation.
-
-The inline message-edit cancel icon uses a 24 px hit area and bottom alignment
-so its header stays close to the first edited line. The existing spacing test
-remains unchanged. Edit layout checks identify icon actions by widget IDs and
-exercise actual cancellation in the matching conversation; verification layout
-checks identify footer controls by IDs and require matching focusable bounds
-instead of relying on button text. These follow-up checks await the integrated
-Cargo run.
+Routine save/reload/cancel/paging controls use contextual icon tooltips and keyboard
+focus. Authentication, security decisions, creation, and destructive confirmation
+submits retain explicit wording. Test actual activation as well as visible geometry.

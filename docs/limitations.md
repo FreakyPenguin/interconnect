@@ -56,7 +56,7 @@ compliance checklist.
   no QR verification or verification of other users. See
   [device verification](validation/verification.md).
 - **Account and sessions:** no password changes/reset, account
-  deactivation, profile name/avatar editing, or renaming/revoking other devices.
+  deactivation, or renaming/revoking other devices.
   Login supports password and browser SSO; legacy sync is unsupported.
 - **Room administration:** no alias management, custom power-rule editing,
   encryption changes, initiating room upgrades, or bans/unbans. Restricted/knock access rules

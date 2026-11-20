@@ -1,8 +1,8 @@
 # Settings and account profiles
 
 Open Settings with **Ctrl+,** (macOS: **Command+,**). Settings are application-wide;
-Save applies, Cancel discards edits, Defaults fills defaults, and Reload rereads
-the file. Demo ignores saved settings/accounts, including `--config`.
+Save applies preferences; Close asks before discarding edits. Defaults fills
+defaults, and Advanced → Reload rereads the file. Demo ignores saved settings/accounts, including `--config`.
 
 ## Account profiles
 
@@ -50,6 +50,19 @@ Account menu → **Key backup & recovery…** creates a recovery key, imports an
 existing key, or replaces a saved key after confirmation. New accounts are offered
 setup after registration. Save the key privately before acknowledging it; see
 [key backup and recovery](validation/recovery.md) for backup status and recovery.
+
+## Account profile
+
+Settings → Account edits the signed-in account's display name and avatar.
+**Save display name** and **Save image** publish their fields independently;
+choosing or removing an image only stages a change. Clearing the name restores
+Matrix's default label. These values are visible to other people on Matrix.
+
+Switching categories retains unsaved edits; closing or reloading asks before
+discarding them. Profile saves are separate from the preferences toolbar Save.
+After an uncertain response or a concurrent profile change, Reload profile before
+retrying. Uploading and publishing an avatar are separate operations, so a failed
+save may leave unused media. Demo changes remain in memory for that session.
 
 ## Configuration file
 

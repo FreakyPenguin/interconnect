@@ -35,8 +35,8 @@ Compare all seven emojis or three numbers before **They match**; mismatch/cancel
 otherwise. Completion requires SDK done after both confirmations. Escape cancels
 an active exchange; conversation/drafts survive. Demo is local and changes no trust.
 
-Own-device Unknown/Unverified/Verified status is separate from cross-signing and
-historical keys. No backup/recovery/cross-signing setup UI; SDK owns key forwarding.
+Device trust and historical-key availability are separate. Use
+[key backup and recovery](recovery.md) to import or manage recovery secrets.
 
 The completion dialog offers **Request room keys in the background**, checked by
 default. Close or Escape on that final dialog submits the choice. Interactive
@@ -113,30 +113,13 @@ Use a dedicated account with a trusted second client:
    or repeated pass should run. Measure settled resources after prefetch and SDK
    responses finish, separately from the startup traffic.
 
-UI fixtures cover the one-time sign-in handoff, delayed worker readiness, dismissal,
-failure/retry, saved-session restoration, verified sessions, and shutdown. They do
-not perform live sign-in or verification.
+## Automated coverage
 
-Crypto fixtures exchange real SDK messages between in-memory clients via mock
-servers. They establish local SAS/MAC/cancellation behavior, not live cross-signing,
-server interoperability, key recovery, native fonts, or CPU/wakeups.
-They force both peers to send SAS start before either start is delivered, then
-check matching comparisons, explicit completion on both sides, and one original
-request with no reverse request. They also cover receiving during discovery and
-rejecting a stale device-selection command while an incoming request is pending.
-UI fixtures check that opening an incoming request leaves its revision unchanged,
-hides outgoing device buttons, and that clicking Accept request at 640×480 emits
-acceptance for the existing transaction. These checks do not establish live-server
-or desktop acceptance.
-
-Background-key fixtures use isolated mock homeservers and real SDK cryptography.
-They cover verification/discovery/choice ordering, skipping an unchecked pass,
-verified startup, later discovery
-batches, room filtering and ordering, bounded requests without pagination, failure
-isolation, cancellation, and a deduplicated missing-session request sent by SDK
-sync to the user's own devices. These are not live-client forwarding/recovery or
-desktop CPU/wakeup measurements; the connected procedure above remains manual.
-UI fixtures cover the checked default, stale/closed/wrong-phase toggle rejection,
-and clicking the final checkbox in the scrolling dialog at 640×480. SAS fixtures
-verify that completion waits for the revision-bound final choice, including both
-enabled and disabled choices and duplicate rejection.
+The workspace suite uses real SDK cryptography against isolated mock servers.
+It covers SAS/MAC completion and cancellation, simultaneous-start tie-breaking,
+incoming requests during discovery, stale commands, and the final prefetch choice.
+Background-key tests cover ordering, room filtering, bounded reads, missing-key
+request deduplication, cancellation, and no repeated pass. UI tests cover one-time
+onboarding, safe dismissal, minimum-window controls, and static redraw deadlines.
+Live forwarding/recovery, server interoperability, native fonts, and CPU/wakeups
+remain separate acceptance checks.

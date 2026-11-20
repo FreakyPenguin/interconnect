@@ -27,11 +27,6 @@ Development/test profiles optimize tiny-skia to keep image redraws responsive.
 checks its signature/icon, and tests session lifecycle without Keychain access.
 CI builds do not establish native desktop acceptance.
 
-CI caches dependencies separately per platform/profile; compiler, manifests,
-lockfile, and environment affect reuse. Bump a workflow's cache key after
-incompatible native setup changes. Keep Debian/macOS builds at two jobs for memory.
-Measure cache reuse in Actions logs/timings, not local checks.
-
 ## Running the client
 
 ```sh
@@ -62,23 +57,11 @@ focused on a different workflow:
 | `formatting.png` | Ctrl+P → Message formatting; enter the draft below and click the preview eye. Focus the composer and use Page Up to show the beginning of the timeline with highlighted code. |
 | `search.png` | Ctrl+Shift+F → search for `quiet` and submit to show matches across conversations. |
 
-`keyboard-navigation.gif` is a paced sequence of actual demo captures with key
-labels added below the app. Capture the following states in order, allowing the
-UI to settle after every key press:
-
-1. Initial Design studio room; Alt+T opens its thread.
-2. Ctrl+Shift+P opens the space picker; type `Design`, Down selects Mobile,
-   then Enter filters the sidebar while preserving the room/thread.
-3. Ctrl+P opens the room picker; type `Design studio`, then Enter opens the room.
-   Alt+T returns to its thread.
-4. Ctrl+Shift+F opens account search; type `quiet`, Enter shows results,
-   then Escape returns to the conversation.
-
-Use the same 1440×960 capture area; resize to 1200×800 and append a 76-pixel
-caption/key strip. The GIF has 14 frames held for 1.3–2.8 seconds (26 seconds in
-total), a shared 256-color palette, and no transition effects. Keep source frames
-and intermediate rendering files outside the repository. Verify every capture
-contains only the demo window and inspect the decoded GIF before replacing it.
+`keyboard-navigation.gif` uses captures from the same demo: Alt+T; then
+Ctrl+Shift+P → Design → Down → Enter; Ctrl+P → Design studio → Enter → Alt+T;
+Ctrl+Shift+F → quiet → Enter → Escape. Allow each state to settle. Resize frames
+to 1200×800 and add key labels below the app. Keep intermediates outside the
+repository and inspect decoded frames before replacing the GIF.
 
 The formatting capture uses this unsent draft:
 
@@ -87,10 +70,8 @@ The formatting capture uses this unsent draft:
 $$\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}$$
 ```
 
-These screenshots demonstrate local UI states, not connected-server acceptance
-or draft persistence across restarts. Demo history is already fully included;
-its search view does not exercise encrypted history downloads. See the
-[connected UI guide](validation/connected-ui.md) for those checks.
+Screenshots use demo content only. They do not validate server behavior or
+persistence across restarts.
 
 ## macOS builds
 
@@ -108,8 +89,11 @@ Distribution signing and notarization are not configured.
 
 A debug linker warning about `__eh_frame section too large` can affect unwind
 performance; prefer a release build for desktop checks. The transitive Metal
-`block` dependency can also emit a future-incompatibility warning; inspect it
-with `cargo tree --locked --target aarch64-apple-darwin -i block@0.1.6`.
+`block` 0.1.6 dependency emits an `uninhabited_static` future-incompatibility
+warning. It needs an upstream fix or reviewed backport before Rust rejects it.
+Inspect the dependency with
+`cargo tree --locked --target aarch64-apple-darwin -i block@0.1.6` and the native
+build report with `cargo report future-incompatibilities --package block@0.1.6`.
 
 ### Download a bleeding-edge macOS build
 
@@ -138,8 +122,8 @@ a running desktop session. Installation checks do not launch an account.
 ### Tagged releases
 
 A pushed version tag, optionally prefixed with `v`, must match `Cargo.toml`.
-Tag pushes also call the macOS build workflow. After the macOS build/signature/session
-checks and Debian installation checks pass, the workflow creates a GitHub Release
+Tag pushes run the Linux format/test/Clippy checks and macOS build/signature/session
+checks. After these and Debian installation checks pass, the workflow creates a GitHub Release
 containing an amd64 `.deb`, `interconnect-VERSION-linux-x86_64.tar.gz`,
 `Interconnect-macos-arm64.tar.gz`, and `SHA256SUMS` covering all three downloads.
 Prerelease versions create prereleases and use Debian `~` ordering. Other runs
@@ -149,14 +133,12 @@ Download from **Releases** and verify with `sha256sum --check SHA256SUMS`.
 The Linux tarball uses Debian stable's library baseline and does not bundle graphics
 libraries, fonts, or desktop services. Extract the macOS archive to get
 `Interconnect.app`; it is Apple Silicon only, ad-hoc signed, and not notarized.
-The separate Linux CI workflow is not a publication dependency; confirm its checks
-pass for the release commit before tagging.
 
 To package an existing local release build:
 
 ```sh
 cargo build --locked --release --bin interconnect
-bash scripts/package-linux-release.sh v0.2.0 target/release/interconnect
+bash scripts/package-linux-release.sh v0.3.0 target/release/interconnect
 ```
 
 Use the version matching the manifest. Outputs go to `target/linux-release/`
@@ -164,8 +146,22 @@ and `target/debian/`. Direct Debian packaging uses
 `scripts/package-debian.sh stable VERSION BINARY`.
 
 Version bumps must update `Cargo.toml`, the root entry in `Cargo.lock`, packaging
-examples, and `CFBundleShortVersionString` in `packaging/macos/Info.plist` (numeric
-version only, without the prerelease suffix).
+examples, and both `CFBundleShortVersionString` and `CFBundleVersion` in
+`packaging/macos/Info.plist` (numeric version only, without the prerelease suffix).
+
+### Before tagging
+
+- Run the locked format, build, workspace tests, and Clippy checks above.
+- Inspect demo screenshots and Light/Dark layouts at desktop and 640×480 sizes;
+  check both renderers where available and measure settled visible/hidden idle use.
+- Upgrade a disposable 0.2.0 profile in place: retain device identity, drafts,
+  room organization, and available encrypted history. Test restart/offline resume.
+- Register and recover encrypted history on fresh dedicated profiles; check the
+  recovery key with a second client. Exercise verification in both directions.
+- Test native Linux/macOS credential prompts, notifications, clipboard, and file
+  picking. Build/fixture success does not establish these platform integrations.
+- Package the release binary, inspect archive contents/version/notices, and verify
+  checksums. Keep raw validation artifacts and private account data outside Git.
 
 ## App logo and desktop icons
 

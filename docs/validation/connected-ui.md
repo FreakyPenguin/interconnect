@@ -100,9 +100,6 @@ Check that a retry cannot overlap the previous attempt, and that a queued older
 submission cannot create another device. If browser approval raced cancellation,
 inspect the dedicated account's devices in another client. Registration remains
 subject to its existing partial-account and challenge-cancellation behavior.
-Headless cancellation tests exercise protocol ordering without accessing a real
-keyring or authenticating an account; these desktop checks remain manual.
-
 Use a homeserver with native sliding sync and working native credential storage.
 SSO requires localhost port **8765** forwarded to the browser's host. See
 [profiles](../settings.md#account-profiles) and [container setup](../development.md#using-the-host-secret-service-from-the-container).
@@ -118,13 +115,6 @@ SSO requires localhost port **8765** forwarded to the browser's host. See
    stores must not resume the revoked session.
 
 ### Registration
-
-Headless mock-server tests cover direct/dummy registration, native registration
-tokens and invalid-token retries, multiple browser stages, premature Continue,
-cancellation/dropped attempts, malformed challenges, and common server errors.
-UI tests cover confirmation, mode changes, token/password redaction and clearing,
-duplicate/stale replies, and minimum-window idle layout.
-These fixtures do not establish live server, browser, or native keyring acceptance.
 
 With an authorized disposable account on a server offering native Matrix
 registration and sliding sync, use a new, dedicated profile:
@@ -159,6 +149,16 @@ registration and sliding sync, use a new, dedicated profile:
 OAuth-only/delegated account creation is not implemented by this native
 registration form. Use the homeserver's own account creation page, then return
 to sign in using its supported method.
+
+### Account profile
+
+Settings → Account loads the signed-in name/avatar. Save each field independently
+and confirm it in another client. Check empty/Unicode/long names, avatar selection
+and removal, and conflict detection after another device edits the same field.
+Only Save uploads/publishes; keep unrelated drafts. Deny/stall/lose a response:
+show an error, retain the draft, and require Reload before retrying. Close/reopen
+or switch account during reads/writes; no stale result may replace another form.
+Avatar upload/publication is not atomic and may leave unused media.
 
 ## Native macOS account storage
 
@@ -273,18 +273,10 @@ remote sign-out retains them. See [storage boundaries](../architecture/drafts.md
   Redacted tombstones without a destination still disable composition and explain
   that the replacement is unavailable. Remote upgrades stop typing/completion and
   reject stale composer actions; already admitted writes may finish.
-  Automated layout/state tests cover both panes, missing/failed history, draft
-  retention, navigation, stale links, and shutdown. Mock sync coverage checks
-  cached/live metadata, redaction, serverless room IDs, and captured send/edit
-  rejection without history requests. Native desktop/federation acceptance remains
-  a dedicated-profile check; no connected account was used for this change.
 - In room and thread composers, type/paste words wider than the field, including
   long identifiers and combining Unicode characters, in Plain text and Markdown
   modes. They should wrap within the field; resize narrower/wider, scroll through
   the draft, and select/copy it without losing text or adding hard line breaks.
-  Automated layout coverage checks both panes/modes, glyph bounds/completeness,
-  resizing, and unchanged draft text/selection. Native typing/scrolling acceptance
-  remains a desktop check.
 - Toggle themes with pending drafts/older positions. Check Save/Cancel/Defaults,
   persistence/Reload in a test profile, legacy missing theme, and invalid theme
   retaining the last valid settings. Demo never writes settings.
@@ -348,8 +340,7 @@ Use a second client for server-dependent state and delivery:
   **Open or join room…** opens a joined room or prefills Join without joining.
   Check malformed addresses, routing hints, cancellation, switching back to people
   search, and late people results after entering a room. Preserve conversation,
-  drafts, and scroll positions when cancelling. Automated demo fixtures cover
-  routing and picker state; connected joining remains a live-server check.
+  drafts, and scroll positions when cancelling.
 - Save/remove/page bookmarks and open originals, including unavailable encrypted
   sources and invalid storage. Manage personal/room emoji packs; only Save uploads,
   conflicts require Reload, removal keeps media, and uploads are unencrypted.
@@ -392,12 +383,6 @@ Room settings also manage **Published Addresses** and **Local Addresses**:
   the directory, and reopen. Changes persist per room for the demo session only.
   Unpublish, then confirm local removal. Demo rejects publishing an address that
   has not been created in its in-memory local list and performs no network calls.
-
-Automated fixtures cover parsing (including ports), permission loss, conflicting
-state, aliases resolving elsewhere, preserved alternatives, distinct Matrix
-write endpoints, unavailable reads, no write retries, demo state/confirmation,
-keyboard focus, and static carets. Live-server policy/federation, native desktop,
-macOS layout, and CPU/wakeup measurements remain dedicated-profile checks.
 
 ### Conversation and space creation
 

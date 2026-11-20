@@ -10,13 +10,24 @@ A native desktop [Matrix](https://matrix.org/) client built with Rust,
 [Iced](https://iced.rs/), and the [Matrix Rust SDK](https://github.com/matrix-org/matrix-rust-sdk).
 Minimal UI, organized conversations, and event-driven updates to keep idle CPU low.
 
-Fully AI-coded for personal use and shared as a working prototype. Developed on
+An experimental client, fully AI-coded for personal use. Developed on
 Linux/Wayland; Apple Silicon macOS builds are experimental.
 
 ![Design studio with custom room sections, reactions, pinned messages, and a separate thread pane](docs/images/demo.png)
 
 Keep a room and its thread open together, with separate composers and drafts.
 All screenshots and the keyboard tour below use local demo data.
+
+## New in 0.3.0
+
+- Account registration, recovery-key setup/import/replacement, and a verification
+  prompt after sign-in. Verified devices can request recent room keys in one
+  bounded background pass.
+- Account display-name/avatar editing, room addresses and directory publishing,
+  and navigation from replaced rooms to their successors.
+- Markdown topics, reorganized settings, keyboard-accessible dialogs, and
+  protection for unsaved changes.
+- Named account profiles and HTTP/HTTPS/SOCKS proxy support.
 
 ## A closer look
 
@@ -37,8 +48,7 @@ back to the conversation. On macOS, use **Command** in place of **Ctrl**.
 
 ![Keyboard navigation tour with key presses shown: open a thread, filter by a nested space, switch rooms, search messages, and return to the conversation](docs/images/keyboard-navigation.gif)
 
-The 26-second loop pauses at each step. See [keyboard shortcuts](docs/keyboard.md)
-for the full reference; the still images also show these views.
+See [keyboard shortcuts](docs/keyboard.md) for the full reference.
 
 ### More expressive conversations
 
@@ -55,20 +65,20 @@ Text drafts persist encrypted per room and thread across restarts.
 Search loaded messages in a room or search across the account, combining local
 results with homeserver search where available. Explicitly load older encrypted
 history in batches when you need to look further; results depend on available
-room keys. Open a result at its original room or
-thread, or bookmark messages for an account-wide saved view.
+room keys. Open results in their original room/thread, or bookmark messages
+for an account-wide saved view.
 
 ![Account-wide search for “quiet”, with highlighted matches from multiple conversations](docs/images/search.png)
 
 ## Other features
 
-- Password and browser SSO login, saved sessions, encrypted messaging, and device
-  verification.
+- Password and browser SSO login, saved sessions, encrypted messaging, device
+  verification, and key backup/recovery.
 - Replies, editing, confirmed deletion, reactions, pinned messages, and read receipts.
 - Images and an image viewer, click-to-play GIFs, and attachments via file picker,
   paste, or drag and drop, with save/open actions.
 - Direct chats, room and space creation, public-room discovery, invitations,
-  member roles, room/space avatars, and notification/access settings.
+  member roles, room/space avatars, published addresses, and notification/access settings.
 - Keyboard navigation and quick switching, light/dark themes, desktop
   notifications, and optional presence refresh (off by default).
 
@@ -86,7 +96,7 @@ cargo run --locked --bin interconnect -- --demo
 Demo uses local sample data without saved accounts or network access. Omit `--demo`
 to sign in; the homeserver must support native sliding sync. Account storage
 requires Linux Secret Service or macOS Keychain. One account is supported per
-process; calls are not available yet. New accounts are offered recovery-key setup;
+process. New accounts are offered recovery-key setup;
 existing accounts can manage [key backup and recovery](docs/validation/recovery.md)
 from the account menu.
 
