@@ -528,7 +528,7 @@ impl App {
                         // Reload fills the form. Save is the only operation that
                         // applies an open form, so Cancel remains meaningful.
                         if initial || self.settings.draft.is_none() {
-                            self.settings.current = settings;
+                            self.apply_preferences(settings);
                         }
                         self.settings.store = Some(store);
                         self.settings.error = None;
@@ -547,7 +547,7 @@ impl App {
                     return Task::none();
                 }
                 if self.demo.is_some() {
-                    self.settings.current = settings;
+                    self.apply_preferences(settings);
                     return self.settings_update(Event::RequestClose);
                 }
                 let Some(mut store) = self.settings.store.clone() else {
@@ -579,7 +579,7 @@ impl App {
                 let close = std::mem::take(&mut self.settings.close_after_save);
                 match result {
                     Ok(store) => {
-                        self.settings.current = settings;
+                        self.apply_preferences(settings);
                         self.settings.store = Some(store);
                         self.settings.error = None;
                         if close {
@@ -601,6 +601,22 @@ impl App {
         if self.settings.draft.is_none() || self.settings.saving {
             return false;
         }
+    fn apply_preferences(&mut self, settings: Settings) {
+        let previous = self.settings.current.appearance.interface_scale;
+        let next = settings.appearance.interface_scale;
+        if previous != next
+            && let Some(width) = self.window_width
+        {
+            // Iced changes its logical viewport without a native resize event.
+            // Keep input routing and compact-layout decisions in the same units.
+            let width = width * previous.factor() / next.factor();
+            self.window_width = Some(width);
+            if width >= shell::COMPACT_WIDTH {
+                self.shell.narrow_navigation = false;
+            }
+        }
+        self.settings.current = settings;
+    }
         if self.settings.dirty() {
             self.settings
                 .request_discard(DiscardAction::Transition(Box::new(next)));
@@ -1329,6 +1345,75 @@ mod tests {
             app.settings.current.appearance.interface_scale,
             InterfaceScale::Normal
         );
+    #[test]
+    fn saved_interface_scale_keeps_navigation_and_attachment_routing_in_logical_units() {
+        let mut app = crate::tests::demo_app();
+        let _ = app.update(Message::WindowResized(1200.0));
+        let _ = app.update(Message::Thread("review".into()));
+        let key = app.draft_key(false).unwrap();
+        let generation = app.selection.room.as_ref().unwrap().0;
+        assert!(app.attachment_drop_target(&key, generation).is_some());
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::InterfaceScale(
+            InterfaceScale::Large,
+        )));
+        assert_eq!(
+            app.window_width,
+            Some(1200.0),
+            "staging must not change layout"
+        );
+        let _ = app.update(Message::Settings(Event::Save));
+        assert!((app.window_width.unwrap() - 1200.0 / 1.3).abs() < 0.01);
+        assert!(app.side_panel_replaces_room(app.window_width.unwrap()));
+        assert!(app.attachment_drop_target(&key, generation).is_none());
+
+        // At compact widths the toggle must open narrow navigation, matching
+        // the responsive layout, rather than hiding the wide-layout sidebar.
+        let _ = app.update(Message::CloseThread);
+        let _ = app.update(Message::WindowResized(700.0));
+        app.shell.narrow_navigation = false;
+        let _ = app.update(Message::ToggleNavigation);
+        assert!(app.shell.narrow_navigation);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::Defaults));
+        let _ = app.update(Message::Settings(Event::Save));
+        assert!((app.window_width.unwrap() - 910.0).abs() < 0.01);
+        assert!(
+            !app.shell.narrow_navigation,
+            "returning to wide layout clears its overlay"
+        );
+    }
+
+    #[test]
+    fn loaded_interface_scale_changes_width_only_when_preferences_are_applied() {
+        let mut app = crate::tests::demo_app();
+        let _ = app.update(Message::WindowResized(900.0));
+        let directory = tempfile::tempdir().unwrap();
+        let (store, mut settings) = Store::load(directory.path().join("settings.toml")).unwrap();
+        settings.appearance.interface_scale = InterfaceScale::ExtraLarge;
+        let _ = app.update(Message::Settings(Event::Open));
+        app.settings.busy = true;
+        let _ = app.update(Message::Settings(Event::Loaded(
+            app.settings.request,
+            Ok((store.clone(), settings.clone())),
+        )));
+        assert_eq!(app.window_width, Some(900.0), "reload stages an open form");
+        let _ = app.update(Message::Settings(Event::Save));
+        assert_eq!(app.window_width, Some(600.0));
+        let _ = app.update(Message::ToggleNavigation);
+        assert!(app.shell.narrow_navigation);
+
+        // A background load without an open form applies immediately.
+        app.settings.busy = true;
+        settings.appearance.interface_scale = InterfaceScale::Normal;
+        let _ = app.update(Message::Settings(Event::Loaded(
+            app.settings.request,
+            Ok((store, settings)),
+        )));
+        assert_eq!(app.window_width, Some(900.0));
+        assert!(!app.shell.narrow_navigation);
+    }
+
         assert_eq!(
             app.settings
                 .draft

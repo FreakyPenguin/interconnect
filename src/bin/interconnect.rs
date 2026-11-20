@@ -2966,6 +2966,17 @@ impl App {
             || self.emoji_management.is_some()
             || self.image_view.is_some()
             || self.verification.open;
+        // Keep native appearance tracking active even with explicit app colors.
+        // In particular, a customized macOS window stops emitting theme changes.
+        iced::widget::themer(
+            Some(appearance::theme(self.effective_theme())),
+            self.view_content(),
+        )
+        .text_color(|theme| appearance::palette(theme).ink)
+        .background(|theme| appearance::palette(theme).background.into())
+        .into()
+    }
+    fn view_content(&self) -> Element<'_, Message> {
         let mut layers = iced::widget::stack![dialog::underlay(self.shell_view(), covered)];
         if self.draft_persistence.close_requested {
             return self
@@ -4402,7 +4413,7 @@ fn main() -> anyhow::Result<()> {
             App::view,
         )
         .title("Interconnect")
-        .theme(|app: &App| appearance::theme(app.effective_theme()))
+        .theme(|_: &App| None::<iced::Theme>)
         .scale_factor(|app: &App| app.settings.current.appearance.interface_scale.factor())
         .default_font(iced::Font::with_name("Inter"))
         .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())

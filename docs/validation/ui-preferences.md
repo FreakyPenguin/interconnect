@@ -26,10 +26,16 @@ see [account validation](connected-ui.md#desktop-login).
 - General → Interface size: stage each size, cancel, then save. Save must scale
   room/thread messages, formatted code, composer text, controls, and hit targets
   together; retain drafts and the selected conversation. Resize for larger sizes
-  and verify Settings remains reachable to return to 100%.
+  and verify Settings remains reachable to return to 100%. Without resizing the
+  native window after Save, toggle the compact sidebar and drop files on each
+  visible conversation pane; hidden panes must reject drops. Repeat after Reload
+  and Save and after returning to defaults.
 - Select System and change desktop appearance while reading and while Settings
   has unsaved edits. All message/code/topic and widget colors follow the native
   event without changing the draft. Explicit Light/Dark ignore desktop changes.
+  Switch desktop appearance during an explicit app color choice, then choose
+  System; it must adopt the current appearance and follow subsequent changes.
+  Native window decorations continue following the desktop in every app mode.
   An unavailable desktop preference resolves to Light. Verify no polling appears
   in idle resource measurements.
 
