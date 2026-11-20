@@ -818,14 +818,19 @@ impl App {
         };
         let primary = |label: &'static str, event: Event, enabled: bool| -> Element<'_, Message> {
             let kind = match &event {
-                Event::Rename | Event::SaveImage => Some(super::icons::Kind::Check),
+                Event::Rename | Event::SaveImage => Some(super::icons::Kind::Save),
                 Event::NewImage => Some(super::icons::Kind::Plus),
                 Event::PickFile => Some(super::icons::Kind::Image),
                 _ => None,
             };
             if let Some(kind) = kind {
-                return super::tooltips::icon_button(kind, label, enabled.then(|| message(event)))
-                    .into();
+                return super::tooltips::icon_action(
+                    kind,
+                    label,
+                    enabled.then(|| message(event)),
+                    shell::primary_button,
+                )
+                .into();
             }
             button(text(label).size(13))
                 .padding([7, 14])

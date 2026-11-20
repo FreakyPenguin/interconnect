@@ -165,10 +165,11 @@ impl State {
                         "Discard avatar change",
                         enabled.then_some(Event::Reset),
                     ),
-                    super::tooltips::icon_button(
-                        Kind::Check,
+                    super::tooltips::icon_action(
+                        Kind::Save,
                         "Save avatar image",
                         (available && self.edit.is_some()).then_some(Event::Save),
+                        shell::primary_button,
                     ),
                 ]
                 .spacing(6)

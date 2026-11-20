@@ -2,7 +2,7 @@
 use super::{App, MAX_PENDING_OPERATIONS, Message, reaction_picker::Target, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, row, rule, scrollable, text},
+    widget::{column, container, row, rule, scrollable, text},
 };
 use interconnect::{
     bookmarks::{Entry, Pointer, Preview},
@@ -412,12 +412,11 @@ impl App {
                 .iter()
                 .any(|room| room.id == entry.pointer.room_id)
             {
-                actions = actions.push(
-                    button(text("Go to message").size(12))
-                        .style(shell::quiet_button)
-                        .keyboard_navigation(true)
-                        .on_press(message(Event::Conversation(entry.pointer.clone()))),
-                );
+                actions = actions.push(super::tooltips::icon_button(
+                    super::icons::Kind::OpenExternal,
+                    "Go to saved message",
+                    Some(message(Event::Conversation(entry.pointer.clone()))),
+                ));
             }
             actions = actions.push(super::tooltips::icon_button(
                 super::icons::Kind::BookmarkFilled,
@@ -487,16 +486,16 @@ impl App {
             .size(12)
             .style(shell::muted_text),
             iced::widget::space().width(Length::Fill),
-            button(text("Previous").size(12))
-                .padding([7, 10])
-                .style(shell::quiet_button)
-                .keyboard_navigation(true)
-                .on_press_maybe((start > 0).then_some(message(Event::Previous))),
-            button(text("Next").size(12))
-                .padding([7, 10])
-                .style(shell::quiet_button)
-                .keyboard_navigation(true)
-                .on_press_maybe((start + 20 < total).then_some(message(Event::More))),
+            super::tooltips::icon_button(
+                super::icons::Kind::ChevronLeft,
+                "Previous saved messages",
+                (start > 0).then_some(message(Event::Previous)),
+            ),
+            super::tooltips::icon_button(
+                super::icons::Kind::ChevronRight,
+                "Next saved messages",
+                (start + 20 < total).then_some(message(Event::More)),
+            ),
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center);

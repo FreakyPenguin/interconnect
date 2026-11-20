@@ -4,7 +4,7 @@ use iced::time::Instant;
 use iced::{
     Element, Length, Subscription,
     futures::StreamExt,
-    widget::{button, column, container, image, mouse_area, opaque, row, scrollable, stack, text},
+    widget::{column, container, image, mouse_area, opaque, row, scrollable, stack, text},
 };
 use interconnect::{
     connected::MessageRow, image_media::Key, media::Animation, settings::GifPlayback,
@@ -544,18 +544,16 @@ impl App {
                 ))
                 .width(Length::Fill),
                 row![
-                    button(text("Fit").size(12))
-                        .padding([5, 8])
-                        .style(shell::quiet_button)
-                        .keyboard_navigation(true)
-                        .on_press_maybe((view.zoom > 0).then_some(Message::Image(Event::Fit))),
-                    button(text("−").size(16))
-                        .padding([3, 9])
-                        .style(shell::quiet_button)
-                        .keyboard_navigation(true)
-                        .on_press_maybe(
-                            (view.zoom > 0).then_some(Message::Image(Event::Zoom(false)))
-                        ),
+                    super::tooltips::icon_button(
+                        super::icons::Kind::Fit,
+                        "Fit image to window",
+                        (view.zoom > 0).then_some(Message::Image(Event::Fit)),
+                    ),
+                    super::tooltips::icon_button(
+                        super::icons::Kind::ZoomOut,
+                        "Zoom out",
+                        (view.zoom > 0).then_some(Message::Image(Event::Zoom(false))),
+                    ),
                     text(if view.zoom == 0 {
                         "Fit".into()
                     } else {
@@ -563,14 +561,12 @@ impl App {
                     })
                     .size(12)
                     .style(shell::muted_text),
-                    button(text("+").size(16))
-                        .padding([3, 9])
-                        .style(shell::quiet_button)
-                        .keyboard_navigation(true)
-                        .on_press_maybe(
-                            (view.zoom < 2 && self.model.images.ready.contains_key(&view.original))
-                                .then_some(Message::Image(Event::Zoom(true)))
-                        ),
+                    super::tooltips::icon_button(
+                        super::icons::Kind::ZoomIn,
+                        "Zoom in",
+                        (view.zoom < 2 && self.model.images.ready.contains_key(&view.original))
+                            .then_some(Message::Image(Event::Zoom(true))),
+                    ),
                 ]
                 .spacing(4)
                 .align_y(iced::Alignment::Center),

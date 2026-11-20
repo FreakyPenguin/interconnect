@@ -108,3 +108,9 @@ confirmation choices retain explicit text; creation submits and room-pack
 sharing choices also retain wording. Availability and request handling are
 unchanged. Source formatting was checked; integrated Cargo and native checks
 must confirm the compact controls at both window sizes.
+
+The media/search follow-up uses the shared Save glyph for actual writes, keeps
+primary save emphasis, and uses Zoom in/Zoom out/Fit controls in the viewer.
+Attachment Open/Save as actions, saved-message paging and result jumps also use
+icons with contextual tooltips. Search-history choices retain their wording
+because they determine what additional encrypted history is loaded.

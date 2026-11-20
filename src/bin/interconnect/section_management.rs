@@ -192,14 +192,15 @@ impl App {
             .on_press_maybe(enabled.then(|| message(Event::SaveSection)))
             .into()
         } else {
-            super::tooltips::icon_button(
-                super::icons::Kind::Check,
+            super::tooltips::icon_action(
+                super::icons::Kind::Save,
                 if state.pending.is_some() {
                     "Saving section…"
                 } else {
                     "Save section"
                 },
                 enabled.then(|| message(Event::SaveSection)),
+                shell::primary_button,
             )
             .into()
         };

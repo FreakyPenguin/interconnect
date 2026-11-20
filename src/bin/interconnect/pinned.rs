@@ -139,37 +139,38 @@ impl App {
                 } else {
                     container(icon(Kind::Pin)).width(20).into()
                 };
-            let body = row![
-                icon,
-                column![
-                    row![
-                        presentation::sender_name(
-                            shell::title(&message.display_name, 12),
-                            &message.sender,
-                            self.pinned_chat_action(message),
+            let body =
+                row![
+                    icon,
+                    column![
+                        row![
+                            presentation::sender_name(
+                                shell::title(&message.display_name, 12),
+                                &message.sender,
+                                self.pinned_chat_action(message),
+                            ),
+                            timestamp,
+                            iced::widget::space().width(Length::Fill),
+                            super::tooltips::icon_button(
+                                Kind::OpenExternal,
+                                "Go to pinned message",
+                                message.event_id.as_ref().map(|event| Message::Pinned(
+                                    Event::GoTo(generation, event.clone())
+                                )),
+                            )
+                        ]
+                        .spacing(10),
+                        selectable::message_view_with_assets(
+                            message,
+                            self.inline_assets(),
+                            None,
+                            self.settings.current.appearance.theme
                         ),
-                        timestamp,
-                        iced::widget::space().width(Length::Fill),
-                        button(text("Go to message").size(12))
-                            .padding([4, 7])
-                            .style(shell::quiet_button)
-                            .keyboard_navigation(true)
-                            .on_press_maybe(message.event_id.as_ref().map(
-                                |event| Message::Pinned(Event::GoTo(generation, event.clone()))
-                            ))
                     ]
-                    .spacing(10),
-                    selectable::message_view_with_assets(
-                        message,
-                        self.inline_assets(),
-                        None,
-                        self.settings.current.appearance.theme
-                    ),
+                    .spacing(4)
+                    .width(Length::Fill),
                 ]
-                .spacing(4)
-                .width(Length::Fill),
-            ]
-            .spacing(8);
+                .spacing(8);
             entries = entries.push(self.pin_feedback(body.into(), message, false, generation));
         }
         if let Some(error) = &pins.error {

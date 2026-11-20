@@ -334,28 +334,14 @@ impl App {
             row: message.key.clone(),
             attachment,
         };
-        let mut open = button(
-            row![
-                icons::icon(icons::Kind::OpenExternal),
-                text("Open").size(12)
-            ]
-            .spacing(6)
-            .align_y(iced::Alignment::Center),
-        )
-        .padding([7, 9])
-        .style(shell::quiet_button)
-        .keyboard_navigation(true);
-        let mut save = button(
-            row![
-                icons::icon(icons::Kind::Download),
-                text("Save as…").size(12)
-            ]
-            .spacing(6)
-            .align_y(iced::Alignment::Center),
-        )
-        .padding([7, 9])
-        .style(shell::quiet_button)
-        .keyboard_navigation(true);
+        let mut open = button(icons::icon(icons::Kind::OpenExternal))
+            .padding(7)
+            .style(shell::icon_button)
+            .keyboard_navigation(true);
+        let mut save = button(icons::icon(icons::Kind::Download))
+            .padding(7)
+            .style(shell::icon_button)
+            .keyboard_navigation(true);
         if self.downloads.pending.is_none() && self.download_valid(&target) {
             open = open.on_press(Message::Download(Event::Start(target.clone(), false)));
             save = save.on_press(Message::Download(Event::Start(target.clone(), true)));

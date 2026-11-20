@@ -547,16 +547,13 @@ impl App {
                 .unwrap_or_default();
             let open = super::tooltips::tooltip(
                 container(
-                    button(
-                        text(if hit.thread_root.is_some() {
-                            "Go to reply"
-                        } else {
-                            "Go to message"
-                        })
-                        .size(12),
-                    )
-                    .padding([7, 10])
-                    .style(shell::quiet_button)
+                    button(super::icons::icon(if hit.thread_root.is_some() {
+                        super::icons::Kind::Reply
+                    } else {
+                        super::icons::Kind::OpenExternal
+                    }))
+                    .padding(7)
+                    .style(shell::icon_button)
                     .keyboard_navigation(true)
                     .on_press(message(Event::Conversation(
                         state.epoch,
@@ -618,12 +615,11 @@ impl App {
             }).size(12).style(shell::muted_text));
         }
         if state.deep_loading {
-            history_controls = history_controls.push(
-                button(text("Stop history search").size(13))
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press(message(Event::StopHistory)),
-            );
+            history_controls = history_controls.push(super::tooltips::icon_button(
+                super::icons::Kind::Stop,
+                "Stop history search",
+                Some(message(Event::StopHistory)),
+            ));
         } else if !state.submitted.is_empty() && !state.loading() && state.hits.len() < MAX_RESULTS
         {
             let label = match &state.history {
@@ -668,12 +664,11 @@ impl App {
                     .style(shell::muted_text),
             );
         } else if state.next.is_some() && !state.loading() {
-            entries = entries.push(
-                button(text("Load more results").size(13))
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press(message(Event::More)),
-            );
+            entries = entries.push(super::tooltips::icon_button(
+                super::icons::Kind::ChevronDown,
+                "Load more search results",
+                Some(message(Event::More)),
+            ));
         }
         let controls = column![
             heading,
