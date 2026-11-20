@@ -304,6 +304,12 @@ impl App {
                 );
             }
             Event::RequestClose if !self.settings.saving => {
+                // Escape on a discard prompt keeps editing, matching room,
+                // space, and emoji editors. Never turn a second Escape into
+                // acceptance of the pending close/reload/application exit.
+                if self.settings.confirm_discard.take().is_some() {
+                    return Task::none();
+                }
                 if self.settings.dirty() {
                     self.settings.request_discard(DiscardAction::Close);
                 } else {
@@ -1035,6 +1041,29 @@ mod tests {
     }
 
     #[test]
+    fn escape_from_each_discard_prompt_keeps_the_form_and_cancels_the_transition() {
+        let (_directory, mut app) = loaded_app();
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::Theme(ThemeMode::Dark));
+        let draft = app.settings.draft.clone();
+        for action in [
+            DiscardAction::Close,
+            DiscardAction::Reload,
+            DiscardAction::Transition(Box::new(Message::Close)),
+        ] {
+            app.settings.request_discard(action);
+            let stale = app.settings.confirm_discard.as_ref().unwrap().serial;
+            let _ = app.settings_update(Event::RequestClose);
+            assert!(app.settings.confirm_discard.is_none());
+            assert_eq!(app.settings.draft, draft);
+            assert!(!app.settings.busy && !app.closing);
+            let _ = app.settings_update(Event::DiscardChanges(stale));
+            assert_eq!(app.settings.draft, draft);
+            assert!(!app.settings.busy && !app.closing);
+        }
+    }
+
+    #[test]
     fn focused_duration_input_keeps_a_steady_caret_without_redraw_deadlines() {
         use iced::advanced::{Shell, layout, mouse, widget};
         let mut app = super::super::tests::demo_app();
@@ -1083,6 +1112,12 @@ mod tests {
         assert!(app.guard_settings_transition(Message::Close));
         let old = app.settings.confirm_discard.as_ref().unwrap().serial;
         assert!(!app.closing);
+        let _ = app.settings_update(Event::RequestClose);
+        assert!(
+            app.settings.confirm_discard.is_none(),
+            "Escape keeps editing"
+        );
+        assert!(app.settings.draft.is_some());
         let _ = app.settings_update(Event::RequestClose);
         let current = app.settings.confirm_discard.as_ref().unwrap().serial;
         assert_ne!(old, current);
