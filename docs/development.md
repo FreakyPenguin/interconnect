@@ -180,7 +180,7 @@ application ID/desktop entry is `interconnect`; macOS uses the bundled icon.
 
 ## Renderer selection
 
-Settings → Graphics applies on the next launch. GPU rendering defaults on,
+Settings → Advanced → Graphics applies on the next launch. GPU rendering defaults on,
 trying wgpu with tiny-skia startup fallback. Disabling it forces CPU rendering
 even if `ICED_BACKEND` requests wgpu. Low-power preference supplies
 `WGPU_POWER_PREF=low`, or `high` when disabled; an explicit environment value

@@ -191,6 +191,8 @@ impl App {
                 column![
                     text_input("Find a person…", &self.members.query)
                         .id("member-search")
+                        .style(shell::search_style)
+                        .padding([7, 10])
                         .cursor_blinking(false)
                         .on_input(|q| message(Event::Search(q)))
                         .size(13),
@@ -246,32 +248,34 @@ impl App {
             ]
             .spacing(3)
             .width(Length::Fill);
-            entries = entries
-                .push(
-                    container(
-                        row![
-                            shell::presence_avatar(
-                                &member.name,
-                                avatar,
-                                if member.invited {
-                                    interconnect::connected::Presence::Unknown
-                                } else {
-                                    self.model
-                                        .presence
-                                        .get(&member.user_id)
-                                        .copied()
-                                        .unwrap_or_default()
-                                }
-                            ),
-                            identity,
-                            self.sidebar_member_controls(member)
-                        ]
-                        .spacing(10)
-                        .align_y(iced::Alignment::Center),
-                    )
-                    .padding([12, 16]),
+            entries = entries.push(
+                container(
+                    row![
+                        shell::presence_avatar(
+                            &member.name,
+                            avatar,
+                            if member.invited {
+                                interconnect::connected::Presence::Unknown
+                            } else {
+                                self.model
+                                    .presence
+                                    .get(&member.user_id)
+                                    .copied()
+                                    .unwrap_or_default()
+                            }
+                        ),
+                        identity,
+                        self.sidebar_member_controls(member)
+                    ]
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center),
                 )
-                .push(rule::horizontal(1));
+                .padding([12, 16]),
+            );
+            if let Some(confirmation) = self.member_sidebar_confirmation(&member.user_id) {
+                entries = entries.push(container(confirmation).padding([8, 16]));
+            }
+            entries = entries.push(rule::horizontal(1));
         }
         if filtered == 0 && snapshot.error.is_none() {
             entries = entries.push(
@@ -301,9 +305,11 @@ impl App {
                 .min(filtered.saturating_sub(1) / PAGE_SIZE);
             let mut previous = button(super::icons::icon(super::icons::Kind::ChevronLeft))
                 .padding(7)
+                .keyboard_navigation(true)
                 .style(shell::icon_button);
             let mut next = button(super::icons::icon(super::icons::Kind::ChevronRight))
                 .padding(7)
+                .keyboard_navigation(true)
                 .style(shell::icon_button);
             if page > 0 {
                 previous = previous.on_press(message(Event::Page(page - 1)));

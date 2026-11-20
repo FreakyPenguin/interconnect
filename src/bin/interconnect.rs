@@ -2118,6 +2118,7 @@ impl App {
                 self.selection.event_focus[1] = None;
                 self.pending_scroll[1] = None;
                 self.pending_scroll[0] = Some(self.saved_scroll(false));
+                action_task = iced::widget::operation::focus("room-composer");
             }
             _ => {}
         }
@@ -2805,21 +2806,35 @@ impl App {
         ])
     }
     fn view(&self) -> Element<'_, Message> {
-        if self.draft_persistence.close_requested {
-            return self.draft_close_view();
-        }
-        if self.demo.is_none()
+        if !self.draft_persistence.close_requested
+            && self.demo.is_none()
             && let Some(authentication) = &self.model.authentication
         {
             return self.login_view(authentication);
         }
+        let covered = self.draft_persistence.close_requested
+            || self.sign_out_open
+            || self.membership.open
+            || self.room_settings.is_open()
+            || self.create_room.is_some()
+            || self.new_chat.is_some()
+            || self.room_picker.is_some()
+            || self.settings.draft.is_some()
+            || self.emoji_management.is_some()
+            || self.image_view.is_some()
+            || self.verification.open;
+        let mut layers = iced::widget::stack![dialog::underlay(self.shell_view(), covered)];
+        if self.draft_persistence.close_requested {
+            return self
+                .context_menu_view(self.space_menu_view(layers.push(self.draft_close_view())));
+        }
         if self.sign_out_open {
-            return self.sign_out_view();
+            return self.context_menu_view(self.space_menu_view(layers.push(self.sign_out_view())));
         }
         if self.membership.open {
-            return self.membership_view();
+            return self
+                .context_menu_view(self.space_menu_view(layers.push(self.membership_view())));
         }
-        let mut layers = iced::widget::stack![self.shell_view()];
         if self.room_settings.is_open() {
             layers = layers.push(self.room_settings_view());
         }
@@ -3216,7 +3231,11 @@ impl App {
             .and_then(|(_, id)| self.model.rooms.iter().find(|r| &r.id == id))
             .map(|r| r.name.as_str())
             .unwrap_or("Conversation");
-        let heading = if thread { "Thread" } else { name };
+        let heading = if thread {
+            format!("Thread · {name}")
+        } else {
+            name.to_owned()
+        };
         let mut header = row![single_line::label(heading, 17).font(iced::Font {
             weight: iced::font::Weight::Semibold,
             ..iced::Font::with_name("Inter")
@@ -3242,14 +3261,15 @@ impl App {
         if thread {
             header = header.push(tooltips::tooltip(
                 button(
-                    container(icons::icon(icons::Kind::Close))
-                        .center_x(28)
-                        .center_y(28),
+                    row![icons::icon(icons::Kind::ArrowLeft), text("Room").size(12)]
+                        .spacing(5)
+                        .align_y(iced::Alignment::Center),
                 )
-                .padding(0)
-                .style(shell::icon_button)
+                .keyboard_navigation(true)
+                .padding([5, 7])
+                .style(shell::quiet_button)
                 .on_press(Message::CloseThread),
-                "Close thread",
+                format!("Back to {name}"),
                 iced::widget::tooltip::Position::Bottom,
             ));
         }
@@ -3690,9 +3710,20 @@ impl App {
         let mut message_area = iced::widget::stack![observed];
         if rows.is_empty() {
             let status = if let Some(error) = pane_error {
-                Some(shell::empty_state(
+                Some(shell::empty_state_with_action(
                     "Could not open this conversation",
                     error,
+                    Some(
+                        button(text("Retry opening conversation").size(13))
+                            .keyboard_navigation(true)
+                            .style(shell::quiet_button)
+                            .on_press(if thread {
+                                Message::Thread(selected_id.clone())
+                            } else {
+                                Message::Room(selected_id.clone())
+                            })
+                            .into(),
+                    ),
                 ))
             } else if matches!(history, History::Loading) {
                 Some(shell::empty_state(
@@ -3913,6 +3944,17 @@ impl App {
                 .spacing(2),
                 self.markdown_controls(&key, *generation),
                 iced::widget::space().width(Length::Fill),
+                text(if draft.editing.is_some() {
+                    "Ctrl+Enter"
+                } else {
+                    match shortcut {
+                        interconnect::settings::SendShortcut::CtrlEnter => "Ctrl+Enter",
+                        interconnect::settings::SendShortcut::Enter => "Enter",
+                    }
+                })
+                .size(10)
+                .style(shell::muted_text)
+                .wrapping(iced::widget::text::Wrapping::None),
                 container(send).id("composer-send")
             ]
             .spacing(8)
@@ -6158,6 +6200,82 @@ mod ux_navigation_tests {
             assert!(!app.closing);
             assert!(!app.selection.shutdown);
             assert!(!app.draft_persistence.close_requested);
+        }
+    }
+
+    #[test]
+    fn membership_and_sign_out_keep_the_live_reading_position_beneath_the_dialog() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Offset(Option<f32>);
+        impl widget::Operation for Offset {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("room-timeline")) {
+                    self.0 = Some((content.height - bounds.height).max(0.0) - translation.y);
+                }
+            }
+        }
+        fn inspect(app: &App, tree: &mut widget::Tree, set: bool) -> Option<f32> {
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let mut view = app.view();
+            tree.diff(view.as_widget());
+            let size = iced::Size::new(1240.0, 820.0);
+            let node =
+                view.as_widget_mut()
+                    .layout(tree, &renderer, &layout::Limits::new(size, size));
+            if set {
+                view.as_widget_mut().operate(
+                    tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut widget::operation::scrollable::scroll_to::<()>(
+                        "room-timeline".into(),
+                        iced::widget::operation::AbsoluteOffset {
+                            x: None,
+                            y: Some(120.0),
+                        },
+                    ),
+                );
+            }
+            let mut offset = Offset::default();
+            view.as_widget_mut()
+                .operate(tree, layout::Layout::new(&node), &renderer, &mut offset);
+            offset.0
+        }
+        let mut app = tests::demo_app();
+        let _ = app.update(Message::Room("busy".into()));
+        let mut tree = widget::Tree::empty();
+        assert!((inspect(&app, &mut tree, true).unwrap() - 120.0).abs() < 1.0);
+        for (open, close) in [
+            (
+                Message::Membership(membership::Event::Open),
+                Message::Membership(membership::Event::Close),
+            ),
+            (
+                Message::SignOut(sign_out::Event::Open),
+                Message::SignOut(sign_out::Event::Cancel),
+            ),
+        ] {
+            let _ = app.update(open);
+            assert_eq!(
+                inspect(&app, &mut tree, false),
+                None,
+                "covered timelines must not receive operations"
+            );
+            let label = format!("{close:?}");
+            let _ = app.update(close);
+            let after = inspect(&app, &mut tree, false).unwrap();
+            assert!((after - 120.0).abs() < 1.0, "offset {after} after {label}");
         }
     }
 

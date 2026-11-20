@@ -1053,47 +1053,23 @@ impl App {
             );
         }
 
-        let mut new_chat = button(container(icon(Kind::Plus)).center_x(28).center_y(28))
-            .padding(2)
-            .style(icon_button);
-        if !self.closing && !self.stopped {
-            new_chat = new_chat.on_press(Message::NewChat(super::new_chat::Event::Open));
-        }
-        let shortcut = if cfg!(target_os = "macos") {
-            "New chat (Cmd+N)"
-        } else {
-            "New chat (Ctrl+N)"
-        };
-        let new_chat = super::tooltips::tooltip(
-            super::navigation_control::plain(
-                new_chat,
-                "nav-new-chat",
-                Message::NewChat(super::new_chat::Event::Open),
-            ),
-            shortcut,
-            widget::tooltip::Position::Bottom,
-        );
-        let mut create_room = button(container(icon(Kind::RoomAdd)).center_x(28).center_y(28))
-            .padding(2)
-            .style(icon_button);
-        if !self.closing && !self.stopped {
-            create_room =
-                create_room.on_press(Message::CreateRoom(super::create_room::Event::Open));
-        }
-        let shortcut = if cfg!(target_os = "macos") {
-            "Create room (Cmd+Shift+N)"
-        } else {
-            "Create room (Ctrl+Shift+N)"
-        };
-        let create_room = super::tooltips::tooltip(
-            super::navigation_control::plain(
-                create_room,
-                "nav-create-room",
-                Message::CreateRoom(super::create_room::Event::Open),
-            ),
-            shortcut,
-            widget::tooltip::Position::Bottom,
-        );
+        let create_action = Message::ContextMenu(super::context_menu::Event::Open(
+            super::context_menu::Target::Create,
+            iced::Point::new(12.0, 90.0),
+        ));
+        let create = container(super::navigation_control::plain(
+            button(
+                row![text("New").size(13), sized(Kind::ChevronDown, 12.0)]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+            )
+            .padding([7, 8])
+            .style(quiet_button)
+            .on_press_maybe((!self.closing && !self.stopped).then(|| create_action.clone())),
+            "nav-create-menu",
+            create_action,
+        ))
+        .id("create-menu-button");
         let manage_sections = Message::ContextMenu(super::context_menu::Event::Open(
             super::context_menu::Target::Sections,
             iced::Point::new(
@@ -1125,18 +1101,7 @@ impl App {
                             super::space_settings::Event::FindRooms
                         ))
                     ),
-                    new_chat,
-                    create_room,
-                    super::tooltips::icon_button(
-                        Kind::SpaceAdd,
-                        if matches!(self.shell.space, Scope::Space(_)) {
-                            "Create subspace"
-                        } else {
-                            "Create space"
-                        },
-                        self.can_create_space()
-                            .then_some(Message::CreateRoom(super::create_room::Event::OpenSpace))
-                    ),
+                    create,
                     widget::space().width(Length::Fill),
                     super::tooltips::tooltip(
                         super::navigation_control::plain(

@@ -44,7 +44,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
 pub(super) const LIGHT: Palette = Palette {
     background: Color::WHITE,
     ink: rgb(39, 46, 56),
-    muted: rgb(112, 121, 134),
+    muted: rgb(96, 106, 120),
     accent: rgb(66, 99, 157),
     accent_hover: rgb(57, 87, 143),
     accent_pressed: rgb(49, 75, 124),
@@ -198,6 +198,12 @@ mod tests {
                 assert!(
                     contrast(p.ink, background) >= 4.5,
                     "{mode}: body text on {background:?}"
+                );
+            }
+            for background in [p.background, p.sidebar, p.rail, p.selected, p.editor] {
+                assert!(
+                    contrast(p.muted, background) >= 4.5,
+                    "{mode}: secondary text on {background:?}"
                 );
             }
             for foreground in [p.accent, p.danger, p.room_accent, p.room_wide_accent] {

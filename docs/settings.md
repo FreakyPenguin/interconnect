@@ -188,7 +188,7 @@ including in encrypted rooms.** Remove clears the reference, not uploaded media/
 
 ## Emoji packs
 
-Settings → Emoji packs manages personal/permitted room packs and account-wide
+Settings → Media & emoji → Manage emoji packs manages personal/permitted room packs and account-wide
 room-pack availability. Shortcodes use 1–100 ASCII letters, digits, `_`, or `-`.
 PNG/JPEG/WebP/GIF preparation accepts up to 2 MiB and 4096 px per side; only Save
 uploads. **Emoji media is unencrypted even in encrypted rooms.** Removing an entry

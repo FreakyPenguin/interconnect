@@ -7,15 +7,16 @@ use iced::{
         widget,
     },
 };
+use std::borrow::Cow;
 use unicode_segmentation::UnicodeSegmentation;
 
 type TextStyle<'a> = Box<dyn Fn(&iced::Theme) -> iced::widget::text::Style + 'a>;
 
 type Paragraph = <iced::Renderer as text::Renderer>::Paragraph;
 
-pub(super) fn label(value: &str, size: u32) -> Label<'_> {
+pub(super) fn label<'a>(value: impl Into<Cow<'a, str>>, size: u32) -> Label<'a> {
     Label {
-        value,
+        value: value.into(),
         size: size as f32,
         font: None,
         style: None,
@@ -24,7 +25,7 @@ pub(super) fn label(value: &str, size: u32) -> Label<'_> {
 }
 
 pub(super) struct Label<'a> {
-    value: &'a str,
+    value: Cow<'a, str>,
     size: f32,
     font: Option<Font>,
     style: Option<TextStyle<'a>>,
@@ -76,7 +77,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Label<'
         let size = Size::new(limits.max().width, self.size * 1.3);
         let state = tree.state.downcast_mut::<State>();
         let font = self.font.unwrap_or_else(|| renderer.default_font());
-        if state.source.as_deref() != Some(self.value)
+        if state.source.as_deref() != Some(self.value.as_ref())
             || state.width != size.width
             || state.paragraph.raw().font() != font
             || state.paragraph.raw().size() != Pixels(self.size)
@@ -125,7 +126,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Label<'
             let _ = state
                 .paragraph
                 .update(format.with_content(display.as_str()));
-            state.source = Some(self.value.into());
+            state.source = Some(self.value.to_string());
             state.width = size.width;
             state.display = display;
         }
@@ -138,7 +139,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Label<'
         _: &iced::Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        operation.text(None, layout.bounds(), self.value);
+        operation.text(None, layout.bounds(), self.value.as_ref());
     }
     fn draw(
         &self,

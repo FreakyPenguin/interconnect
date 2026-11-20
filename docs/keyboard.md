@@ -18,7 +18,7 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 | Ctrl+, | Settings. |
 | Alt+Up / Alt+Down | Previous/next visible room, wrapping. |
 | Alt+T | Thread on latest non-thread room message; focus thread composer. |
-| Tab / Shift+Tab | Traverse focusable controls; some views remain incomplete. |
+| Tab / Shift+Tab | Traverse focusable controls; dialogs cycle within their active form. |
 | Escape | Dismiss overlay/search/filter, cancel reply, then close People/thread and focus room composer. |
 
 Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
@@ -87,6 +87,14 @@ Select timeline text and Ctrl+C / Command+C to copy across messages. Copy uses
 displayed text, image alternatives, and LaTeX source; hidden spoilers use placeholders.
 
 ## Dialogs and viewers
+
+Dialog buttons accept Enter/Space, checkboxes toggle with Enter/Space, and
+focused dropdowns accept arrows/Home/End. Escape closes an open dropdown before
+dismissing its dialog. Text input and IME composition retain their normal keys.
+Settings, metadata, and emoji forms ask before discarding unsaved changes;
+Escape on that confirmation keeps editing. Explicit Cancel buttons discard their
+form. The sidebar's **New** menu groups chat, room, and space creation; the
+existing creation shortcuts still work.
 
 | View | Key |
 | --- | --- |

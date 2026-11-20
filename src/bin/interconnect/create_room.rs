@@ -3,10 +3,7 @@ use super::{App, MAX_PENDING_OPERATIONS, Message, shell};
 use iced::{
     Element, Length, Task,
     keyboard::{Key, Modifiers, key::Named},
-    widget::{
-        button, checkbox, column, container, mouse_area, opaque, pick_list, row, scrollable, text,
-        text_input,
-    },
+    widget::{button, checkbox, column, pick_list, row, text, text_input},
 };
 use interconnect::{
     navigation::Scope,
@@ -490,15 +487,24 @@ impl App {
                 listed = listed.on_toggle(|v| message(Event::Listed(v)));
             }
         }
-        let mut content = column![
+        let header = row![
             shell::title(
                 match kind {
                     "space" => "Create a space",
                     "subspace" => "Create a subspace",
                     _ => "Create a room",
                 },
-                22
+                20
             ),
+            iced::widget::space().width(Length::Fill),
+            super::tooltips::icon_button(
+                super::icons::Kind::Close,
+                "Close creation form",
+                Some(message(Event::Close))
+            ),
+        ]
+        .align_y(iced::Alignment::Center);
+        let mut content = column![
             text("Name").size(12).style(shell::muted_text),
             name,
             text("Topic").size(12).style(shell::muted_text),
@@ -518,13 +524,9 @@ impl App {
             })
             .size(11)
             .style(shell::muted_text),
-            text(if options.is_space {
-                "Visibility"
-            } else {
-                "Room type"
-            })
-            .size(12)
-            .style(shell::muted_text),
+            iced::widget::rule::horizontal(1),
+            shell::title("Access & security", 14),
+            text("Who can join").size(12).style(shell::muted_text),
             visibility,
             listed,
         ]
@@ -548,7 +550,7 @@ impl App {
             );
         }
         if let Some(error) = &state.error {
-            content = content.push(text(error).size(12).style(shell::accent_text));
+            content = content.push(text(error).size(12).style(shell::danger_text));
         }
         if let Some(created) = &state.created
             && let Some(error) = &created.link_error
@@ -616,36 +618,17 @@ impl App {
             );
         }
         actions = actions.push(submit);
-        let card = container(
-            column![
-                scrollable(content)
-                    .height(Length::Fill)
-                    .direction(shell::scrollbar())
-                    .style(shell::scroll_style),
-                actions
-            ]
-            .spacing(18),
-        )
-        .id("create-room-dialog")
-        .padding(20)
-        .width(540)
-        .height((size.height - 32.0).clamp(1.0, 640.0))
-        .style(|theme| container::Style {
-            border: iced::Border::default().rounded(12),
-            ..shell::surface(theme, shell::palette(theme).background)
-        });
+        let card = super::dialog::frame(
+            size,
+            560.0,
+            if options.is_space { 540.0 } else { 700.0 },
+            "create-room",
+            header,
+            content,
+            actions,
+        );
         super::focus_scope::dismissible(
-            opaque(
-                mouse_area(
-                    container(card)
-                        .center_x(Length::Fill)
-                        .center_y(Length::Fill)
-                        .padding(16)
-                        .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
-                )
-                .on_press(message(Event::Ignore))
-                .on_scroll(|_| message(Event::Ignore)),
-            ),
+            super::dialog::modal(card, message(Event::Ignore)),
             "create-room-focus",
             Message::Escape,
         )
@@ -1072,11 +1055,11 @@ mod layout_tests {
             &renderer,
             &mut operation::focusable::focus::<()>(NAME.into()),
         );
-        for expected in (0..8).map(|i| Some(i % 7)) {
+        for expected in (0..10).map(|i| Some((i + 1) % 8)) {
             let mut count = operation::map(
                 operation::scope("create-room-dialog".into(), operation::focusable::count()),
                 move |count| {
-                    assert_eq!(count.total, 7);
+                    assert_eq!(count.total, 8);
                     assert_eq!(count.focused, expected);
                 },
             );

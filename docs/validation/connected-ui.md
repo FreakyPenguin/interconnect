@@ -45,6 +45,15 @@ states. Static controls and focused fields must not schedule periodic redraws.
 | Discovery | Room/account search, saved messages, People, pins, invitations, room/space creation and discovery. |
 | Management | Room/space settings, members, avatars, emoji packs, leave/disband previews and cancellation. |
 
+See the focused [preference/dialog](ui-preferences.md),
+[management](ui-management.md), and [discovery/media](ui-discovery.md) checks.
+Also verify the sidebar New menu, thread room identity/back action, composer
+shortcut hints, and conversation-level retry. Open invitations and sign-out
+over an older reading position, then cancel: the same live timeline offset and
+draft must remain. Covered conversations must not publish viewport/read demand
+or accept focus/input. Check nested forms and application close with unsaved
+changes: each confirmation must be visible in the topmost active dialog.
+
 ## Shared lifecycle checks
 
 For each asynchronous feature, close/reopen, navigate, switch accounts, and quit
