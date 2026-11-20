@@ -24,6 +24,7 @@ pub struct State {
     verify_after_login: bool,
     recover_after_registration: bool,
     cancel_requested: bool,
+    attempt: u64,
 }
 
 #[derive(Clone)]
@@ -40,7 +41,7 @@ pub enum Event {
     SubmitToken(RegistrationChallenge),
     SubmitPassword,
     Submit,
-    CancelSignIn,
+    CancelSignIn(u64),
     OpenBrowser,
     BrowserOpened(String, Result<(), String>),
     CopyLink,
@@ -61,7 +62,7 @@ impl std::fmt::Debug for Event {
             Self::SubmitToken(_) => "SubmitToken",
             Self::SubmitPassword => "SubmitPassword",
             Self::Submit => "Submit",
-            Self::CancelSignIn => "CancelSignIn",
+            Self::CancelSignIn(_) => "CancelSignIn",
             Self::OpenBrowser => "OpenBrowser",
             Self::BrowserOpened(_, _) => "BrowserOpened",
             Self::CopyLink => "CopyLink",
@@ -160,17 +161,21 @@ impl App {
                         .is_ok()
                     })
                 {
+                    self.generation = self.generation.wrapping_add(1);
+                    self.login.attempt = self.generation;
                     self.login.password = Zeroizing::new(String::new());
                     self.login.confirm_password = Zeroizing::new(String::new());
                     self.login.browser_error = None;
+                    self.login.cancel_requested = false;
                     self.login.verify_after_login = true;
                     self.login.recover_after_registration =
                         matches!(event, Event::SubmitRegistration);
                     self.model.authentication = Some(Authentication::Waiting { url: None });
                 }
             }
-            Event::CancelSignIn
-                if !self.closing
+            Event::CancelSignIn(attempt)
+                if attempt == self.login.attempt
+                    && !self.closing
                     && !self.login.cancel_requested
                     && matches!(
                         self.model.authentication,
@@ -538,7 +543,7 @@ impl App {
                         (!self.closing
                             && !self.login.cancel_requested
                             && self.login.sender.is_some())
-                        .then_some(Message::Login(Event::CancelSignIn)),
+                        .then_some(Message::Login(Event::CancelSignIn(self.login.attempt))),
                     ),
                 );
                 if self.login.cancel_requested {
@@ -649,7 +654,7 @@ impl App {
             super::focus_scope::dismissible(
                 form,
                 "login-waiting-focus",
-                Message::Login(Event::CancelSignIn),
+                Message::Login(Event::CancelSignIn(self.login.attempt)),
             )
         } else {
             super::focus_scope::view(form, "login-focus")
@@ -1179,27 +1184,53 @@ mod tests {
             requests.try_recv(),
             Ok(LoginRequest::SignIn { .. })
         ));
-        let _ = app.login_update(Event::CancelSignIn);
+        let _ = app.login_update(Event::CancelSignIn(app.login.attempt));
         assert!(matches!(requests.try_recv(), Ok(LoginRequest::Cancel)));
         assert!(app.login.cancel_requested);
         assert!(matches!(
             app.model.authentication,
             Some(Authentication::Waiting { .. })
         ));
-        let _ = app.login_update(Event::CancelSignIn);
+        let _ = app.login_update(Event::CancelSignIn(app.login.attempt));
         assert!(requests.try_recv().is_err());
         app.model.authentication = Some(Authentication::SignIn { error: None });
         let _ = app.finish_login();
         assert!(!app.login.cancel_requested);
-        let _ = app.login_update(Event::CancelSignIn);
+        let _ = app.login_update(Event::CancelSignIn(app.login.attempt));
         assert!(requests.try_recv().is_err());
+    }
+
+    #[test]
+    fn an_old_cancel_cannot_target_a_later_sign_in_attempt() {
+        let (mut app, mut requests) = form();
+        submit(&mut app, false);
+        let old = app.login.attempt;
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(LoginRequest::SignIn { .. })
+        ));
+        app.model.authentication = Some(Authentication::SignIn { error: None });
+        let _ = app.finish_login();
+        submit(&mut app, false);
+        let current = app.login.attempt;
+        assert_ne!(old, current);
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(LoginRequest::SignIn { .. })
+        ));
+        let _ = app.login_update(Event::CancelSignIn(old));
+        assert!(requests.try_recv().is_err());
+        assert!(!app.login.cancel_requested);
+        let _ = app.login_update(Event::CancelSignIn(current));
+        assert!(matches!(requests.try_recv(), Ok(LoginRequest::Cancel)));
+        assert!(app.login.cancel_requested);
     }
 
     #[test]
     fn cancellation_queue_failure_keeps_waiting_and_allows_explicit_retry() {
         let (mut app, mut requests) = form();
         submit(&mut app, false);
-        let _ = app.login_update(Event::CancelSignIn);
+        let _ = app.login_update(Event::CancelSignIn(app.login.attempt));
         assert!(!app.login.cancel_requested);
         assert!(app.login.browser_error.is_some());
         assert!(matches!(
@@ -1210,7 +1241,7 @@ mod tests {
             requests.try_recv(),
             Ok(LoginRequest::SignIn { .. })
         ));
-        let _ = app.login_update(Event::CancelSignIn);
+        let _ = app.login_update(Event::CancelSignIn(app.login.attempt));
         assert!(matches!(requests.try_recv(), Ok(LoginRequest::Cancel)));
         assert!(app.login.cancel_requested);
         assert!(app.login.browser_error.is_none());

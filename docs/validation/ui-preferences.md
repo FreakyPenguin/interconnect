@@ -63,7 +63,8 @@ appearance, native notification permissions, and CPU/wakeups need manual checks.
 - With an authorized disposable profile, cancel browser/password sign-in during
   discovery/authentication. The UI stays in its waiting state until the connection
   owner reports cancellation or completed sign-in. Repeated Cancel requests are
-  suppressed; a full command queue offers an explicit retry.
+  suppressed; a full command queue offers an explicit retry. A buffered Cancel
+  from an earlier attempt must not cancel a subsequent attempt.
 - Cancel after native credential persistence begins: cleanup/persistence finishes
   safely before a new sign-in form is admitted. An already-completed sign-in can
   succeed. Registration cancellation can leave a created account or a browser-
