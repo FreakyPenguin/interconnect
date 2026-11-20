@@ -38,8 +38,8 @@ builds are experimental.
 
 - Deletion needs a synced event ID; no unsent-echo cancellation or state/activity
   redaction. Editing covers owned text/emotes, not captions/notices or arbitrary
-  HTML round-tripping. Reply previews need loaded/embedded context; no fetch/jump
-  to quoted originals.
+  HTML round-tripping. Reply previews need loaded/embedded context; opening an
+  original explicitly loads history, subject to available keys and server access.
 - Reader labels are room-scoped; thread unread badges are process-local.
 - No full tables, visual rich-text editor, inline-image authoring, formatted media
   captions, language detection, or composer-source highlighting. Code highlighting

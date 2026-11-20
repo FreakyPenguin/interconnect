@@ -318,6 +318,13 @@ remote sign-out retains them. See [storage boundaries](../architecture/drafts.md
 - Queue admission clears reply intent; conversion/queue failure preserves it.
   Loaded/embedded originals reflect edits/redactions; missing context shows unavailable
   without background fetching.
+- Activate received reply previews with mouse or keyboard. Loaded originals and
+  older unavailable previews should navigate to the original with a highlighted
+  row. Known thread replies open in their thread; a reply to its thread root
+  opens the room original. Missing originals/keys and timeout show an error;
+  leaving the conversation cancels loading. Verify drafts remain intact and old
+  source generations/changed reply targets cannot navigate. Demo exercises local
+  routing only; remote history, encryption, and cancellation need connected checks.
 - Connected text/attachment sends carry `m.in_reply_to.event_id`. Room composer
   replies have no `m.thread`; thread replies retain the root with explicit-reply
   `is_falling_back: false` (or omitted). Check mentions, local echo, encryption,

@@ -1564,7 +1564,7 @@ async fn view(
         let (load_older, mut requests) = mpsc::channel(1);
         let mut history = History::Ready;
         let mut revision = 0;
-        // Saved-event navigation uses the ordinary live/thread timeline. Load the
+        // Explicit event navigation uses the ordinary live/thread timeline. Load the
         // intervening history asynchronously, plus one page before the target so
         // its first stable layout has enough context to center it.
         let initial_history = async {
@@ -1594,14 +1594,14 @@ async fn view(
                             let (cache, _guard) = client.event_cache().room(&room_id).await?;
                             cache.find_event(&event_id).await?.is_some()
                         };
-                        ensure!(cached, "Saved message is unavailable in this conversation's history");
+                        ensure!(cached, "Requested message is unavailable in this conversation's history");
                         while timeline.item_by_event_id(&event_id).await.is_none() {
                             ensure!(updates.next().await.is_some(), "Timeline subscription ended");
                         }
                         break;
                     }
                     if let History::Failed(error) = &history {
-                        anyhow::bail!("Could not load the saved message: {error}");
+                        anyhow::bail!("Could not load the requested message: {error}");
                     }
                 } else {
                     let loaded_events = timeline.items().await.iter()
@@ -1616,7 +1616,7 @@ async fn view(
         };
         if target.is_some() {
             tokio::time::timeout(Duration::from_secs(60), initial_history).await
-                .context("Loading history around the saved message timed out")??;
+                .context("Loading history around the requested message timed out")??;
         } else {
             initial_history.await?;
         }

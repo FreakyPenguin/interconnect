@@ -1220,7 +1220,8 @@ impl App {
         }
         let navigation = matches!(
             &message,
-            Message::Bookmark(bookmarks::Event::Conversation(_))
+            Message::Replying(message_reply::Event::Jump { .. })
+                | Message::Bookmark(bookmarks::Event::Conversation(_))
                 | Message::GlobalSearch(global_search::Event::Conversation(..))
                 | Message::Room(_)
                 | Message::Pinned(_)

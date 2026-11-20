@@ -2,7 +2,7 @@
 use super::{App, DraftKey, Message, MessageRow, current_pane, reaction_picker, shell};
 use iced::{
     Element, Length, Task,
-    widget::{column, container, row, text, text_editor},
+    widget::{button, column, container, row, text, text_editor},
 };
 use interconnect::connected::ReplyPreview;
 
@@ -10,6 +10,10 @@ use interconnect::connected::ReplyPreview;
 pub enum Event {
     Start(reaction_picker::Target),
     Cancel(DraftKey),
+    Jump {
+        source: reaction_picker::Target,
+        event: String,
+    },
 }
 fn message(event: Event) -> Message {
     Message::Replying(event)
@@ -47,6 +51,9 @@ impl App {
             .then(|| message(Event::Start(target)))
     }
     pub(super) fn message_reply_event(&mut self, event: Event) -> Task<Message> {
+        if let Event::Jump { source, event } = event {
+            return self.jump_to_reply(source, event);
+        }
         let key = match event {
             Event::Start(target) if self.can_reply(&target) => {
                 let key = self.draft_key(target.thread).unwrap();
@@ -75,6 +82,61 @@ impl App {
         } else {
             "room-composer"
         })
+    }
+    fn jump_to_reply(&mut self, source: reaction_picker::Target, event: String) -> Task<Message> {
+        if !self.context_menu_allowed()
+            || self.composing
+            || !self
+                .message_row(&source)
+                .is_some_and(|row| row.reply.as_ref().is_some_and(|reply| reply.event == event))
+        {
+            return Task::none();
+        }
+        // A known thread reply belongs in its thread pane. For an unloaded
+        // original, retain the source thread; its root itself lives in the room.
+        let root = self
+            .reply_row(source.thread, &event)
+            .and_then(|row| row.thread_root.clone())
+            .or_else(|| {
+                source
+                    .thread
+                    .then(|| self.selection.thread.as_ref())
+                    .flatten()
+                    .filter(|(_, root)| root != &event)
+                    .map(|(_, root)| root.clone())
+            });
+        let thread = root.is_some();
+        if let Some(root) = root {
+            self.select_thread(root);
+        } else {
+            self.select_room(source.room);
+        }
+        let generation = if thread {
+            self.selection.thread.as_ref().unwrap().0
+        } else {
+            self.selection.room.as_ref().unwrap().0
+        };
+        // Selecting again gives the asynchronous history view a new generation,
+        // rejecting snapshots still arriving from the previous navigation.
+        self.selection.event_focus[usize::from(thread)] = Some((generation, event));
+        self.pending_scroll[usize::from(thread)] = None;
+        Task::none()
+    }
+    fn reply_jump_action(&self, row: &MessageRow, thread: bool) -> Option<Message> {
+        let selection = if thread {
+            &self.selection.thread
+        } else {
+            &self.selection.room
+        };
+        Some(message(Event::Jump {
+            source: reaction_picker::Target {
+                room: self.selection.room.as_ref()?.1.clone(),
+                thread,
+                generation: selection.as_ref()?.0,
+                event: row.event_id.clone()?,
+            },
+            event: row.reply.as_ref()?.event.clone(),
+        }))
     }
     fn reply_row(&self, thread: bool, event: &str) -> Option<&MessageRow> {
         // Prefer current rows to embedded context: edits and redactions must be
@@ -156,36 +218,43 @@ impl App {
             .and_then(ReplyPreview::from_row)
             .unwrap_or_else(|| preview.clone());
         Some(
-            container(
-                column![
-                    text(
-                        preview
-                            .sender
-                            .map_or_else(|| "↪ Reply".into(), |name| format!("↪ {name}"))
-                    )
-                    .size(12)
-                    .wrapping(iced::widget::text::Wrapping::None)
-                    .width(Length::Fill)
-                    .style(shell::muted_text),
-                    text(preview.body)
+            button(
+                container(
+                    column![
+                        text(
+                            preview
+                                .sender
+                                .map_or_else(|| "↪ Reply".into(), |name| format!("↪ {name}"))
+                        )
                         .size(12)
                         .wrapping(iced::widget::text::Wrapping::None)
                         .width(Length::Fill)
                         .style(shell::muted_text),
-                ]
-                .spacing(2),
+                        text(preview.body)
+                            .size(12)
+                            .wrapping(iced::widget::text::Wrapping::None)
+                            .width(Length::Fill)
+                            .style(shell::muted_text),
+                    ]
+                    .spacing(2),
+                )
+                .clip(true)
+                .padding([4, 8])
+                .style(|theme| {
+                    let mut style = shell::composer_toolbar(theme);
+                    style.border = iced::Border {
+                        color: shell::palette(theme).accent.scale_alpha(0.4),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    };
+                    style
+                }),
             )
-            .clip(true)
-            .padding([4, 8])
-            .style(|theme| {
-                let mut style = shell::composer_toolbar(theme);
-                style.border = iced::Border {
-                    color: shell::palette(theme).accent.scale_alpha(0.4),
-                    width: 1.0,
-                    radius: 4.0.into(),
-                };
-                style
-            })
+            .padding(0)
+            .width(Length::Fill)
+            .style(button::text)
+            .keyboard_navigation(true)
+            .on_press_maybe(self.reply_jump_action(row, thread))
             .into(),
         )
     }
@@ -220,6 +289,111 @@ mod tests {
             } else {
                 app.selection.room.as_ref().unwrap().0
             },
+        }
+    }
+    fn quote(app: &mut App, thread: bool, source: &str, original: &str) -> Message {
+        let pane = if thread {
+            app.model.thread.as_mut().unwrap()
+        } else {
+            app.model.room.as_mut().unwrap()
+        };
+        let row = std::sync::Arc::make_mut(&mut pane.rows)
+            .iter_mut()
+            .find(|row| row.event_id.as_deref() == Some(source))
+            .unwrap();
+        row.reply = Some(ReplyPreview {
+            event: original.into(),
+            sender: None,
+            body: "Original message unavailable".into(),
+        });
+        let row = row.clone();
+        app.reply_jump_action(&row, thread).unwrap()
+    }
+    #[test]
+    fn reply_jump_refreshes_generation_and_preserves_drafts_and_reading_position() {
+        let mut app = demo_app();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content = text_editor::Content::with_text("unsent");
+        app.scroll_positions.insert(key.clone(), 175.0);
+        let old = app.selection.room.as_ref().unwrap().0;
+        let jump = quote(&mut app, false, "review", "welcome");
+        let (control, observed) = tokio::sync::watch::channel(app.selection.clone());
+        app.control = Some(control);
+        let _ = app.update(jump);
+        let generation = app.selection.room.as_ref().unwrap().0;
+        assert_ne!(generation, old);
+        assert_eq!(
+            app.selection.event_focus[0],
+            Some((generation, "welcome".into()))
+        );
+        assert!(app.pending_scroll[0].is_none());
+        assert_eq!(app.model.room.as_ref().unwrap().generation, generation);
+        assert_eq!(app.drafts[&key].content.text(), "unsent");
+        assert_eq!(app.scroll_positions[&key], 175.0);
+        assert_eq!(*observed.borrow(), app.selection);
+        assert!(app.selection.thread.is_none());
+    }
+    #[test]
+    fn reply_jump_routes_known_thread_events_unloaded_replies_and_thread_roots() {
+        let mut app = demo_app();
+        let jump = quote(&mut app, false, "review", "review-reply-1");
+        let _ = app.update(jump);
+        assert_eq!(app.selection.thread.as_ref().unwrap().1, "review");
+        let generation = app.selection.thread.as_ref().unwrap().0;
+        assert_eq!(
+            app.selection.event_focus[1],
+            Some((generation, "review-reply-1".into()))
+        );
+        for original in ["review-reply-1", "$unloaded"] {
+            let jump = quote(&mut app, true, "review-reply-2", original);
+            let _ = app.update(jump);
+            let generation = app.selection.thread.as_ref().unwrap().0;
+            assert_eq!(app.selection.thread.as_ref().unwrap().1, "review");
+            assert_eq!(
+                app.selection.event_focus[1],
+                Some((generation, original.into()))
+            );
+            assert!(app.pending_scroll[1].is_none());
+        }
+        let jump = quote(&mut app, true, "review-reply-2", "review");
+        let _ = app.update(jump);
+        assert!(app.selection.thread.is_none());
+        let generation = app.selection.room.as_ref().unwrap().0;
+        assert_eq!(
+            app.selection.event_focus[0],
+            Some((generation, "review".into()))
+        );
+    }
+    #[test]
+    fn reply_jump_rejects_stale_sources_changed_quotes_and_blocked_input() {
+        for blocked in 0..6 {
+            let mut app = demo_app();
+            let jump = quote(&mut app, false, "review", "welcome");
+            match blocked {
+                0 => {
+                    let _ = app.update(Message::Room("general".into()));
+                }
+                1 => {
+                    let _ = quote(&mut app, false, "review", "direction");
+                }
+                2 => app.composing = true,
+                3 => app.closing = true,
+                4 => app.stopped = true,
+                _ => {
+                    let _ = app.update(Message::Membership(super::super::membership::Event::Join));
+                }
+            }
+            let selection = app.selection.clone();
+            let _ = app.update(jump);
+            assert_eq!(app.selection.room, selection.room, "blocked case {blocked}");
+            assert_eq!(
+                app.selection.thread, selection.thread,
+                "blocked case {blocked}"
+            );
+            assert_eq!(
+                app.selection.event_focus, selection.event_focus,
+                "blocked case {blocked}"
+            );
         }
     }
     #[tokio::test]

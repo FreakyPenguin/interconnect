@@ -21,6 +21,10 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 | Tab / Shift+Tab | Traverse focusable controls; dialogs cycle within their active form. |
 | Escape | Dismiss overlay/search/filter, cancel reply, then close People/thread and focus room composer. |
 
+Received reply previews are focusable buttons: Enter/Space opens the original
+message, loading older history when necessary. Thread replies open in their thread;
+its original root opens in the room timeline.
+
 Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
 the previous match; account-search Enter submits.
 
