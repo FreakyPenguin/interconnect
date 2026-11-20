@@ -64,6 +64,23 @@ Ctrl+Shift+F → quiet → Enter → Escape. Allow each state to settle. Resize 
 to 1200×800 and add key labels below the app. Keep intermediates outside the
 repository and inspect decoded frames before replacing the GIF.
 
+`authentication-verification.gif` shows the real sign-in view followed by the
+existing local verification demo. Its capture fixture runs with `--demo`, keeps
+SDK subscriptions disabled, and temporarily displays `Authentication::SignIn`
+even with demo data active. A local form sender enables the controls; submitting
+sample credentials clears the password and opens the demo verification dialog
+without sending a login request. The fixture is for capture only and is not
+part of the shipped client.
+
+Capture the empty form, sample homeserver/username/masked password, device
+selection, emoji/number comparison, local completion, and return to the room.
+Use `https://matrix.example.org` and `@jamie:example.org`, never real account
+information. Keep the demo's Unverified trust and “Demo comparison complete”
+labels intact. Add a persistent “LOCAL SIMULATION · NO SERVER CONNECTION” label
+below every frame; the tour demonstrates UI, not live authentication, peer
+confirmation, trust changes, or room-key retrieval. Use the same capture size,
+frame resizing, and decoded-frame inspection as the keyboard tour.
+
 The formatting capture uses this unsent draft:
 
 ```text

@@ -16,7 +16,7 @@ Linux/Wayland; Apple Silicon macOS builds are experimental.
 ![Design studio with custom room sections, reactions, pinned messages, and a separate thread pane](docs/images/demo.png)
 
 Keep a room and its thread open together, with separate composers and drafts.
-All screenshots and the keyboard tour below use local demo data.
+All screenshots and GIFs below use local sample data.
 
 ## New in 0.3.0
 
@@ -30,6 +30,18 @@ All screenshots and the keyboard tour below use local demo data.
 - Named account profiles and HTTP/HTTPS/SOCKS proxy support.
 
 ## A closer look
+
+### Sign in and verify your device
+
+Sign in with a password or continue in your browser, then verify the new device
+with another Matrix client on the same account. Compare every emoji or number
+on both devices before confirming.
+
+![Local UI tour: enter sample sign-in details, choose another device, compare seven emojis or three numbers, and complete the demo comparison](docs/images/authentication-verification.gif)
+
+This tour simulates sign-in and verification locally; it does not connect to a
+homeserver. See [device verification](docs/validation/verification.md) for the
+live workflow and validation steps.
 
 ### Spaces without losing your place
 
