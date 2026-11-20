@@ -35,9 +35,11 @@ native macOS or connected-server run record.
 
 ## Search, saved messages, pins, and menus
 
-- Open New in the sidebar. Use arrows, Tab/Shift+Tab, and Enter/Space to choose
-  New chat, Create room, or Create space/subspace. Escape returns to the trigger.
-  Removing space-management permission while the menu is open must reject an
+- Use the sidebar's separate New chat (+) and Create room icons and their
+  Ctrl+N / Ctrl+Shift+N shortcuts (Command on macOS). Hover hints identify each.
+  Tab/Shift+Tab and Enter/Space activate each independently. Space/subspace
+  creation remains in sidebar actions (⋯); Escape returns to that trigger.
+  Removing space-management permission while this menu is open must reject an
   outdated Create subspace action.
 - Right-click a message and use Save message, then Remove saved message. Verify
   the actions have the same permission/pending checks as the message toolbar.

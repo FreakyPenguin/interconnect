@@ -99,8 +99,8 @@ focused dropdowns accept arrows/Home/End. Escape closes an open dropdown before
 dismissing its dialog. Text input and IME composition retain their normal keys.
 Settings, metadata, and emoji forms ask before discarding unsaved changes;
 Escape on that confirmation keeps editing. Explicit Cancel buttons discard their
-form. The sidebar's **New** menu groups chat, room, and space creation; the
-existing creation shortcuts still work.
+form. The sidebar has separate New chat (+) and Create room icons. Space/subspace
+creation is in its sidebar actions (⋯) menu; creation shortcuts still work.
 
 | View | Key |
 | --- | --- |

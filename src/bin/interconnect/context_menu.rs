@@ -14,7 +14,6 @@ pub(super) mod space_management;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     Account,
-    Create,
     Sections,
     Section(String),
     Room(String),
@@ -71,7 +70,6 @@ fn message(event: Event) -> Message {
 fn menu_prefix(target: &Target) -> Option<&'static str> {
     match target {
         Target::Account => Some("account-action"),
-        Target::Create => Some("create-action"),
         _ => None,
     }
 }
@@ -179,29 +177,6 @@ impl App {
             return Vec::new();
         }
         match target {
-            Target::Create => {
-                let mut actions = vec![
-                    (
-                        "New chat…",
-                        dispatch(Message::NewChat(super::new_chat::Event::Open)),
-                    ),
-                    (
-                        "Create room…",
-                        dispatch(Message::CreateRoom(super::create_room::Event::Open)),
-                    ),
-                ];
-                if self.can_create_space() {
-                    actions.push((
-                        if matches!(self.shell.space, interconnect::navigation::Scope::Space(_)) {
-                            "Create subspace…"
-                        } else {
-                            "Create space…"
-                        },
-                        dispatch(Message::CreateRoom(super::create_room::Event::OpenSpace)),
-                    ));
-                }
-                actions
-            }
             Target::Account => {
                 let mut actions = vec![
                     (
@@ -248,7 +223,20 @@ impl App {
                 }
                 actions
             }
-            Target::Sections => vec![("New section…", Action::CreateSection)],
+            Target::Sections => {
+                let mut actions = vec![("New section…", Action::CreateSection)];
+                if self.can_create_space() {
+                    actions.push((
+                        if matches!(self.shell.space, interconnect::navigation::Scope::Space(_)) {
+                            "Create subspace…"
+                        } else {
+                            "Create space…"
+                        },
+                        dispatch(Message::CreateRoom(super::create_room::Event::OpenSpace)),
+                    ));
+                }
+                actions
+            }
             Target::Section(tag) => {
                 if !self.model.sections.iter().any(|section| &section.id == tag) {
                     return Vec::new();
@@ -468,7 +456,7 @@ impl App {
                 let target = self.context_menu.as_ref().map(|state| &state.target);
                 let focus = match target {
                     Some(Target::Account) => Some(super::space_navigation::ACCOUNT),
-                    Some(Target::Create) => Some("nav-create-menu"),
+                    Some(Target::Sections) => Some("nav-manage-sections"),
                     _ => None,
                 };
                 self.context_menu = None;
@@ -850,18 +838,6 @@ impl App {
                 message(Event::Dismiss),
             );
         }
-        if self
-            .context_menu
-            .as_ref()
-            .is_some_and(|state| state.target == Target::Create)
-        {
-            return popover::view(
-                base,
-                Some("create-menu-button".into()),
-                popup,
-                message(Event::Dismiss),
-            );
-        }
         popover::at_position(
             base,
             self.context_menu.as_ref().map(|state| state.position),
@@ -877,20 +853,18 @@ mod tests {
     use crate::tests::demo_app;
 
     #[test]
-    fn creation_menu_rechecks_space_permissions_and_opens_existing_forms() {
+    fn sidebar_actions_recheck_space_permissions_and_keep_direct_creation_actions() {
         let mut app = demo_app();
-        let target = Target::Create;
+        let target = Target::Sections;
         assert!(
             app.context_actions(&target)
                 .iter()
                 .any(|(label, _)| *label == "Create subspace…")
         );
-        open(&mut app, &target);
-        choose(&mut app, &target, "New chat…");
+        let _ = app.update(Message::NewChat(super::super::new_chat::Event::Open));
         assert!(app.new_chat.is_some());
         let _ = app.update(Message::Escape);
-        open(&mut app, &target);
-        choose(&mut app, &target, "Create room…");
+        let _ = app.update(Message::CreateRoom(super::super::create_room::Event::Open));
         assert!(app.create_room.is_some());
         let _ = app.update(Message::Escape);
         open(&mut app, &target);

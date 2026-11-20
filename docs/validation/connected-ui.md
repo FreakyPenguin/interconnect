@@ -47,7 +47,8 @@ states. Static controls and focused fields must not schedule periodic redraws.
 
 See the focused [preference/dialog](ui-preferences.md),
 [management](ui-management.md), and [discovery/media](ui-discovery.md) checks.
-Also verify the sidebar New menu, thread room identity/back action, composer
+Also verify the separate sidebar chat/room creation icons, sidebar actions menu,
+thread room identity/back action, composer
 shortcut hints, and conversation-level retry. Open invitations and sign-out
 over an older reading position, then cancel: the same live timeline offset and
 draft must remain. Covered conversations must not publish viewport/read demand

@@ -379,7 +379,8 @@ impl App {
                         "nav-message-search",
                         "nav-saved",
                         "nav-invitations",
-                        "nav-create-menu",
+                        "nav-new-chat",
+                        "nav-create-room",
                         "nav-manage-sections",
                     ]
                     .into_iter()
