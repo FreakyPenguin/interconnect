@@ -11,6 +11,7 @@ pub mod download;
 pub mod drafts;
 mod event_text;
 pub mod formula;
+pub mod ignored_users;
 pub mod image_media;
 pub mod live;
 pub mod media;

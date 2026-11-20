@@ -195,12 +195,21 @@ impl App {
                 row![avatar, identity]
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
-                container(self.sidebar_member_controls(member))
-                    .id(format!("member-controls-{}", member.user_id))
-                    .padding(iced::Padding {
-                        left: 42.0,
-                        ..Default::default()
-                    }),
+                container(
+                    column![
+                        self.sidebar_member_controls(member),
+                        button(text("Ignore user…").size(11))
+                            .keyboard_navigation(true)
+                            .on_press_maybe(self.ignore_member_action(member))
+                            .style(shell::quiet_button),
+                    ]
+                    .spacing(6)
+                )
+                .id(format!("member-controls-{}", member.user_id))
+                .padding(iced::Padding {
+                    left: 42.0,
+                    ..Default::default()
+                }),
             ]
             .spacing(8),
         )

@@ -319,8 +319,12 @@ impl App {
             Event::Category(category) if self.settings.draft.is_some() && !self.settings.saving => {
                 self.settings.category = category;
                 let profile = if category == Category::Account {
-                    self.account_profile_event(super::account_profile::Event::Open)
+                    Task::batch([
+                        self.account_profile_event(super::account_profile::Event::Open),
+                        self.ignored_users_event(super::ignored_users::Event::Open),
+                    ])
                 } else {
+                    self.ignored_users.dismiss();
                     Task::none()
                 };
                 return Task::batch([
@@ -387,6 +391,7 @@ impl App {
                     DiscardAction::Transition(next) => {
                         self.settings.draft = None;
                         self.settings.profile.dismiss();
+                        self.ignored_users.dismiss();
                         return self.update(*next);
                     }
                 }
@@ -408,6 +413,7 @@ impl App {
             }
             Event::Cancel if !self.settings.saving => {
                 self.settings.profile.dismiss();
+                self.ignored_users.dismiss();
                 self.settings.draft = None;
                 self.settings.confirm_discard = None;
                 return iced::widget::operation::focus(if self.selection.thread.is_some() {
@@ -595,12 +601,6 @@ impl App {
         }
         Task::none()
     }
-    /// Capture the requested application transition, preserving unsaved values
-    /// until the exact displayed confirmation is accepted.
-    pub(super) fn guard_settings_transition(&mut self, next: Message) -> bool {
-        if self.settings.draft.is_none() || self.settings.saving {
-            return false;
-        }
     fn apply_preferences(&mut self, settings: Settings) {
         let previous = self.settings.current.appearance.interface_scale;
         let next = settings.appearance.interface_scale;
@@ -617,6 +617,22 @@ impl App {
         }
         self.settings.current = settings;
     }
+    pub(super) fn ignored_users_available(&self) -> bool {
+        self.settings.draft.is_some()
+            && self.settings.category == Category::Account
+            && !self.settings.busy
+            && !self.settings.saving
+            && self.settings.confirm_discard.is_none()
+            && !self.closing
+            && !self.stopped
+    }
+
+    /// Capture the requested application transition, preserving unsaved values
+    /// until the exact displayed confirmation is accepted.
+    pub(super) fn guard_settings_transition(&mut self, next: Message) -> bool {
+        if self.settings.draft.is_none() || self.settings.saving {
+            return false;
+        }
         if self.settings.dirty() {
             self.settings
                 .request_discard(DiscardAction::Transition(Box::new(next)));
@@ -624,6 +640,7 @@ impl App {
         } else {
             self.settings.draft = None;
             self.settings.profile.dismiss();
+            self.ignored_users.dismiss();
             self.settings.confirm_discard = None;
             false
         }
@@ -877,7 +894,11 @@ impl App {
                     unread_first,
                 ].spacing(12),
             ],
-            Category::Account => column![self.account_profile_view(available && self.settings.confirm_discard.is_none())],
+            Category::Account => column![
+                self.account_profile_view(available && self.settings.confirm_discard.is_none()),
+                iced::widget::rule::horizontal(1),
+                self.ignored_users_view(available && self.settings.confirm_discard.is_none()),
+            ].spacing(18),
             Category::Notifications => column![
                 shell::title("Desktop notifications", 14), notification_controls,
             ],
@@ -1325,27 +1346,6 @@ mod tests {
     }
 
     #[test]
-    fn system_appearance_events_do_not_change_explicit_themes_or_unsaved_preferences() {
-        let mut app = crate::tests::demo_app();
-        let selection = app.selection.clone();
-        let _ = app.update(Message::Settings(Event::SystemTheme(
-            iced::theme::Mode::Dark,
-        )));
-        assert_eq!(app.effective_theme(), ThemeMode::Light);
-        let _ = app.update(Message::Settings(Event::Open));
-        let _ = app.update(Message::Settings(Event::Theme(ThemeMode::System)));
-        let _ = app.update(Message::Settings(Event::InterfaceScale(
-            InterfaceScale::Large,
-        )));
-        let _ = app.update(Message::Settings(Event::SystemTheme(
-            iced::theme::Mode::Light,
-        )));
-        assert_eq!(app.effective_theme(), ThemeMode::Light);
-        assert_eq!(
-            app.settings.current.appearance.interface_scale,
-            InterfaceScale::Normal
-        );
-    #[test]
     fn saved_interface_scale_keeps_navigation_and_attachment_routing_in_logical_units() {
         let mut app = crate::tests::demo_app();
         let _ = app.update(Message::WindowResized(1200.0));
@@ -1414,6 +1414,27 @@ mod tests {
         assert!(!app.shell.narrow_navigation);
     }
 
+    #[test]
+    fn system_appearance_events_do_not_change_explicit_themes_or_unsaved_preferences() {
+        let mut app = crate::tests::demo_app();
+        let selection = app.selection.clone();
+        let _ = app.update(Message::Settings(Event::SystemTheme(
+            iced::theme::Mode::Dark,
+        )));
+        assert_eq!(app.effective_theme(), ThemeMode::Light);
+        let _ = app.update(Message::Settings(Event::Open));
+        let _ = app.update(Message::Settings(Event::Theme(ThemeMode::System)));
+        let _ = app.update(Message::Settings(Event::InterfaceScale(
+            InterfaceScale::Large,
+        )));
+        let _ = app.update(Message::Settings(Event::SystemTheme(
+            iced::theme::Mode::Light,
+        )));
+        assert_eq!(app.effective_theme(), ThemeMode::Light);
+        assert_eq!(
+            app.settings.current.appearance.interface_scale,
+            InterfaceScale::Normal
+        );
         assert_eq!(
             app.settings
                 .draft

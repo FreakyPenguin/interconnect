@@ -64,6 +64,27 @@ After an uncertain response or a concurrent profile change, Reload profile befor
 retrying. Uploading and publishing an avatar are separate operations, so a failed
 save may leave unused media. Demo changes remain in memory for that session.
 
+## Ignored users
+
+Settings → Account → **Ignored users** manages the account-wide Matrix ignore list.
+Enter a full Matrix ID and choose **Ignore…**, then confirm. People → **Ignore user…**
+opens this section with the selected ID filled in. Use **Unignore…** beside an ID to
+restore contact; entering an already ignored ID also offers Unignore. Lists over
+100 entries show the first 100, with full-ID entry available for the rest.
+
+Ignoring hides messages/invitations through Matrix's ignore list after account data
+syncs. It does not ban someone, stop them reading your messages, or remove them
+from shared rooms. Unignore does not promise to recover previously filtered
+history. This is separate from room moderation and abuse reporting.
+
+The displayed list is a server snapshot; Reload checks changes made in other
+clients. Each confirmed edit reads fresh server state, preserves other entries,
+and makes one update attempt. Cross-client changes can still race because Matrix
+has no conditional account-data writes. After an uncertain result, Reload before
+retrying. Reads cancel when Settings closes; submitted writes finish for their
+captured account and participate in shutdown. Demo changes stay in memory.
+See [ignored-user validation](validation/ignored-users.md).
+
 ## Configuration file
 
 | Platform | Default settings file |

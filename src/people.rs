@@ -74,6 +74,26 @@ impl Directory {
         let _ = self.4.send(details.clone());
         Ok(details)
     }
+    pub async fn ignored_users(self) -> Result<Vec<String>, String> {
+        tokio::time::timeout(Duration::from_secs(30), crate::ignored_users::load(&self.0))
+            .await
+            .map_err(|_| "Loading ignored users timed out. Use Reload.".to_owned())?
+    }
+    pub async fn change_ignored_user(
+        self,
+        user: String,
+        ignored: bool,
+    ) -> Result<Vec<String>, String> {
+        tokio::time::timeout(Duration::from_secs(45), async {
+            let _guard = self.3.lock().await;
+            crate::ignored_users::change(&self.0, user, ignored).await
+        })
+        .await
+        .map_err(|_| {
+            "Updating ignored users timed out and may have succeeded. Reload before retrying."
+                .to_owned()
+        })?
+    }
     pub(crate) fn navigation_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
         self.1.subscribe()
     }
