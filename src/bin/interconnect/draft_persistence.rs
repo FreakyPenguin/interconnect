@@ -363,13 +363,12 @@ impl App {
             .spacing(8);
             if failed {
                 if self.draft_persistence.store.is_some() {
-                    actions = actions.push(
-                        button(text("Retry save").size(13))
-                            .keyboard_navigation(true)
-                            .padding([7, 14])
-                            .style(shell::primary_button)
-                            .on_press(message(Event::Retry)),
-                    );
+                    actions = actions.push(super::tooltips::icon_action(
+                        super::icons::Kind::Refresh,
+                        "Retry saving drafts",
+                        Some(message(Event::Retry)),
+                        shell::primary_button,
+                    ));
                 }
                 actions = actions.push(
                     button(text("Close without saving").size(13))

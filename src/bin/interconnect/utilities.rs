@@ -86,23 +86,26 @@ impl App {
             );
         }
         if let Some(error) = &self.draft_persistence.error {
-            items = items.push(
-                row![
-                    super::tooltips::tooltip(
-                        text("Drafts need attention")
-                            .size(11)
-                            .style(shell::muted_text),
-                        error,
-                        iced::widget::tooltip::Position::Top
-                    ),
-                    button(text("Retry draft save").size(11))
-                        .style(shell::quiet_button)
-                        .on_press_maybe(self.draft_persistence.can_retry().then_some(
-                            Message::DraftPersistence(super::draft_persistence::Event::Retry)
-                        ))
-                ]
-                .spacing(8),
-            );
+            items =
+                items.push(
+                    row![
+                        super::tooltips::tooltip(
+                            text("Drafts need attention")
+                                .size(11)
+                                .style(shell::muted_text),
+                            error,
+                            iced::widget::tooltip::Position::Top
+                        ),
+                        super::tooltips::icon_button(
+                            super::icons::Kind::Refresh,
+                            "Retry draft save",
+                            self.draft_persistence.can_retry().then_some(
+                                Message::DraftPersistence(super::draft_persistence::Event::Retry)
+                            ),
+                        )
+                    ]
+                    .spacing(8),
+                );
         }
         let settings_error =
             self.settings.error.is_some() || self.model.notification_error.is_some();

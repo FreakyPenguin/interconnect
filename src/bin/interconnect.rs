@@ -3313,18 +3313,19 @@ impl App {
         let history = pane.map_or(&History::Loading, |pane| &pane.history);
         let history_revision = pane.map_or(0, |pane| pane.history_revision);
         let retry_history = || {
-            let mut retry = button(text("Retry loading history").size(12))
-                .padding([4, 0])
-                .style(shell::quiet_button);
-            if pane.is_some_and(|pane| pane.load_older.is_some()) && !self.closing && !self.stopped
-            {
-                retry = retry.on_press(Message::LoadOlder {
-                    thread,
-                    generation: *generation,
-                    revision: history_revision,
-                });
-            }
-            container(retry).id("history-retry")
+            container(tooltips::icon_button(
+                icons::Kind::Refresh,
+                "Retry loading history",
+                (pane.is_some_and(|pane| pane.load_older.is_some())
+                    && !self.closing
+                    && !self.stopped)
+                    .then_some(Message::LoadOlder {
+                        thread,
+                        generation: *generation,
+                        revision: history_revision,
+                    }),
+            ))
+            .id("history-retry")
         };
         let mut history_controls = column![].spacing(6);
         if let Some((current, _)) = &self.model.receipt_errors[usize::from(thread)]
@@ -3719,15 +3720,16 @@ impl App {
                     "Could not open this conversation",
                     error,
                     Some(
-                        button(text("Retry opening conversation").size(13))
-                            .keyboard_navigation(true)
-                            .style(shell::quiet_button)
-                            .on_press(if thread {
+                        tooltips::icon_button(
+                            icons::Kind::Refresh,
+                            "Retry opening conversation",
+                            Some(if thread {
                                 Message::Thread(selected_id.clone())
                             } else {
                                 Message::Room(selected_id.clone())
-                            })
-                            .into(),
+                            }),
+                        )
+                        .into(),
                     ),
                 ))
             } else if matches!(history, History::Loading) {
