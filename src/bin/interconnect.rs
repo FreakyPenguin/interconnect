@@ -4292,6 +4292,10 @@ fn configure_graphics_environment(
     Ok(())
 }
 
+#[cfg(test)]
+#[path = "interconnect/render_damage.rs"]
+mod render_damage;
+
 /// Widget/layout tests stay headless and deterministic with the same software
 /// renderer variant used by the application's real fallback path.
 #[cfg(test)]

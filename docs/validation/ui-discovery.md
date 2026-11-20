@@ -78,3 +78,20 @@ explicit discard, remove the emoji dialog before replaying the captured exit so
 that a parent Settings confirmation is visible. Clean dialogs close immediately;
 already-admitted writes keep their independent shutdown bookkeeping. Buffered
 Keep/Discard actions from replaced or reopened confirmations must be ignored.
+
+## Software text redraw regression
+
+`cargo test --locked --bin interconnect render_damage::` checks real software
+renderer layer diffs against a full redraw for search-caption pixels at
+1400×900 and 640×480, including reopening search after changing conversations.
+It also checks text-group translation/scaling, empty cached icon replacement,
+and zero damage for unchanged text. The unchanged-version tiny-skia override
+is documented in `vendor/iced_tiny_skia/PATCH.md`.
+
+The caption regression reproduced missing suffixes before the transform fix and
+passes with the fix. A broader exploratory whole-frame pixel comparison also
+found an independent one-pixel antialias difference on search-input borders
+(1,388 pixels, bounding box 739×24 at x427/y144 at 1400×900). The text regression
+does not assert those borders. Outward pixel rounding did not resolve that
+separate issue; it is not included in the text-transform patch. Native desktop
+confirmation belongs to the integrated review, not this offscreen test.

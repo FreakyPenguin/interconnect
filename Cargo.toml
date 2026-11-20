@@ -76,6 +76,7 @@ opt-level = 2
 
 # Iced 0.14 has no public switch for the editor's blink timer.
 [patch.crates-io]
+iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
 cosmic-text = { path = "vendor/cosmic-text" }
 iced_widget = { path = "vendor/iced_widget" }
 
