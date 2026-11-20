@@ -68,8 +68,11 @@ SDK; account profiles cannot be imported across OS keyrings. See
 ## Conversations and navigation
 
 Drafts are keyed by room and optional thread root. Text, mode, and explicit emoji
-choices persist encrypted; staged attachments and reading positions remain in
-memory. Drafts clear on SDK queue admission, independently of delivery. Local
+choices and per-conversation reading anchors persist encrypted; staged attachments
+remain in memory. Reading anchors store a synced event ID and its viewport offset;
+newest-following conversations have no anchor. Reopening after restart loads bounded
+history around the event asynchronously, then restores its offset. Unavailable
+anchors fall back once to the ordinary timeline. Drafts clear on SDK queue admission, independently of delivery. Local
 echoes show pending/sent/failed states; retry reuses the original transaction.
 Shutdown waits for admission/retry operations and flushes drafts.
 

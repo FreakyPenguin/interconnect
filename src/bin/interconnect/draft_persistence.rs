@@ -103,6 +103,7 @@ pub fn may_change(message: &Message) -> bool {
             | Message::EmojiCompletion(_)
             | Message::UserCompletion(_)
             | Message::Attachment(_)
+            | Message::ReadingPosition { .. }
     )
 }
 
@@ -146,6 +147,8 @@ impl App {
             Ok(loaded) => {
                 self.draft_persistence.store = Some(loaded.store);
                 self.draft_persistence.current = loaded.saved.clone();
+                self.reading_positions =
+                    super::reading_positions::State::from_saved(&loaded.saved.reading_positions);
                 self.draft_persistence.error = None;
                 for saved in &loaded.saved.entries {
                     let key = DraftKey {
@@ -170,6 +173,7 @@ impl App {
             }
             Err(error) => {
                 self.draft_persistence.store = None;
+                self.reading_positions = Default::default();
                 self.draft_persistence.current = Arc::default();
                 self.draft_persistence.error = Some(error);
             }
@@ -190,8 +194,14 @@ impl App {
             .filter_map(|(key, draft)| entry(key, draft))
             .collect();
         entries.sort_by(|a, b| (&a.room, &a.root).cmp(&(&b.room, &b.root)));
-        if self.draft_persistence.current.entries != entries {
-            self.draft_persistence.current = Arc::new(Snapshot { entries });
+        let reading_positions = self.reading_positions.snapshot();
+        if self.draft_persistence.current.entries != entries
+            || self.draft_persistence.current.reading_positions != reading_positions
+        {
+            self.draft_persistence.current = Arc::new(Snapshot {
+                entries,
+                reading_positions,
+            });
             self.draft_persistence.revision += 1;
             self.draft_persistence.cancel_timer();
             if self.draft_persistence.store.is_some() {
@@ -468,6 +478,7 @@ mod tests {
             },
         );
         let snapshot = Snapshot {
+            reading_positions: vec![],
             entries: first
                 .drafts
                 .iter()

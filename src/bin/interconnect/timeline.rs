@@ -54,6 +54,7 @@ pub fn thread_history_view(
     )
 }
 
+#[cfg(test)]
 pub fn focused_history_view(
     generation: u64,
     keys: Vec<Option<String>>,
@@ -62,11 +63,32 @@ pub fn focused_history_view(
     observe_visible: bool,
     target: Option<String>,
 ) -> Element<'_, Message> {
+    reading_history_view(
+        generation,
+        keys,
+        content,
+        history,
+        observe_visible,
+        target,
+        None,
+    )
+}
+
+pub fn reading_history_view(
+    generation: u64,
+    keys: Vec<Option<String>>,
+    content: Element<'_, Message>,
+    history: (bool, u64, bool),
+    observe_visible: bool,
+    target: Option<String>,
+    reading_anchor: Option<interconnect::drafts::ReadingPosition>,
+) -> Element<'_, Message> {
     Element::new(Timeline {
         generation,
         history: Some(history),
         observe_visible,
         target,
+        reading_anchor,
         keys: keys
             .into_iter()
             .enumerate()
@@ -89,6 +111,7 @@ fn make_view(
         history,
         observe_visible,
         target: None,
+        reading_anchor: None,
         keys: keys
             .into_iter()
             .enumerate()
@@ -102,6 +125,7 @@ struct Timeline<'a> {
     history: Option<(bool, u64, bool)>,
     observe_visible: bool,
     target: Option<String>,
+    reading_anchor: Option<interconnect::drafts::ReadingPosition>,
     keys: HashMap<widget::Id, String>,
     content: Element<'a, Message>,
 }
@@ -145,6 +169,7 @@ struct Identity {
     reported: Option<(Metrics, u64, bool)>,
     visible: Option<(Metrics, Vec<String>)>,
     media_visible: Option<(Metrics, Vec<String>)>,
+    reading_report: Option<(Option<String>, i32)>,
 }
 
 struct Measure<'a> {
@@ -263,6 +288,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             reported: None,
             visible: None,
             media_visible: None,
+            reading_report: None,
             selection: Default::default(),
         })
     }
@@ -282,6 +308,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             identity.reported = None;
             identity.visible = None;
             identity.media_visible = None;
+            identity.reading_report = None;
             identity.selection = Default::default();
             tree.children = self.children();
         } else {
@@ -329,8 +356,14 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         {
             // Center short messages; show the start of a message taller than the viewport.
             let center = row.y + row.height.min(current.metrics.height) / 2.0;
-            let translation =
-                (center - current.metrics.height / 2.0).clamp(0.0, current.metrics.maximum());
+            let translation = self
+                .reading_anchor
+                .as_ref()
+                .filter(|anchor| &anchor.event == target)
+                .map_or(center - current.metrics.height / 2.0, |anchor| {
+                    row.y - anchor.offset as f32
+                })
+                .clamp(0.0, current.metrics.maximum());
             let offset = current.metrics.maximum() - translation;
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
@@ -442,6 +475,38 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
                     })
                     .map(|row| row.key.clone())
                     .collect();
+                // Report a stable event anchor only after loading/restoration. This
+                // follows actual layout changes and scrolling, with no timer.
+                if self.history.is_some_and(|(_, _, ready)| ready) {
+                    let anchor = if metrics.distance_from_bottom() <= 1.0 {
+                        Some((None, 0))
+                    } else {
+                        snapshot
+                            .rows
+                            .iter()
+                            .find(|row| {
+                                row.y + row.height > metrics.translation
+                                    && row.key.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()
+                            })
+                            .map(|row| {
+                                (
+                                    Some(row.key.clone()),
+                                    (row.y - metrics.translation).round() as i32,
+                                )
+                            })
+                    };
+                    if let Some(anchor) = anchor
+                        && identity.reading_report.as_ref() != Some(&anchor)
+                    {
+                        shell.publish(Message::ReadingPosition {
+                            thread: self.history.is_some_and(|(thread, _, _)| thread),
+                            generation: self.generation,
+                            event: anchor.0.clone(),
+                            offset: anchor.1,
+                        });
+                        identity.reading_report = Some(anchor);
+                    }
+                }
                 let report = (metrics, visible);
                 if identity.visible.as_ref() != Some(&report) {
                     shell.publish(Message::TimelineVisible {
@@ -866,6 +931,76 @@ mod tests {
         assert!(screen_y(&above, "event-10") > screen_y(&focused, "event-10"));
         let next = harness.render_focus(&rows, 2, 200.0, None, Some("event-20"), true);
         assert_near(screen_y(&next, "event-20"), 80.0);
+    }
+
+    #[test]
+    fn saved_event_restores_its_top_offset_after_resize_and_does_not_override_manual_scroll() {
+        let mut harness = Harness::new();
+        let rows: Vec<_> = (0..40).map(|i| (format!("$event-{i}"), 40.0)).collect();
+        let render = |harness: &mut Harness, height: f32, offset: Option<f32>| {
+            let content = column(rows.iter().enumerate().map(|(index, (_, height))| {
+                Element::from(container(space().height(*height)).id(row_id(index)))
+            }));
+            let mut view = reading_history_view(
+                1,
+                rows.iter().map(|(key, _)| Some(key.clone())).collect(),
+                scrollable(content)
+                    .id("saved-timeline")
+                    .anchor_bottom()
+                    .height(Length::Fill)
+                    .into(),
+                (false, 1, true),
+                true,
+                Some("$event-10".into()),
+                Some(interconnect::drafts::ReadingPosition {
+                    room: "!room:example.org".into(),
+                    root: None,
+                    event: "$event-10".into(),
+                    offset: -17,
+                }),
+            );
+            harness.tree.diff(view.as_widget());
+            let node = view.as_widget_mut().layout(
+                &mut harness.tree,
+                &harness.renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(300.0, height)),
+            );
+            if let Some(offset) = offset {
+                view.as_widget_mut().operate(
+                    &mut harness.tree,
+                    Layout::new(&node),
+                    &harness.renderer,
+                    &mut widget::operation::scrollable::scroll_to::<()>(
+                        "saved-timeline".into(),
+                        iced::widget::operation::AbsoluteOffset {
+                            x: None,
+                            y: Some(offset),
+                        },
+                    ),
+                );
+            }
+            harness
+                .tree
+                .state
+                .downcast_ref::<Identity>()
+                .snapshot
+                .as_ref()
+                .unwrap()
+                .clone()
+        };
+        assert_near(
+            screen_y(&render(&mut harness, 200.0, None), "$event-10"),
+            -17.0,
+        );
+        assert_near(
+            screen_y(&render(&mut harness, 300.0, None), "$event-10"),
+            -17.0,
+        );
+        let manual = render(&mut harness, 300.0, Some(250.0));
+        assert_near(
+            screen_y(&render(&mut harness, 300.0, None), "$event-10"),
+            screen_y(&manual, "$event-10"),
+        );
     }
 
     #[test]

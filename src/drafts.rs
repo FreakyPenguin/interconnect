@@ -34,9 +34,20 @@ pub struct Entry {
     #[serde(default)]
     pub named_mentions: Vec<crate::composition::NamedMention>,
 }
+/// A stable event at the viewport's top, with its signed pixel displacement.
+/// Newest-following conversations have no saved entry.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadingPosition {
+    pub room: String,
+    pub root: Option<String>,
+    pub event: String,
+    pub offset: i32,
+}
 #[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub entries: Vec<Entry>,
+    #[serde(default)]
+    pub reading_positions: Vec<ReadingPosition>,
 }
 impl std::fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -98,6 +109,33 @@ impl Snapshot {
             ensure!(
                 bytes <= MAX_TEXT_BYTES,
                 "Drafts exceed the 8 MiB text storage limit"
+            );
+        }
+        ensure!(
+            self.reading_positions.len() <= 4096,
+            "Too many reading positions"
+        );
+        let mut positions = HashSet::new();
+        for position in &self.reading_positions {
+            ensure!(
+                position
+                    .room
+                    .parse::<matrix_sdk::ruma::OwnedRoomId>()
+                    .is_ok()
+                    && position
+                        .root
+                        .as_ref()
+                        .is_none_or(|root| root.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok())
+                    && position
+                        .event
+                        .parse::<matrix_sdk::ruma::OwnedEventId>()
+                        .is_ok()
+                    && position.offset.unsigned_abs() <= 1_000_000,
+                "Invalid reading position"
+            );
+            ensure!(
+                positions.insert((&position.room, &position.root)),
+                "Duplicate reading position"
             );
         }
         Ok(())
@@ -278,6 +316,12 @@ mod tests {
     }
     fn snapshot() -> Snapshot {
         Snapshot {
+            reading_positions: vec![ReadingPosition {
+                room: "!room:example.org".into(),
+                root: Some("$thread".into()),
+                event: "$reading".into(),
+                offset: -27,
+            }],
             entries: vec![
                 Entry {
                     room: "!room:example.org".into(),
@@ -303,6 +347,24 @@ mod tests {
         }
     }
     #[test]
+    fn old_snapshots_default_to_no_reading_positions_and_invalid_anchors_are_rejected() {
+        let old: Snapshot = serde_json::from_value(serde_json::json!({"entries": []})).unwrap();
+        assert!(old.reading_positions.is_empty());
+        for invalid in ["event", ""] {
+            let mut saved = snapshot();
+            saved.reading_positions[0].event = invalid.into();
+            assert!(saved.validate().is_err());
+        }
+        let mut saved = snapshot();
+        saved.reading_positions[0].offset = i32::MIN;
+        assert!(saved.validate().is_err());
+        let mut saved = snapshot();
+        saved
+            .reading_positions
+            .push(saved.reading_positions[0].clone());
+        assert!(saved.validate().is_err());
+    }
+    #[test]
     fn invalid_reply_ids_are_rejected() {
         let mut saved = snapshot();
         saved.entries[0].reply = Some("invalid".into());
@@ -315,7 +377,10 @@ mod tests {
         })).unwrap();
         assert!(old.mentions.is_empty());
         assert!(old.reply.is_none());
-        let mut saved = Snapshot { entries: vec![old] };
+        let mut saved = Snapshot {
+            entries: vec![old],
+            ..Default::default()
+        };
         saved.entries[0].mentions = vec!["@maya:example.org".parse().unwrap(); 257];
         assert!(saved.validate().is_err());
     }
@@ -334,6 +399,11 @@ mod tests {
             !bytes
                 .windows(b"unfinished private fixture".len())
                 .any(|w| w == b"unfinished private fixture")
+        );
+        assert!(
+            !bytes
+                .windows(b"$reading".len())
+                .any(|window| window == b"$reading")
         );
         assert_eq!(
             fs::metadata(directory.path().join(FILE))
