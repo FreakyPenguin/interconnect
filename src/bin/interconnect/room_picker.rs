@@ -316,40 +316,69 @@ impl App {
     }
 
     pub(super) fn validate_room_focus(&mut self) {
-        if self.pending_room_focus.is_some_and(|generation| {
-            self.selection
-                .room
-                .as_ref()
-                .is_none_or(|(current, _)| *current != generation)
-                || !self.window_focused
-                || self.closing
-                || self.stopped
-                || self.room_picker.is_some()
-                || self.create_room.is_some()
-                || self.new_chat.is_some()
-                || self.settings.draft.is_some()
-                || self.verification.open
-                || self.image_view.is_some()
-                || self.reaction_picker.is_some()
-                || self.composer_picker.is_some()
-                || self.emoji_management.is_some()
-                || self.invite.is_some()
-                || self.topic_editor.is_some()
-                || self.room_search.open
-                || self.bookmarks.open
-                || self.global_search.open
-                || self.space_settings.is_open()
-                || self.selection.members.is_some()
-                || (self.demo.is_none() && self.model.authentication.is_some())
-        }) {
+        let blocked = !self.window_focused
+            || self.closing
+            || self.stopped
+            || self.room_picker.is_some()
+            || self.create_room.is_some()
+            || self.new_chat.is_some()
+            || self.settings.draft.is_some()
+            || self.verification.open
+            || self.image_view.is_some()
+            || self.reaction_picker.is_some()
+            || self.composer_picker.is_some()
+            || self.emoji_management.is_some()
+            || self.invite.is_some()
+            || self.topic_editor.is_some()
+            || self.message_delete.is_some()
+            || self.context_menu.is_some()
+            || self.room_search.open
+            || self.bookmarks.open
+            || self.global_search.open
+            || self.space_settings.is_open()
+            || self.selection.members.is_some()
+            || (self.demo.is_none() && self.model.authentication.is_some());
+        if blocked
+            || self.pending_room_focus.is_some_and(|generation| {
+                self.selection
+                    .room
+                    .as_ref()
+                    .is_none_or(|(current, _)| *current != generation)
+            })
+        {
             self.pending_room_focus = None;
+        }
+        if blocked
+            || self.pending_thread_focus.is_some_and(|generation| {
+                self.selection
+                    .thread
+                    .as_ref()
+                    .is_none_or(|(current, _)| *current != generation)
+            })
+        {
+            self.pending_thread_focus = None;
         }
     }
 
     fn take_room_focus(&mut self) -> Option<impl iced::advanced::widget::Operation + use<>> {
         self.validate_room_focus();
-        let generation = self.pending_room_focus?;
-        let pane = super::current_pane(&self.model.room, generation)?;
+        let thread = self.pending_thread_focus.is_some();
+        let generation = if thread {
+            self.pending_thread_focus?
+        } else {
+            self.pending_room_focus?
+        };
+        let pane = super::current_pane(
+            if thread {
+                &self.model.thread
+            } else {
+                &self.model.room
+            },
+            generation,
+        )?;
+        if thread {
+            self.pending_thread_focus = None;
+        }
         self.pending_room_focus = None;
         if pane.error.is_some()
             || self
@@ -361,7 +390,12 @@ impl App {
             return None;
         }
         Some(iced::advanced::widget::operation::focusable::focus(
-            "room-composer".into(),
+            if thread {
+                "thread-composer"
+            } else {
+                "room-composer"
+            }
+            .into(),
         ))
     }
 
@@ -1214,6 +1248,140 @@ mod tests {
         assert_eq!(app.drafts[&original].content.text(), "other draft");
         assert_eq!(app.scroll_positions, scroll);
         assert!(app.take_room_focus().is_none());
+    }
+
+    fn loading_thread() -> (App, super::super::Pane) {
+        let mut app = demo_app();
+        let _ = app.update(Message::WindowFocused(true));
+        let _ = app.update(Message::Thread("review".into()));
+        let mut pane = app.model.thread.clone().unwrap();
+        app.demo = None;
+        app.model.authentication = None;
+        app.model.thread = None;
+        let task = app.update(Message::Thread("review".into()));
+        pane.generation = app.selection.thread.as_ref().unwrap().0;
+        assert_eq!(task.units(), 0, "wait for the asynchronous thread pane");
+        assert_eq!(app.pending_thread_focus, Some(pane.generation));
+        (app, pane)
+    }
+
+    #[test]
+    fn connected_thread_arrival_focuses_its_composer_once() {
+        let (mut app, pane) = loading_thread();
+        app.pending_scroll = [None, None];
+        let mut snapshot = app.model.clone();
+        snapshot.thread = Some(pane);
+        assert_eq!(
+            app.update(Message::State(Box::new(snapshot.clone())))
+                .units(),
+            1
+        );
+        assert!(app.pending_thread_focus.is_none());
+        assert_eq!(app.update(Message::State(Box::new(snapshot))).units(), 0);
+    }
+
+    #[test]
+    fn deferred_thread_focus_routes_typing_to_thread_and_preserves_room_draft() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+        let (mut app, pane) = loading_thread();
+        app.model.thread = Some(pane);
+        let mut focus = app
+            .take_room_focus()
+            .expect("matching thread pane is ready");
+        let room = app.draft_key(false).unwrap();
+        let thread = app.draft_key(true).unwrap();
+        app.drafts.get_mut(&room).unwrap().content =
+            iced::widget::text_editor::Content::with_text("room draft");
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = iced::Size::new(1280.0, 720.0);
+        let mut view = app.view();
+        let mut tree = widget::Tree::new(&view);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        view.as_widget_mut()
+            .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut focus);
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        view.as_widget_mut().update(
+            &mut tree,
+            &iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Character("x".into()),
+                modified_key: Key::Character("x".into()),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: Modifiers::empty(),
+                text: Some("x".into()),
+                repeat: false,
+            }),
+            layout::Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut shell,
+            &iced::Rectangle::with_size(size),
+        );
+        assert!(shell.is_event_captured());
+        assert!(messages.iter().any(|message| {
+            matches!(message, Message::Edit(target, Action::Edit(Edit::Insert('x'))) if target == &thread)
+        }));
+        drop(view);
+        for message in messages {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.drafts[&thread].content.text(), "x");
+        assert_eq!(app.drafts[&room].content.text(), "room draft");
+        assert!(app.take_room_focus().is_none());
+    }
+
+    #[test]
+    fn late_thread_arrivals_do_not_steal_focus_after_interruption() {
+        for interruption in [
+            "room",
+            "close",
+            "settings",
+            "picker",
+            "filter",
+            "unfocused",
+            "regions",
+            "error",
+        ] {
+            let (mut app, mut pane) = loading_thread();
+            match interruption {
+                "room" => {
+                    let _ = app.update(Message::Room("general".into()));
+                }
+                "close" => {
+                    let _ = app.update(Message::CloseThread);
+                }
+                "settings" => {
+                    let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+                }
+                "picker" => {
+                    let _ = app.update(message(Event::Open));
+                }
+                "filter" => {
+                    let _ = app.update(Message::SearchFocus);
+                }
+                "unfocused" => {
+                    let _ = app.update(Message::WindowFocused(false));
+                }
+                "regions" => {
+                    let _ = app.update(Message::SpaceNavigation(
+                        super::super::space_navigation::Event::CycleRegion(false),
+                    ));
+                }
+                "error" => pane.error = Some("could not load".into()),
+                _ => unreachable!(),
+            }
+            let mut snapshot = app.model.clone();
+            snapshot.thread = Some(pane);
+            let _ = app.update(Message::State(Box::new(snapshot)));
+            assert!(app.pending_thread_focus.is_none(), "{interruption}");
+            assert!(app.take_room_focus().is_none(), "{interruption}");
+        }
     }
 
     #[test]

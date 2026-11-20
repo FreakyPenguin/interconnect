@@ -189,6 +189,11 @@ impl App {
                     Some(self.saved_scroll(false)),
                     Some(self.saved_scroll(true)),
                 ];
+                return iced::widget::operation::focus(if self.selection.thread.is_some() {
+                    "thread-composer"
+                } else {
+                    "room-composer"
+                });
             }
             Event::Refresh if self.bookmarks.open && !self.closing && !self.stopped => {
                 if let Some(service) = &self.model.bookmarks_service {

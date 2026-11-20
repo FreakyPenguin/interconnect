@@ -254,6 +254,7 @@ struct App {
     room_search: room_search::State,
     room_picker: Option<room_picker::State>,
     pending_room_focus: Option<u64>,
+    pending_thread_focus: Option<u64>,
     pending_notification: Option<std::sync::Arc<interconnect::notifications::Activation>>,
     new_chat: Option<new_chat::State>,
     create_room: Option<create_room::State>,
@@ -466,6 +467,7 @@ impl App {
             room_search: room_search::State::default(),
             room_picker: None,
             pending_room_focus: None,
+            pending_thread_focus: None,
             pending_notification: None,
             new_chat: None,
             create_room: None,
@@ -835,6 +837,7 @@ impl App {
             Message::SearchFocus | Message::Search(_) | Message::Focus(_) | Message::RoomSearch(_)
         ) {
             self.pending_room_focus = None;
+            self.pending_thread_focus = None;
         }
         self.validate_room_focus();
         if let Message::EmojiManagement(event) = message {
@@ -2174,6 +2177,7 @@ impl App {
                 }
             }
             Message::CloseThread => {
+                self.pending_thread_focus = None;
                 self.visible_rows[1].clear();
                 self.selection.thread = None;
                 self.selection.event_focus[1] = None;
@@ -2528,6 +2532,7 @@ impl App {
     }
     fn select_room(&mut self, id: String) {
         self.pending_room_focus = None;
+        self.pending_thread_focus = None;
         self.shell.narrow_navigation = false;
         self.bookmarks.close();
         self.global_search.close();
@@ -2552,6 +2557,7 @@ impl App {
         self.selection.members = None;
         self.selection.event_focus[1] = None;
         self.selection.thread = Some((self.generation, id));
+        self.pending_thread_focus = Some(self.generation);
         self.pending_scroll[1] = Some(self.saved_scroll(true));
         if let Some(key) = self.draft_key(true) {
             self.drafts.entry(key).or_default();

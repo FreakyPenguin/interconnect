@@ -356,6 +356,7 @@ impl App {
             return Task::none();
         }
         self.pending_room_focus = None;
+        self.pending_thread_focus = None;
         match event {
             Event::FocusLocation => {
                 self.stop_typing();

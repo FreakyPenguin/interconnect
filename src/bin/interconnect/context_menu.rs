@@ -465,6 +465,21 @@ impl App {
                 let focus = match target {
                     Some(Target::Account) => Some(super::space_navigation::ACCOUNT),
                     Some(Target::Sections) => Some("nav-manage-sections"),
+                    Some(
+                        Target::Message(target)
+                        | Target::Link {
+                            message: target, ..
+                        },
+                    ) if self.message_row(target).is_some() => Some(if target.thread {
+                        "thread-composer"
+                    } else {
+                        "room-composer"
+                    }),
+                    Some(Target::Thread {
+                        room, generation, ..
+                    }) if self.selection.room.as_ref() == Some(&(*generation, room.clone())) => {
+                        Some("room-composer")
+                    }
                     _ => None,
                 };
                 self.context_menu = None;

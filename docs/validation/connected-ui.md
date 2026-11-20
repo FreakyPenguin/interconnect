@@ -238,6 +238,16 @@ Positions are per-session; loaded history can grow memory without virtualization
   alias preference, ID fallback, and preserving conversation state. Check native
   clipboard and opening in another client manually.
 
+### Deferred composer focus
+
+Open a thread with Alt+T while its messages are still loading, then type after
+arrival: input must reach the thread composer and leave the room draft intact.
+Before arrival, switch rooms, close the thread, press F6/Tab, focus the room filter,
+open Settings, or unfocus the window: the late pane must not take focus back.
+Close Saved messages and dismiss room/thread message menus, then type: the
+corresponding composer should receive input. Automated tests cover delayed pane
+focus and interruption routing; connected latency and desktop focus remain manual.
+
 ## Read receipts and unread clearing
 
 Focused, uncovered newest room panes send public read/fully-read updates. Older,

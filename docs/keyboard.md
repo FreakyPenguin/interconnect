@@ -61,6 +61,11 @@ ancestors in overflow. Include subspaces is beside the sidebar filter.
 Expansion/focus alone does not select a space. Account menu supports arrows,
 Tab/Shift+Tab, Enter/Space, and Escape.
 
+Thread navigation waits for the matching pane before focusing its composer.
+Changing focus, opening a dialog, or leaving the thread cancels delayed focus.
+Closing Saved messages or dismissing a message/link menu returns focus to the
+corresponding room or thread composer.
+
 ## Composition
 
 | Shortcut | Action |
