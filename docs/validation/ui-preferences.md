@@ -13,7 +13,9 @@ macOS validation. Build with the locked desktop command before launching
 - Edit values in several categories. Switching categories must retain every edit
   and numeric input, including invalid input. An invalid value keeps Save disabled
   and offers a link to the category needing attention.
-- Close using X or Escape with an edited form: keep editing or explicitly discard.
+- Close using X, Escape, or the application close/exit action with an edited form:
+  keep editing or explicitly discard. Old confirmation actions must not dismiss
+  a replacement confirmation or a newly opened form.
   Cancel explicitly discards the form. Clean forms close immediately. Preserve the
   open room/thread, their drafts, and an older reading position throughout.
 - Advanced → Reload file warns before discarding edited values. Reload fills the

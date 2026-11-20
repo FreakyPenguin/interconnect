@@ -32,7 +32,8 @@ pub struct State {
     notification_test_busy: bool,
     notification_test_result: Option<Result<(), String>>,
     category: Category,
-    confirm_discard: Option<DiscardAction>,
+    confirm_discard: Option<Discard>,
+    confirm_serial: u64,
 }
 impl State {
     pub(super) fn graphics_restart_required(&self) -> bool {
@@ -64,12 +65,25 @@ impl Category {
         }
     }
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum DiscardAction {
     Close,
     Reload,
+    Transition(Box<Message>),
+}
+#[derive(Clone, Debug)]
+struct Discard {
+    serial: u64,
+    action: DiscardAction,
 }
 impl State {
+    fn request_discard(&mut self, action: DiscardAction) {
+        self.confirm_serial = self.confirm_serial.wrapping_add(1);
+        self.confirm_discard = Some(Discard {
+            serial: self.confirm_serial,
+            action,
+        });
+    }
     fn dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(|draft| {
             draft != &self.current
@@ -119,8 +133,8 @@ pub enum Event {
     Open,
     Cancel,
     RequestClose,
-    KeepEditing,
-    DiscardChanges,
+    KeepEditing(u64),
+    DiscardChanges(u64),
     Category(Category),
     ShowRoomList(bool),
     ShowUnreadSection(bool),
@@ -291,17 +305,35 @@ impl App {
             }
             Event::RequestClose if !self.settings.saving => {
                 if self.settings.dirty() {
-                    self.settings.confirm_discard = Some(DiscardAction::Close);
+                    self.settings.request_discard(DiscardAction::Close);
                 } else {
                     return self.settings_update(Event::Cancel);
                 }
             }
-            Event::KeepEditing => self.settings.confirm_discard = None,
-            Event::DiscardChanges if !self.settings.busy => {
-                match self.settings.confirm_discard.take() {
-                    Some(DiscardAction::Close) => return self.settings_update(Event::Cancel),
-                    Some(DiscardAction::Reload) => return self.load_settings(),
-                    None => {}
+            Event::KeepEditing(serial)
+                if self
+                    .settings
+                    .confirm_discard
+                    .as_ref()
+                    .is_some_and(|confirm| confirm.serial == serial) =>
+            {
+                self.settings.confirm_discard = None;
+            }
+            Event::DiscardChanges(serial)
+                if !self.settings.busy
+                    && self
+                        .settings
+                        .confirm_discard
+                        .as_ref()
+                        .is_some_and(|confirm| confirm.serial == serial) =>
+            {
+                match self.settings.confirm_discard.take().unwrap().action {
+                    DiscardAction::Close => return self.settings_update(Event::Cancel),
+                    DiscardAction::Reload => return self.load_settings(),
+                    DiscardAction::Transition(next) => {
+                        self.settings.draft = None;
+                        return self.update(*next);
+                    }
                 }
             }
             Event::Open if self.settings.draft.is_none() && !self.closing => {
@@ -410,7 +442,7 @@ impl App {
             }
             Event::Reload if self.settings.draft.is_some() && !self.settings.busy => {
                 if self.settings.dirty() {
-                    self.settings.confirm_discard = Some(DiscardAction::Reload);
+                    self.settings.request_discard(DiscardAction::Reload);
                 } else {
                     return self.load_settings();
                 }
@@ -507,6 +539,23 @@ impl App {
         }
         Task::none()
     }
+    /// Capture the requested application transition, preserving unsaved values
+    /// until the exact displayed confirmation is accepted.
+    pub(super) fn guard_settings_transition(&mut self, next: Message) -> bool {
+        if self.settings.draft.is_none() || self.settings.saving {
+            return false;
+        }
+        if self.settings.dirty() {
+            self.settings
+                .request_discard(DiscardAction::Transition(Box::new(next)));
+            true
+        } else {
+            self.settings.draft = None;
+            self.settings.confirm_discard = None;
+            false
+        }
+    }
+
     pub(super) fn defer_close_for_settings(&mut self) -> bool {
         if self.settings.saving {
             self.settings.close_after_save = true;
@@ -819,10 +868,14 @@ impl App {
                     .on_press(message(Event::Category(category))),
             );
         }
-        if let Some(action) = self.settings.confirm_discard {
+        if let Some(confirm) = &self.settings.confirm_discard {
+            let serial = confirm.serial;
             actions = actions.push(
-                text(match action {
+                text(match &confirm.action {
                     DiscardAction::Close => "Discard your unsaved settings changes?",
+                    DiscardAction::Transition(_) => {
+                        "Close Interconnect and discard your unsaved settings changes?"
+                    }
                     DiscardAction::Reload => "Reload the file and discard your unsaved changes?",
                 })
                 .size(13),
@@ -833,17 +886,18 @@ impl App {
                     button(text("Keep editing").size(13))
                         .padding([7, 14])
                         .style(shell::quiet_button)
-                        .on_press(message(Event::KeepEditing)),
+                        .on_press(message(Event::KeepEditing(serial))),
                     button(
-                        text(match action {
+                        text(match &confirm.action {
                             DiscardAction::Close => "Discard changes",
                             DiscardAction::Reload => "Reload file",
+                            DiscardAction::Transition(_) => "Discard and close",
                         })
                         .size(13)
                     )
                     .padding([7, 14])
                     .style(button::danger)
-                    .on_press(message(Event::DiscardChanges)),
+                    .on_press(message(Event::DiscardChanges(serial))),
                 ]
                 .spacing(8),
             );
@@ -928,14 +982,21 @@ mod tests {
         let _ = app.settings_update(Event::RequestClose);
         assert!(app.settings.draft.is_some());
         assert!(matches!(
-            app.settings.confirm_discard,
-            Some(DiscardAction::Close)
+            app.settings.confirm_discard.as_ref(),
+            Some(Discard {
+                action: DiscardAction::Close,
+                ..
+            })
         ));
-        let _ = app.settings_update(Event::KeepEditing);
+        let _ = app.settings_update(Event::KeepEditing(
+            app.settings.confirm_discard.as_ref().unwrap().serial,
+        ));
         assert!(app.settings.confirm_discard.is_none());
         assert_eq!(app.settings.draft, draft);
         let _ = app.settings_update(Event::RequestClose);
-        let _ = app.settings_update(Event::DiscardChanges);
+        let _ = app.settings_update(Event::DiscardChanges(
+            app.settings.confirm_discard.as_ref().unwrap().serial,
+        ));
         assert!(app.settings.draft.is_none());
         assert_eq!(app.settings.current, Settings::default());
         assert_eq!(app.selection, selection);
@@ -949,6 +1010,39 @@ mod tests {
     }
 
     #[test]
+    fn application_exit_captures_choice_and_rejects_old_confirmations() {
+        let mut app = super::super::tests::demo_app();
+        let _ = app.settings_update(Event::Open);
+        let _ = app.settings_update(Event::Theme(ThemeMode::Dark));
+        assert!(app.guard_settings_transition(Message::Close));
+        let old = app.settings.confirm_discard.as_ref().unwrap().serial;
+        assert!(!app.closing);
+        let _ = app.settings_update(Event::RequestClose);
+        let current = app.settings.confirm_discard.as_ref().unwrap().serial;
+        assert_ne!(old, current);
+        let _ = app.settings_update(Event::DiscardChanges(old));
+        assert!(app.settings.draft.is_some());
+        assert!(!app.closing);
+        let _ = app.settings_update(Event::KeepEditing(current));
+        assert_eq!(
+            app.settings.draft.as_ref().unwrap().appearance.theme,
+            ThemeMode::Dark
+        );
+        assert!(app.guard_settings_transition(Message::Exit));
+        let exit = app.settings.confirm_discard.as_ref().unwrap().serial;
+        assert!(
+            matches!(&app.settings.confirm_discard.as_ref().unwrap().action,
+            DiscardAction::Transition(next) if matches!(next.as_ref(), Message::Exit))
+        );
+        // Inspect the normal asynchronous-close state; demo exits immediately.
+        app.demo = None;
+        let _ = app.settings_update(Event::DiscardChanges(exit));
+        assert!(app.settings.draft.is_none());
+        assert!(app.closing);
+        assert_eq!(app.settings.current.appearance.theme, ThemeMode::Light);
+    }
+
+    #[test]
     fn reloading_an_open_form_requires_discard_and_stages_until_save() {
         let (_directory, mut app) = loaded_app();
         let _ = app.settings_update(Event::Open);
@@ -956,16 +1050,23 @@ mod tests {
         let _ = app.settings_update(Event::Reload);
         assert!(!app.settings.busy);
         assert!(matches!(
-            app.settings.confirm_discard,
-            Some(DiscardAction::Reload)
+            app.settings.confirm_discard.as_ref(),
+            Some(Discard {
+                action: DiscardAction::Reload,
+                ..
+            })
         ));
-        let _ = app.settings_update(Event::KeepEditing);
+        let _ = app.settings_update(Event::KeepEditing(
+            app.settings.confirm_discard.as_ref().unwrap().serial,
+        ));
         assert_eq!(
             app.settings.draft.as_ref().unwrap().appearance.theme,
             ThemeMode::Dark
         );
         let _ = app.settings_update(Event::Reload);
-        let _ = app.settings_update(Event::DiscardChanges);
+        let _ = app.settings_update(Event::DiscardChanges(
+            app.settings.confirm_discard.as_ref().unwrap().serial,
+        ));
         assert!(app.settings.busy);
         let request = app.settings.request;
         let mut file_settings = Settings::default();
