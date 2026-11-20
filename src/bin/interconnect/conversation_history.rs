@@ -19,7 +19,11 @@ pub(super) struct Place {
 }
 impl Place {
     fn destination_eq(&self, other: &Self) -> bool {
-        self.room == other.room && self.root == other.root && self.events == other.events
+        self.room == other.room
+            && self.root == other.root
+            && self.events == other.events
+            && self.offsets == other.offsets
+            && self.anchors == other.anchors
     }
 }
 
@@ -68,6 +72,11 @@ pub(super) fn tracks(message: &Message) -> bool {
             | Message::FollowReplacement(_)
             | Message::NewChat(_)
             | Message::CreateRoom(_)
+            | Message::ContextMenu(_)
+            | Message::Escape
+            | Message::JumpToNewest { .. }
+            | Message::SpaceSettings(_)
+            | Message::Members(_)
     )
 }
 
@@ -374,6 +383,38 @@ mod tests {
         navigate(&mut app, "general");
         step(&mut app, true);
         assert_eq!(app.reading_anchor(false), Some(position));
+    }
+
+    #[test]
+    fn menu_navigation_escape_and_jump_to_newest_record_actual_dispatches() {
+        let mut app = demo_app();
+        let target = super::super::context_menu::Target::Room("general".into());
+        let _ = app.update(Message::ContextMenu(
+            super::super::context_menu::Event::Open(target.clone(), iced::Point::ORIGIN),
+        ));
+        let _ = app.update(Message::ContextMenu(
+            super::super::context_menu::Event::Choose(target, "Open room".into()),
+        ));
+        assert_eq!(room(&app), "general");
+        step(&mut app, true);
+        assert_eq!(room(&app), "studio");
+        step(&mut app, false);
+        let _ = app.update(Message::Thread("review".into()));
+        let _ = app.update(Message::Escape);
+        assert!(app.selection.thread.is_none());
+        step(&mut app, true);
+        assert_eq!(app.selection.thread.as_ref().unwrap().1, "review");
+        let _ = app.update(Message::CloseThread);
+        let key = app.draft_key(false).unwrap();
+        app.scroll_positions.insert(key.clone(), 200.0);
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let _ = app.update(Message::JumpToNewest {
+            thread: false,
+            generation,
+        });
+        assert_eq!(app.scroll_positions[&key], 0.0);
+        step(&mut app, true);
+        assert_eq!(app.scroll_positions[&key], 200.0);
     }
 
     #[test]
