@@ -114,3 +114,11 @@ primary save emphasis, and uses Zoom in/Zoom out/Fit controls in the viewer.
 Attachment Open/Save as actions, saved-message paging and result jumps also use
 icons with contextual tooltips. Search-history choices retain their wording
 because they determine what additional encrypted history is loaded.
+
+The final routine-action audit covers message-edit/reply cancellation, topic
+Save/Cancel, people-search retries, busy chat cancellation, verification device
+refresh/close, recovery close, sign-out draft-save retry, and directory loading.
+Security decisions (matching verification codes, deferring verification,
+recovery-key acknowledgment/replacement), authentication steps, destructive
+confirmation choices and named room-directory tabs keep explicit labels.
+Existing cancel, stale-result and availability guards are preserved.

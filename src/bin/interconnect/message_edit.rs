@@ -4,7 +4,7 @@ use super::{
 };
 use iced::{
     Element, Task,
-    widget::{button, container, row, text, text_editor},
+    widget::{container, row, text, text_editor},
 };
 use interconnect::composition::{self, Prepared};
 
@@ -411,12 +411,11 @@ impl App {
                 row![
                     text("Editing message").size(12).style(shell::muted_text),
                     iced::widget::space().width(iced::Length::Fill),
-                    button(text("Cancel").size(12))
-                        .padding([2, 0])
-                        .style(shell::quiet_button)
-                        .on_press_maybe(
-                            (!draft.pending).then(|| message(Event::Cancel(key.clone())))
-                        ),
+                    super::tooltips::icon_button(
+                        super::icons::Kind::Close,
+                        "Cancel message editing",
+                        (!draft.pending).then(|| message(Event::Cancel(key.clone()))),
+                    ),
                 ]
                 .align_y(iced::Alignment::Center),
             )

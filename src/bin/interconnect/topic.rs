@@ -145,19 +145,26 @@ impl App {
     }
     pub(super) fn topic_view<'a>(&'a self, generation: u64, room_id: &str) -> Element<'a, Message> {
         if let Some(state) = &self.topic_editor {
-            let mut save = button(text(if state.pending { "Saving…" } else { "Save" }).size(12))
-                .style(shell::quiet_button);
-            let mut cancel = button(text("Cancel").size(12)).style(shell::quiet_button);
-            if !state.pending {
-                cancel = cancel.on_press(message(Event::Cancel));
-                if self.pending_ops < MAX_PENDING_OPERATIONS
-                    && (self.demo.is_some()
-                        || current_pane(&self.model.room, generation)
-                            .is_some_and(|pane| pane.composer.is_some()))
-                {
-                    save = save.on_press(message(Event::Save));
-                }
-            }
+            let can_save = !state.pending
+                && self.pending_ops < MAX_PENDING_OPERATIONS
+                && (self.demo.is_some()
+                    || current_pane(&self.model.room, generation)
+                        .is_some_and(|pane| pane.composer.is_some()));
+            let save = super::tooltips::icon_action(
+                super::icons::Kind::Save,
+                if state.pending {
+                    "Saving room topic…"
+                } else {
+                    "Save room topic"
+                },
+                can_save.then_some(message(Event::Save)),
+                shell::primary_button,
+            );
+            let cancel = super::tooltips::icon_button(
+                super::icons::Kind::Close,
+                "Cancel topic changes",
+                (!state.pending).then_some(message(Event::Cancel)),
+            );
             let editor = text_editor(&state.content)
                 .id("room-topic")
                 .cursor_blinking(false)

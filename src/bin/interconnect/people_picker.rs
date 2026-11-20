@@ -184,10 +184,11 @@ impl State {
                     .style(shell::muted_text),
             );
         } else if let Some(error) = &self.error {
-            let mut retry = button(text("Retry search").size(12)).style(shell::quiet_button);
-            if enabled {
-                retry = retry.on_press(Event::Retry);
-            }
+            let retry = super::tooltips::icon_button(
+                super::icons::Kind::Refresh,
+                "Retry people search",
+                enabled.then_some(Event::Retry),
+            );
             body = body.push(text(error).size(12)).push(retry);
         } else if self.query.trim().chars().count() >= 2 && self.results.is_empty() {
             body = body.push(

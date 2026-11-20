@@ -350,32 +350,37 @@ impl App {
             && self.demo.is_none()
             && snapshot.control.is_some()
         {
-            buttons = buttons.push(
-                button(text("Refresh devices").size(13))
-                    .keyboard_navigation(true)
-                    .on_press(action(Action::Refresh))
-                    .style(shell::quiet_button),
-            );
+            buttons = buttons.push(super::tooltips::icon_button(
+                super::icons::Kind::Refresh,
+                "Refresh verification devices",
+                Some(action(Action::Refresh)),
+            ));
         }
-        buttons = buttons
-            .push(
-                button(
-                    text(if snapshot.phase.active() {
-                        "Cancel verification"
-                    } else if snapshot.trust != VerificationState::Verified
-                        && snapshot.phase != Phase::Complete
-                    {
-                        "Verify later"
-                    } else {
-                        "Close"
-                    })
-                    .size(13),
-                )
+        let dismiss: Element<'_, Message> = if !snapshot.phase.active()
+            && snapshot.trust != VerificationState::Verified
+            && snapshot.phase != Phase::Complete
+        {
+            // Deferring verification is a security choice, so keep its wording.
+            button(text("Verify later").size(13))
                 .keyboard_navigation(true)
                 .on_press(message(Event::Close))
                 .padding([7, 10])
-                .style(shell::quiet_button),
+                .style(shell::quiet_button)
+                .into()
+        } else {
+            super::tooltips::icon_button(
+                super::icons::Kind::Close,
+                if snapshot.phase.active() {
+                    "Cancel verification"
+                } else {
+                    "Close verification"
+                },
+                Some(message(Event::Close)),
             )
+            .into()
+        };
+        buttons = buttons
+            .push(dismiss)
             .push(iced::widget::space().width(Length::Fill));
         if let Phase::Compare { comparison, .. } = &snapshot.phase {
             buttons = buttons

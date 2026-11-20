@@ -2,7 +2,7 @@
 use super::{App, DraftKey, Message, MessageRow, current_pane, reaction_picker, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, row, text, text_editor},
+    widget::{column, container, row, text, text_editor},
 };
 use interconnect::connected::ReplyPreview;
 
@@ -131,12 +131,11 @@ impl App {
                     ]
                     .spacing(2)
                     .width(Length::Fill),
-                    button(text("Cancel").size(12))
-                        .padding([2, 0])
-                        .style(shell::quiet_button)
-                        .on_press_maybe(
-                            (!draft.pending).then(|| message(Event::Cancel(key.clone())))
-                        ),
+                    super::tooltips::icon_button(
+                        super::icons::Kind::Close,
+                        "Cancel reply",
+                        (!draft.pending).then(|| message(Event::Cancel(key.clone()))),
+                    ),
                 ]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),

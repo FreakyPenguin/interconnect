@@ -128,17 +128,16 @@ impl App {
             }
             let mut footer = column![].spacing(8).width(Length::Fill);
             if let Some(error) = &self.draft_persistence.error {
-                footer = footer
-                    .push(text(error).size(12).style(shell::danger_text))
-                    .push(
-                        button(text("Retry draft save").size(12))
-                            .keyboard_navigation(true)
-                            .padding([7, 10])
-                            .style(shell::quiet_button)
-                            .on_press_maybe(self.draft_persistence.can_retry().then_some(
+                footer =
+                    footer
+                        .push(text(error).size(12).style(shell::danger_text))
+                        .push(super::tooltips::icon_button(
+                            super::icons::Kind::Refresh,
+                            "Retry saving drafts before sign out",
+                            self.draft_persistence.can_retry().then_some(
                                 Message::DraftPersistence(super::draft_persistence::Event::Retry),
-                            )),
-                    );
+                            ),
+                        ));
             }
             if let SignOut::Failed { error, .. } = &self.model.sign_out {
                 footer = footer.push(text(error).size(13).style(shell::danger_text));

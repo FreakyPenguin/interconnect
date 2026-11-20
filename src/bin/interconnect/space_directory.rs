@@ -643,11 +643,11 @@ impl App {
             );
         }
         if state.next.is_some() {
-            content = content.push(
-                button(row![icons::icon(Kind::Plus), text("Load more rooms").size(13)].spacing(7))
-                    .style(shell::quiet_button)
-                    .on_press_maybe(state.loading.is_none().then_some(event(Event::More))),
-            );
+            content = content.push(icon_button(
+                Kind::ChevronDown,
+                "Load more rooms",
+                state.loading.is_none().then_some(event(Event::More)),
+            ));
         }
         if state.loading.is_some() {
             content = content.push(

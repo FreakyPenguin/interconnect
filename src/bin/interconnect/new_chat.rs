@@ -504,11 +504,11 @@ impl App {
         ]
         .spacing(10);
         if busy {
-            content = content.push(
-                button(text("Cancel opening chat").size(13))
-                    .style(shell::quiet_button)
-                    .on_press(message(Event::Close)),
-            );
+            content = content.push(super::tooltips::icon_button(
+                super::icons::Kind::Close,
+                "Cancel opening chat",
+                Some(message(Event::Close)),
+            ));
         }
         if room_address || state.picker.selected.is_some() {
             let mut start = button(

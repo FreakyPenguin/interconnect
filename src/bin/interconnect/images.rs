@@ -4,7 +4,7 @@ use iced::time::Instant;
 use iced::{
     Element, Length, Subscription,
     futures::StreamExt,
-    widget::{column, container, image, mouse_area, opaque, row, scrollable, stack, text},
+    widget::{button, column, container, image, mouse_area, opaque, row, scrollable, stack, text},
 };
 use interconnect::{
     connected::MessageRow, image_media::Key, media::Animation, settings::GifPlayback,

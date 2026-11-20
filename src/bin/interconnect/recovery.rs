@@ -292,14 +292,11 @@ impl App {
                     }
                     footer =
                         footer
-                            .push(
-                                button("Close")
-                                    .keyboard_navigation(true)
-                                    .on_press_maybe(ready.then_some(Message::Verification(
-                                        verification::Event::Close,
-                                    )))
-                                    .style(shell::quiet_button),
-                            )
+                            .push(super::tooltips::icon_button(
+                                super::icons::Kind::Close,
+                                "Close recovery",
+                                ready.then_some(Message::Verification(verification::Event::Close)),
+                            ))
                             .push(
                                 button("Verify with another device…")
                                     .keyboard_navigation(true)
