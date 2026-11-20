@@ -9,6 +9,9 @@ preserving IME precedence and scrolling focused controls into view. Existing
 navigation wrappers retain their original focus behavior. These additions have
 no subscriptions or animation deadlines; focused-widget interaction and idle
 regressions live in the application's focus-scope tests.
+Pick lists also report a read-only `KeyboardState` snapshot through custom
+operations, so Escape precedence applies to open menus rather than hover
+tooltips. A focused-field regression covers this distinction.
 
 Upstream: crates.io `iced_widget` 0.14.2, repository commit
 `54abf81d13fec06d4d9ac754b03ce2c3313e8a1f`, `widget/`.

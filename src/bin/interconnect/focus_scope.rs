@@ -218,18 +218,15 @@ impl<Message> Widget<Message, Theme, Renderer> for Scope<'_, Message> {
                     ..
                 })
             );
-        let popup_open = escape
-            && self
-                .content
-                .as_widget_mut()
-                .overlay(
-                    &mut tree.children[0],
-                    layout,
-                    renderer,
-                    viewport,
-                    Vector::ZERO,
-                )
-                .is_some();
+        let mut dropdown = OpenDropdown::default();
+        if escape {
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                &mut dropdown,
+            );
+        }
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -240,7 +237,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Scope<'_, Message> {
             shell,
             viewport,
         );
-        if escape && !popup_open {
+        if escape && !dropdown.0 {
             shell.publish((self.on_escape.as_ref().expect("escape action"))());
             shell.capture_event();
         }
@@ -343,6 +340,18 @@ impl widget::Operation for FocusedBounds {
     fn focusable(&mut self, _: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Focusable) {
         if state.is_focused() {
             self.0 = Some(bounds);
+        }
+    }
+}
+#[derive(Default)]
+struct OpenDropdown(bool);
+impl widget::Operation for OpenDropdown {
+    fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+        f(self);
+    }
+    fn custom(&mut self, _: Option<&widget::Id>, _: Rectangle, state: &mut dyn std::any::Any) {
+        if let Some(menu) = state.downcast_ref::<iced::widget::pick_list::KeyboardState>() {
+            self.0 |= menu.is_open();
         }
     }
 }
@@ -660,6 +669,72 @@ mod tests {
         assert_eq!(
             update(
                 &mut picker,
+                &mut tree,
+                &node,
+                &renderer,
+                key(Named::Escape, false, false)
+            )
+            .0,
+            [9]
+        );
+    }
+
+    #[test]
+    fn a_visible_hover_tooltip_does_not_consume_dialog_escape() {
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = Size::new(300.0, 200.0);
+        let mut form = dismissible(
+            iced::widget::tooltip(
+                text_input("Name", "value")
+                    .on_input(|_| 1)
+                    .cursor_blinking(false),
+                "Field hint",
+                iced::widget::tooltip::Position::Bottom,
+            )
+            .delay(std::time::Duration::ZERO),
+            "tooltip-escape",
+            9,
+        );
+        let mut tree = Tree::new(&form);
+        let node =
+            form.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        let viewport = Rectangle::with_size(size);
+        let cursor = mouse::Cursor::Available(iced::Point::new(10.0, 10.0));
+        let mut messages = Vec::new();
+        for event in [
+            Event::Mouse(mouse::Event::CursorMoved {
+                position: iced::Point::new(10.0, 10.0),
+            }),
+            Event::Window(iced::window::Event::RedrawRequested(
+                iced::time::Instant::now(),
+            )),
+        ] {
+            form.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                cursor,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &viewport,
+            );
+        }
+        assert!(
+            form.as_widget_mut()
+                .overlay(
+                    &mut tree,
+                    Layout::new(&node),
+                    &renderer,
+                    &viewport,
+                    Vector::ZERO
+                )
+                .is_some()
+        );
+        assert_eq!(
+            update(
+                &mut form,
                 &mut tree,
                 &node,
                 &renderer,

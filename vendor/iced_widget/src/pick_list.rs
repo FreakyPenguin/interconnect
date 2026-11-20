@@ -448,12 +448,16 @@ where
         _renderer: &Renderer,
         operation: &mut dyn crate::core::widget::Operation,
     ) {
+        let state = tree.state.downcast_mut::<State<Renderer::Paragraph>>();
+        operation.custom(
+            None,
+            layout.bounds(),
+            &mut KeyboardState {
+                is_open: state.is_open,
+            },
+        );
         if self.keyboard_navigation {
-            operation.focusable(
-                None,
-                layout.bounds(),
-                tree.state.downcast_mut::<State<Renderer::Paragraph>>(),
-            );
+            operation.focusable(None, layout.bounds(), state);
         }
     }
 
@@ -872,6 +876,19 @@ where
         pick_list: PickList<'a, T, L, V, Message, Theme, Renderer>,
     ) -> Self {
         Self::new(pick_list)
+    }
+}
+
+/// Read-only keyboard menu snapshot supplied to custom widget operations.
+/// This lets a containing focus scope distinguish menus from hover tooltips.
+#[derive(Debug)]
+pub struct KeyboardState {
+    is_open: bool,
+}
+impl KeyboardState {
+    /// Whether this pick list currently owns an open menu.
+    pub fn is_open(&self) -> bool {
+        self.is_open
     }
 }
 
