@@ -33,6 +33,10 @@ pub(super) enum Kind {
     BookmarkFilled,
     Close,
     Check,
+    Save,
+    ZoomIn,
+    ZoomOut,
+    Fit,
     ChevronLeft,
     ArrowLeft,
     Refresh,
@@ -202,6 +206,42 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                     line(&[(12.0, 5.0), (12.0, 19.0)]);
                 }
                 Check => line(&[(5.0, 12.0), (10.0, 17.0), (20.0, 7.0)]),
+                Save => {
+                    line(&[
+                        (4.0, 3.0),
+                        (17.0, 3.0),
+                        (21.0, 7.0),
+                        (21.0, 21.0),
+                        (3.0, 21.0),
+                        (3.0, 3.0),
+                        (4.0, 3.0),
+                    ]);
+                    line(&[(7.0, 3.0), (7.0, 9.0), (16.0, 9.0), (16.0, 3.0)]);
+                    line(&[(7.0, 21.0), (7.0, 14.0), (17.0, 14.0), (17.0, 21.0)]);
+                }
+                ZoomIn | ZoomOut => {
+                    line(&[(15.0, 15.0), (21.0, 21.0)]);
+                    line(&[(7.0, 10.0), (13.0, 10.0)]);
+                    if self.kind == ZoomIn {
+                        line(&[(10.0, 7.0), (10.0, 13.0)]);
+                    }
+                    frame.stroke(&Path::circle(Point::new(10.0, 10.0), 6.5), stroke);
+                }
+                Fit => {
+                    line(&[(8.0, 3.0), (3.0, 3.0), (3.0, 8.0)]);
+                    line(&[(16.0, 3.0), (21.0, 3.0), (21.0, 8.0)]);
+                    line(&[(3.0, 16.0), (3.0, 21.0), (8.0, 21.0)]);
+                    line(&[(16.0, 21.0), (21.0, 21.0), (21.0, 16.0)]);
+                    frame.stroke(
+                        &Path::rounded_rectangle(
+                            Point::new(7.0, 7.0),
+                            Size::new(10.0, 10.0),
+                            1.0.into(),
+                        ),
+                        stroke,
+                    );
+                }
+
                 Close => {
                     line(&[(6.0, 6.0), (18.0, 18.0)]);
                     line(&[(18.0, 6.0), (6.0, 18.0)]);

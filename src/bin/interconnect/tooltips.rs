@@ -51,3 +51,21 @@ pub(super) fn icon_button<'a, Message: Clone + 'a>(
         iced_tooltip::Position::Top,
     )
 }
+
+/// Icon action with the same hit area, keyboard behavior, and hint as toolbar controls.
+pub(super) fn icon_action<'a, Message: Clone + 'a>(
+    kind: super::icons::Kind,
+    label: &'a str,
+    on_press: Option<Message>,
+    style: fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style,
+) -> iced_tooltip::Tooltip<'a, Message> {
+    tooltip(
+        iced::widget::button(super::icons::icon(kind))
+            .keyboard_navigation(true)
+            .padding(7)
+            .style(style)
+            .on_press_maybe(on_press),
+        label,
+        iced_tooltip::Position::Top,
+    )
+}
