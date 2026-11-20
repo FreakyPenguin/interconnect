@@ -27,3 +27,24 @@ Automated regressions exercise emoji-column bounds, exact-key search/selection,
 filtered thumbnail demand, stale picker results, and existing account/cancellation
 behavior. The steps above are manual acceptance procedures, not a completed
 native macOS or connected-server run record.
+
+## Search, saved messages, pins, and menus
+
+- Open New in the sidebar. Use arrows, Tab/Shift+Tab, and Enter/Space to choose
+  New chat, Create room, or Create space/subspace. Escape returns to the trigger.
+  Removing space-management permission while the menu is open must reject an
+  outdated Create subspace action.
+- Right-click a message and use Save message, then Remove saved message. Verify
+  the actions have the same permission/pending checks as the message toolbar.
+- Search results, saved messages, and pins provide a labeled Go to message/reply
+  action without making the selectable text itself navigate. Open an older pin
+  and a pinned thread reply; reject a stale room-generation action.
+- Saved messages show the time they were saved and a persistent range and
+  Previous/Next controls. Remove the last item on the last page: pagination
+  should clamp to the remaining entries rather than show an empty stale page.
+- Create/rename/remove a sidebar section. Inputs and action styling match other
+  forms, and keyboard focus stays inside the popup.
+
+Automated tests cover pin target validation and draft retention, creation-menu
+permission changes, saving/removing from the context menu, and existing search
+and saved-message navigation behavior.

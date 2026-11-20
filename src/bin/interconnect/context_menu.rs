@@ -14,6 +14,7 @@ pub(super) mod space_management;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
     Account,
+    Create,
     Sections,
     Section(String),
     Room(String),
@@ -65,6 +66,14 @@ fn dispatch(message: Message) -> Action {
 }
 fn message(event: Event) -> Message {
     Message::ContextMenu(event)
+}
+
+fn menu_prefix(target: &Target) -> Option<&'static str> {
+    match target {
+        Target::Account => Some("account-action"),
+        Target::Create => Some("create-action"),
+        _ => None,
+    }
 }
 
 pub fn trigger<'a>(base: impl Into<Element<'a, Message>>, target: Target) -> Element<'a, Message> {
@@ -170,6 +179,29 @@ impl App {
             return Vec::new();
         }
         match target {
+            Target::Create => {
+                let mut actions = vec![
+                    (
+                        "New chat…",
+                        dispatch(Message::NewChat(super::new_chat::Event::Open)),
+                    ),
+                    (
+                        "Create room…",
+                        dispatch(Message::CreateRoom(super::create_room::Event::Open)),
+                    ),
+                ];
+                if self.can_create_space() {
+                    actions.push((
+                        if matches!(self.shell.space, interconnect::navigation::Scope::Space(_)) {
+                            "Create subspace…"
+                        } else {
+                            "Create space…"
+                        },
+                        dispatch(Message::CreateRoom(super::create_room::Event::OpenSpace)),
+                    ));
+                }
+                actions
+            }
             Target::Account => {
                 let mut actions = vec![
                     (
@@ -383,6 +415,20 @@ impl App {
                         dispatch(action),
                     ));
                 }
+                if let Some(action) = self.bookmark_action(row, target.thread, target.generation) {
+                    let saving = matches!(
+                        &action,
+                        Message::Bookmark(super::bookmarks::Event::Set(_, true))
+                    );
+                    actions.push((
+                        if saving {
+                            "Save message"
+                        } else {
+                            "Remove saved message"
+                        },
+                        dispatch(action),
+                    ));
+                }
                 actions
             }
         }
@@ -401,7 +447,7 @@ impl App {
             }
             Event::Open(target, position) => {
                 if !self.context_actions(&target).is_empty() {
-                    let account = target == Target::Account;
+                    let focus = menu_prefix(&target).map(|prefix| format!("{prefix}:0"));
                     self.context_menu = Some(State {
                         target,
                         account: self.account_id.clone(),
@@ -413,35 +459,35 @@ impl App {
                     });
                     self.emoji_completion.clear();
                     self.user_completion.clear();
-                    if account {
-                        return iced::widget::operation::focus("account-action:0");
+                    if let Some(focus) = focus {
+                        return iced::widget::operation::focus(focus);
                     }
                 }
             }
             Event::Dismiss => {
-                let account = self
-                    .context_menu
-                    .as_ref()
-                    .is_some_and(|state| state.target == Target::Account);
+                let target = self.context_menu.as_ref().map(|state| &state.target);
+                let focus = match target {
+                    Some(Target::Account) => Some(super::space_navigation::ACCOUNT),
+                    Some(Target::Create) => Some("nav-create-menu"),
+                    _ => None,
+                };
                 self.context_menu = None;
-                if account {
-                    return iced::widget::operation::focus(super::space_navigation::ACCOUNT);
+                if let Some(focus) = focus {
+                    return iced::widget::operation::focus(focus);
                 }
             }
             Event::AccountMove(index, backwards) => {
-                if self
-                    .context_menu
-                    .as_ref()
-                    .is_some_and(|state| state.target == Target::Account)
+                if let Some(state) = &self.context_menu
+                    && let Some(prefix) = menu_prefix(&state.target)
                 {
-                    let count = self.context_actions(&Target::Account).len();
+                    let count = self.context_actions(&state.target).len();
                     if count > 0 {
                         let next = if backwards {
                             (index + count - 1) % count
                         } else {
                             (index + 1) % count
                         };
-                        return iced::widget::operation::focus(format!("account-action:{next}"));
+                        return iced::widget::operation::focus(format!("{prefix}:{next}"));
                     }
                 }
             }
@@ -640,6 +686,7 @@ impl App {
                     button(text("‹ Move to section").size(13))
                         .padding([7, 10])
                         .style(shell::quiet_button)
+                        .keyboard_navigation(true)
                         .on_press_maybe(state.pending.is_none().then(|| message(Event::Back)))
                 ]
                 .spacing(2);
@@ -664,6 +711,7 @@ impl App {
                             .width(iced::Length::Fill)
                             .padding([7, 10])
                             .style(shell::quiet_button)
+                            .keyboard_navigation(true)
                             .on_press_maybe(
                                 (state.pending.is_none()
                                     && self.pending_ops < super::MAX_PENDING_OPERATIONS
@@ -700,31 +748,33 @@ impl App {
                                 .width(iced::Length::Fill)
                                 .padding([7, 10])
                                 .style(shell::quiet_button)
+                                .keyboard_navigation(menu_prefix(&state.target).is_none())
                                 .on_press_maybe(state.pending.is_none().then(|| action.clone()));
-                            let control: Element<'_, Message> = if state.target == Target::Account {
-                                super::navigation_control::view(
-                                    control,
-                                    format!("account-action:{index}"),
-                                    action,
-                                    move |key, modifiers| {
-                                        use iced::keyboard::{Key, key::Named};
-                                        match key {
-                                            Key::Named(Named::ArrowUp) => {
-                                                Some(message(Event::AccountMove(index, true)))
+                            let control: Element<'_, Message> =
+                                if let Some(prefix) = menu_prefix(&state.target) {
+                                    super::navigation_control::view(
+                                        control,
+                                        format!("{prefix}:{index}"),
+                                        action,
+                                        move |key, modifiers| {
+                                            use iced::keyboard::{Key, key::Named};
+                                            match key {
+                                                Key::Named(Named::ArrowUp) => {
+                                                    Some(message(Event::AccountMove(index, true)))
+                                                }
+                                                Key::Named(Named::ArrowDown) => {
+                                                    Some(message(Event::AccountMove(index, false)))
+                                                }
+                                                Key::Named(Named::Tab) => Some(message(
+                                                    Event::AccountMove(index, modifiers.shift()),
+                                                )),
+                                                _ => None,
                                             }
-                                            Key::Named(Named::ArrowDown) => {
-                                                Some(message(Event::AccountMove(index, false)))
-                                            }
-                                            Key::Named(Named::Tab) => Some(message(
-                                                Event::AccountMove(index, modifiers.shift()),
-                                            )),
-                                            _ => None,
-                                        }
-                                    },
-                                )
-                            } else {
-                                control.into()
-                            };
+                                        },
+                                    )
+                                } else {
+                                    control.into()
+                                };
                             items.push(control)
                         });
                 if state.pending.is_some() {
@@ -750,6 +800,7 @@ impl App {
                                 .width(iced::Length::Fill)
                                 .padding([7, 10])
                                 .style(shell::quiet_button)
+                                .keyboard_navigation(true)
                                 .on_press(message(Event::Open(
                                     Target::Section(section.id.clone()),
                                     state.position,
@@ -759,7 +810,7 @@ impl App {
                 }
                 items
             };
-            Some(
+            let card: Element<'_, Message> =
                 container(iced::widget::scrollable(items).height(iced::Length::Shrink))
                     .max_height(360)
                     .width(if state.form.is_some() {
@@ -780,8 +831,12 @@ impl App {
                         },
                         ..shell::surface(theme, shell::palette(theme).background)
                     })
-                    .into(),
-            )
+                    .into();
+            Some(if menu_prefix(&state.target).is_some() {
+                card
+            } else {
+                super::focus_scope::view(card, "context-menu")
+            })
         });
         if self
             .context_menu
@@ -791,6 +846,18 @@ impl App {
             return popover::view(
                 base,
                 Some("account-menu-button".into()),
+                popup,
+                message(Event::Dismiss),
+            );
+        }
+        if self
+            .context_menu
+            .as_ref()
+            .is_some_and(|state| state.target == Target::Create)
+        {
+            return popover::view(
+                base,
+                Some("create-menu-button".into()),
                 popup,
                 message(Event::Dismiss),
             );
@@ -808,6 +875,70 @@ impl App {
 mod tests {
     use super::*;
     use crate::tests::demo_app;
+
+    #[test]
+    fn creation_menu_rechecks_space_permissions_and_opens_existing_forms() {
+        let mut app = demo_app();
+        let target = Target::Create;
+        assert!(
+            app.context_actions(&target)
+                .iter()
+                .any(|(label, _)| *label == "Create subspace…")
+        );
+        open(&mut app, &target);
+        choose(&mut app, &target, "New chat…");
+        assert!(app.new_chat.is_some());
+        let _ = app.update(Message::Escape);
+        open(&mut app, &target);
+        choose(&mut app, &target, "Create room…");
+        assert!(app.create_room.is_some());
+        let _ = app.update(Message::Escape);
+        open(&mut app, &target);
+        for space in std::sync::Arc::make_mut(&mut app.model.spaces) {
+            space.can_manage_rooms = false;
+        }
+        choose(&mut app, &target, "Create subspace…");
+        assert!(app.create_room.is_none());
+    }
+
+    #[test]
+    fn message_context_exposes_saving_and_removing_saved_messages() {
+        let mut app = demo_app();
+        app.model.bookmarks.complete = true;
+        let event = app
+            .model
+            .room
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.can_react && row.event_id.is_some())
+            .unwrap()
+            .event_id
+            .clone()
+            .unwrap();
+        let target = target(&app, false, &event);
+        open(&mut app, &target);
+        assert!(
+            app.context_actions(&target)
+                .iter()
+                .any(|(label, _)| *label == "Save message")
+        );
+        choose(&mut app, &target, "Save message");
+        assert!(
+            app.model
+                .bookmarks
+                .contains(&app.selection.room.as_ref().unwrap().1, &event)
+        );
+        open(&mut app, &target);
+        assert!(
+            app.context_actions(&target)
+                .iter()
+                .any(|(label, _)| *label == "Remove saved message")
+        );
+        choose(&mut app, &target, "Remove saved message");
+        assert!(app.model.bookmarks.entries.is_empty());
+    }
 
     fn target(app: &App, thread: bool, event: &str) -> Target {
         Target::Message(reaction_picker::Target {

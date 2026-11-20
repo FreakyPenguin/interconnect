@@ -5,11 +5,66 @@ use super::{
     presentation, selectable, shell,
 };
 use iced::{
-    Element, Length,
+    Element, Length, Task,
     widget::{button, column, container, row, rule, scrollable, text, tooltip},
 };
 
+#[derive(Clone, Debug)]
+pub enum Event {
+    GoTo(u64, String),
+}
+
 impl App {
+    pub(super) fn pinned_event(&mut self, event: Event) -> Task<Message> {
+        let Event::GoTo(generation, event) = event;
+        let Some((current, room)) = &self.selection.room else {
+            return Task::none();
+        };
+        if *current != generation
+            || !self.context_menu_allowed()
+            || self.composing
+            || !self.model.pinned.as_ref().is_some_and(|pins| {
+                pins.generation == generation
+                    && pins
+                        .rows
+                        .iter()
+                        .any(|row| row.event_id.as_deref() == Some(event.as_str()))
+            })
+        {
+            return Task::none();
+        }
+        // A new generation also asks the SDK to load an older pinned event,
+        // rather than only trying to scroll the currently loaded timeline.
+        let room = room.clone();
+        let root = self
+            .model
+            .pinned
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .find(|row| row.event_id.as_deref() == Some(event.as_str()))
+            .and_then(|row| row.thread_root.clone());
+        self.stop_typing();
+        self.select_room(room);
+        let thread = root.is_some();
+        if let Some(root) = root {
+            self.select_thread(root);
+        }
+        let generation = if thread {
+            self.selection.thread.as_ref().unwrap().0
+        } else {
+            self.selection.room.as_ref().unwrap().0
+        };
+        self.selection.event_focus[usize::from(thread)] = Some((generation, event));
+        self.pending_scroll[usize::from(thread)] = None;
+        self.expanded_pins = None;
+        iced::widget::operation::focus(if thread {
+            "thread-composer"
+        } else {
+            "room-composer"
+        })
+    }
     pub(super) fn pinned_view(&self, generation: u64) -> Option<Element<'_, Message>> {
         let pins = self
             .model
@@ -46,6 +101,7 @@ impl App {
             button(summary)
                 .padding([6, 8])
                 .style(shell::quiet_button)
+                .keyboard_navigation(true)
                 .on_press_maybe(
                     (!self.closing && !self.stopped).then_some(Message::TogglePins(generation)),
                 ),
@@ -72,6 +128,7 @@ impl App {
                                 .padding(0)
                                 .width(20)
                                 .style(shell::icon_button)
+                                .keyboard_navigation(true)
                                 .on_press(unpin),
                         )
                         .id(format!("pinned-unpin:{}", message.key)),
@@ -91,7 +148,15 @@ impl App {
                             &message.sender,
                             self.pinned_chat_action(message),
                         ),
-                        timestamp
+                        timestamp,
+                        iced::widget::space().width(Length::Fill),
+                        button(text("Go to message").size(12))
+                            .padding([4, 7])
+                            .style(shell::quiet_button)
+                            .keyboard_navigation(true)
+                            .on_press_maybe(message.event_id.as_ref().map(
+                                |event| Message::Pinned(Event::GoTo(generation, event.clone()))
+                            ))
                     ]
                     .spacing(10),
                     selectable::message_view_with_assets(
@@ -145,6 +210,29 @@ mod tests {
     use super::*;
     use crate::{DraftKey, tests::demo_app};
     use iced::advanced::{layout, widget};
+
+    #[test]
+    fn opening_a_pin_rejects_stale_targets_and_preserves_unsent_text() {
+        let mut app = demo_app();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Keep this draft");
+        let generation = app.selection.room.as_ref().unwrap().0;
+        let event = app.model.pinned.as_ref().unwrap().rows[0]
+            .event_id
+            .clone()
+            .unwrap();
+        let _ = app.pinned_event(Event::GoTo(generation - 1, event.clone()));
+        assert_eq!(app.selection.room.as_ref().unwrap().0, generation);
+        let _ = app.pinned_event(Event::GoTo(generation, "unknown".into()));
+        assert_eq!(app.selection.room.as_ref().unwrap().0, generation);
+        let _ = app.pinned_event(Event::GoTo(generation, event.clone()));
+        let current = app.selection.room.as_ref().unwrap().0;
+        assert_ne!(current, generation);
+        assert_eq!(app.selection.event_focus[0], Some((current, event)));
+        assert_eq!(app.pending_scroll[0], None);
+        assert_eq!(app.drafts[&key].content.text(), "Keep this draft");
+    }
 
     #[test]
     fn expanded_pins_render_rich_messages_and_activate_links() {

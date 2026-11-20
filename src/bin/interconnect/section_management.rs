@@ -149,7 +149,8 @@ impl App {
                 .id("section-name")
                 .cursor_blinking(false)
                 .size(13)
-                .padding(8);
+                .padding([7, 10])
+                .style(shell::search_style);
             if state.pending.is_none() {
                 input = input
                     .on_input(|name| message(Event::EditSectionName(name)))
@@ -181,6 +182,7 @@ impl App {
             row![
                 button(text("Cancel").size(13))
                     .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press_maybe(
                         state
                             .pending
@@ -195,7 +197,12 @@ impl App {
                     })
                     .size(13)
                 )
-                .style(shell::quiet_button)
+                .style(if matches!(form.change, Change::Remove { .. }) {
+                    button::danger
+                } else {
+                    shell::primary_button
+                })
+                .keyboard_navigation(true)
                 .on_press_maybe(enabled.then(|| message(Event::SaveSection))),
             ]
             .spacing(8),

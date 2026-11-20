@@ -386,7 +386,7 @@ impl App {
         if self.model.bookmarks.entries.is_empty() && self.model.bookmarks.complete {
             entries = entries.push(shell::empty_state(
                 "No saved messages",
-                "Bookmark a message from its action panel to find it here.",
+                "Choose Save message from a message’s actions to find it here.",
             ));
         }
         for entry in self
@@ -415,6 +415,7 @@ impl App {
                 actions = actions.push(
                     button(text("Go to message").size(12))
                         .style(shell::quiet_button)
+                        .keyboard_navigation(true)
                         .on_press(message(Event::Conversation(entry.pointer.clone()))),
                 );
             }
@@ -430,6 +431,17 @@ impl App {
                     ..iced::Font::with_name("Inter")
                 })]
                 .spacing(6);
+            if let Some(date) = chrono::DateTime::from_timestamp_millis(entry.saved_at) {
+                content = content.push(
+                    text(format!(
+                        "Saved {}",
+                        date.with_timezone(&chrono::Local)
+                            .format("%b %-d, %Y · %H:%M")
+                    ))
+                    .size(11)
+                    .style(shell::muted_text),
+                );
+            }
             if let Some(preview) = preview {
                 if !preview.sender.is_empty() {
                     content = content.push(text(&preview.sender).size(12).style(shell::muted_text));
@@ -455,20 +467,39 @@ impl App {
                     .style(shell::result_row),
             );
         }
-        if self.bookmarks.start() > 0 {
-            entries = entries.push(super::tooltips::icon_button(
-                super::icons::Kind::ChevronLeft,
-                "Previous page",
-                Some(message(Event::Previous)),
-            ));
-        }
-        if self.model.bookmarks.entries.len() > self.bookmarks.limit.max(20) {
-            entries = entries.push(super::tooltips::icon_button(
-                super::icons::Kind::ChevronRight,
-                "Next page",
-                Some(message(Event::More)),
-            ));
-        }
+        let total = self.model.bookmarks.entries.len();
+        let start = self.bookmarks.start().min(total);
+        let pagination = row![
+            text(if total == 0 {
+                "0 saved messages".into()
+            } else {
+                format!(
+                    "{}–{} of {total} {}",
+                    start + 1,
+                    (start + 20).min(total),
+                    if self.model.bookmarks.complete {
+                        "saved"
+                    } else {
+                        "loaded"
+                    }
+                )
+            })
+            .size(12)
+            .style(shell::muted_text),
+            iced::widget::space().width(Length::Fill),
+            button(text("Previous").size(12))
+                .padding([7, 10])
+                .style(shell::quiet_button)
+                .keyboard_navigation(true)
+                .on_press_maybe((start > 0).then_some(message(Event::Previous))),
+            button(text("Next").size(12))
+                .padding([7, 10])
+                .style(shell::quiet_button)
+                .keyboard_navigation(true)
+                .on_press_maybe((start + 20 < total).then_some(message(Event::More))),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center);
         column![
             self.room_column(
                 container(
@@ -509,6 +540,7 @@ impl App {
             .direction(shell::scrollbar())
             .style(shell::scroll_style)
             .height(Length::Fill),
+            self.room_column(container(pagination).padding([10, 24]).width(Length::Fill)),
         ]
         .height(Length::Fill)
         .into()

@@ -515,6 +515,7 @@ impl App {
         let search = button(super::icons::icon(super::icons::Kind::Search))
             .padding([7, 14])
             .style(shell::primary_button)
+            .keyboard_navigation(true)
             .on_press_maybe(
                 (!state.query.trim().is_empty() && !self.closing && !self.stopped)
                     .then_some(message(Event::Submit)),
@@ -547,12 +548,16 @@ impl App {
             let open = super::tooltips::tooltip(
                 container(
                     button(
-                        container(super::icons::icon(super::icons::Kind::ChevronRight))
-                            .center_x(28)
-                            .center_y(28),
+                        text(if hit.thread_root.is_some() {
+                            "Go to reply"
+                        } else {
+                            "Go to message"
+                        })
+                        .size(12),
                     )
-                    .padding(0)
-                    .style(shell::icon_button)
+                    .padding([7, 10])
+                    .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press(message(Event::Conversation(
                         state.epoch,
                         hit.room.clone(),
@@ -616,6 +621,7 @@ impl App {
             history_controls = history_controls.push(
                 button(text("Stop history search").size(13))
                     .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press(message(Event::StopHistory)),
             );
         } else if !state.submitted.is_empty() && !state.loading() && state.hits.len() < MAX_RESULTS
@@ -628,6 +634,7 @@ impl App {
             history_controls = history_controls.push(
                 button(text(label).size(13))
                     .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press_maybe(
                         (self.demo.is_some() || self.model.search.is_some())
                             .then_some(message(Event::History)),
@@ -664,6 +671,7 @@ impl App {
             entries = entries.push(
                 button(text("Load more results").size(13))
                     .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press(message(Event::More)),
             );
         }

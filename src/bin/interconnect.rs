@@ -279,6 +279,7 @@ enum Message {
     SpaceManagement(space_management::Event),
     Pin(pin_action::Event),
     TogglePins(u64),
+    Pinned(pinned::Event),
     Topic(topic::Event),
     SpaceSettings(space_settings::Event),
     RoomSettings(room_settings::Event),
@@ -1059,6 +1060,7 @@ impl App {
                     | Message::OpenLastThread
                     | Message::ToggleNavigation
                     | Message::TogglePins(_)
+                    | Message::Pinned(_)
                     | Message::Focus(_)
                     | Message::Bookmark(
                         bookmarks::Event::Open
@@ -1162,6 +1164,7 @@ impl App {
             Message::Bookmark(bookmarks::Event::Conversation(_))
                 | Message::GlobalSearch(global_search::Event::Conversation(..))
                 | Message::Room(_)
+                | Message::Pinned(_)
                 | Message::Notification(_)
                 | Message::Thread(_)
                 | Message::CloseThread
@@ -1247,6 +1250,7 @@ impl App {
             Message::Topic(event) => action_task = self.topic_event(event),
             Message::SpaceSettings(event) => action_task = self.space_settings_event(event),
             Message::RoomSettings(event) => action_task = self.room_settings_event(event),
+            Message::Pinned(event) => action_task = self.pinned_event(event),
             Message::Members(event) => action_task = self.members_event(event),
             Message::RefreshPresence { room, members } => self.refresh_presence(room, members),
             Message::Invite(event) => action_task = self.invite_event(event),
