@@ -121,5 +121,12 @@ Save/Cancel, people-search retries, busy chat cancellation, verification device
 refresh/close, recovery close, sign-out draft-save retry, and directory loading.
 Security decisions (matching verification codes, deferring verification,
 recovery-key acknowledgment/replacement), authentication steps, destructive
-confirmation choices and named room-directory tabs keep explicit labels.
+confirmation submits and named room-directory tabs keep explicit labels.
+Ordinary cancellation in deletion, sign-out and recovery forms uses a Close
+icon with a contextual tooltip. Login cancellation keeps explicit wording
+because it cancels an external browser/server authentication flow.
 Existing cancel, stale-result and availability guards are preserved.
+
+Source formatting and diff checks pass for the compact-action changes. Cargo
+checks and the integrated desktop review are run by the coordinating agent;
+this isolated action pass did not run Cargo concurrently with that validation.

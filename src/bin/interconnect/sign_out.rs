@@ -142,11 +142,11 @@ impl App {
             if let SignOut::Failed { error, .. } = &self.model.sign_out {
                 footer = footer.push(text(error).size(13).style(shell::danger_text));
             }
-            let cancel = button(text("Cancel").size(13))
-                .keyboard_navigation(true)
-                .padding([7, 14])
-                .style(shell::quiet_button)
-                .on_press_maybe(available.then_some(Message::SignOut(Event::Cancel)));
+            let cancel = super::tooltips::icon_button(
+                super::icons::Kind::Close,
+                "Cancel sign out",
+                available.then_some(Message::SignOut(Event::Cancel)),
+            );
             let confirm = button(
                 text(if busy {
                     "Signing out…"

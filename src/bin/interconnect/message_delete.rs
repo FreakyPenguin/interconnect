@@ -288,12 +288,15 @@ impl App {
         content = content.push(
             row![
                 iced::widget::space().width(Length::Fill),
-                container(
-                    button(text(if state.pending { "Close" } else { "Cancel" }).size(12))
-                        .padding([6, 10])
-                        .style(shell::quiet_button)
-                        .on_press(message(Event::Cancel(request)))
-                )
+                container(super::tooltips::icon_button(
+                    super::icons::Kind::Close,
+                    if state.pending {
+                        "Close deletion progress"
+                    } else {
+                        "Cancel message deletion"
+                    },
+                    Some(message(Event::Cancel(request))),
+                ))
                 .id("cancel-message-delete"),
                 container(confirm).id("confirm-message-delete"),
             ]

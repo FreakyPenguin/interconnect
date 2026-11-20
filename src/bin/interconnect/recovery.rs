@@ -221,12 +221,11 @@ impl App {
                     content = content.push(shell::title("Replace your recovery key?", 18))
                     .push(text("The previous key will no longer unlock recovery. Your existing message backup is kept. Save the new key before leaving this screen.").size(13));
                     footer = footer
-                        .push(
-                            button("Cancel")
-                                .keyboard_navigation(true)
-                                .on_press(message(Event::CancelReplace))
-                                .style(shell::quiet_button),
-                        )
+                        .push(super::tooltips::icon_button(
+                            super::icons::Kind::Close,
+                            "Cancel recovery key replacement",
+                            Some(message(Event::CancelReplace)),
+                        ))
                         .push(
                             button("Replace recovery key")
                                 .keyboard_navigation(true)
