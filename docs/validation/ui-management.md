@@ -32,6 +32,14 @@ unit tests do not establish server or platform behavior.
 
 ## Members and destructive actions
 
+- In the channel People roster at 300–360 px pane widths, names and Matrix IDs
+  occupy the full identity row beside the avatar. Permission controls appear
+  below; long Unicode names and IDs ellipsize without touching the role control.
+  Hover either identity line to read the full value. Check editable roles,
+  read-only administrators, and pending invitations, then widen and narrow again.
+- Invite is beside search, and Refresh checks members/roles and online status
+  without resetting the filter. A buffered refresh for an old roster must do
+  nothing. No empty feedback area reserves space above search.
 - Member-role dropdowns display the current role as a value, including custom
   roles. Selecting the current role is a no-op; permitted changes require an
   explicit Change role confirmation.

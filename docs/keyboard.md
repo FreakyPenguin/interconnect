@@ -88,6 +88,12 @@ displayed text, image alternatives, and LaTeX source; hidden spoilers use placeh
 
 ## Dialogs and viewers
 
+Routine actions use contextual icon tooltips: disk for Save, circular arrow for
+Reload/Retry, X for Close/Cancel, and arrows for returning or paging. Destructive
+confirmation buttons keep explicit action text. Settings fills the window with
+categories and Save/Close in its toolbar; closing edited preferences asks before
+discarding them.
+
 Dialog buttons accept Enter/Space, checkboxes toggle with Enter/Space, and
 focused dropdowns accept arrows/Home/End. Escape closes an open dropdown before
 dismissing its dialog. Text input and IME composition retain their normal keys.
