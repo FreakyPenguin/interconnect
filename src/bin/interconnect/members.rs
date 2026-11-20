@@ -196,14 +196,21 @@ impl App {
                     .spacing(10)
                     .align_y(iced::Alignment::Center),
                 container(
-                    column![
-                        self.sidebar_member_controls(member),
-                        button(text("Ignore user…").size(11))
-                            .keyboard_navigation(true)
-                            .on_press_maybe(self.ignore_member_action(member))
-                            .style(shell::quiet_button),
+                    row![
+                        container(self.sidebar_member_controls(member)).width(Length::Fill),
+                        super::tooltips::tooltip(
+                            button(text("Ignore…").size(11))
+                                .width(44)
+                                .padding([5, 3])
+                                .keyboard_navigation(true)
+                                .on_press_maybe(self.ignore_member_action(member))
+                                .style(shell::quiet_button),
+                            "Ignore user…",
+                            tooltip::Position::Top,
+                        ),
                     ]
                     .spacing(6)
+                    .align_y(iced::Alignment::Center)
                 )
                 .id(format!("member-controls-{}", member.user_id))
                 .padding(iced::Padding {
