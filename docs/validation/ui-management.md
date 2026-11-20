@@ -22,6 +22,9 @@ unit tests do not establish server or platform behavior.
 
 - At 640×480 and desktop sizes, room and space titles/close controls stay fixed
   while forms scroll. Feedback and Reload remain visible in the footer.
+- In Find rooms to join, scroll a long list at 640×480. Its title, Close, and
+  Reload must stay visible while the directory body scrolls. Changing directory
+  tabs and query/pagination cancellation retain their existing behavior.
 - Save a multiline topic while another field is edited: only the topic is saved,
   the editor retains its line breaks, and the footer still reports unsaved changes.
 - Confirm error and save messages remain beside the fixed actions rather than
