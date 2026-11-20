@@ -836,7 +836,13 @@ impl App {
         &'a self,
         base: impl Into<Element<'a, Message>>,
     ) -> Element<'a, Message> {
-        let content = self.shell.spaces.menu.as_ref().map(|menu| {
+        let menu = self
+            .shell
+            .spaces
+            .menu
+            .as_ref()
+            .filter(|_| self.space_navigation_allowed());
+        let content = menu.map(|menu| {
             let heading = menu
                 .parent
                 .last()
@@ -1081,6 +1087,26 @@ mod tests {
         assert_eq!(app.scroll_positions[&key], 89.0);
         let shown: HashSet<_> = app.visible_rooms().into_iter().collect();
         assert_eq!(shown.len(), app.visible_rooms().len());
+    }
+
+    #[test]
+    fn a_priority_confirmation_cannot_leave_a_breadcrumb_menu_above_it() {
+        let mut app = nested_app();
+        act(
+            &mut app,
+            Event::Open {
+                anchor: crumb_id(0),
+                parent: Vec::new(),
+            },
+        );
+        assert!(app.shell.spaces.menu.is_some());
+        {
+            let view = app.space_menu_view(iced::widget::space());
+            assert!(!view.as_widget().children()[1].children.is_empty());
+        }
+        app.sign_out_open = true;
+        let view = app.space_menu_view(iced::widget::space());
+        assert!(view.as_widget().children()[1].children.is_empty());
     }
 
     #[test]

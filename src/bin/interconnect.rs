@@ -496,25 +496,29 @@ impl App {
         if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_recovery() {
             return Task::none();
         }
-        let leaving_management = matches!(
-            &message,
-            Message::Room(_)
-                | Message::Space(_)
-                | Message::AdjacentRoom(_)
-                | Message::SpaceNavigation(space_navigation::Event::Choose(_))
-                | Message::GlobalSearch(global_search::Event::Open)
-                | Message::Bookmark(bookmarks::Event::Open)
-                | Message::Close
-                | Message::Exit
-        );
+        let closing_window = matches!(message, Message::Close | Message::Exit);
+        // Resolve the topmost editable dialog first so its confirmation cannot
+        // be hidden under another modal. Clean parents reveal the next form.
+        if closing_window && self.guard_emoji_management_transition(message.clone()) {
+            return Task::none();
+        }
+        if closing_window && self.guard_settings_transition(message.clone()) {
+            return Task::none();
+        }
+        let leaving_management = closing_window
+            || matches!(
+                &message,
+                Message::Room(_)
+                    | Message::Space(_)
+                    | Message::AdjacentRoom(_)
+                    | Message::SpaceNavigation(space_navigation::Event::Choose(_))
+                    | Message::GlobalSearch(global_search::Event::Open)
+                    | Message::Bookmark(bookmarks::Event::Open)
+                    | Message::Notification(_)
+            );
         if leaving_management
             && (self.guard_room_settings_transition(message.clone())
                 || self.guard_space_settings_transition(message.clone()))
-        {
-            return Task::none();
-        }
-        if matches!(message, Message::Close | Message::Exit)
-            && self.guard_settings_transition(message.clone())
         {
             return Task::none();
         }
@@ -863,6 +867,7 @@ impl App {
                 | Message::Room(_)
                 | Message::GlobalSearch(global_search::Event::Open)
                 | Message::Bookmark(bookmarks::Event::Open)
+                | Message::Notification(_)
         ) {
             self.close_space_settings();
         }
@@ -6201,6 +6206,32 @@ mod ux_navigation_tests {
             assert!(!app.selection.shutdown);
             assert!(!app.draft_persistence.close_requested);
         }
+    }
+
+    #[test]
+    fn notification_navigation_protects_dirty_space_forms_and_closes_clean_ones() {
+        let mut app = tests::demo_app();
+        let selection = app.selection.room.clone();
+        let _ = app.update(Message::SpaceSettings(space_settings::Event::Open(
+            "studio-space".into(),
+        )));
+        let _ = app.update(Message::SpaceSettings(space_settings::Event::Name(
+            "Unsaved space".into(),
+        )));
+        let target = interconnect::notifications::Target {
+            room: "general".into(),
+            thread: None,
+        };
+        let _ = app.update(Message::Notification(target.clone()));
+        assert_eq!(app.selection.room, selection);
+        assert!(app.space_settings.is_open());
+        let mut clean = tests::demo_app();
+        let _ = clean.update(Message::SpaceSettings(space_settings::Event::Open(
+            "studio-space".into(),
+        )));
+        let _ = clean.update(Message::Notification(target));
+        assert_eq!(clean.selection.room.as_ref().unwrap().1, "general");
+        assert!(!clean.space_settings.is_open());
     }
 
     #[test]
