@@ -130,3 +130,11 @@ Existing cancel, stale-result and availability guards are preserved.
 Source formatting and diff checks pass for the compact-action changes. Cargo
 checks and the integrated desktop review are run by the coordinating agent;
 this isolated action pass did not run Cargo concurrently with that validation.
+
+The inline message-edit cancel icon uses a 24 px hit area and bottom alignment
+so its header stays close to the first edited line. The existing spacing test
+remains unchanged. Edit layout checks identify icon actions by widget IDs and
+exercise actual cancellation in the matching conversation; verification layout
+checks identify footer controls by IDs and require matching focusable bounds
+instead of relying on button text. These follow-up checks await the integrated
+Cargo run.

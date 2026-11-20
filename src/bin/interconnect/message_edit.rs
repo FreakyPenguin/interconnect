@@ -4,7 +4,7 @@ use super::{
 };
 use iced::{
     Element, Task,
-    widget::{container, row, text, text_editor},
+    widget::{button, container, row, text, text_editor},
 };
 use interconnect::composition::{self, Prepared};
 
@@ -411,13 +411,24 @@ impl App {
                 row![
                     text("Editing message").size(12).style(shell::muted_text),
                     iced::widget::space().width(iced::Length::Fill),
-                    super::tooltips::icon_button(
-                        super::icons::Kind::Close,
+                    container(super::tooltips::tooltip(
+                        button(super::icons::icon(super::icons::Kind::Close))
+                            .padding(3)
+                            .keyboard_navigation(true)
+                            .style(shell::icon_button)
+                            .on_press_maybe(
+                                (!draft.pending).then(|| message(Event::Cancel(key.clone())))
+                            ),
                         "Cancel message editing",
-                        (!draft.pending).then(|| message(Event::Cancel(key.clone()))),
-                    ),
+                        iced::widget::tooltip::Position::Top,
+                    ))
+                    .id(if key.root.is_some() {
+                        "message-edit-cancel-thread"
+                    } else {
+                        "message-edit-cancel-room"
+                    }),
                 ]
-                .align_y(iced::Alignment::Center),
+                .align_y(iced::alignment::Vertical::Bottom),
             )
             .padding(iced::Padding {
                 top: 4.0,
@@ -884,17 +895,28 @@ mod tests {
                 f(self);
             }
             fn text(&mut self, _: Option<&widget::Id>, bounds: Rectangle, value: &str) {
-                if matches!(value, "Editing message" | "Cancel" | "Save") {
+                if value == "Editing message" {
                     self.0.push((value.into(), bounds));
+                }
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+                for name in [
+                    "message-edit-cancel-room",
+                    "message-edit-cancel-thread",
+                    "composer-send",
+                ] {
+                    if id == Some(&widget::Id::new(name)) {
+                        self.0.push((name.into(), bounds));
+                    }
                 }
             }
         }
         let mut app = demo_app();
         let room = app.draft_key(false).unwrap();
-        let _ = app.update(message(Event::Latest(room)));
+        let _ = app.update(message(Event::Latest(room.clone())));
         let _ = app.update(Message::Thread("review".into()));
         let thread = app.draft_key(true).unwrap();
-        let _ = app.update(message(Event::Latest(thread)));
+        let _ = app.update(message(Event::Latest(thread.clone())));
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         for size in [Size::new(640.0, 480.0), Size::new(1240.0, 820.0)] {
             let _ = app.update(Message::WindowResized(size.width));
@@ -906,8 +928,12 @@ mod tests {
             let mut probe = Probe::default();
             view.as_widget_mut()
                 .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
-            for label in ["Editing message", "Cancel", "Save"] {
-                let controls: Vec<_> = probe.0.iter().filter(|(value, _)| value == label).collect();
+            for label in ["Editing message", "message-edit-cancel", "composer-send"] {
+                let controls: Vec<_> = probe
+                    .0
+                    .iter()
+                    .filter(|(value, _)| value.starts_with(label))
+                    .collect();
                 assert!(!controls.is_empty(), "missing {label} at {size:?}");
                 for (_, bounds) in controls {
                     assert!(
@@ -947,6 +973,43 @@ mod tests {
                 if milliseconds > 0 {
                     assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
                 }
+            }
+            for (id, bounds) in probe
+                .0
+                .iter()
+                .filter(|(id, _)| id.starts_with("message-edit-cancel"))
+            {
+                assert!(
+                    bounds.width <= 24.1 && bounds.height <= 24.1,
+                    "inline edit cancel stays compact: {bounds:?}"
+                );
+                let mut messages = Vec::new();
+                for event in [
+                    mouse::Event::ButtonPressed(mouse::Button::Left),
+                    mouse::Event::ButtonReleased(mouse::Button::Left),
+                ] {
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &IcedEvent::Mouse(event),
+                        Layout::new(&node),
+                        mouse::Cursor::Available(bounds.center()),
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut Shell::new(&mut messages),
+                        &Rectangle::with_size(size),
+                    );
+                }
+                let expected = if id.ends_with("thread") {
+                    &thread
+                } else {
+                    &room
+                };
+                assert!(
+                    messages.iter().any(|message| matches!(message,
+                        Message::Editing(Event::Cancel(key)) if key == expected
+                    )),
+                    "{id} cancels the matching conversation edit"
+                );
             }
         }
     }

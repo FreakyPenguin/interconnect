@@ -380,37 +380,46 @@ impl App {
             .into()
         };
         buttons = buttons
-            .push(dismiss)
+            .push(container(dismiss).id("verification-dismiss"))
             .push(iced::widget::space().width(Length::Fill));
         if let Phase::Compare { comparison, .. } = &snapshot.phase {
             buttons = buttons
                 .push(
-                    button(text("They don't match").size(13))
-                        .keyboard_navigation(true)
-                        .on_press(action(Action::Mismatch))
-                        .padding([7, 10])
-                        .style(shell::quiet_button),
+                    container(
+                        button(text("They don't match").size(13))
+                            .keyboard_navigation(true)
+                            .on_press(action(Action::Mismatch))
+                            .padding([7, 10])
+                            .style(shell::quiet_button),
+                    )
+                    .id("verification-mismatch"),
                 )
                 .push(
-                    button(text("They match").size(13))
-                        .keyboard_navigation(true)
-                        .style(shell::primary_button)
-                        .on_press_maybe(
-                            (self.verification.confirming
-                                != Some((snapshot.revision, comparison.decimals)))
-                            .then(|| action(Action::Confirm(comparison.decimals))),
-                        )
-                        .padding([7, 10]),
+                    container(
+                        button(text("They match").size(13))
+                            .keyboard_navigation(true)
+                            .style(shell::primary_button)
+                            .on_press_maybe(
+                                (self.verification.confirming
+                                    != Some((snapshot.revision, comparison.decimals)))
+                                .then(|| action(Action::Confirm(comparison.decimals))),
+                            )
+                            .padding([7, 10]),
+                    )
+                    .id("verification-match"),
                 );
         } else if let Some(incoming) = &snapshot.incoming
             && !snapshot.phase.active()
         {
             buttons = buttons.push(
-                button(text("Accept request").size(13))
-                    .keyboard_navigation(true)
-                    .style(shell::primary_button)
-                    .on_press(action(Action::Accept(incoming.flow.clone())))
-                    .padding([7, 10]),
+                container(
+                    button(text("Accept request").size(13))
+                        .keyboard_navigation(true)
+                        .style(shell::primary_button)
+                        .on_press(action(Action::Accept(incoming.flow.clone())))
+                        .padding([7, 10]),
+                )
+                .id("verification-accept"),
             );
         }
         let mut heading = column![shell::title(
@@ -650,6 +659,7 @@ mod tests {
             body: Option<(iced::Rectangle, iced::Rectangle)>,
             footer: Option<iced::Rectangle>,
             actions: Vec<(String, iced::Rectangle)>,
+            focusable: Vec<iced::Rectangle>,
             prefetch: Option<iced::Rectangle>,
             body_translation: iced::Vector,
             device_visible: bool,
@@ -666,6 +676,24 @@ mod tests {
                 if id == Some(&widget::Id::new("verification-actions")) {
                     self.footer = Some(bounds);
                 }
+                for name in [
+                    "verification-dismiss",
+                    "verification-match",
+                    "verification-mismatch",
+                    "verification-accept",
+                ] {
+                    if id == Some(&widget::Id::new(name)) {
+                        self.actions.push((name.into(), bounds));
+                    }
+                }
+            }
+            fn focusable(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _: &mut dyn widget::operation::Focusable,
+            ) {
+                self.focusable.push(bounds);
             }
             fn scrollable(
                 &mut self,
@@ -689,17 +717,6 @@ mod tests {
                 }
                 if value == "Request room keys in the background" {
                     self.prefetch = Some(bounds);
-                }
-                if matches!(
-                    value,
-                    "Close"
-                        | "Verify later"
-                        | "Cancel verification"
-                        | "They match"
-                        | "They don't match"
-                        | "Accept request"
-                ) {
-                    self.actions.push((value.into(), bounds));
                 }
             }
         }
@@ -754,6 +771,10 @@ mod tests {
             );
             assert!(!bounds.actions.is_empty());
             for (_, action) in &bounds.actions {
+                assert!(
+                    bounds.focusable.iter().any(|button| button == action),
+                    "footer action must expose an actual focusable control: {action:?}"
+                );
                 assert!(action.x >= footer.x && action.x + action.width <= footer.x + footer.width);
                 assert!(
                     action.y >= footer.y && action.y + action.height <= footer.y + footer.height
@@ -767,7 +788,7 @@ mod tests {
                 let (_, accept) = bounds
                     .actions
                     .iter()
-                    .find(|(name, _)| name == "Accept request")
+                    .find(|(name, _)| name == "verification-accept")
                     .unwrap();
                 let mut messages = Vec::new();
                 for event in [
@@ -803,12 +824,17 @@ mod tests {
                     numbers.y >= body.y && numbers.y + numbers.height <= body.y + body.height,
                     "all three numbers must be visible before scrolling"
                 );
-                assert!(bounds.actions.iter().any(|(name, _)| name == "They match"));
                 assert!(
                     bounds
                         .actions
                         .iter()
-                        .any(|(name, _)| name == "They don't match")
+                        .any(|(name, _)| name == "verification-match")
+                );
+                assert!(
+                    bounds
+                        .actions
+                        .iter()
+                        .any(|(name, _)| name == "verification-mismatch")
                 );
             }
             view.as_widget_mut().operate(
