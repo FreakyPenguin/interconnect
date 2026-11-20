@@ -14,6 +14,7 @@ use matrix_sdk::{
     utils::local_server::LocalServerBuilder,
 };
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 mod credentials;
@@ -440,6 +441,23 @@ pub struct DesktopSession {
     drafts: Option<Result<crate::drafts::Loaded, String>>,
 }
 
+#[derive(Debug)]
+pub(crate) struct SignInCancelled;
+impl std::fmt::Display for SignInCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Sign-in cancelled")
+    }
+}
+impl std::error::Error for SignInCancelled {}
+
+fn check_sign_in_cancellation(cancel: &CancellationToken) -> anyhow::Result<()> {
+    if cancel.is_cancelled() {
+        Err(SignInCancelled.into())
+    } else {
+        Ok(())
+    }
+}
+
 impl DesktopSession {
     pub async fn open(directory: &str) -> anyhow::Result<Self> {
         let exists = Path::new(directory).try_exists()?;
@@ -557,15 +575,35 @@ impl DesktopSession {
         method: LoginMethod,
         progress: impl FnMut(LoginProgress) + Send,
     ) -> anyhow::Result<()> {
+        self.sign_in_cancellable(homeserver, method, progress, &CancellationToken::new())
+            .await
+    }
+
+    /// Cancellation interrupts network waits, but admitted credential operations
+    /// finish before another attempt can start. A successful authentication is
+    /// always persisted completely, even if cancellation arrives concurrently.
+    pub(crate) async fn sign_in_cancellable(
+        &mut self,
+        homeserver: &str,
+        method: LoginMethod,
+        progress: impl FnMut(LoginProgress) + Send,
+        cancel: &CancellationToken,
+    ) -> anyhow::Result<()> {
         // Discover before reserving keys or creating a device.
-        let discovered = Client::builder()
+        check_sign_in_cancellation(cancel)?;
+        let discovery = Client::builder()
             .homeserver_url(homeserver)
             .sliding_sync_version_builder(VersionBuilder::DiscoverNative)
-            .build()
-            .await?;
+            .build();
+        let discovered = tokio::select! {
+            biased;
+            result = discovery => result?,
+            _ = cancel.cancelled() => return Err(SignInCancelled.into()),
+        };
         if self.service.is_none() {
             self.service = Some(connect().await?);
         }
+        check_sign_in_cancellation(cancel)?;
         let service = self.service.as_ref().expect("keyring connected");
         let key: [u8; 32] = rand::random();
         let mut retained_store_keys = HashMap::new();
@@ -573,6 +611,7 @@ impl DesktopSession {
             retained_store_keys = previous.retained_store_keys;
             retained_store_keys.insert(previous.store_directory, previous.store_key);
         }
+        check_sign_in_cancellation(cancel)?;
         let mut saved = SavedSession {
             version: 1,
             homeserver: discovered.homeserver().to_string(),
@@ -586,8 +625,14 @@ impl DesktopSession {
         // Persist the encryption key before opening SQLite or browser login.
         // Never reuse a retained store for a new device.
         self.profile.save(service, &saved).await?;
+        check_sign_in_cancellation(cancel)?;
         let client = client(&self.profile, &saved).await?;
-        authenticate(&client, method, progress).await?;
+        check_sign_in_cancellation(cancel)?;
+        tokio::select! {
+            biased;
+            result = authenticate(&client, method, progress) => result?,
+            _ = cancel.cancelled() => return Err(SignInCancelled.into()),
+        }
         let auth = client.matrix_auth();
         saved.device_key = Some(device_key(&client).await?);
         saved.session = Some(auth.session().context("SDK did not return a session")?);
@@ -1249,5 +1294,32 @@ mod tests {
             device_key: None,
         };
         assert!(SavedSession::decode(&serde_json::to_vec(&record).unwrap()).is_err());
+    }
+}
+
+#[cfg(test)]
+mod sign_in_cancellation_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelled_attempt_never_opens_credentials_or_starts_discovery() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("cancelled-profile");
+        let mut session = DesktopSession::open(path.to_str().unwrap()).await.unwrap();
+        let cancel = CancellationToken::new();
+        cancel.cancel();
+        let error = session
+            .sign_in_cancellable(
+                "http://127.0.0.1:9",
+                LoginMethod::Browser,
+                |_| panic!("cancelled discovery published progress"),
+                &cancel,
+            )
+            .await
+            .unwrap_err();
+        assert!(error.is::<SignInCancelled>());
+        assert!(session.service.is_none());
+        assert!(session.client.is_none());
+        assert!(!path.join("store").exists());
     }
 }

@@ -82,6 +82,17 @@ tests alone do not establish live proxy or DNS behavior.
 
 ## Desktop login
 
+During browser/password sign-in, cancel while discovery, browser approval, and
+credential persistence are pending. Cancellation must return to the form only
+after the session owner acknowledges it. Admitted credential writes must finish;
+an already authenticated session must finish persistence and may still sign in.
+Check that a retry cannot overlap the previous attempt, and that a queued older
+submission cannot create another device. If browser approval raced cancellation,
+inspect the dedicated account's devices in another client. Registration remains
+subject to its existing partial-account and challenge-cancellation behavior.
+Headless cancellation tests exercise protocol ordering without accessing a real
+keyring or authenticating an account; these desktop checks remain manual.
+
 Use a homeserver with native sliding sync and working native credential storage.
 SSO requires localhost port **8765** forwarded to the browser's host. See
 [profiles](../settings.md#account-profiles) and [container setup](../development.md#using-the-host-secret-service-from-the-container).

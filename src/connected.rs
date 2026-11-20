@@ -706,10 +706,49 @@ pub enum Authentication {
 
 #[derive(Clone, Debug)]
 pub enum LoginRequest {
+    /// Cancel the active sign-in; idle cancellations are ignored.
+    Cancel,
     SignIn {
         homeserver: String,
         method: crate::session::LoginMethod,
     },
+}
+
+#[derive(Debug)]
+struct SignInTimedOut;
+impl std::fmt::Display for SignInTimedOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Sign-in timed out")
+    }
+}
+impl std::error::Error for SignInTimedOut {}
+
+/// Keep an admitted attempt alive while cancelling. This allows native credential
+/// writes and a successful authentication's persistence to complete safely.
+async fn await_sign_in(
+    attempt: impl std::future::Future<Output = anyhow::Result<()>>,
+    cancel: &tokio_util::sync::CancellationToken,
+    login: &mut mpsc::Receiver<LoginRequest>,
+    selection: &mut watch::Receiver<Selection>,
+    timeout: Duration,
+) -> anyhow::Result<()> {
+    tokio::pin!(attempt);
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+    let mut timed_out = false;
+    loop {
+        tokio::select! {
+            biased;
+            result = &mut attempt => return if timed_out && result.as_ref().is_err_and(|error| error.is::<crate::session::SignInCancelled>()) { Err(SignInTimedOut.into()) } else { result },
+            request = login.recv() => match request {
+                Some(LoginRequest::Cancel) => cancel.cancel(),
+                Some(LoginRequest::SignIn { .. }) => {}, // Old form snapshots never queue another device.
+                None => { cancel.cancel(); return Err(crate::session::SignInCancelled.into()); },
+            },
+            _ = &mut deadline, if !timed_out => { timed_out = true; cancel.cancel(); },
+            _ = selection.wait_for(|s| s.shutdown) => { cancel.cancel(); return Err(crate::session::SignInCancelled.into()); },
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -859,31 +898,51 @@ pub async fn run(
             }
             loop {
                 let (homeserver, method) = tokio::select! {
-                    request = login.recv() => match request { Some(LoginRequest::SignIn { homeserver, method }) => (homeserver, method), None => return Ok(()) },
+                    request = login.recv() => match request {
+                        Some(LoginRequest::SignIn { homeserver, method }) => (homeserver, method),
+                        Some(LoginRequest::Cancel) => continue,
+                        None => return Ok(()),
+                    },
                     _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
                 };
                 let registering = matches!(method, crate::session::LoginMethod::Register { .. });
                 state.send_modify(|s| {
                     s.authentication = Some(Authentication::Waiting { url: None })
                 });
-                let result = tokio::select! {
-                    result = tokio::time::timeout(Duration::from_secs(if registering { 900 } else { 180 }), desktop.sign_in(&homeserver, method, |progress| {
-                        state.send_modify(|s| s.authentication = Some(match progress {
-                            crate::session::LoginProgress::Browser(url) => Authentication::Waiting { url: Some(url) },
-                            crate::session::LoginProgress::Registration(challenge) => Authentication::Registration(challenge),
-                        }));
-                    })) => result.context(if registering { "Registration timed out after fifteen minutes" } else { "Sign-in timed out after three minutes" }).and_then(|r| r),
-                    _ = selection.wait_for(|s| s.shutdown) => return Ok(()),
-
-                };
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let sign_in = desktop.sign_in_cancellable(
+                    &homeserver,
+                    method,
+                    |progress| {
+                        state.send_modify(|s| {
+                            s.authentication = Some(match progress {
+                                crate::session::LoginProgress::Browser(url) => {
+                                    Authentication::Waiting { url: Some(url) }
+                                }
+                                crate::session::LoginProgress::Registration(challenge) => {
+                                    Authentication::Registration(challenge)
+                                }
+                            })
+                        });
+                    },
+                    &cancel,
+                );
+                let result = await_sign_in(
+                    sign_in,
+                    &cancel,
+                    &mut login,
+                    &mut selection,
+                    Duration::from_secs(if registering { 900 } else { 180 }),
+                )
+                .await;
                 // Discard duplicate submissions from an older UI snapshot.
                 while login.try_recv().is_ok() {}
                 match result {
                     Ok(()) => break,
                     Err(error) => state.send_modify(|s| s.authentication = Some(Authentication::SignIn {
-                        error: if error.is::<crate::session::RegistrationCancelled>() { None }
+                        error: if error.is::<crate::session::RegistrationCancelled>() || error.is::<crate::session::SignInCancelled>() { None }
                         else if let Some(failure) = error.downcast_ref::<crate::session::RegistrationFailure>() { Some(failure.to_string()) }
-                        else if registering && error.is::<tokio::time::error::Elapsed>() { Some("Registration expired after fifteen minutes. If your account was created, return to sign in instead of registering again.".into()) }
+                        else if registering && error.is::<SignInTimedOut>() { Some("Registration expired after fifteen minutes. If your account was created, return to sign in instead of registering again.".into()) }
                         else if registering { Some("Registration could not finish. Check your homeserver and system keyring. If your account was created, return to sign in. Remove any abandoned Interconnect device in another client.".into()) }
                         else { Some("Sign-in could not finish. Check your credentials, homeserver, and system keyring, then try again. For browser sign-in, check the callback connection. If you approved a device, remove the abandoned Interconnect device in another client.".into()) },
                     })),
@@ -4279,3 +4338,92 @@ mod tests {
 #[cfg(test)]
 #[path = "connected/attachments_tests.rs"]
 mod attachments_tests;
+
+#[cfg(test)]
+mod sign_in_cancellation_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn cancellation_waits_for_admitted_cleanup_and_rejects_queued_submissions() {
+        let cancel = CancellationToken::new();
+        let (sender, mut receiver) = mpsc::channel(4);
+        sender
+            .send(LoginRequest::SignIn {
+                homeserver: "https://stale.invalid".into(),
+                method: crate::session::LoginMethod::Browser,
+            })
+            .await
+            .unwrap();
+        sender.send(LoginRequest::Cancel).await.unwrap();
+        let (_selection_sender, mut selection) = watch::channel(Selection::default());
+        let finished = AtomicBool::new(false);
+        let attempt = async {
+            cancel.cancelled().await;
+            // An admitted keyring operation may complete after cancellation.
+            tokio::task::yield_now().await;
+            finished.store(true, Ordering::SeqCst);
+            Err(crate::session::SignInCancelled.into())
+        };
+        let error = await_sign_in(
+            attempt,
+            &cancel,
+            &mut receiver,
+            &mut selection,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.is::<crate::session::SignInCancelled>());
+        assert!(finished.load(Ordering::SeqCst));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn cancellation_cannot_abandon_a_successfully_authenticated_session() {
+        let cancel = CancellationToken::new();
+        let (sender, mut receiver) = mpsc::channel(1);
+        sender.send(LoginRequest::Cancel).await.unwrap();
+        let (_selection_sender, mut selection) = watch::channel(Selection::default());
+        let persisted = AtomicBool::new(false);
+        let attempt = async {
+            cancel.cancelled().await;
+            tokio::task::yield_now().await;
+            persisted.store(true, Ordering::SeqCst);
+            Ok(())
+        };
+        await_sign_in(
+            attempt,
+            &cancel,
+            &mut receiver,
+            &mut selection,
+            Duration::from_secs(5),
+        )
+        .await
+        .unwrap();
+        assert!(persisted.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn timeout_requests_cooperative_cancellation_before_reporting_expiry() {
+        let cancel = CancellationToken::new();
+        let (_sender, mut receiver) = mpsc::channel(1);
+        let (_selection_sender, mut selection) = watch::channel(Selection::default());
+        let attempt = async {
+            cancel.cancelled().await;
+            tokio::task::yield_now().await;
+            Err(crate::session::SignInCancelled.into())
+        };
+        let error = await_sign_in(
+            attempt,
+            &cancel,
+            &mut receiver,
+            &mut selection,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.is::<SignInTimedOut>());
+    }
+}
