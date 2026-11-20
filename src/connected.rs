@@ -1342,17 +1342,33 @@ async fn connected(
 
 // Scoped to the connection future: shutdown drops profile requests and subscriptions.
 async fn account_profile_updates(client: &Client, state: &watch::Sender<Model>) {
-    use matrix_sdk::ruma::profile::{AvatarUrl, DisplayName, UserProfile};
+    use crate::account_profile::Details;
+    use matrix_sdk::ruma::profile::UserProfile;
 
+    let mut edits = state
+        .borrow()
+        .people_directory
+        .as_ref()
+        .map(|d| d.profile_changes());
+    async fn edited(edits: &mut Option<tokio::sync::broadcast::Receiver<Details>>) -> Details {
+        loop {
+            match edits {
+                Some(receiver) => match receiver.recv().await {
+                    Ok(details) => return details,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => *edits = None,
+                },
+                None => return pending().await,
+            }
+        }
+    }
     let fallback = client.user_id().map_or("Me", |id| id.as_str());
-    let publish = |profile: UserProfile| {
+    let publish = |profile: Details| {
         let name = profile
-            .get_static::<DisplayName>()
-            .ok()
-            .flatten()
+            .display_name
             .filter(|name| !name.trim().is_empty())
             .unwrap_or_else(|| fallback.to_owned());
-        let avatar = profile.get_static::<AvatarUrl>().ok().flatten();
+        let avatar = profile.avatar_url;
         state.send_if_modified(|s| {
             if s.account_name == name && s.account_avatar_url == avatar {
                 return false;
@@ -1362,26 +1378,37 @@ async fn account_profile_updates(client: &Client, state: &watch::Sender<Model>) 
             true
         });
     };
-    publish(UserProfile::default());
+    let publish_sdk = |profile: UserProfile| {
+        if let Ok(details) = Details::from_profile(&profile) {
+            publish(details);
+        }
+    };
+    publish(Details::default());
     if let Ok(updates) = client.subscribe_to_own_profile() {
         tokio::pin!(updates);
         if let Some(cached) = updates.next().await {
-            publish(cached);
+            publish_sdk(cached);
         }
         // A one-time fetch also supports servers without the profiles extension.
         // Sync profile updates supersede an in-flight fetch.
         let account = client.account();
         tokio::select! {
+            details = edited(&mut edits) => publish(details),
             result = account.fetch_user_profile() => {
-                if let Ok(profile) = result { publish(profile.data); }
+                if let Ok(profile) = result { publish_sdk(profile.data); }
             }
-            Some(profile) = updates.next() => publish(profile),
+            Some(profile) = updates.next() => publish_sdk(profile),
         }
-        while let Some(profile) = updates.next().await {
-            publish(profile);
+        loop {
+            tokio::select! {
+                details = edited(&mut edits) => publish(details),
+                Some(profile) = updates.next() => publish_sdk(profile),
+            }
         }
     }
-    pending::<()>().await;
+    loop {
+        publish(edited(&mut edits).await);
+    }
 }
 
 async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {

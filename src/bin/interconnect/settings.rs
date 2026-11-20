@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 #[derive(Default)]
 pub struct State {
+    pub(super) profile: super::account_profile::State,
     pub current: Settings,
     pub draft: Option<Settings>,
     pub path: Option<PathBuf>,
@@ -44,13 +45,15 @@ impl State {
 pub enum Category {
     #[default]
     General,
+    Account,
     Notifications,
     Media,
     Advanced,
 }
 impl Category {
-    const ALL: [Self; 4] = [
+    const ALL: [Self; 5] = [
         Self::General,
+        Self::Account,
         Self::Notifications,
         Self::Media,
         Self::Advanced,
@@ -58,6 +61,7 @@ impl Category {
     fn label(self) -> &'static str {
         match self {
             Self::General => "General",
+            Self::Account => "Account",
             Self::Notifications => "Notifications",
             Self::Media => "Media & emoji",
             Self::Advanced => "Advanced",
@@ -68,6 +72,7 @@ impl Category {
 enum DiscardAction {
     Close,
     Reload,
+    ReloadProfile,
     Transition(Box<Message>),
 }
 #[derive(Clone, Debug)]
@@ -84,6 +89,9 @@ impl State {
         });
     }
     fn dirty(&self) -> bool {
+        self.profile.dirty() || self.preferences_dirty()
+    }
+    fn preferences_dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(|draft| {
             draft != &self.current
                 || self.gif_seconds_input != self.current.media.gif_seconds.to_string()
@@ -129,6 +137,7 @@ impl Startup {
 }
 #[derive(Clone, Debug)]
 pub enum Event {
+    Profile(super::account_profile::Event),
     Open,
     Cancel,
     RequestClose,
@@ -299,10 +308,35 @@ impl App {
             }
             Event::Category(category) if self.settings.draft.is_some() && !self.settings.saving => {
                 self.settings.category = category;
-                return iced::widget::operation::snap_to(
-                    "settings-body",
-                    iced::widget::operation::RelativeOffset::START,
-                );
+                let profile = if category == Category::Account {
+                    self.account_profile_event(super::account_profile::Event::Open)
+                } else {
+                    Task::none()
+                };
+                return Task::batch([
+                    profile,
+                    iced::widget::operation::snap_to(
+                        "settings-body",
+                        iced::widget::operation::RelativeOffset::START,
+                    ),
+                ]);
+            }
+            Event::Profile(super::account_profile::Event::Reload)
+                if self.settings.profile.dirty() && self.settings.draft.is_some() =>
+            {
+                self.settings.request_discard(DiscardAction::ReloadProfile);
+            }
+            Event::Profile(event) => {
+                if self.settings.confirm_discard.is_some()
+                    && !matches!(
+                        event,
+                        super::account_profile::Event::Loaded(..)
+                            | super::account_profile::Event::Saved(..)
+                    )
+                {
+                    return Task::none();
+                }
+                return self.account_profile_event(event);
             }
             Event::RequestClose if !self.settings.saving => {
                 // Escape on a discard prompt keeps editing, matching room,
@@ -337,8 +371,12 @@ impl App {
                 match self.settings.confirm_discard.take().unwrap().action {
                     DiscardAction::Close => return self.settings_update(Event::Cancel),
                     DiscardAction::Reload => return self.load_settings(),
+                    DiscardAction::ReloadProfile => {
+                        return self.account_profile_event(super::account_profile::Event::Reload);
+                    }
                     DiscardAction::Transition(next) => {
                         self.settings.draft = None;
+                        self.settings.profile.dismiss();
                         return self.update(*next);
                     }
                 }
@@ -359,6 +397,7 @@ impl App {
                 return iced::widget::operation::focus("settings-dialog");
             }
             Event::Cancel if !self.settings.saving => {
+                self.settings.profile.dismiss();
                 self.settings.draft = None;
                 self.settings.confirm_discard = None;
                 return iced::widget::operation::focus(if self.selection.thread.is_some() {
@@ -448,7 +487,7 @@ impl App {
                 }
             }
             Event::Reload if self.settings.draft.is_some() && !self.settings.busy => {
-                if self.settings.dirty() {
+                if self.settings.preferences_dirty() {
                     self.settings.request_discard(DiscardAction::Reload);
                 } else {
                     return self.load_settings();
@@ -499,7 +538,7 @@ impl App {
                 }
                 if self.demo.is_some() {
                     self.settings.current = settings;
-                    return self.settings_update(Event::Cancel);
+                    return self.settings_update(Event::RequestClose);
                 }
                 let Some(mut store) = self.settings.store.clone() else {
                     return Task::none();
@@ -537,7 +576,7 @@ impl App {
                             self.settings.draft = None;
                             return self.update(Message::Close);
                         }
-                        return self.settings_update(Event::Cancel);
+                        return self.settings_update(Event::RequestClose);
                     }
                     Err(error) => self.settings.error = Some(error),
                 }
@@ -558,6 +597,7 @@ impl App {
             true
         } else {
             self.settings.draft = None;
+            self.settings.profile.dismiss();
             self.settings.confirm_discard = None;
             false
         }
@@ -728,7 +768,7 @@ impl App {
             },
             (available
                 && self.settings.confirm_discard.is_none()
-                && self.settings.dirty()
+                && self.settings.preferences_dirty()
                 && (self.demo.is_some() || self.settings.store.is_some())
                 && self.valid_gif_seconds()
                 && self.valid_presence_seconds())
@@ -806,6 +846,7 @@ impl App {
                     unread_first,
                 ].spacing(12),
             ],
+            Category::Account => column![self.account_profile_view(available && self.settings.confirm_discard.is_none())],
             Category::Notifications => column![
                 shell::title("Desktop notifications", 14), notification_controls,
             ],
@@ -898,6 +939,9 @@ impl App {
                         "Close Interconnect and discard your unsaved settings changes?"
                     }
                     DiscardAction::Reload => "Reload the file and discard your unsaved changes?",
+                    DiscardAction::ReloadProfile => {
+                        "Reload your profile and discard unsaved profile changes?"
+                    }
                 })
                 .size(13),
             );
@@ -913,6 +957,7 @@ impl App {
                         text(match &confirm.action {
                             DiscardAction::Close => "Discard changes",
                             DiscardAction::Reload => "Reload file",
+                            DiscardAction::ReloadProfile => "Reload profile",
                             DiscardAction::Transition(_) => "Discard and close",
                         })
                         .size(13)

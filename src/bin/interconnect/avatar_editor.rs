@@ -102,7 +102,7 @@ impl State {
     }
     pub fn view<'a>(
         &'a self,
-        details: &'a Details,
+        details: &Details,
         images: &'a Images,
         enabled: bool,
     ) -> Element<'a, Event> {

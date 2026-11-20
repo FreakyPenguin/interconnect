@@ -30,6 +30,7 @@ pub struct Directory(
     tokio::sync::broadcast::Sender<()>,
     Arc<tokio::sync::Mutex<std::collections::HashMap<String, matrix_sdk::ruma::OwnedRoomId>>>,
     Arc<tokio::sync::Mutex<()>>,
+    tokio::sync::broadcast::Sender<crate::account_profile::Details>,
 );
 impl Directory {
     /// Construct inside the client's Tokio runtime; final drop is runtime-safe.
@@ -39,6 +40,7 @@ impl Directory {
             tokio::sync::broadcast::channel(1).0,
             Arc::default(),
             Arc::default(),
+            tokio::sync::broadcast::channel(16).0,
         )
     }
     pub(crate) fn from_runtime(client: Client, runtime: tokio::runtime::Handle) -> Self {
@@ -47,10 +49,30 @@ impl Directory {
             tokio::sync::broadcast::channel(1).0,
             Arc::default(),
             Arc::default(),
+            tokio::sync::broadcast::channel(16).0,
         )
     }
     pub fn refresh_navigation(&self) {
         let _ = self.1.send(());
+    }
+    pub(crate) fn profile_changes(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<crate::account_profile::Details> {
+        self.4.subscribe()
+    }
+    pub async fn account_profile(self) -> Result<crate::account_profile::Details, String> {
+        let details = crate::account_profile::load(&self.0).await?;
+        let _ = self.4.send(details.clone());
+        Ok(details)
+    }
+    pub async fn change_account_profile(
+        self,
+        baseline: crate::account_profile::Details,
+        change: crate::account_profile::Change,
+    ) -> Result<crate::account_profile::Details, String> {
+        let details = crate::account_profile::save(&self.0, baseline, change).await?;
+        let _ = self.4.send(details.clone());
+        Ok(details)
     }
     pub(crate) fn navigation_changes(&self) -> tokio::sync::broadcast::Receiver<()> {
         self.1.subscribe()

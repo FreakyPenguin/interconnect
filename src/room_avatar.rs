@@ -45,6 +45,9 @@ impl Upload {
     pub fn preview(&self) -> &Handle {
         &self.0.preview
     }
+    pub(crate) fn bytes(&self) -> Vec<u8> {
+        self.0.bytes.clone()
+    }
 }
 
 pub async fn read_image(path: PathBuf) -> Result<Upload, String> {

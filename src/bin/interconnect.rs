@@ -1,4 +1,6 @@
 #![recursion_limit = "256"]
+#[path = "interconnect/account_profile.rs"]
+mod account_profile;
 #[path = "interconnect/appearance.rs"]
 mod appearance;
 #[path = "interconnect/attachments.rs"]
@@ -1018,6 +1020,13 @@ impl App {
                 self.user_completion.clear();
             }
             let task = self.settings_update(event);
+            if self.closing && self.pending_ops == 0 {
+                if self.stopped {
+                    return iced::exit();
+                }
+                self.selection.shutdown = true;
+            }
+            self.refresh_media_demand();
             self.publish_notification_context();
             return task;
         }
@@ -1982,6 +1991,7 @@ impl App {
                     self.global_search.reset();
                 }
                 if state.authentication.is_some() || state.account_id != self.account_id {
+                    self.settings.profile.reset_account();
                     self.space_settings.reset();
                     self.room_settings.dismiss();
                     self.membership.reset();
@@ -2392,6 +2402,7 @@ impl App {
             .chain(self.member_management_avatars())
             .chain(self.room_settings_avatar())
             .chain(self.space_settings_avatar())
+            .chain(self.account_profile_avatar())
         {
             if !self.selection.avatars.contains(&uri)
                 && self.selection.avatars.len() < interconnect::media::MAX_REQUESTED

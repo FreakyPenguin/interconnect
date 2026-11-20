@@ -1,4 +1,5 @@
 #![recursion_limit = "256"]
+pub mod account_profile;
 pub mod attachment;
 pub mod bookmarks;
 pub mod clipboard;

@@ -78,6 +78,7 @@ impl App {
         let mut clean = Self::new();
         clean.profile = self.profile.clone();
         clean.settings = std::mem::take(&mut self.settings);
+        clean.settings.profile.reset_account();
         clean.login.sender = self.login.sender.take();
         clean.login.homeserver = std::mem::take(&mut self.login.homeserver);
         clean.control = self.control.take();
