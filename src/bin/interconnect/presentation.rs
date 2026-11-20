@@ -191,6 +191,7 @@ mod tests {
             formatted: None,
             send_state: String::new(),
             retry: None,
+            cancel_send: None,
         }
     }
     #[test]

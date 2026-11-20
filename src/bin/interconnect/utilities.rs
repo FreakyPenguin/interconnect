@@ -123,7 +123,13 @@ impl App {
                 iced::widget::tooltip::Position::Top,
             ));
         }
+        let send_error = self.queued_send_feedback();
+        let has_send_error = send_error.is_some();
+        if let Some(error) = send_error {
+            items = items.push(error);
+        }
         if self.draft_persistence.error.is_none()
+            && !has_send_error
             && !connection
             && !self.stopped
             && verification.is_none()

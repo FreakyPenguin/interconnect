@@ -106,6 +106,12 @@ ordinary links do not create notifications. Room links do not notify everyone.
 Select timeline text and Ctrl+C / Command+C to copy across messages. Copy uses
 displayed text, image alternatives, and LaTeX source; hidden spoilers use placeholders.
 
+Queued or failed local echoes offer **Cancel send…**, followed by **Cancel send**
+or **Keep sending**. Tab cycles confirmation controls; Enter/Space activates, and
+Escape keeps sending. Both choices return focus to the composer. Cancellation stops
+pending uploads; a message already being sent may finish and then be removed by
+Matrix. Sent messages use the separate confirmed **Delete message…** action.
+
 ## Dialogs and viewers
 
 Routine actions use contextual icon tooltips: disk for Save, circular arrow for

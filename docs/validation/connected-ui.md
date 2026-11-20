@@ -356,6 +356,27 @@ remote sign-out retains them. See [storage boundaries](../architecture/drafts.md
   `is_falling_back: false` (or omitted). Check mentions, local echo, encryption,
   retry, and the other client's rendering.
 
+### Cancelling queued sends
+
+- Queue text and attachments while offline, including in a thread. Cancel send…
+  opens an inline confirmation without changing drafts. Keep sending retains the
+  queue entry; Confirm removes the unsent echo. Failed sends offer both Retry and
+  Cancel, with overlapping retry/cancellation disabled.
+- Cancel while an upload is active: its dependent media message must not be sent;
+  subsequent queued messages must continue. Already uploaded bytes may remain on
+  the server. If an event send is already in flight, the SDK may finish sending
+  then redact it; confirmation must explain that others may see it first.
+- Race sync/send completion with confirmation. Sent rows offer Delete message,
+  and cancellation that arrives too late reports that the message left the queue.
+  Check storage errors, room/thread switches, account changes, and shutdown during
+  cancellation. Old results cannot alter another account or any composer draft.
+  Cancellation errors stay in a dismissible footer through later SDK snapshots,
+  including when the local echo has disappeared or navigation is hidden.
+- Automated local-server tests cover pending/failed text, active upload abort,
+  already-sent handles, and the in-flight-send/redaction race. Desktop offline,
+  encrypted media, restart, and homeserver visibility remain connected checks;
+  demo has no real send queue.
+
 ### Multiple attachments
 
 - Pick/paste/drop batches into both panes, append more, remove individually, and

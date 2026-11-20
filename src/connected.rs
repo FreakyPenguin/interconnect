@@ -14,6 +14,8 @@ use matrix_sdk_ui::{
 };
 use tokio::sync::{mpsc, watch};
 
+mod queued_sends;
+pub use queued_sends::CancelSend;
 mod deleting;
 #[cfg(test)]
 mod deleting_tests;
@@ -108,6 +110,7 @@ pub struct MessageRow {
     pub formatted: Option<Arc<crate::message_document::Document>>,
     pub send_state: String,
     pub retry: Option<RetrySend>,
+    pub cancel_send: Option<CancelSend>,
 }
 
 /// Bounded, plain reply context; unavailable events retain their identity.
@@ -1756,6 +1759,7 @@ async fn timeline_rows_cached(
 ) -> Vec<MessageRow> {
     let items = timeline.items().await;
     let own_user = timeline.room().own_user_id().to_owned();
+    let room_id = timeline.room().room_id().to_string();
     let queue = timeline.room().send_queue();
     let has_text = items.iter().filter_map(|item| item.as_event()).any(|event| {
         matches!(event.content(), TimelineItemContent::MsgLike(content) if matches!(&content.kind,
@@ -1865,6 +1869,16 @@ async fn timeline_rows_cached(
                         Some(EventSendState::Sent { .. }) => "Sent".into(),
                         None if event.sender() == own_user => "Sent".into(),
                         None => String::new(),
+                    },
+                    cancel_send: if matches!(
+                        event.send_state(),
+                        Some(EventSendState::NotSentYet { .. } | EventSendState::SendingFailed { .. })
+                    ) && event.is_own() {
+                        event.local_echo_send_handle().zip(event.transaction_id()).map(|(handle, id)| {
+                            CancelSend::new(room_id.clone(), id.to_string(), handle)
+                        })
+                    } else {
+                        None
                     },
                     retry: if matches!(
                         event.send_state(),

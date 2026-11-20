@@ -480,6 +480,7 @@ fn message(id: &str, sender: &str, body: &str) -> MessageRow {
             .map(std::sync::Arc::new),
         send_state: String::new(),
         retry: None,
+        cancel_send: None,
     }
 }
 fn formatted(id: &str, html: &str) -> MessageRow {
