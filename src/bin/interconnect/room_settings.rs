@@ -6,7 +6,7 @@ use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
 use iced::{
     Element, Length, Task,
     widget::{
-        button, column, container, mouse_area, opaque, pick_list, row, text, text_editor,
+        button, column, container, mouse_area, opaque, pick_list, row, rule, text, text_editor,
         text_input,
     },
 };
@@ -726,10 +726,11 @@ impl App {
                 Message::Escape,
             );
         }
-        let mut content = column![].spacing(16);
+        let mut content = column![].spacing(24);
         if let (Some(draft), Some(saved)) = (&panel.draft, &panel.saved) {
             let enabled = !busy && self.pending_ops < MAX_PENDING_OPERATIONS;
-            content = content.push(
+            let mut details = column![].spacing(14);
+            details = details.push(
                 panel
                     .avatar
                     .view(&saved.avatar, &self.model.avatars, enabled)
@@ -754,21 +755,25 @@ impl App {
             if enabled && draft.editable[1] {
                 topic = topic.on_action(|action| message(Event::TopicEdit(action)));
             }
-            content = content.push(setting(
+            details = details.push(setting(
                 "Name",
                 name,
                 0,
                 enabled && draft.editable[0] && saved.name != draft.name,
             ));
-            content = content.push(setting(
+            details = details.push(setting(
                 "Topic",
                 topic,
                 1,
                 enabled && draft.editable[1] && saved.topic != draft.topic,
             ));
-            content = content.push(text("Name, topic, access and history changes apply to everyone. Controls require room permissions.").size(12).style(shell::muted_text));
-            content = content.push(shell::title("Notifications", 15));
-            content = content.push(setting(
+            content = content.push(section(
+                "Room details",
+                "Name, topic and image are shared with everyone in this room.",
+                details,
+            ));
+            let mut notifications = column![].spacing(10);
+            notifications = notifications.push(setting(
                 "Notify me about",
                 select(
                     vec![
@@ -784,28 +789,22 @@ impl App {
                 2,
                 enabled && saved.notifications != draft.notifications,
             ));
-            content = content.push(
-                text(format!(
-                    "Account default: {}. This preference follows your account across clients.",
-                    draft.default_notifications
-                ))
-                .size(12)
-                .style(shell::muted_text),
+            notifications = notifications.push(
+                text(format!("Account default: {}", draft.default_notifications))
+                    .size(12)
+                    .style(shell::muted_text),
             );
             if !self.settings.current.notifications.enabled {
-                content = content
+                notifications = notifications
                     .push(text("Desktop alerts are disabled in application Settings.").size(12));
             }
-            content = content.push(match &saved.addresses {
-                Ok(addresses) => panel
-                    .addresses
-                    .view(addresses, enabled && !panel.avatar.is_picking()),
-                Err(error) => column![shell::title("Room addresses", 15), text(error).size(13)]
-                    .spacing(8)
-                    .into(),
-            });
-            content = content.push(shell::title("Security & access", 15));
-            content = content.push(text(format!("Encryption: {}", draft.encryption)).size(13));
+            content = content.push(rule::horizontal(1)).push(section(
+                "Notifications",
+                "Your preference for this room, synced across your clients.",
+                notifications,
+            ));
+            let mut access_settings =
+                column![text(format!("Encryption: {}", draft.encryption)).size(13)].spacing(14);
             let supported = matches!(saved.access, Some(JoinRule::Invite | JoinRule::Public));
             let access: Element<'_, Message> = if supported {
                 let value = if draft.access == Some(JoinRule::Public) {
@@ -832,13 +831,13 @@ impl App {
                 .size(13)
                 .into()
             };
-            content = content.push(setting(
+            access_settings = access_settings.push(setting(
                 "Who can join",
                 access,
                 3,
                 supported && enabled && draft.editable[2] && saved.access != draft.access,
             ));
-            content = content.push(setting(
+            access_settings = access_settings.push(setting(
                 "Who can read history",
                 select(
                     vec![
@@ -854,11 +853,28 @@ impl App {
                 4,
                 enabled && draft.editable[3] && saved.history != draft.history,
             ));
-            content = content.push(text("Public access lets anyone join. History visibility does not grant old encryption keys. Public access does not list the room in a directory.").size(12).style(shell::muted_text));
+            access_settings = access_settings.push(text("Public access does not list this room in a directory. History visibility does not grant old encryption keys.").size(12).style(shell::muted_text));
+            content = content.push(rule::horizontal(1)).push(section(
+                "Security & access",
+                "These settings apply to everyone. Changes require room permissions.",
+                access_settings,
+            ));
+            content = content
+                .push(rule::horizontal(1))
+                .push(match &saved.addresses {
+                    Ok(addresses) => panel
+                        .addresses
+                        .view(addresses, enabled && !panel.avatar.is_picking()),
+                    Err(error) => column![shell::title("Room addresses", 15), text(error).size(13)]
+                        .spacing(8)
+                        .into(),
+                });
         } else if busy {
             content = content.push(text("Loading room settings…").size(13));
         }
-        content = content.push(
+        content = content.push(rule::horizontal(1)).push(section(
+            "Membership",
+            "Manage the people in this room or leave it.",
             row![
                 button("Members & invitations")
                     .style(shell::quiet_button)
@@ -878,7 +894,7 @@ impl App {
             ]
             .spacing(8)
             .wrap(),
-        );
+        ));
         content = content.push(
             text(&panel.target.1)
                 .size(11)
@@ -910,8 +926,7 @@ impl App {
             );
         }
         let header = row![
-            shell::title("Room settings", 20),
-            iced::widget::space().width(Length::Fill),
+            shell::title("Room settings", 20).width(Length::Fill),
             super::tooltips::icon_button(
                 super::icons::Kind::Close,
                 "Close room settings",
@@ -930,9 +945,9 @@ impl App {
                     .on_press_maybe((!busy).then_some(message(Event::Reload))),
                 iced::widget::space().width(Length::Fill),
                 text(if panel.dirty() {
-                    "Unsaved changes · save each edited field"
+                    "Unsaved changes"
                 } else {
-                    "Changes save individually"
+                    "Save changes per field"
                 })
                 .size(12)
                 .style(shell::muted_text),
@@ -943,7 +958,7 @@ impl App {
         .spacing(8);
         super::focus_scope::dismissible(
             super::dialog::modal(
-                super::dialog::frame(size, 560.0, 760.0, "room-settings", header, content, footer),
+                super::dialog::frame(size, 640.0, 760.0, "room-settings", header, content, footer),
                 message(Event::Ignore),
             ),
             "room-settings-scope",
@@ -957,7 +972,53 @@ fn setting<'a>(
     field: usize,
     changed: bool,
 ) -> Element<'a, Message> {
-    setting_field(label, control, message(Event::Save(field)), changed)
+    let save_label = match field {
+        0 => "Save name",
+        1 => "Save topic",
+        2 => "Save preference",
+        3 => "Save access",
+        4 => "Save history",
+        _ => unreachable!(),
+    };
+    let action: Element<'a, Message> = if changed {
+        button(text(save_label).size(12))
+            .padding([4, 9])
+            .style(shell::primary_button)
+            .keyboard_navigation(true)
+            .on_press(message(Event::Save(field)))
+            .into()
+    } else {
+        text("Saved").size(12).style(shell::muted_text).into()
+    };
+    column![
+        row![
+            text(label).size(13).width(Length::Fill),
+            container(action).id(format!("room-settings-save-{field}")),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(10),
+        container(control)
+            .width(Length::Fill)
+            .id(format!("room-settings-control-{field}")),
+    ]
+    .spacing(7)
+    .into()
+}
+fn section<'a>(
+    title: &'a str,
+    description: &'a str,
+    body: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    column![
+        column![
+            shell::title(title, 15),
+            text(description).size(12).style(shell::muted_text),
+        ]
+        .spacing(4),
+        body.into(),
+    ]
+    .spacing(12)
+    .into()
 }
 pub(super) fn setting_field<'a>(
     label: &'a str,
@@ -1736,6 +1797,58 @@ mod layout_tests {
             operation::{self, Outcome},
         },
     };
+
+    #[test]
+    fn field_save_actions_leave_the_full_width_available_to_values() {
+        #[derive(Default)]
+        struct Probe {
+            action: Option<iced::Rectangle>,
+            control: Option<iced::Rectangle>,
+        }
+        impl Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("room-settings-save-1")) {
+                    self.action = Some(bounds);
+                }
+                if id == Some(&widget::Id::new("room-settings-control-1")) {
+                    self.control = Some(bounds);
+                }
+            }
+        }
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        for width in [240.0, 560.0] {
+            for changed in [false, true] {
+                let mut view = setting(
+                    "Topic",
+                    text("A long multiline topic").width(Length::Fill),
+                    1,
+                    changed,
+                );
+                let mut tree = widget::Tree::new(&view);
+                let size = iced::Size::new(width, 300.0);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(iced::Size::ZERO, size),
+                );
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                let action = probe.action.unwrap();
+                let control = probe.control.unwrap();
+                assert_eq!(control.width, width);
+                assert!(action.x >= 0.0 && action.x + action.width <= width);
+                assert!(action.y + action.height <= control.y);
+            }
+        }
+    }
 
     #[test]
     fn escape_from_a_focused_room_field_emits_one_dismissal() {
