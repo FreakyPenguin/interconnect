@@ -15,6 +15,7 @@ pub struct State {
     pub password: Zeroizing<String>,
     pub sender: Option<tokio::sync::mpsc::Sender<LoginRequest>>,
     pub browser_error: Option<String>,
+    verify_after_login: bool,
 }
 
 #[derive(Clone)]
@@ -105,6 +106,7 @@ impl App {
                 {
                     self.login.password = Zeroizing::new(String::new());
                     self.login.browser_error = None;
+                    self.login.verify_after_login = true;
                     self.model.authentication = Some(Authentication::Waiting { url: None });
                 }
             }
@@ -156,6 +158,45 @@ impl App {
             _ => {}
         }
         Task::none()
+    }
+
+    pub(super) fn finish_login(&mut self) -> Task<Message> {
+        if !self.login.verify_after_login {
+            return Task::none();
+        }
+        if self.closing
+            || self.stopped
+            || self.demo.is_some()
+            || self.selection.sign_out != 0
+            || matches!(
+                self.model.authentication,
+                Some(Authentication::SignIn { .. } | Authentication::Failed(_))
+            )
+        {
+            self.login.verify_after_login = false;
+            return Task::none();
+        }
+        // Authentication and the verification worker arrive in separate snapshots.
+        // Wait for readiness through normal UI events, without a timer or SDK work.
+        if self.model.authentication.is_some() || self.model.verification.control.is_none() {
+            return Task::none();
+        }
+        if self.verification.open
+            || self.model.verification.trust == matrix_sdk::encryption::VerificationState::Verified
+        {
+            self.login.verify_after_login = false;
+            return Task::none();
+        }
+        if !self.context_menu_allowed() {
+            return Task::none();
+        }
+        self.login.verify_after_login = false;
+        self.context_menu = None;
+        self.shell.spaces.menu = None;
+        self.stop_typing();
+        let task = self.verification_update(super::verification::Event::Open);
+        self.publish_notification_context();
+        task
     }
 
     pub fn login_view(&self, authentication: &Authentication) -> Element<'_, Message> {
@@ -258,6 +299,8 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use interconnect::connected::Model;
+    use matrix_sdk::encryption::VerificationState;
 
     fn form() -> (App, tokio::sync::mpsc::Receiver<LoginRequest>) {
         let mut app = App::new();
@@ -265,6 +308,145 @@ mod tests {
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let _ = app.login_update(Event::Ready(sender));
         (app, receiver)
+    }
+
+    async fn verification_fixture() -> (
+        interconnect::verification::Snapshot,
+        impl std::future::Future<Output = ()>,
+    ) {
+        let client = matrix_sdk::Client::builder()
+            .homeserver_url("https://example.org")
+            .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+            .build()
+            .await
+            .unwrap();
+        client
+            .matrix_auth()
+            .restore_session(
+                serde_json::from_value(serde_json::json!({
+                    "user_id": "@fixture:example.org",
+                    "device_id": "FIXTURE",
+                    "access_token": "test-only-token"
+                }))
+                .unwrap(),
+                Default::default(),
+            )
+            .await
+            .unwrap();
+        let (state, snapshots) = tokio::sync::watch::channel(Model::default());
+        let mut worker = Box::pin(
+            interconnect::verification::Service::new(client)
+                .run(state, tokio_util::sync::CancellationToken::new()),
+        );
+        // Initialize the real command channel, then leave the worker unpolled.
+        // UI commands stay local: no discovery, network, or sync is performed.
+        assert!(iced::futures::poll!(&mut worker).is_pending());
+        let snapshot = snapshots.borrow().verification.clone();
+        assert!(snapshot.control.is_some());
+        (snapshot, worker)
+    }
+
+    fn submit(app: &mut App, password: bool) {
+        let _ = app.update(Message::Login(Event::Homeserver(
+            "https://example.org".into(),
+        )));
+        let _ = app.update(Message::Login(Event::Username("fixture".into())));
+        let _ = app.update(Message::Login(Event::Password(Zeroizing::new(
+            "test-only-password".into(),
+        ))));
+        let _ = app.update(Message::Login(if password {
+            Event::SubmitPassword
+        } else {
+            Event::Submit
+        }));
+    }
+
+    #[tokio::test]
+    async fn sign_in_opens_verification_once_when_worker_is_ready() {
+        let (snapshot, _worker) = verification_fixture().await;
+        for (password, trust) in [
+            (true, VerificationState::Unknown),
+            (false, VerificationState::Unverified),
+        ] {
+            let (mut app, mut requests) = form();
+            submit(&mut app, password);
+            assert!(requests.try_recv().is_ok());
+            assert!(app.login.verify_after_login);
+            // The authenticated snapshot may arrive before verification is ready.
+            let _ = app.update(Message::State(Box::new(Model {
+                authentication: None,
+                account_id: Some(snapshot.user.clone()),
+                ..Model::default()
+            })));
+            assert!(!app.verification.open);
+            assert!(app.login.verify_after_login);
+            let mut ready = app.model.clone();
+            ready.verification = snapshot.clone();
+            ready.verification.trust = trust;
+            let _ = app.update(Message::State(Box::new(ready.clone())));
+            assert!(app.verification.open);
+            assert!(!app.login.verify_after_login);
+            let _ = app.update(Message::Escape);
+            assert!(!app.verification.open);
+            let _ = app.update(Message::State(Box::new(ready)));
+            assert!(
+                !app.verification.open,
+                "dismissal must survive later snapshots"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn restoration_failure_verified_sessions_and_shutdown_do_not_prompt() {
+        let (snapshot, _worker) = verification_fixture().await;
+        let ready = Model {
+            authentication: None,
+            account_id: Some(snapshot.user.clone()),
+            verification: snapshot,
+            ..Model::default()
+        };
+        // Restoring a session never submitted the sign-in form.
+        let mut restored = App::new();
+        let _ = restored.update(Message::State(Box::new(ready.clone())));
+        assert!(!restored.verification.open);
+
+        let (mut failed, mut requests) = form();
+        submit(&mut failed, true);
+        requests.try_recv().unwrap();
+        let _ = failed.update(Message::State(Box::new(Model {
+            authentication: Some(Authentication::SignIn {
+                error: Some("Try again".into()),
+            }),
+            ..Model::default()
+        })));
+        assert!(!failed.login.verify_after_login);
+        let _ = failed.update(Message::State(Box::new(ready.clone())));
+        assert!(!failed.verification.open);
+        // A fresh explicit retry arms onboarding again.
+        failed.model.authentication = Some(Authentication::SignIn { error: None });
+        submit(&mut failed, false);
+        requests.try_recv().unwrap();
+        let _ = failed.update(Message::State(Box::new(ready.clone())));
+        assert!(failed.verification.open);
+
+        let (mut verified, mut requests) = form();
+        submit(&mut verified, true);
+        requests.try_recv().unwrap();
+        let mut trusted = ready.clone();
+        trusted.verification.trust = VerificationState::Verified;
+        let _ = verified.update(Message::State(Box::new(trusted)));
+        assert!(!verified.verification.open);
+        assert!(!verified.login.verify_after_login);
+        let _ = verified.update(Message::State(Box::new(ready.clone())));
+        assert!(!verified.verification.open);
+
+        let (mut closing, mut requests) = form();
+        submit(&mut closing, true);
+        requests.try_recv().unwrap();
+        let _ = closing.update(Message::Close);
+        let _ = closing.update(Message::State(Box::new(ready)));
+        assert!(!closing.verification.open);
+        assert!(!closing.login.verify_after_login);
     }
 
     #[test]

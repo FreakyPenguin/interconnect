@@ -173,6 +173,15 @@ impl App {
                     .style(shell::accent_text),
             );
         }
+        if matches!(
+            snapshot.phase,
+            Phase::Idle | Phase::Loading | Phase::Devices(_)
+        ) {
+            content = content.push(
+                text("Verify this device by comparing emojis or numbers with another Matrix app where you're already signed in. You can also verify later from the account menu.")
+                    .size(13),
+            );
+        }
         if let Some(incoming) = &snapshot.incoming {
             content = content.push(text(format!(
                 "Your device {} is requesting verification.",
@@ -182,7 +191,7 @@ impl App {
         match &snapshot.phase {
             Phase::Idle | Phase::Loading => content = content.push(text("Loading your devices…")),
             Phase::Devices(devices) => {
-                content = content.push(text("Choose a device you can compare with. Keep that client open."));
+                content = content.push(text("Open your other Matrix app, keep it open, and choose that device below."));
                 if devices.is_empty() { content = content.push(text("No other devices found. Sign in on another Matrix client, then refresh.")); }
                 for device in devices {
                     content = content.push(button(column![
@@ -233,6 +242,10 @@ impl App {
                 button(
                     text(if snapshot.phase.active() {
                         "Cancel verification"
+                    } else if snapshot.trust != VerificationState::Verified
+                        && snapshot.phase != Phase::Complete
+                    {
+                        "Verify later"
                     } else {
                         "Close"
                     })
@@ -446,6 +459,7 @@ mod tests {
                 if matches!(
                     value,
                     "Close"
+                        | "Verify later"
                         | "Cancel verification"
                         | "They match"
                         | "They don't match"

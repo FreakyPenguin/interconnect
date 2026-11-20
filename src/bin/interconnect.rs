@@ -516,6 +516,7 @@ impl App {
                 self.update_inner(message)
             }
         };
+        let verification = self.finish_login();
         if was_waiting != self.draft_persistence.close_requested {
             self.publish_notification_context();
         }
@@ -525,7 +526,7 @@ impl App {
         let save = self.schedule_draft_save();
         self.validate_space_settings();
         self.validate_space_management();
-        Task::batch([task, self.activate_notification(), save])
+        Task::batch([task, verification, self.activate_notification(), save])
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         if let Message::SpaceManagement(event @ space_management::Event::Completed(..)) = message {
