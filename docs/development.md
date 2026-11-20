@@ -46,7 +46,8 @@ Use `cargo run --locked --bin interconnect -- --help` to list startup options.
 ### README screenshots
 
 The images in `docs/images/` are captures of the running demo, using a 1440×960
-window and the default light theme on Linux/Wayland. Capture only the app's
+window and the light theme on Linux/Wayland. Install Noto Color Emoji and a
+CJK font for the multilingual samples. Capture only the app's
 content, excluding desktop chrome, tooltips, and other windows. Keep each image
 focused on a different workflow:
 
