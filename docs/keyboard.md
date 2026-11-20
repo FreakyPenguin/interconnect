@@ -98,7 +98,7 @@ existing creation shortcuts still work.
 
 | View | Key |
 | --- | --- |
-| Create room | Tab/Shift+Tab between name/topic; Ctrl+Enter (macOS: Command+Enter) submits. |
+| Create room | Tab/Shift+Tab through enabled form controls; Ctrl+Enter (macOS: Command+Enter) submits. |
 | Join room | Enter in address submits. |
 | Message deletion | Enter confirms; Escape cancels. |
 | Verification | Escape closes and cancels active exchange. |

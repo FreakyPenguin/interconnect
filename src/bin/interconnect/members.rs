@@ -101,6 +101,7 @@ impl App {
             .align_y(iced::Alignment::Center),
         )
         .padding([5, 6])
+        .keyboard_navigation(true)
         .style(shell::icon_button);
         if !self.closing && !self.stopped {
             badge = badge.on_press(message(Event::Open));
@@ -130,6 +131,7 @@ impl App {
                         .center_y(28)
                 )
                 .padding(0)
+                .keyboard_navigation(true)
                 .style(shell::icon_button)
                 .on_press(message(Event::Close)),
                 "Close people",
