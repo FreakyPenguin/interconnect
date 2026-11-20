@@ -1523,7 +1523,7 @@ mod tests {
                 }
             }
         }
-        fn inspect(app: &App, tree: &mut widget::Tree, set: bool) -> f32 {
+        fn inspect(app: &App, tree: &mut widget::Tree, set: bool) -> Option<f32> {
             let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
             let mut view = app.view();
             tree.diff(view.as_widget());
@@ -1548,22 +1548,25 @@ mod tests {
             let mut probe = Probe::default();
             view.as_widget_mut()
                 .operate(tree, layout::Layout::new(&node), &renderer, &mut probe);
-            probe.0.unwrap()
+            probe.0
         }
         let mut app = super::super::tests::demo_app();
         let _ = app.update(Message::Room("busy".into()));
         let mut tree = widget::Tree::empty();
-        assert!((inspect(&app, &mut tree, true) - 120.0).abs() < 1.0);
+        assert!((inspect(&app, &mut tree, true).unwrap() - 120.0).abs() < 1.0);
         let _ = app.settings_update(Event::Open);
-        assert!((inspect(&app, &mut tree, false) - 120.0).abs() < 1.0);
+        assert!(
+            inspect(&app, &mut tree, false).is_none(),
+            "covered conversation widgets do not participate in operations"
+        );
         let _ = app.settings_update(Event::Cancel);
-        assert!((inspect(&app, &mut tree, false) - 120.0).abs() < 1.0);
+        assert!((inspect(&app, &mut tree, false).unwrap() - 120.0).abs() < 1.0);
         for mode in [ThemeMode::Dark, ThemeMode::Light] {
             let _ = app.settings_update(Event::Open);
             let _ = app.settings_update(Event::Theme(mode));
             let _ = app.settings_update(Event::Save);
             assert_eq!(app.settings.current.appearance.theme, mode);
-            assert!((inspect(&app, &mut tree, false) - 120.0).abs() < 1.0);
+            assert!((inspect(&app, &mut tree, false).unwrap() - 120.0).abs() < 1.0);
         }
     }
 
