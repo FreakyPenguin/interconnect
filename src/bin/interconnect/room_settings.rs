@@ -6,7 +6,8 @@ use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
 use iced::{
     Element, Length, Task,
     widget::{
-        button, column, container, mouse_area, opaque, pick_list, row, scrollable, text, text_input,
+        button, column, container, mouse_area, opaque, pick_list, row, text, text_editor,
+        text_input,
     },
 };
 use interconnect::connected::room_settings::{
@@ -38,6 +39,7 @@ impl State {
 struct Panel {
     avatar: avatar_editor::State,
     addresses: addresses::Editor,
+    topic: text_editor::Content,
     target: (u64, String),
     request: u64,
     pending: bool,
@@ -71,8 +73,8 @@ pub(super) fn discard_prompt(keep: Message, discard: Message) -> Element<'static
     container(column![
         shell::title("Discard unsaved changes?", 20),
         text("Some edits have not been saved. Keep editing to save them individually. Changes already being saved will continue.").size(13),
-        row![button(text("Keep editing").size(13)).padding([7, 12]).style(shell::primary_button).on_press(keep),
-            button(text("Discard changes").size(13)).padding([7, 12]).style(button::danger).on_press(discard)].spacing(10).wrap(),
+        row![button(text("Keep editing").size(13)).padding([7, 12]).style(shell::primary_button).keyboard_navigation(true).on_press(keep),
+            button(text("Discard changes").size(13)).padding([7, 12]).style(button::danger).keyboard_navigation(true).on_press(discard)].spacing(10).wrap(),
     ].spacing(16))
         .padding(24).max_width(460)
         .style(|theme| container::Style { border: iced::Border { color: shell::palette(theme).line, width: 1.0, radius: 12.0.into() }, ..shell::surface(theme, shell::palette(theme).background) }).into()
@@ -86,15 +88,17 @@ pub enum Event {
     AvatarSaved(u64, Option<Upload>, Result<Option<OwnedMxcUri>, String>),
     Open(String),
     Close,
-    KeepChanges,
-    DiscardChanges,
+    KeepChanges(u64),
+    DiscardChanges(u64),
     Members,
     Leave,
     Reload,
     Ignore,
     Focus(bool),
     Name(String),
+    #[cfg(test)]
     Topic(String),
+    TopicEdit(text_editor::Action),
     Notifications(Notifications),
     Access(JoinRule),
     History(HistoryVisibility),
@@ -155,26 +159,33 @@ impl App {
     pub(super) fn room_settings_event(&mut self, event: Event) -> Task<Message> {
         if matches!(
             event,
-            Event::Close | Event::Reload | Event::Members | Event::Leave
+            Event::Close | Event::Reload | Event::Members | Event::Leave | Event::Open(_)
         ) && self.guard_room_settings_transition(message(event.clone()))
         {
             return Task::none();
         }
         match event {
-            Event::KeepChanges => {
-                if let Some(panel) = &mut self.room_settings.panel {
+            Event::KeepChanges(request) => {
+                if let Some(panel) = &mut self.room_settings.panel
+                    && panel.request == request
+                {
                     panel.transition = None;
                 }
             }
-            Event::DiscardChanges => {
-                if let Some(panel) = &mut self.room_settings.panel {
-                    let next = panel.transition.take();
+            Event::DiscardChanges(request) => {
+                if let Some(panel) = &mut self.room_settings.panel
+                    && panel.request == request
+                {
+                    let Some(next) = panel.transition.take() else {
+                        return Task::none();
+                    };
                     panel.draft = panel.saved.clone();
+                    panel.topic = text_editor::Content::with_text(
+                        panel.saved.as_ref().map_or("", |s| s.topic.as_str()),
+                    );
                     panel.avatar = avatar_editor::State::default();
                     panel.addresses = addresses::Editor::default();
-                    if let Some(next) = next {
-                        return self.update(*next);
-                    }
+                    return self.update(*next);
                 }
             }
             Event::Avatar(session, event) => {
@@ -310,6 +321,7 @@ impl App {
                 self.room_settings.panel = Some(Panel {
                     avatar: avatar_editor::State::default(),
                     addresses: addresses::Editor::default(),
+                    topic: text_editor::Content::new(),
                     target: self.selection.room.clone().unwrap(),
                     request: self.generation,
                     pending: false,
@@ -392,6 +404,7 @@ impl App {
                     settings.name = room.name.clone();
                     settings.topic = room.topic.clone();
                     panel.saved = Some(settings.clone());
+                    panel.topic = text_editor::Content::with_text(&settings.topic);
                     panel.draft = Some(settings);
                 } else if let Some(composer) =
                     current_pane(&self.model.room, panel.target.0).and_then(|p| p.composer.clone())
@@ -423,6 +436,7 @@ impl App {
                         Ok(settings) => {
                             self.room_settings.control = settings.control.clone();
                             panel.saved = Some(settings.clone());
+                            panel.topic = text_editor::Content::with_text(&settings.topic);
                             panel.draft = Some(settings);
                         }
                         Err(error) => {
@@ -605,7 +619,15 @@ impl App {
                 {
                     match event {
                         Event::Name(value) if draft.editable[0] => draft.name = value,
-                        Event::Topic(value) if draft.editable[1] => draft.topic = value,
+                        #[cfg(test)]
+                        Event::Topic(value) if draft.editable[1] => {
+                            panel.topic = text_editor::Content::with_text(&value);
+                            draft.topic = value;
+                        }
+                        Event::TopicEdit(action) if draft.editable[1] => {
+                            panel.topic.perform(action);
+                            draft.topic = panel.topic.text();
+                        }
                         Event::Notifications(value) => draft.notifications = value,
                         Event::Access(value)
                             if draft.editable[2]
@@ -650,22 +672,25 @@ impl App {
         let panel = self.room_settings.panel.as_ref().unwrap();
         let busy = panel.pending || self.room_settings.busy.contains(&panel.target.1);
         if panel.transition.is_some() {
-            return opaque(
-                mouse_area(
-                    container(discard_prompt(
-                        message(Event::KeepChanges),
-                        message(Event::DiscardChanges),
-                    ))
-                    .padding(24)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
-                )
-                .on_press(message(Event::Ignore))
-                .on_scroll(|_| message(Event::Ignore)),
+            return super::focus_scope::view(
+                opaque(
+                    mouse_area(
+                        container(discard_prompt(
+                            message(Event::KeepChanges(panel.request)),
+                            message(Event::DiscardChanges(panel.request)),
+                        ))
+                        .padding(24)
+                        .center_x(Length::Fill)
+                        .center_y(Length::Fill)
+                        .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
+                    )
+                    .on_press(message(Event::Ignore))
+                    .on_scroll(|_| message(Event::Ignore)),
+                ),
+                "room-settings-discard",
             );
         }
-        let mut content = column![shell::title("Room settings", 20)].spacing(14);
+        let mut content = column![].spacing(16);
         if let (Some(draft), Some(saved)) = (&panel.draft, &panel.saved) {
             let enabled = !busy && self.pending_ops < MAX_PENDING_OPERATIONS;
             content = content.push(
@@ -678,18 +703,21 @@ impl App {
                 .id("room-settings-name")
                 .cursor_blinking(false)
                 .style(shell::search_style)
-                .size(14)
+                .padding([7, 10])
+                .size(13)
                 .on_input_maybe(
                     (enabled && draft.editable[0]).then_some(|v| message(Event::Name(v))),
                 );
-            let topic = text_input("Room topic", &draft.topic)
+            let mut topic = text_editor(&panel.topic)
                 .id("room-settings-topic")
                 .cursor_blinking(false)
-                .style(shell::search_style)
-                .size(14)
-                .on_input_maybe(
-                    (enabled && draft.editable[1]).then_some(|v| message(Event::Topic(v))),
-                );
+                .placeholder("Room topic")
+                .style(shell::editor_style)
+                .size(13)
+                .height(84);
+            if enabled && draft.editable[1] {
+                topic = topic.on_action(|action| message(Event::TopicEdit(action)));
+            }
             content = content.push(setting(
                 "Name",
                 name,
@@ -798,6 +826,7 @@ impl App {
             row![
                 button("Members & invitations")
                     .style(shell::quiet_button)
+                    .keyboard_navigation(true)
                     .on_press_maybe((!busy).then_some(message(Event::Members))),
                 button(
                     row![
@@ -808,16 +837,24 @@ impl App {
                     .align_y(iced::Alignment::Center)
                 )
                 .style(button::danger)
+                .keyboard_navigation(true)
                 .on_press_maybe((!busy).then_some(message(Event::Leave))),
             ]
-            .spacing(8),
+            .spacing(8)
+            .wrap(),
         );
-        content = content.push(text(&panel.target.1).size(12).style(shell::muted_text));
+        content = content.push(
+            text(&panel.target.1)
+                .size(11)
+                .style(shell::muted_text)
+                .wrapping(text::Wrapping::Glyph),
+        );
+        let mut feedback = column![].spacing(8);
         if let Some(error) = &panel.error {
-            content = content.push(text(error).size(13));
+            feedback = feedback.push(text(error).size(13).style(shell::danger_text));
         }
         if busy && panel.saved.is_some() {
-            content = content.push(
+            feedback = feedback.push(
                 text(if panel.load.is_some() {
                     "Refreshing…"
                 } else {
@@ -827,56 +864,53 @@ impl App {
             );
         }
         if panel.success {
-            content = content.push(
+            feedback = feedback.push(
                 text(if self.demo.is_some() {
-                    "Saved for this demo session."
+                    "Field saved for this demo session."
                 } else {
-                    "Saved."
+                    "Field saved."
                 })
                 .size(13),
             );
         }
-        let card = container(
-            column![
-                scrollable(content)
-                    .height(Length::Fill)
-                    .direction(shell::scrollbar())
-                    .style(shell::scroll_style),
-                row![
-                    super::tooltips::icon_button(
-                        super::icons::Kind::Refresh,
-                        "Reload room settings",
-                        (!busy).then_some(message(Event::Reload))
-                    ),
-                    iced::widget::space().width(Length::Fill),
-                    super::tooltips::icon_button(
-                        super::icons::Kind::Close,
-                        "Close room settings",
-                        Some(message(Event::Close))
-                    )
-                ]
-                .spacing(8)
+        let header = row![
+            shell::title("Room settings", 20),
+            iced::widget::space().width(Length::Fill),
+            super::tooltips::icon_button(
+                super::icons::Kind::Close,
+                "Close room settings",
+                Some(message(Event::Close))
+            ),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center);
+        let footer = column![
+            feedback,
+            row![
+                button(text("Reload").size(13))
+                    .padding([7, 10])
+                    .style(shell::quiet_button)
+                    .keyboard_navigation(true)
+                    .on_press_maybe((!busy).then_some(message(Event::Reload))),
+                iced::widget::space().width(Length::Fill),
+                text(if panel.dirty() {
+                    "Unsaved changes · save each edited field"
+                } else {
+                    "Changes save individually"
+                })
+                .size(12)
+                .style(shell::muted_text),
             ]
-            .spacing(16),
-        )
-        .id("room-settings-dialog")
-        .padding(20)
-        .width(560)
-        .height((size.height - 32.0).clamp(1.0, 720.0))
-        .style(|theme| container::Style {
-            border: iced::Border::default().rounded(12),
-            ..shell::surface(theme, shell::palette(theme).background)
-        });
-        opaque(
-            mouse_area(
-                container(card)
-                    .center_x(Length::Fill)
-                    .center_y(Length::Fill)
-                    .padding(16)
-                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
-            )
-            .on_press(message(Event::Ignore))
-            .on_scroll(|_| message(Event::Ignore)),
+            .spacing(10)
+            .align_y(iced::Alignment::Center)
+        ]
+        .spacing(8);
+        super::focus_scope::view(
+            super::dialog::modal(
+                super::dialog::frame(size, 560.0, 760.0, "room-settings", header, content, footer),
+                message(Event::Ignore),
+            ),
+            "room-settings-scope",
         )
     }
 }
@@ -886,15 +920,23 @@ fn setting<'a>(
     field: usize,
     changed: bool,
 ) -> Element<'a, Message> {
+    setting_field(label, control, message(Event::Save(field)), changed)
+}
+pub(super) fn setting_field<'a>(
+    label: &'a str,
+    control: impl Into<Element<'a, Message>>,
+    save: Message,
+    changed: bool,
+) -> Element<'a, Message> {
     column![
         text(label).size(12).style(shell::muted_text),
         row![
             container(control).width(Length::Fill),
-            super::tooltips::icon_button(
-                super::icons::Kind::Check,
-                "Save",
-                changed.then_some(message(Event::Save(field)))
-            )
+            button(text(if changed { "Save" } else { "Saved" }).size(12))
+                .padding([7, 10])
+                .style(shell::quiet_button)
+                .keyboard_navigation(true)
+                .on_press_maybe(changed.then_some(save))
         ]
         .spacing(8)
         .align_y(iced::Alignment::Center)
@@ -911,6 +953,7 @@ fn select<'a, T: Clone + Eq + std::fmt::Display + 'a>(
     if enabled {
         pick_list(values, Some(selected), event)
             .style(shell::select_style)
+            .keyboard_navigation(true)
             .padding([7, 10])
             .width(Length::Fill)
             .text_size(13)
@@ -1032,9 +1075,12 @@ fn focus_step<T: Send + 'static>(backwards: bool) -> impl iced::advanced::widget
 
 pub fn shortcut(
     event: iced::Event,
-    _: iced::event::Status,
+    status: iced::event::Status,
     _: iced::window::Id,
 ) -> Option<Message> {
+    if status == iced::event::Status::Captured {
+        return None;
+    }
     use iced::keyboard::{Key, key::Named};
     if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
         match key {
@@ -1173,6 +1219,34 @@ mod tests {
     }
 
     #[test]
+    fn multiline_topic_saves_without_discarding_other_field_edits() {
+        let mut app = demo_app();
+        open(&mut app);
+        let _ = app.update(message(Event::Topic("First line\nSecond line".into())));
+        let _ = app.update(message(Event::Name("Still editing the name".into())));
+        let _ = app.update(message(Event::Save(1)));
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        assert_eq!(
+            panel.saved.as_ref().unwrap().topic,
+            "First line\nSecond line"
+        );
+        assert_eq!(panel.topic.text(), "First line\nSecond line");
+        assert!(panel.dirty());
+        assert_ne!(panel.saved.as_ref().unwrap().name, "Still editing the name");
+        let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::DiscardChanges(
+            app.room_settings.panel.as_ref().unwrap().request,
+        )));
+        open(&mut app);
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        assert_eq!(
+            panel.draft.as_ref().unwrap().topic,
+            "First line\nSecond line"
+        );
+        assert_ne!(panel.draft.as_ref().unwrap().name, "Still editing the name");
+    }
+
+    #[test]
     fn dirty_room_settings_require_explicit_discard_before_close_or_reload() {
         let mut app = demo_app();
         open(&mut app);
@@ -1191,7 +1265,9 @@ mod tests {
         let panel = app.room_settings.panel.as_ref().unwrap();
         assert!(panel.transition.is_some());
         assert_eq!(panel.draft.as_ref().unwrap().name, "Uncommitted room name");
-        let _ = app.update(message(Event::KeepChanges));
+        let _ = app.update(message(Event::KeepChanges(
+            app.room_settings.panel.as_ref().unwrap().request,
+        )));
         assert!(
             app.room_settings
                 .panel
@@ -1209,7 +1285,9 @@ mod tests {
                 .transition
                 .is_some()
         );
-        let _ = app.update(message(Event::DiscardChanges));
+        let _ = app.update(message(Event::DiscardChanges(
+            app.room_settings.panel.as_ref().unwrap().request,
+        )));
         assert_eq!(
             app.room_settings
                 .panel
@@ -1234,7 +1312,9 @@ mod tests {
                 .is_some()
         );
         assert!(!app.space_settings.is_open());
-        let _ = app.update(message(Event::DiscardChanges));
+        let _ = app.update(message(Event::DiscardChanges(
+            app.room_settings.panel.as_ref().unwrap().request,
+        )));
         assert!(!app.room_settings.is_open());
         assert!(app.space_settings.is_open());
     }
@@ -1273,6 +1353,7 @@ mod tests {
         let operation = app.generation;
         assert_eq!(app.pending_ops, 1);
         let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::DiscardChanges(session)));
         let url: OwnedMxcUri = "mxc://demo.invalid/saved-avatar".into();
         let _ = app.update(message(Event::AvatarSaved(
             operation,
@@ -1367,6 +1448,8 @@ mod tests {
         assert_eq!(saved.history, HistoryVisibility::Joined);
         let _ = app.update(message(Event::Name("Discarded".into())));
         let _ = app.update(Message::Escape);
+        let request = app.room_settings.panel.as_ref().unwrap().request;
+        let _ = app.update(message(Event::DiscardChanges(request)));
         open(&mut app);
         assert_eq!(
             app.room_settings
@@ -1496,60 +1579,70 @@ mod layout_tests {
                 &renderer,
                 &mut operation::focusable::focus::<()>("room-settings-name".into()),
             );
-            for expected in [Some(0), Some(1), Some(2), Some(3), Some(0)] {
-                let mut count = operation::map(
+            let count = |view: &mut Element<'_, Message>, tree: &mut widget::Tree| {
+                let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+                let output = result.clone();
+                let mut operation = operation::map(
                     operation::scope("room-settings-dialog".into(), operation::focusable::count()),
-                    move |count| {
-                        assert_eq!(count.total, 4);
-                        assert_eq!(count.focused, expected);
-                    },
+                    move |value| *output.lock().unwrap() = Some(value),
                 );
                 view.as_widget_mut().operate(
-                    &mut tree,
+                    tree,
                     layout::Layout::new(&node),
                     &renderer,
-                    &mut count,
+                    &mut operation,
                 );
-                assert!(matches!(count.finish(), Outcome::Some(())));
-                let mut next: Box<dyn Operation<()>> = Box::new(focus_step(false));
-                loop {
-                    view.as_widget_mut().operate(
+                assert!(matches!(operation.finish(), Outcome::Some(())));
+                let value = result.lock().unwrap().take().unwrap();
+                value
+            };
+            let initial = count(&mut view, &mut tree);
+            assert!(
+                initial.total > 4,
+                "actions and choices join the text fields in the focus loop"
+            );
+            let mut focused = initial.focused.unwrap();
+            for backwards in [false, true] {
+                for _ in 0..=initial.total {
+                    let mut messages = Vec::new();
+                    let mut shell = iced::advanced::Shell::new(&mut messages);
+                    view.as_widget_mut().update(
                         &mut tree,
+                        &iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                            key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                            modified_key: iced::keyboard::Key::Named(
+                                iced::keyboard::key::Named::Tab,
+                            ),
+                            physical_key: iced::keyboard::key::Physical::Code(
+                                iced::keyboard::key::Code::Tab,
+                            ),
+                            location: iced::keyboard::Location::Standard,
+                            modifiers: if backwards {
+                                iced::keyboard::Modifiers::SHIFT
+                            } else {
+                                iced::keyboard::Modifiers::empty()
+                            },
+                            text: None,
+                            repeat: false,
+                        }),
                         layout::Layout::new(&node),
+                        mouse::Cursor::Unavailable,
                         &renderer,
-                        next.as_mut(),
+                        &mut iced::advanced::clipboard::Null,
+                        &mut shell,
+                        &iced::Rectangle::with_size(size),
                     );
-                    match next.finish() {
-                        Outcome::Chain(op) => next = op,
-                        _ => break,
-                    }
+                    assert!(shell.is_event_captured());
+                    assert!(messages.is_empty());
+                    focused = if backwards {
+                        (focused + initial.total - 1) % initial.total
+                    } else {
+                        (focused + 1) % initial.total
+                    };
+                    let actual = count(&mut view, &mut tree);
+                    assert_eq!(actual.total, initial.total);
+                    assert_eq!(actual.focused, Some(focused));
                 }
-            }
-            for expected in [Some(0), Some(3)] {
-                let mut previous: Box<dyn Operation<()>> = Box::new(focus_step(true));
-                loop {
-                    view.as_widget_mut().operate(
-                        &mut tree,
-                        layout::Layout::new(&node),
-                        &renderer,
-                        previous.as_mut(),
-                    );
-                    match previous.finish() {
-                        Outcome::Chain(op) => previous = op,
-                        _ => break,
-                    }
-                }
-                let mut count = operation::map(
-                    operation::scope("room-settings-dialog".into(), operation::focusable::count()),
-                    move |count| assert_eq!(count.focused, expected),
-                );
-                view.as_widget_mut().operate(
-                    &mut tree,
-                    layout::Layout::new(&node),
-                    &renderer,
-                    &mut count,
-                );
-                assert!(matches!(count.finish(), Outcome::Some(())));
             }
             let now = iced::time::Instant::now();
             for millis in [0, 750, 1250] {

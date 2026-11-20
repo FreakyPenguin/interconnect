@@ -2,7 +2,7 @@
 use super::{Message, message, shell};
 use iced::{
     Element, Length,
-    widget::{button, column, pick_list, row, text, text_input, toggler},
+    widget::{button, checkbox, column, pick_list, row, text, text_input},
 };
 use interconnect::connected::room_settings::addresses::{self as model, Addresses, Change};
 use matrix_sdk::ruma::OwnedRoomAliasId;
@@ -148,6 +148,7 @@ impl Editor {
                 event(Event::Main(v.0))
             })
             .style(shell::select_style)
+            .keyboard_navigation(true)
             .padding([7, 10])
             .text_size(13)
             .width(Length::Fill)
@@ -159,13 +160,14 @@ impl Editor {
         };
         let mut content = column![
             shell::title("Published Addresses", 15),
-            text("Published addresses help people find this room. An address must already point to this room before you can publish it.").size(12).style(shell::muted_text),
+            text("Address and directory actions apply immediately. An address must already point to this room before you can publish it.").size(12).style(shell::muted_text),
             text("Main address").size(12).style(shell::muted_text),
             main,
         ].spacing(9);
         match &saved.directory {
             Ok(value) => {
-                let control = toggler(*value)
+                let control = checkbox(*value)
+                    .keyboard_navigation(true)
                     .label(format!(
                         "Publish in {}'s public room directory",
                         saved.server
@@ -193,6 +195,7 @@ impl Editor {
                         .wrapping(text::Wrapping::Glyph),
                     button("Unpublish")
                         .style(shell::quiet_button)
+                        .keyboard_navigation(true)
                         .on_press_maybe(editable.then(|| event(Event::Unpublish(alias.clone()))))
                 ]
                 .spacing(8)
@@ -215,6 +218,7 @@ impl Editor {
         content = content.push(
             button("Add published address")
                 .style(shell::quiet_button)
+                .keyboard_navigation(true)
                 .on_press_maybe(
                     (editable && !self.published.trim().is_empty())
                         .then_some(event(Event::Publish)),
@@ -241,10 +245,13 @@ impl Editor {
                                 .size(13)
                                 .width(Length::Fill)
                                 .wrapping(text::Wrapping::Glyph),
-                            button("Remove").style(shell::quiet_button).on_press_maybe(
-                                (enabled && !aliases.contains(alias))
-                                    .then(|| event(Event::Remove(alias.clone())))
-                            )
+                            button("Remove")
+                                .style(shell::quiet_button)
+                                .keyboard_navigation(true)
+                                .on_press_maybe(
+                                    (enabled && !aliases.contains(alias))
+                                        .then(|| event(Event::Remove(alias.clone())))
+                                )
                         ]
                         .spacing(8)
                         .align_y(iced::Alignment::Center),
@@ -269,6 +276,7 @@ impl Editor {
                 content = content.push(
                     button("Add local address")
                         .style(shell::quiet_button)
+                        .keyboard_navigation(true)
                         .on_press_maybe(
                             (enabled && !self.local.trim().is_empty())
                                 .then_some(event(Event::AddLocal)),
@@ -289,9 +297,11 @@ impl Editor {
                     row![
                         button("Remove address")
                             .style(button::danger)
+                            .keyboard_navigation(true)
                             .on_press_maybe(enabled.then_some(event(Event::ConfirmRemove))),
                         button("Cancel")
                             .style(shell::quiet_button)
+                            .keyboard_navigation(true)
                             .on_press_maybe(enabled.then_some(event(Event::CancelRemove)))
                     ]
                     .spacing(8),

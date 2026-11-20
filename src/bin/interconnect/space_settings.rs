@@ -7,15 +7,12 @@ mod space_directory;
 mod space_exit;
 
 use super::avatar_editor;
-use super::{
-    App, MAX_PENDING_OPERATIONS, Message,
-    icons::{self, Kind},
-    shell,
-    tooltips::icon_button,
-};
+use super::{App, MAX_PENDING_OPERATIONS, Message, icons::Kind, shell, tooltips::icon_button};
 use iced::{
     Element, Length, Task,
-    widget::{column, container, pick_list, row, rule, scrollable, text, text_input},
+    widget::{
+        button, column, container, pick_list, row, rule, scrollable, text, text_editor, text_input,
+    },
 };
 use interconnect::room_avatar::{Details, Upload};
 use interconnect::{
@@ -49,6 +46,7 @@ impl State {
 }
 struct Panel {
     avatar: avatar_editor::State,
+    topic: text_editor::Content,
     space: bool,
     scope: Scope,
     members: member_management::State,
@@ -95,11 +93,13 @@ pub enum Event {
     SidebarMembers(member_management::Event),
     Exit(space_exit::Event),
     Close,
-    KeepChanges,
-    DiscardChanges,
+    KeepChanges(u64),
+    DiscardChanges(u64),
     Reload,
     Name(String),
+    #[cfg(test)]
     Topic(String),
+    TopicEdit(text_editor::Action),
     Access(JoinRule),
     Save(usize),
     Loaded(u64, Box<Result<(Management, Settings), String>>),
@@ -166,6 +166,7 @@ impl App {
         let request = self.generation;
         self.space_settings.sidebar = Some(Panel {
             avatar: avatar_editor::State::default(),
+            topic: text_editor::Content::new(),
             space: false,
             scope: self.shell.space.clone(),
             members: member_management::State::default(),
@@ -281,19 +282,26 @@ impl App {
         let opening_space = matches!(&event, Event::Open(_) | Event::Browse(_));
         let browse = matches!(&event, Event::Browse(_));
         match event {
-            Event::KeepChanges => {
-                if let Some(panel) = &mut self.space_settings.panel {
+            Event::KeepChanges(request) => {
+                if let Some(panel) = &mut self.space_settings.panel
+                    && panel.request == request
+                {
                     panel.transition = None;
                 }
             }
-            Event::DiscardChanges => {
-                if let Some(panel) = &mut self.space_settings.panel {
-                    let next = panel.transition.take();
+            Event::DiscardChanges(request) => {
+                if let Some(panel) = &mut self.space_settings.panel
+                    && panel.request == request
+                {
+                    let Some(next) = panel.transition.take() else {
+                        return Task::none();
+                    };
                     panel.draft = panel.saved.clone();
+                    panel.topic = text_editor::Content::with_text(
+                        panel.saved.as_ref().map_or("", |s| s.topic.as_str()),
+                    );
                     panel.avatar = avatar_editor::State::default();
-                    if let Some(next) = next {
-                        return self.update(*next);
-                    }
+                    return self.update(*next);
                 }
             }
             Event::SidebarMembers(member_management::Event::Reload) => {
@@ -473,6 +481,7 @@ impl App {
                 self.generation += 1;
                 self.space_settings.panel = Some(Panel {
                     avatar: avatar_editor::State::default(),
+                    topic: text_editor::Content::new(),
                     space,
                     scope: self.shell.space.clone(),
                     members: member_management::State::default(),
@@ -568,6 +577,7 @@ impl App {
                                 editable: [editable; 3],
                             });
                     panel.saved = Some(settings.clone());
+                    panel.topic = text_editor::Content::with_text(&settings.topic);
                     panel.draft = Some(settings);
                     return self.member_management_event(
                         member_management::Host::Panel,
@@ -607,6 +617,7 @@ impl App {
                         Ok((control, settings)) => {
                             panel.control = Some(control);
                             panel.saved = Some(settings.clone());
+                            panel.topic = text_editor::Content::with_text(&settings.topic);
                             panel.draft = Some(settings);
                             return self.member_management_event(
                                 member_management::Host::Panel,
@@ -713,7 +724,15 @@ impl App {
                 {
                     match edit {
                         Event::Name(value) if draft.editable[0] => draft.name = value,
-                        Event::Topic(value) if draft.editable[1] => draft.topic = value,
+                        #[cfg(test)]
+                        Event::Topic(value) if draft.editable[1] => {
+                            panel.topic = text_editor::Content::with_text(&value);
+                            draft.topic = value;
+                        }
+                        Event::TopicEdit(action) if draft.editable[1] => {
+                            panel.topic.perform(action);
+                            draft.topic = panel.topic.text();
+                        }
                         Event::Access(value)
                             if draft.editable[2]
                                 && matches!(
@@ -735,14 +754,16 @@ impl App {
     pub(super) fn space_settings_view(&self) -> Element<'_, Message> {
         let panel = self.space_settings.panel.as_ref().unwrap();
         if panel.transition.is_some() {
-            return container(super::room_settings::discard_prompt(
-                message(Event::KeepChanges),
-                message(Event::DiscardChanges),
-            ))
-            .padding(24)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .into();
+            return super::focus_scope::view(
+                container(super::room_settings::discard_prompt(
+                    message(Event::KeepChanges(panel.request)),
+                    message(Event::DiscardChanges(panel.request)),
+                ))
+                .padding(24)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill),
+                "space-settings-discard",
+            );
         }
         if panel.directory.is_some() {
             return self.space_directory_view();
@@ -750,40 +771,26 @@ impl App {
         if panel.exit.is_open() {
             return self.space_exit_view();
         }
-        let mut body = column![
+        let header = container(
             row![
-                icons::icon(if panel.space {
-                    Kind::Space
-                } else {
-                    Kind::People
-                }),
                 shell::title(
                     if panel.space {
                         "Space settings"
                     } else {
                         "Room members"
                     },
-                    22
+                    20
                 ),
                 iced::widget::space().width(Length::Fill),
                 if panel.space {
-                    iced::Element::from(icon_button(
+                    Element::from(icon_button(
                         Kind::Compass,
                         "Find rooms to join",
                         Some(message(Event::Browse(panel.id.clone()))),
                     ))
                 } else {
-                    iced::Element::from(iced::widget::space().width(0))
+                    Element::from(iced::widget::space().width(0))
                 },
-                icon_button(
-                    Kind::Refresh,
-                    if panel.space {
-                        "Reload space settings"
-                    } else {
-                        "Reload room members"
-                    },
-                    (!panel.pending).then_some(message(Event::Reload))
-                ),
                 icon_button(
                     Kind::Close,
                     if panel.space {
@@ -792,14 +799,20 @@ impl App {
                         "Close room members"
                     },
                     Some(message(Event::Close))
-                )
+                ),
             ]
-            .spacing(8)
+            .spacing(10)
             .align_y(iced::Alignment::Center),
-            text(&panel.id).size(11).style(shell::muted_text),
-            rule::horizontal(1)
+        )
+        .padding([18, 24])
+        .width(Length::Fill);
+        let mut body = column![
+            text(&panel.id)
+                .size(11)
+                .style(shell::muted_text)
+                .wrapping(text::Wrapping::Glyph)
         ]
-        .spacing(18);
+        .spacing(16);
         if panel.space
             && let (Some(saved), Some(draft)) = (&panel.saved, &panel.draft)
         {
@@ -813,50 +826,36 @@ impl App {
                     )
                     .map(move |event| message(Event::Avatar(panel.request, event))),
             );
-            for (field, label, value, before) in [
-                (0, "Name", &draft.name, &saved.name),
-                (1, "Topic", &draft.topic, &saved.topic),
-            ] {
-                let editable = saved.editable[field] && !panel.pending;
-                let mut input = text_input(label, value)
-                    .cursor_blinking(false)
-                    .padding(10)
-                    .style(shell::search_style);
-                if editable {
-                    input = input.on_input(move |value| {
-                        message(if field == 0 {
-                            Event::Name(value)
-                        } else {
-                            Event::Topic(value)
-                        })
-                    });
-                }
-                body = body.push(
-                    column![
-                        row![
-                            icons::icon(if field == 0 { Kind::Edit } else { Kind::Thread }),
-                            text(label).size(13).style(shell::muted_text)
-                        ]
-                        .spacing(8)
-                        .align_y(iced::Alignment::Center),
-                        row![
-                            input,
-                            icon_button(
-                                Kind::Check,
-                                if field == 0 {
-                                    "Save name"
-                                } else {
-                                    "Save topic"
-                                },
-                                (editable && value != before)
-                                    .then_some(message(Event::Save(field)))
-                            )
-                        ]
-                        .spacing(8)
-                    ]
-                    .spacing(8),
-                );
+            let editable_name = saved.editable[0] && !panel.pending;
+            let name = text_input("Space name", &draft.name)
+                .id("space-settings-name")
+                .cursor_blinking(false)
+                .padding([7, 10])
+                .size(13)
+                .style(shell::search_style)
+                .on_input_maybe(editable_name.then_some(|value| message(Event::Name(value))));
+            body = body.push(super::room_settings::setting_field(
+                "Name",
+                name,
+                message(Event::Save(0)),
+                editable_name && draft.name != saved.name,
+            ));
+            let mut topic = text_editor(&panel.topic)
+                .id("space-settings-topic")
+                .cursor_blinking(false)
+                .placeholder("Space topic")
+                .height(84)
+                .size(13)
+                .style(shell::editor_style);
+            if saved.editable[1] && !panel.pending {
+                topic = topic.on_action(|action| message(Event::TopicEdit(action)));
             }
+            body = body.push(super::room_settings::setting_field(
+                "Topic",
+                topic,
+                message(Event::Save(1)),
+                saved.editable[1] && !panel.pending && draft.topic != saved.topic,
+            ));
             let supported = matches!(draft.access, Some(JoinRule::Invite | JoinRule::Public));
             let access: Element<'_, Message> = if supported && draft.editable[2] && !panel.pending {
                 pick_list(
@@ -875,6 +874,11 @@ impl App {
                         }))
                     },
                 )
+                .style(shell::select_style)
+                .keyboard_navigation(true)
+                .padding([7, 10])
+                .text_size(13)
+                .width(Length::Fill)
                 .into()
             } else {
                 text(
@@ -886,30 +890,12 @@ impl App {
                 .size(14)
                 .into()
             };
-            body = body.push(
-                column![
-                    row![
-                        icons::icon(Kind::People),
-                        text("Who can join").size(13).style(shell::muted_text)
-                    ]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
-                    row![
-                        access,
-                        icon_button(
-                            Kind::Check,
-                            "Save access",
-                            (supported
-                                && draft.editable[2]
-                                && !panel.pending
-                                && draft.access != saved.access)
-                                .then_some(message(Event::Save(2)))
-                        )
-                    ]
-                    .spacing(8)
-                ]
-                .spacing(8),
-            );
+            body = body.push(super::room_settings::setting_field(
+                "Who can join",
+                access,
+                message(Event::Save(2)),
+                supported && draft.editable[2] && !panel.pending && draft.access != saved.access,
+            ));
             if !supported {
                 body = body.push(
                     text("This access rule is read-only.")
@@ -927,23 +913,56 @@ impl App {
         if panel.space && panel.saved.is_some() {
             body = body.push(self.space_exit_actions());
         }
+        let mut feedback = column![].spacing(6);
         if panel.pending {
-            body = body.push(text("Working…").size(13));
+            feedback = feedback.push(text("Working…").size(13));
         }
         if panel.success {
-            body = body.push(text("Saved").size(13).style(shell::muted_text));
+            feedback = feedback.push(text("Change saved.").size(13).style(shell::muted_text));
         }
         if let Some(error) = &panel.error {
-            body = body.push(text(error).size(13).style(shell::accent_text));
+            feedback = feedback.push(text(error).size(13).style(shell::danger_text));
         }
-        container(
-            scrollable(container(body).padding(28).max_width(800))
-                .direction(shell::scrollbar())
-                .style(shell::scroll_style),
+        let footer = container(
+            column![
+                feedback,
+                row![
+                    button(text("Reload").size(13))
+                        .padding([7, 10])
+                        .style(shell::quiet_button)
+                        .keyboard_navigation(true)
+                        .on_press_maybe((!panel.pending).then_some(message(Event::Reload))),
+                    iced::widget::space().width(Length::Fill),
+                    text(if panel.dirty() {
+                        "Unsaved changes · save each edited field"
+                    } else {
+                        "Changes save individually"
+                    })
+                    .size(12)
+                    .style(shell::muted_text)
+                ]
+                .spacing(10)
+                .align_y(iced::Alignment::Center)
+            ]
+            .spacing(6),
         )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .padding([14, 24]);
+        super::focus_scope::view(
+            column![
+                header,
+                rule::horizontal(1),
+                scrollable(container(body).padding(24).max_width(800))
+                    .id("space-settings-body")
+                    .height(Length::Fill)
+                    .direction(shell::scrollbar())
+                    .style(shell::scroll_style),
+                rule::horizontal(1),
+                footer,
+            ]
+            .height(Length::Fill)
+            .width(Length::Fill),
+            "space-settings-scope",
+        )
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -969,6 +988,23 @@ mod tests {
         app.space_settings.panel.as_ref().unwrap().request
     }
     #[test]
+    fn multiline_space_topic_stays_separate_from_an_unsaved_name() {
+        let mut app = demo_app();
+        open(&mut app);
+        let _ = app.update(message(Event::Topic("First line\nSecond line".into())));
+        let _ = app.update(message(Event::Name("Still editing the name".into())));
+        let _ = app.update(message(Event::Save(1)));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert_eq!(
+            panel.saved.as_ref().unwrap().topic,
+            "First line\nSecond line"
+        );
+        assert_eq!(panel.topic.text(), "First line\nSecond line");
+        assert!(panel.dirty());
+        assert_ne!(panel.saved.as_ref().unwrap().name, "Still editing the name");
+    }
+
+    #[test]
     fn dirty_space_settings_preserve_edits_until_discard_is_confirmed() {
         let mut app = demo_app();
         open(&mut app);
@@ -980,7 +1016,9 @@ mod tests {
             panel.draft.as_ref().unwrap().topic,
             "Uncommitted space topic"
         );
-        let _ = app.update(message(Event::KeepChanges));
+        let _ = app.update(message(Event::KeepChanges(
+            app.space_settings.panel.as_ref().unwrap().request,
+        )));
         assert!(
             app.space_settings
                 .panel
@@ -998,7 +1036,9 @@ mod tests {
                 .transition
                 .is_some()
         );
-        let _ = app.update(message(Event::DiscardChanges));
+        let _ = app.update(message(Event::DiscardChanges(
+            app.space_settings.panel.as_ref().unwrap().request,
+        )));
         let panel = app.space_settings.panel.as_ref().unwrap();
         assert!(panel.transition.is_none());
         assert_eq!(
@@ -1047,6 +1087,7 @@ mod tests {
         let operation = app.generation;
         assert_eq!(app.pending_ops, 1);
         let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::DiscardChanges(session)));
         let url: OwnedMxcUri = "mxc://demo.invalid/saved-avatar".into();
         let _ = app.update(message(Event::AvatarSaved(
             operation,

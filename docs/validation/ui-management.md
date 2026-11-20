@@ -17,3 +17,12 @@ Run the locked UI tests and build before the demo acceptance checks in
 The UI suite exercises draft preservation and discard transitions. Connected
 server writes and native file-picker cancellation require desktop acceptance;
 unit tests do not establish server or platform behavior.
+
+## Management layout
+
+- At 640×480 and desktop sizes, room and space titles/close controls stay fixed
+  while forms scroll. Feedback and Reload remain visible in the footer.
+- Save a multiline topic while another field is edited: only the topic is saved,
+  the editor retains its line breaks, and the footer still reports unsaved changes.
+- Confirm error and save messages remain beside the fixed actions rather than
+  disappearing below the form. Read-only fields retain readable values.
