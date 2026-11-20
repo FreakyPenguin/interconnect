@@ -192,8 +192,8 @@ impl App {
             .on_press_maybe(enabled.then(|| message(Event::SaveSection)))
             .into()
         } else {
-            super::tooltips::icon_action(
-                super::icons::Kind::Save,
+            crate::tooltips::icon_action(
+                crate::icons::Kind::Save,
                 if state.pending.is_some() {
                     "Saving section…"
                 } else {
@@ -206,8 +206,8 @@ impl App {
         };
         body.push(
             row![
-                super::tooltips::icon_button(
-                    super::icons::Kind::Close,
+                crate::tooltips::icon_button(
+                    crate::icons::Kind::Close,
                     "Cancel section changes",
                     state
                         .pending
