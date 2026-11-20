@@ -90,8 +90,10 @@ is documented in `vendor/iced_tiny_skia/PATCH.md`.
 
 The caption regression reproduced missing suffixes before the transform fix and
 passes with the fix. A broader exploratory whole-frame pixel comparison also
-found an independent one-pixel antialias difference on search-input borders
-(1,388 pixels, bounding box 739×24 at x427/y144 at 1400×900). The text regression
-does not assert those borders. Outward pixel rounding did not resolve that
-separate issue; it is not included in the text-transform patch. Native desktop
+found independent antialias rounding on the search-input perimeter: 1,388
+pixels differed by at most 3/255 per channel, with 1,371 differing by just 1/255.
+Text and input interiors matched. Source inspection points to upstream masked
+versus unmasked blending arithmetic; this is not missing invalidation or text.
+The text regression excludes these borders. Outward pixel rounding did not
+resolve that separate issue and was not included in the patch. Native desktop
 confirmation belongs to the integrated review, not this offscreen test.
