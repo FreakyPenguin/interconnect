@@ -39,9 +39,9 @@ macOS validation. Build with the locked desktop command before launching
 The headless suite includes category draft retention, dirty-close/reload choices,
 reload staging, and a 640×480 panel fixture checking full bounds, compact toolbar,
 remaining body height, icon hit areas, and empty-space input capture. The panel
-fixture was updated for this layout and needs the integration run; static rustfmt
-and whitespace checks passed. Desktop appearance, native notification permissions,
-and CPU/wakeups need manual checks.
+fixture exercises the integrated full-panel layout. Desktop appearance, native
+notification permissions, and CPU/wakeups still need the manual checks above;
+headless geometry tests do not establish platform service behavior.
 
 ## Account and membership dialogs
 
