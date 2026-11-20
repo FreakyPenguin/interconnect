@@ -1,5 +1,7 @@
 # Interconnect
 
+[![Matrix: #interconnect:mpi-sws.org](https://img.shields.io/badge/Matrix-%23interconnect%3Ampi--sws.org-000000?logo=matrix&logoColor=white)](https://matrix.to/#/#interconnect:mpi-sws.org)
+
 <a href="docs/logo.svg">
   <img src="docs/logo.svg" alt="Interconnect logo" width="160" height="160">
 </a>
