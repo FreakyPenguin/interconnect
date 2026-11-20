@@ -156,7 +156,23 @@ pub fn rooms() -> Vec<RoomEntry> {
             canonical_alias: Some(format!("#{}:example.org", r.id)),
             tombstone: None,
             topic: if r.id == "studio" {
-                "A place for design notes and plans".into()
+                concat!(
+                    "**A place for design notes and plans**\n\n",
+                    "## Working together\n",
+                    "- Share early sketches and explain the tradeoffs.\n",
+                    "- Keep feedback kind, specific, and useful.\n",
+                    "- Put longer discussions in a thread.\n\n",
+                    "## Useful places\n",
+                    "Visit [General](https://matrix.to/#/!demo-general:example.org) for team updates.\n",
+                    "Read the [Matrix introduction](https://matrix.org/docs/matrix-concepts/) for background.\n\n",
+                    "> Leave room for focused work; a reply can wait.\n\n",
+                    "## Sharing a proposal\n",
+                    "1. Describe the problem and the people it affects.\n",
+                    "2. Include a sketch or a short example.\n",
+                    "3. Note open questions and the next step.\n\n",
+                    "Use `work in progress` when an idea is still taking shape.\n\n",
+                    "Topic links and selected text work here just like in messages."
+                ).into()
             } else {
                 String::new()
             },

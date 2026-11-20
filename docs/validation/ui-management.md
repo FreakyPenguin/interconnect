@@ -108,3 +108,41 @@ Saved states, plus address input widths with a long server name at 240px and
 560px body widths. Another regression checks the compact room header, body space,
 and conditional feedback footer at 320×480 and 640×480. Run these with the locked UI suite; desktop appearance and
 native dropdown placement still require the demo acceptance checks above.
+
+## Room topic disclosure
+
+- In demo mode, click Design studio's topic or its caret beneath the room name.
+  It expands downward within the header; click again to collapse. The collapsed
+  snippet retains bold, italic, code, strikethrough, and link styling, with
+  grapheme-safe ellipsis at narrow widths. Check both light and dark themes.
+- At 640×480 and desktop sizes, scroll a long expanded topic. The caret and
+  Copy Markdown/Edit actions stay visible. The timeline and composer remain
+  usable. Select text and copy with Ctrl+C/Command+C; Copy Markdown copies the
+  original source, including line breaks and link destinations.
+- External links retain expansion. The General room link uses normal internal
+  Matrix navigation and clears the old room's expansion. Unknown Matrix rooms
+  and users offer the existing join/new-chat flow.
+- Choose Edit: the larger multiline dialog retains original Markdown. Save,
+  clear, cancel, and dismiss with Escape; retain message drafts and timeline
+  reading positions. Check wrapping of long save errors beside the fixed save
+  control. The room-settings topic field also accepts Markdown source.
+- Read-only rooms support expansion, selection, copy, and links; Edit is absent.
+  Remote topic changes update both views. Room/account changes, permission loss
+  during editing, and shutdown reject stale formatting/editor results. Space
+  filtering preserves expansion. Escape collapses it after other dialogs dismiss.
+- Raw HTML stays literal and image syntax shows alternatives. Excessive
+  formatting falls back to plain text. Topics must not download media/previews,
+  poll, or start animation/caret timers.
+
+Automated regressions cover safe Markdown, limits, cache reuse/stale results,
+read-only access, routing, original source, draft/scroll retention, styled snippet
+truncation in both themes, disclosure toggling, minimum-pane timeline/composer
+space, editor geometry, and idle redraw deadlines. Native clipboard/browser,
+connected server writes, and macOS behavior require separate acceptance.
+
+Local validation on 2026-11-20: all 550 locked UI tests, formatting, workspace
+Clippy with warnings denied, and the desktop build passed. An isolated headless
+Wayland demo session confirmed the styled collapsed snippet, inline disclosure,
+responsive topic height, usable composer, and Escape collapse at 1400×900 and
+640×480. Host clipboard/browser integration, connected writes, and native macOS
+behavior were not exercised.

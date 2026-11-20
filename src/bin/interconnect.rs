@@ -135,6 +135,8 @@ mod tombstone;
 mod tooltips;
 #[path = "interconnect/topic.rs"]
 mod topic;
+#[path = "interconnect/topic_snippet.rs"]
+mod topic_snippet;
 #[path = "interconnect/typing.rs"]
 mod typing;
 #[path = "interconnect/unread.rs"]
@@ -237,6 +239,8 @@ struct App {
     emoji_completion: emoji_completion::State,
     user_completion: user_completion::State,
     topic_editor: Option<topic::State>,
+    topic_render: Option<topic::Rendered>,
+    expanded_topic: Option<(u64, String)>,
     space_settings: space_settings::State,
     room_settings: room_settings::State,
     members: members::State,
@@ -447,6 +451,8 @@ impl App {
             emoji_completion: emoji_completion::State::default(),
             user_completion: user_completion::State::default(),
             topic_editor: None,
+            topic_render: None,
+            expanded_topic: None,
             space_settings: space_settings::State::default(),
             room_settings: room_settings::State::default(),
             members: members::State::default(),
@@ -470,7 +476,7 @@ impl App {
             pending_created_room: None,
         }
     }
-    fn enable_demo(&mut self) {
+    fn enable_demo(&mut self) -> Task<Message> {
         self.model.authentication = None;
         self.model.bookmarks.complete = true;
         self.demo = Some(demo::Demo::default());
@@ -489,7 +495,7 @@ impl App {
         self.model.status = "Design preview · local sample data".into();
         self.model.images = demo::images();
         self.local_inline = demo::inline_assets();
-        let _ = self.update(Message::Room("studio".into()));
+        self.update(Message::Room("studio".into()))
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
@@ -567,9 +573,44 @@ impl App {
         let save = self.schedule_draft_save();
         self.validate_space_settings();
         self.validate_space_management();
-        Task::batch([task, verification, self.activate_notification(), save])
+        self.validate_topic_editor();
+        let topic = self.refresh_topic();
+        Task::batch([
+            task,
+            verification,
+            self.activate_notification(),
+            save,
+            topic,
+        ])
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
+        // Formatting completions must survive other dialogs covering the reader.
+        if let Message::Topic(event @ topic::Event::Rendered(..)) = message {
+            return self.topic_event(event);
+        }
+        if self.topic_editor.is_some() {
+            if matches!(message, Message::Escape) {
+                return self.topic_event(topic::Event::Cancel);
+            }
+            if matches!(
+                &message,
+                Message::Settings(settings::Event::Open)
+                    | Message::Verification(
+                        verification::Event::Open | verification::Event::OpenRecovery
+                    )
+                    | Message::ContextMenu(_)
+                    | Message::Send(_)
+                    | Message::Edit(..)
+                    | Message::DeleteWord(..)
+                    | Message::QuickRoom(room_picker::Event::Open | room_picker::Event::OpenSpaces)
+                    | Message::GlobalSearch(global_search::Event::Open)
+                    | Message::RoomSearch(room_search::Event::Open)
+                    | Message::Focus(_)
+                    | Message::OpenMessageLink(_)
+            ) {
+                return Task::none();
+            }
+        }
         if let Message::SpaceManagement(event @ space_management::Event::Completed(..)) = message {
             return self.space_management_event(event);
         }
@@ -635,6 +676,7 @@ impl App {
                     | Message::ComposerEmoji(_)
                     | Message::Topic(
                         topic::Event::Open(..)
+                            | topic::Event::View(..)
                             | topic::Event::Save
                             | topic::Event::Edit(_)
                             | topic::Event::Cancel
@@ -758,7 +800,7 @@ impl App {
                     | Message::Image(images::Event::Open { .. })
                     | Message::NewChat(new_chat::Event::Open)
                     | Message::CreateRoom(create_room::Event::Open | create_room::Event::OpenSpace)
-                    | Message::Topic(topic::Event::Open(..))
+                    | Message::Topic(topic::Event::Open(..) | topic::Event::View(..))
                     | Message::Invite(invite::Event::Open)
                     | Message::Pin(pin_action::Event::Set(..))
                     | Message::Bookmark(bookmarks::Event::Set(..))
@@ -1120,6 +1162,9 @@ impl App {
         }
         if matches!(message, Message::Escape) && self.topic_editor.is_some() {
             return self.update(Message::Topic(topic::Event::Cancel));
+        }
+        if matches!(message, Message::Escape) && self.expanded_topic.take().is_some() {
+            return Task::none();
         }
         if self.space_settings.is_open()
             && self.context_menu.is_none()
@@ -2165,7 +2210,6 @@ impl App {
         self.validate_download();
         self.validate_invite();
         self.validate_pin_error();
-        self.validate_topic_editor();
         self.validate_space_settings();
         self.validate_room_settings();
         self.validate_reaction_picker();
@@ -2664,6 +2708,14 @@ impl App {
                 })
             } else if self.room_settings.is_open() {
                 iced::event::listen_with(room_settings::shortcut)
+            } else if self.topic_editor.is_some() {
+                iced::event::listen_with(|event, status, _| match event {
+                    iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        ..
+                    }) if status != iced::event::Status::Captured => Some(Message::Escape),
+                    _ => None,
+                })
             } else if self.message_delete.is_some() {
                 self.delete_subscription()
             } else if self.create_room.is_some() && !self.composing {
@@ -2821,6 +2873,7 @@ impl App {
             || self.sign_out_open
             || self.membership.open
             || self.room_settings.is_open()
+            || self.topic_editor.is_some()
             || self.create_room.is_some()
             || self.new_chat.is_some()
             || self.room_picker.is_some()
@@ -2842,6 +2895,9 @@ impl App {
         }
         if self.room_settings.is_open() {
             layers = layers.push(self.room_settings_view());
+        }
+        if self.topic_editor.is_some() {
+            layers = layers.push(self.topic_dialog());
         }
         if self.create_room.is_some() {
             layers = layers.push(self.create_room_view());
@@ -3280,7 +3336,11 @@ impl App {
         }
         let mut heading = column![header].spacing(2);
         if !thread {
-            heading = heading.push(self.topic_view(*generation, selected_id));
+            heading = heading.push(self.topic_view(
+                *generation,
+                selected_id,
+                (size.height * 0.3 - 24.0).clamp(96.0, 240.0),
+            ));
         }
         let mut content = column![
             self.room_column(

@@ -24,6 +24,12 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
 the previous match; account-search Enter submits.
 
+Room topic: activate its caret or styled header snippet to expand/collapse the
+full formatted topic below the header. The conversation stays interactive;
+Escape collapses the topic. Copy selected text with Ctrl+C/Command+C, or choose
+Copy Markdown for the original source. Edit opens a separate dialog where
+Tab/Shift+Tab stay inside and Escape cancels.
+
 The Ctrl+N picker accepts `#room:server`, `!room:server`, matrix.to room links,
 and `matrix:` room links. Enter opens known rooms or prefills the Join dialog;
 joining an unfamiliar room requires submitting that dialog.

@@ -221,9 +221,11 @@ impl App {
     }
     pub(super) fn boot(startup: Startup) -> (Self, Task<Message>) {
         let mut app = Self::new();
-        if startup.loaded.is_none() {
-            app.enable_demo();
-        }
+        let demo_topic = if startup.loaded.is_none() {
+            app.enable_demo()
+        } else {
+            Task::none()
+        };
         let demo_code = if app.demo.is_some() {
             Task::perform(
                 async {
@@ -243,7 +245,7 @@ impl App {
             Task::none()
         };
         let Some(loaded) = startup.loaded else {
-            return (app, demo_code);
+            return (app, Task::batch([demo_topic, demo_code]));
         };
         app.settings.initial_load = true;
         app.settings.path = startup.path;

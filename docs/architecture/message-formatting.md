@@ -152,3 +152,24 @@ Failed publication can leave unused media; deletion removes references, not medi
 or existing bindings. Reads/file tasks cancel; admitted writes retain target and
 participate in shutdown. Read/global deadlines are 30 seconds; saves 60 seconds.
 Demo stays local. See [file/shortcode limits](../settings.md#emoji-packs).
+
+## Room topics
+
+The selected room's plain topic source is interpreted as Markdown using the
+same bounded asynchronous composition workers and native document renderer.
+Only the current account/room generation/source is cached; changes abort old
+publication and stale completions are rejected. Space filtering reuses the
+unchanged document. Formatting runs on content changes, never on redraw or
+editor keystrokes. Excessive formatting falls back to selectable literal text.
+
+The header retains inline Markdown styles in a bounded, grapheme-safe one-line
+snippet. A caret expands/collapses the topic directly below it, with a bounded
+scrollable body, selection, validated links, Copy Markdown, and permission-checked
+editing. Expansion keeps the conversation and composer interactive; space filters
+retain it, while conversation/account changes invalidate it. External links retain
+expansion; Matrix links use ordinary internal routing. Raw HTML escapes and images
+become alternatives; there is no topic media or link-preview demand. Editing uses
+a separate multiline dialog and preserves the original source. The existing
+asynchronous writer owns permissions, request identity, pending operations, and
+errors. Rich snippets cache layout and truncate at grapheme boundaries while
+retaining emphasis, code, link colors/underlines, and strikethrough.

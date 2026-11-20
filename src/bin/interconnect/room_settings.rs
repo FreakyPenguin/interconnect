@@ -748,7 +748,7 @@ impl App {
             let mut topic = text_editor(&panel.topic)
                 .id("room-settings-topic")
                 .cursor_blinking(false)
-                .placeholder("Room topic")
+                .placeholder("Room topic (Markdown supported)")
                 .style(shell::editor_style)
                 .size(13)
                 .height(84);

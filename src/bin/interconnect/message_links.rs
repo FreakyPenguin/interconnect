@@ -3,6 +3,13 @@ use super::{App, Message, membership, new_chat};
 use iced::Task;
 use matrix_sdk::ruma::{MatrixToUri, MatrixUri, matrix_uri::MatrixId};
 
+pub(super) fn is_matrix_link(link: &str) -> bool {
+    link.starts_with("matrix:")
+        || url::Url::parse(link)
+            .ok()
+            .is_some_and(|url| url.host_str() == Some("matrix.to"))
+}
+
 impl App {
     pub(super) fn open_message_link(&mut self, link: String) -> Task<Message> {
         if self.closing || self.stopped {
@@ -11,11 +18,7 @@ impl App {
         let Some(link) = interconnect::message_document::safe_link(&link) else {
             return Task::none();
         };
-        let matrix = link.starts_with("matrix:")
-            || url::Url::parse(&link)
-                .ok()
-                .is_some_and(|url| url.host_str() == Some("matrix.to"));
-        if matrix {
+        if is_matrix_link(&link) {
             if !self.context_menu_allowed() || self.composing {
                 return Task::none();
             }
