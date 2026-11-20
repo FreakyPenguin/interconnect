@@ -2,23 +2,35 @@
 use super::{App, Message, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, mouse_area, opaque, row, scrollable, text},
+    widget::{button, checkbox, column, container, mouse_area, opaque, row, scrollable, text},
 };
 use interconnect::verification::{Action, Comparison, Device, Phase, Snapshot};
 use matrix_sdk::encryption::VerificationState;
 
-#[derive(Default)]
 pub struct State {
     pub open: bool,
     error: Option<String>,
     confirming: Option<(u64, (u16, u16, u16))>,
     demo: Snapshot,
+    prefetch_keys: bool,
+}
+impl Default for State {
+    fn default() -> Self {
+        Self {
+            open: false,
+            error: None,
+            confirming: None,
+            demo: Snapshot::default(),
+            prefetch_keys: true,
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub enum Event {
     Open,
     Close,
     Action(u64, Action),
+    PrefetchKeys(u64, bool),
     Ignore,
 }
 fn message(event: Event) -> Message {
@@ -54,6 +66,7 @@ impl App {
                 self.user_completion.clear();
                 self.verification.open = true;
                 self.verification.error = None;
+                self.verification.prefetch_keys = true;
                 if self.demo.is_some() {
                     self.verification.demo = Snapshot {
                         user: "@jamie:example.org".into(),
@@ -82,15 +95,33 @@ impl App {
                 }
             }
             Event::Close => {
+                let complete = self.verification_snapshot().phase == Phase::Complete;
                 if self.demo.is_none()
                     && let Some(control) = &self.model.verification.control
                 {
-                    self.verification.error = control
-                        .send(self.model.verification.revision, Action::Cancel)
-                        .err();
+                    let action = if complete {
+                        Action::Finish {
+                            prefetch_keys: self.verification.prefetch_keys,
+                        }
+                    } else {
+                        Action::Cancel
+                    };
+                    self.verification.error =
+                        control.send(self.model.verification.revision, action).err();
+                    if complete && self.verification.error.is_some() {
+                        return Task::none();
+                    }
                 }
                 self.verification.open = false;
                 self.verification.confirming = None;
+            }
+            Event::PrefetchKeys(revision, value)
+                if self.verification.open
+                    && !self.closing
+                    && self.verification_snapshot().revision == revision
+                    && self.verification_snapshot().phase == Phase::Complete =>
+            {
+                self.verification.prefetch_keys = value;
             }
             Event::Action(revision, action) if self.verification.open && !self.closing => {
                 let snapshot = self.verification_snapshot();
@@ -222,7 +253,12 @@ impl App {
             }
             Phase::Confirmed { device } => content = content.push(text(format!("Confirmed here. Waiting for {device} to confirm…"))),
             Phase::Complete => content = content.push(shell::title(if self.demo.is_some() { "Demo comparison complete" } else { "Comparison complete on both devices" }, 19))
-                .push(text("Device trust above is reported by Matrix. Historical message keys may still need to be shared by your trusted client.").size(13)),
+                .push(text("Device trust above is reported by Matrix. Historical message keys may still need to be shared by your trusted client.").size(13))
+                .push(checkbox(self.verification.prefetch_keys)
+                    .label("Request room keys in the background")
+                    .size(16).text_size(13).spacing(9)
+                    .on_toggle(move |value| message(Event::PrefetchKeys(snapshot.revision, value))))
+                .push(text("After closing, prepare recent encrypted messages across your rooms. Keep your other trusted client online.").size(12).style(shell::muted_text)),
             Phase::Cancelled => content = content.push(text("Verification cancelled. No automatic confirmation was sent.")),
             Phase::Failed(error) => content = content.push(text(error.clone()).size(13)),
         }
@@ -230,7 +266,11 @@ impl App {
             content = content.push(text(error).size(12));
         }
         let mut buttons = row![].spacing(8).align_y(iced::Alignment::Center);
-        if !snapshot.phase.active() && self.demo.is_none() && snapshot.control.is_some() {
+        if !snapshot.phase.active()
+            && snapshot.phase != Phase::Complete
+            && self.demo.is_none()
+            && snapshot.control.is_some()
+        {
             buttons = buttons.push(
                 button(text("Refresh devices").size(13))
                     .on_press(action(Action::Refresh))
@@ -388,6 +428,14 @@ mod tests {
         )));
         assert_eq!(app.verification.demo.phase, Phase::Complete);
         assert_eq!(app.verification.demo.trust, VerificationState::Unverified);
+        assert!(app.verification.prefetch_keys);
+        let _ = app.update(message(Event::PrefetchKeys(revision - 1, false)));
+        assert!(
+            app.verification.prefetch_keys,
+            "stale checkbox events must be rejected"
+        );
+        let _ = app.update(message(Event::PrefetchKeys(revision, false)));
+        assert!(!app.verification.prefetch_keys);
         let _ = app.update(Message::Escape);
         assert!(!app.verification.open);
         assert_eq!(app.selection.room, selection.room);
@@ -395,6 +443,22 @@ mod tests {
         assert_eq!(app.drafts[&key].content.text(), "Unsent draft");
         assert_eq!(app.scroll_positions[&key], 120.0);
         assert!(app.model.verification.control.is_none());
+        let _ = app.update(message(Event::PrefetchKeys(revision, true)));
+        assert!(
+            !app.verification.prefetch_keys,
+            "closed dialogs reject late toggles"
+        );
+        let _ = app.update(message(Event::Open));
+        assert!(
+            app.verification.prefetch_keys,
+            "each dialog defaults to checked"
+        );
+        let revision = app.verification.demo.revision;
+        let _ = app.update(message(Event::PrefetchKeys(revision, false)));
+        assert!(
+            app.verification.prefetch_keys,
+            "only the completion dialog accepts toggles"
+        );
     }
 
     #[test]
@@ -411,6 +475,46 @@ mod tests {
         assert!(app.settings.draft.is_none());
         let _ = app.update(Message::Escape);
         assert!(app.selection.conversation_visible);
+    }
+
+    #[tokio::test]
+    async fn closing_the_final_dialog_submits_the_checkbox_choice() {
+        for choice in [false, true] {
+            // Only exercise the local command channel. SAS completion itself is
+            // covered by the backend's two-device crypto fixtures.
+            let client = matrix_sdk::Client::builder()
+                .homeserver_url("https://example.org")
+                .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
+                .build()
+                .await
+                .unwrap();
+            let (state, snapshots) =
+                tokio::sync::watch::channel(interconnect::connected::Model::default());
+            let stop = tokio_util::sync::CancellationToken::new();
+            let mut worker = Box::pin(
+                interconnect::verification::Service::new(client).run(state.clone(), stop.clone()),
+            );
+            assert!(iced::futures::poll!(&mut worker).is_pending());
+            state.send_modify(|s| s.verification.phase = Phase::Complete);
+
+            let mut app = super::super::tests::demo_app();
+            app.demo = None;
+            app.model = snapshots.borrow().clone();
+            app.verification.open = true;
+            let revision = app.model.verification.revision;
+            let _ = app.update(message(Event::PrefetchKeys(revision, choice)));
+            // Escape on completion has exactly the same semantics as Close.
+            let _ = app.update(if choice {
+                message(Event::Close)
+            } else {
+                Message::Escape
+            });
+            assert!(!app.verification.open);
+            assert!(iced::futures::poll!(&mut worker).is_pending());
+            assert_eq!(snapshots.borrow().verification.prefetch_keys, Some(choice));
+            stop.cancel();
+            worker.await;
+        }
     }
 
     #[test]
@@ -430,6 +534,8 @@ mod tests {
             body: Option<(iced::Rectangle, iced::Rectangle)>,
             footer: Option<iced::Rectangle>,
             actions: Vec<(String, iced::Rectangle)>,
+            prefetch: Option<iced::Rectangle>,
+            body_translation: iced::Vector,
         }
         impl widget::Operation for Bounds {
             fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
@@ -448,14 +554,18 @@ mod tests {
                 id: Option<&widget::Id>,
                 bounds: iced::Rectangle,
                 content: iced::Rectangle,
-                _: iced::Vector,
+                translation: iced::Vector,
                 _: &mut dyn widget::operation::Scrollable,
             ) {
                 if id == Some(&widget::Id::new("verification-body")) {
                     self.body = Some((bounds, content));
+                    self.body_translation = translation;
                 }
             }
             fn text(&mut self, _: Option<&widget::Id>, bounds: iced::Rectangle, value: &str) {
+                if value == "Request room keys in the background" {
+                    self.prefetch = Some(bounds);
+                }
                 if matches!(
                     value,
                     "Close"
@@ -561,6 +671,37 @@ mod tests {
                 scrolled.actions, bounds.actions,
                 "scrolling must leave actions fixed"
             );
+            assert_eq!(
+                bounds.prefetch.is_some(),
+                app.verification.demo.phase == Phase::Complete
+            );
+            if let Some(checkbox) = scrolled.prefetch {
+                let point = checkbox.center() - scrolled.body_translation;
+                assert!(
+                    body.contains(point),
+                    "checkbox must be visible after scrolling"
+                );
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                    layout::Layout::new(&node),
+                    mouse::Cursor::Available(point),
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                    &iced::Rectangle::with_size(size),
+                );
+                assert!(shell.is_event_captured());
+                assert!(
+                    messages.iter().any(|message| matches!(
+                        message,
+                        Message::Verification(Event::PrefetchKeys(_, false))
+                    )),
+                    "the checked checkbox must be reachable and toggle off at minimum size"
+                );
+            }
             let event = iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
             let mut messages = Vec::new();
             let mut shell = Shell::new(&mut messages);

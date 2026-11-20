@@ -230,6 +230,12 @@ async fn two_clients_complete_sas_only_after_explicit_matching_confirmations() {
     let mut pair = Pair::new().await;
     let (comparison, _) = pair.compare().await;
     let current = pair.states[0].borrow().verification.clone();
+    pair.send(
+        0,
+        Action::Finish {
+            prefetch_keys: true,
+        },
+    );
     current
         .control
         .as_ref()
@@ -242,10 +248,51 @@ async fn two_clients_complete_sas_only_after_explicit_matching_confirmations() {
     pair.send(0, Action::Confirm(comparison.decimals));
     pair.wait(0, |s| matches!(s.phase, Phase::Confirmed { .. }))
         .await;
+    assert_eq!(pair.states[0].borrow().verification.prefetch_keys, None);
     pair.send(0, Action::Confirm(comparison.decimals));
     pair.send(1, Action::Confirm(comparison.decimals));
     pair.wait(0, |s| s.phase == Phase::Complete).await;
     pair.wait(1, |s| s.phase == Phase::Complete).await;
+    for state in &pair.states {
+        assert_eq!(
+            state.borrow().verification.prefetch_keys,
+            None,
+            "comparison completion must wait for the final-dialog choice"
+        );
+    }
+    let current = pair.states[0].borrow().verification.clone();
+    current
+        .control
+        .as_ref()
+        .unwrap()
+        .send(
+            current.revision - 1,
+            Action::Finish {
+                prefetch_keys: true,
+            },
+        )
+        .unwrap();
+    for (index, choice) in [(0, false), (1, true)] {
+        pair.send(
+            index,
+            Action::Finish {
+                prefetch_keys: choice,
+            },
+        );
+        pair.wait(index, |s| s.prefetch_keys == Some(choice)).await;
+        // A duplicate close or stale choice cannot reverse the decision.
+        pair.send(
+            index,
+            Action::Finish {
+                prefetch_keys: !choice,
+            },
+        );
+        pair.send(index, Action::Refresh);
+        let refreshed = pair
+            .wait(index, |s| matches!(s.phase, Phase::Devices(_)))
+            .await;
+        assert_eq!(refreshed.prefetch_keys, Some(choice));
+    }
     for (index, peer) in [(0, "SECOND"), (1, "FIRST")] {
         assert!(
             pair.clients[index]

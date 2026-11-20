@@ -80,6 +80,8 @@ pub struct Snapshot {
     pub trust: VerificationState,
     pub phase: Phase,
     pub incoming: Option<Incoming>,
+    /// Final-dialog choice for this session; None waits for that choice.
+    pub prefetch_keys: Option<bool>,
 }
 impl Default for Snapshot {
     fn default() -> Self {
@@ -91,6 +93,7 @@ impl Default for Snapshot {
             trust: VerificationState::Unknown,
             phase: Phase::Idle,
             incoming: None,
+            prefetch_keys: None,
         }
     }
 }
@@ -111,6 +114,7 @@ pub enum Action {
     Confirm((u16, u16, u16)),
     Mismatch,
     Cancel,
+    Finish { prefetch_keys: bool },
 }
 #[derive(Debug)]
 struct Command {
@@ -187,6 +191,7 @@ impl Service {
                     .map(ToString::to_string)
                     .unwrap_or_default(),
                 trust: trust.get(),
+                prefetch_keys: (trust.get() == VerificationState::Verified).then_some(true),
                 ..Snapshot::default()
             }
         });
@@ -198,6 +203,7 @@ impl Service {
         let mut incoming_end: Pin<Box<dyn Future<Output = ()> + Send>> = Box::pin(pending());
         let mut stopping = false;
         let mut trust_open = true;
+        let mut interactive = false;
         loop {
             if stopping && !busy {
                 break;
@@ -212,6 +218,11 @@ impl Service {
                         state.send_if_modified(|s| {
                             if s.verification.trust == value { return false; }
                             s.verification.trust = value;
+                            // Sessions verified outside this interactive flow
+                            // retain the automatic startup pass.
+                            if value == VerificationState::Verified && !interactive {
+                                s.verification.prefetch_keys = Some(true);
+                            }
                             true
                         });
                     } else {
@@ -256,6 +267,17 @@ impl Service {
                         && command.revision.checked_add(1) == Some(revision);
                     if command.revision != revision && !cancelling_previous_snapshot { continue; }
                     match command.action {
+                        Action::Finish { prefetch_keys } if !busy => {
+                            state.send_if_modified(|s| {
+                                if s.verification.phase != Phase::Complete
+                                    || s.verification.prefetch_keys.is_some()
+                                {
+                                    return false;
+                                }
+                                s.verification.prefetch_keys = Some(prefetch_keys);
+                                true
+                            });
+                        }
                         Action::Cancel => {
                             cancel.cancel();
                             if let Some(request) = incoming.take() {
@@ -292,6 +314,7 @@ impl Service {
                         Action::Start(device) if !busy => {
                             let allowed = matches!(&state.borrow().verification.phase, Phase::Devices(devices) if devices.iter().any(|d| d.id == device));
                             if !allowed { continue; }
+                            interactive = true;
                             revision += 1;
                             cancel = CancellationToken::new();
                             let (sender, receiver) = mpsc::channel(4);
@@ -304,6 +327,7 @@ impl Service {
                             if !incoming.as_ref().is_some_and(|r| r.flow_id() == flow) { continue; }
                             let request = incoming.take().expect("matched request");
                             let Some(summary) = incoming_summary(&request) else { continue; };
+                            interactive = true;
                             incoming_end = Box::pin(pending());
                             revision += 1;
                             cancel = CancellationToken::new();

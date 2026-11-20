@@ -22,11 +22,38 @@ take priority; Unknown/Verified sessions have no reminder. Matrix trust updates
 clear it, rather than comparison completion alone. No timer or polling is added.
 
 Compare all seven emojis or three numbers before **They match**; mismatch/cancel
-otherwise. Completion requires SDK done after both confirmations. Escape cancels;
-conversation/drafts survive. Demo is local and changes no trust.
+otherwise. Completion requires SDK done after both confirmations. Escape cancels
+an active exchange; conversation/drafts survive. Demo is local and changes no trust.
 
 Own-device Unknown/Unverified/Verified status is separate from cross-signing and
 historical keys. No backup/recovery/cross-signing setup UI; SDK owns key forwarding.
+
+The completion dialog offers **Request room keys in the background**, checked by
+default. Close or Escape on that final dialog submits the choice. Interactive
+verification does not start the pass before closing, even if Matrix already
+reports Verified. Unchecking skips the pass for this session; ordinary on-demand
+key requests still work. Stale/duplicate completion choices cannot reverse it.
+
+After an enabled choice, Matrix must report Verified and the known joined/invited
+room count must cover the server's room-list count. One background pass then reads
+up to 50 recent encrypted events per joined conversation, most recently active
+first. Already verified restored sessions retain the automatic startup pass.
+The dialog choice is session-scoped, not a saved account setting. Unknown encryption
+state is resolved first; unencrypted rooms, spaces, invitations, left rooms, and
+bookmark storage are skipped.
+The pass uses SDK decryption to queue missing session keys for the existing crypto
+sync worker. It needs no recovery-key entry or configured backup; another verified
+device must have the keys and process the requests. It does not guarantee recovery.
+
+Only one room is read at a time, with a 30-second deadline per room. Failed rooms
+are skipped; returned pagination tokens are discarded, including on empty pages.
+This is a snapshot of the available rooms, not a scan of all historical messages;
+rooms joined later and older sessions remain on demand. Cached room metadata can
+contribute to the discovery count on restore. Reconnects do not restart the pass.
+Completion releases the worker without polling or periodic retries. Loss of trust,
+sign-out, and shutdown cancel remaining reads; SDK requests already queued remain
+SDK-owned. No presentation timelines, subscriptions, read receipts, navigation,
+drafts, or scroll positions are changed.
 
 ## Lifecycle
 
@@ -55,6 +82,18 @@ Use a dedicated account with a trusted second client:
    with device discovery and a Verify later action, even if worker readiness is
    delayed. Dismiss and reconnect: it must stay closed. Retry a failed sign-in,
    restore a saved session, and quit while signing in; no stale dialog should open.
+7. With a trusted second client online and no recovery key entered, finish
+   verification. Check that the final checkbox starts checked and room reads wait
+   for Close/Escape. Repeat with the checkbox cleared: no background pass should
+   start for that session, while ordinary room opening still requests missing keys.
+   With it checked, leave conversations unopened while the bounded background pass
+   finishes. Open several encrypted conversations and check available recent keys;
+   compare older history separately. Repeat with an already verified saved session,
+   a large room list, offline/failing rooms, and the second client offline. Navigate
+   and edit distinct drafts during the pass; preserve reading positions and unread
+   state. Sign out/quit mid-read, and reconnect after completion: no remaining reads
+   or repeated pass should run. Measure settled resources after prefetch and SDK
+   responses finish, separately from the startup traffic.
 
 UI fixtures cover the one-time sign-in handoff, delayed worker readiness, dismissal,
 failure/retry, saved-session restoration, verified sessions, and shutdown. They do
@@ -63,3 +102,15 @@ not perform live sign-in or verification.
 Crypto fixtures exchange real SDK messages between in-memory clients via mock
 servers. They establish local SAS/MAC/cancellation behavior, not live cross-signing,
 server interoperability, key recovery, native fonts, or CPU/wakeups.
+
+Background-key fixtures use isolated mock homeservers and real SDK cryptography.
+They cover verification/discovery/choice ordering, skipping an unchecked pass,
+verified startup, later discovery
+batches, room filtering and ordering, bounded requests without pagination, failure
+isolation, cancellation, and a deduplicated missing-session request sent by SDK
+sync to the user's own devices. These are not live-client forwarding/recovery or
+desktop CPU/wakeup measurements; the connected procedure above remains manual.
+UI fixtures cover the checked default, stale/closed/wrong-phase toggle rejection,
+and clicking the final checkbox in the scrolling dialog at 640×480. SAS fixtures
+verify that completion waits for the revision-bound final choice, including both
+enabled and disabled choices and duplicate rejection.

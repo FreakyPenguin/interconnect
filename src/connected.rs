@@ -20,6 +20,7 @@ mod deleting_tests;
 mod editing;
 #[cfg(test)]
 mod editing_tests;
+mod key_prefetch;
 #[cfg(test)]
 mod replies_tests;
 pub mod room_settings;
@@ -1085,6 +1086,11 @@ async fn connected(
     tokio::pin!(bookmarks);
     let mut sync_states = sync.state();
     let mut room_states = sync.room_list_service().state();
+    // A finite session-owned read pass; dropping this future cancels it before
+    // sign-out or shutdown proceeds. It never owns a presentation timeline.
+    let keys = key_prefetch::run(client, sync, state.subscribe());
+    tokio::pin!(keys);
+    let mut keys_finished = false;
     let mut session_changes = client.subscribe_to_session_changes();
     if !selection.borrow().shutdown {
         sync.start().await;
@@ -1202,6 +1208,7 @@ async fn connected(
                     }
                 }
                 changed = selection.changed() => { if changed.is_err() { break; } }
+                _ = &mut keys, if !keys_finished => keys_finished = true,
                 _ = &mut profile => {},
                 _ = &mut emoji => anyhow::bail!("Emoji update stream ended"),
                 _ = &mut presence => anyhow::bail!("Presence update stream ended"),

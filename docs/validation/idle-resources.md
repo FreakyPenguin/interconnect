@@ -8,6 +8,15 @@ operation deadlines, dirty-draft debounce, and explicitly playing GIFs schedule
 work only while needed. Carets are static. Stopping playback, closing a view, or
 ending a session must cancel its associated work.
 
+Verified connected sessions make one bounded room-key prefetch pass after room
+discovery and the checked completion-dialog choice. Unchecking skips it for the
+session; already verified restores retain the automatic startup pass.
+The pass reads one room at a time, up to 50 recent encrypted events each, with a
+30-second room deadline. Completion schedules no polling or repeated pass;
+trust loss/session teardown cancels remaining reads. Exclude this initial work
+and subsequent SDK key exchanges from settled idle measurements. See
+[verification](verification.md) for scope and connected acceptance checks.
+
 Selected timelines are session-owned and asynchronously cancelled. Stale results
 must not restore old panes; SDK handles must be dropped within a live runtime.
 See [architecture](../architecture/client.md) for ownership and bounded media work.
