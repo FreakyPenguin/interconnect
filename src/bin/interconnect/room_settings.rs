@@ -6,8 +6,8 @@ use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
 use iced::{
     Element, Length, Task,
     widget::{
-        button, column, container, mouse_area, opaque, pick_list, row, rule, text, text_editor,
-        text_input,
+        button, column, container, mouse_area, opaque, pick_list, row, rule, scrollable, text,
+        text_editor, text_input,
     },
 };
 use interconnect::connected::room_settings::{
@@ -928,39 +928,60 @@ impl App {
         let header = row![
             shell::title("Room settings", 20).width(Length::Fill),
             super::tooltips::icon_button(
+                super::icons::Kind::Refresh,
+                "Reload room settings",
+                (!busy).then_some(message(Event::Reload)),
+            ),
+            super::tooltips::icon_button(
                 super::icons::Kind::Close,
                 "Close room settings",
-                Some(message(Event::Close))
+                Some(message(Event::Close)),
             ),
         ]
-        .spacing(12)
+        .spacing(8)
         .align_y(iced::Alignment::Center);
-        let footer = column![
-            feedback,
-            row![
-                button(text("Reload").size(13))
-                    .padding([7, 10])
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press_maybe((!busy).then_some(message(Event::Reload))),
-                iced::widget::space().width(Length::Fill),
-                text(if panel.dirty() {
-                    "Unsaved changes"
-                } else {
-                    "Save changes per field"
-                })
-                .size(12)
-                .style(shell::muted_text),
-            ]
-            .spacing(10)
-            .align_y(iced::Alignment::Center)
-        ]
-        .spacing(8);
+        if panel.dirty() {
+            feedback = feedback.push(text("Unsaved changes").size(12).style(shell::muted_text));
+        }
+        let show_feedback = panel.dirty()
+            || panel.error.is_some()
+            || panel.success
+            || (busy && panel.saved.is_some());
+        let mut card = column![
+            container(header)
+                .padding([12, 20])
+                .width(Length::Fill)
+                .id("room-settings-header"),
+            rule::horizontal(1),
+            scrollable(container(content).padding(20).width(Length::Fill))
+                .id("room-settings-body")
+                .direction(shell::scrollbar())
+                .style(shell::scroll_style)
+                .height(Length::Fill),
+        ];
+        if show_feedback {
+            card = card.push(rule::horizontal(1)).push(
+                container(feedback)
+                    .padding([10, 20])
+                    .width(Length::Fill)
+                    .id("room-settings-actions"),
+            );
+        }
+        let card = container(card)
+            .id("room-settings-dialog")
+            .width((size.width - 32.0).clamp(1.0, 640.0))
+            .height((size.height - 32.0).clamp(1.0, 760.0))
+            .clip(true)
+            .style(|theme| container::Style {
+                border: iced::Border {
+                    color: shell::palette(theme).line,
+                    width: 1.0,
+                    radius: 12.0.into(),
+                },
+                ..shell::surface(theme, shell::palette(theme).background)
+            });
         super::focus_scope::dismissible(
-            super::dialog::modal(
-                super::dialog::frame(size, 640.0, 760.0, "room-settings", header, content, footer),
-                message(Event::Ignore),
-            ),
+            super::dialog::modal(card, message(Event::Ignore)),
             "room-settings-scope",
             Message::Escape,
         )
@@ -981,12 +1002,12 @@ fn setting<'a>(
         _ => unreachable!(),
     };
     let action: Element<'a, Message> = if changed {
-        button(text(save_label).size(12))
-            .padding([4, 9])
-            .style(shell::primary_button)
-            .keyboard_navigation(true)
-            .on_press(message(Event::Save(field)))
-            .into()
+        super::tooltips::icon_button(
+            super::icons::Kind::Check,
+            save_label,
+            Some(message(Event::Save(field))),
+        )
+        .into()
     } else {
         text("Saved").size(12).style(shell::muted_text).into()
     };
@@ -1797,6 +1818,77 @@ mod layout_tests {
             operation::{self, Outcome},
         },
     };
+
+    #[test]
+    fn compact_room_card_only_reserves_a_footer_for_feedback() {
+        #[derive(Default)]
+        struct Probe {
+            header: Option<iced::Rectangle>,
+            body: Option<iced::Rectangle>,
+            footer: Option<iced::Rectangle>,
+        }
+        impl Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: iced::Rectangle) {
+                if id == Some(&widget::Id::new("room-settings-header")) {
+                    self.header = Some(bounds);
+                }
+                if id == Some(&widget::Id::new("room-settings-actions")) {
+                    self.footer = Some(bounds);
+                }
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                _: iced::Rectangle,
+                _: iced::Vector,
+                _: &mut dyn operation::Scrollable,
+            ) {
+                if id == Some(&widget::Id::new("room-settings-body")) {
+                    self.body = Some(bounds);
+                }
+            }
+        }
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        for width in [320.0, 640.0] {
+            let mut app = crate::tests::demo_app();
+            let room = app.selection.room.as_ref().unwrap().1.clone();
+            let _ = app.update(message(Event::Open(room)));
+            for dirty in [false, true] {
+                if dirty {
+                    let _ = app.update(message(Event::Name("An edited room name".into())));
+                }
+                let size = iced::Size::new(width, 480.0);
+                let mut view = app.room_settings_sized(size);
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                let header = probe.header.unwrap();
+                let body = probe.body.unwrap();
+                assert_eq!(probe.footer.is_some(), dirty);
+                assert!(header.height <= 64.0);
+                assert!(header.y >= 16.0 && header.y + header.height <= body.y);
+                assert!(body.height >= 300.0 && body.y + body.height <= size.height - 16.0);
+                if let Some(footer) = probe.footer {
+                    assert!(footer.y >= body.y + body.height);
+                    assert!(footer.y + footer.height <= size.height - 16.0);
+                }
+            }
+        }
+    }
 
     #[test]
     fn field_save_actions_leave_the_full_width_available_to_values() {

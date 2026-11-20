@@ -21,7 +21,7 @@ unit tests do not establish server or platform behavior.
 ## Management layout
 
 - At 640×480 and desktop sizes, room and space titles/close controls stay fixed
-  while forms scroll. Feedback and Reload remain visible in the footer.
+  while forms scroll. Feedback remains visible; Reload stays with the fixed room toolbar (or space footer).
 - In Find rooms to join, scroll a long list at 640×480. Its title, Close, and
   Reload must stay visible while the directory body scrolls. Changing directory
   tabs and query/pagination cancellation retain their existing behavior.
@@ -83,10 +83,11 @@ unit tests do not establish server or platform behavior.
   access, Room addresses, and Membership have distinct headings and spacing.
   Access and history controls precede the longer address management tools.
 - Edit each field independently. Its full-width value remains readable, the
-  action names the field (for example, Save topic), and saving retains the other
+  save icon has a contextual tooltip (for example, Save topic), and saving retains the other
   drafts. Unchanged fields show a Saved status rather than a disabled action.
 - At 640×480 and desktop sizes, verify the bounded dialog, fixed Close and Reload,
-  scrollable body, and readable feedback. Inspect edited fields and dropdowns,
+  scrollable body, and readable feedback. Room Reload uses the header toolbar;
+  an unchanged room form reserves no empty footer. Inspect edited fields and dropdowns,
   including the longest history option, without horizontal overlap.
 - Published addresses, Local addresses, and Directory listing form separate
   groups. A long homeserver name wraps below the local input and directory
@@ -96,5 +97,6 @@ unit tests do not establish server or platform behavior.
 
 Focused geometry regressions exercise full-width field values with both Save and
 Saved states, plus address input widths with a long server name at 240px and
-560px body widths. Run these with the locked UI suite; desktop appearance and
+560px body widths. Another regression checks the compact room header, body space,
+and conditional feedback footer at 320×480 and 640×480. Run these with the locked UI suite; desktop appearance and
 native dropdown placement still require the demo acceptance checks above.
