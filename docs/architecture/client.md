@@ -61,7 +61,9 @@ limiting in-process profile reuse. All programs must honor the lock.
 Desktop restore checks local device identity and can show cached data offline;
 CLI session commands retain a network `whoami` check. New logins use separate
 store directories and retain earlier stores/keys. Tokens cannot replace crypto
-state; there is no recovery/import UI. See [profiles](../settings.md#account-profiles).
+state. [Recovery](../validation/recovery.md) imports encryption secrets through the
+SDK; account profiles cannot be imported across OS keyrings. See
+[profiles](../settings.md#account-profiles).
 
 ## Conversations and navigation
 

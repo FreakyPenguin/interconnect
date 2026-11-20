@@ -7,5 +7,5 @@ See [limitations](limitations.md) for existing gaps.
 - Matrix URI handler registration in Settings.
 - System appearance, custom palettes, and text size.
 - Optional scrollable code blocks with configurable preview lines.
-- Advanced room settings (aliases, power rules, encryption, upgrades) and bans.
+- Advanced room settings (power rules, encryption, upgrades) and bans.
 - Space aliases and links to existing subspaces/unjoined children.

@@ -131,8 +131,8 @@ Prerelease versions create prereleases and use Debian `~` ordering. Other runs
 do not publish. The release must not already exist when the publishing job runs.
 
 Download from **Releases** and verify with `sha256sum --check SHA256SUMS`.
-The Linux tarball uses Debian stable's library baseline and does not bundle graphics
-libraries, fonts, or desktop services. Extract the macOS archive to get
+Published Linux builds use Debian stable's library baseline. Graphics libraries,
+desktop services, and fallback Unicode/emoji fonts come from the system. Extract the macOS archive to get
 `Interconnect.app`; it is Apple Silicon only, ad-hoc signed, and not notarized.
 
 To package an existing local release build:
