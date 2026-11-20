@@ -43,6 +43,7 @@ pub(super) fn icon_button<'a, Message: Clone + 'a>(
 ) -> iced_tooltip::Tooltip<'a, Message> {
     tooltip(
         iced::widget::button(super::icons::icon(kind))
+            .keyboard_navigation(true)
             .padding(7)
             .style(super::shell::icon_button)
             .on_press_maybe(on_press),

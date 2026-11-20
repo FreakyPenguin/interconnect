@@ -495,6 +495,28 @@ impl App {
         if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_recovery() {
             return Task::none();
         }
+        let leaving_management = matches!(
+            &message,
+            Message::Room(_)
+                | Message::Space(_)
+                | Message::AdjacentRoom(_)
+                | Message::SpaceNavigation(space_navigation::Event::Choose(_))
+                | Message::GlobalSearch(global_search::Event::Open)
+                | Message::Bookmark(bookmarks::Event::Open)
+                | Message::Close
+                | Message::Exit
+        );
+        if leaving_management
+            && (self.guard_room_settings_transition(message.clone())
+                || self.guard_space_settings_transition(message.clone()))
+        {
+            return Task::none();
+        }
+        if matches!(message, Message::Close | Message::Exit)
+            && self.guard_settings_transition(message.clone())
+        {
+            return Task::none();
+        }
         let changing = draft_persistence::may_change(&message);
         if matches!(message, Message::Close | Message::Exit)
             && self.sign_out_open
@@ -1013,7 +1035,7 @@ impl App {
                 if self.image_view.is_some() {
                     return self.update(Message::Image(images::Event::Close));
                 }
-                return self.update(Message::Settings(settings::Event::Cancel));
+                return self.update(Message::Settings(settings::Event::RequestClose));
             }
             if matches!(
                 message,
@@ -2611,19 +2633,23 @@ impl App {
             if self.draft_persistence.close_requested {
                 Subscription::none()
             } else if self.sign_out_open {
-                iced::event::listen_with(|event, _, _| match event {
+                iced::event::listen_with(|event, status, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
                         ..
-                    }) => Some(Message::SignOut(sign_out::Event::Cancel)),
+                    }) if status != iced::event::Status::Captured => {
+                        Some(Message::SignOut(sign_out::Event::Cancel))
+                    }
                     _ => None,
                 })
             } else if self.membership.open {
-                iced::event::listen_with(|event, _, _| match event {
+                iced::event::listen_with(|event, status, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
                         ..
-                    }) => Some(Message::Membership(membership::Event::Close)),
+                    }) if status != iced::event::Status::Captured => {
+                        Some(Message::Membership(membership::Event::Close))
+                    }
                     _ => None,
                 })
             } else if self.room_settings.is_open() {
@@ -2637,11 +2663,11 @@ impl App {
             } else if self.room_picker.is_some() && !self.composing {
                 iced::event::listen_with(room_picker::shortcut)
             } else if self.verification.open {
-                iced::event::listen_with(|event, _, _| match event {
+                iced::event::listen_with(|event, status, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
                         ..
-                    }) => Some(Message::Escape),
+                    }) if status != iced::event::Status::Captured => Some(Message::Escape),
                     _ => None,
                 })
             } else if (self.demo.is_none() && self.model.authentication.is_some())
@@ -2667,12 +2693,30 @@ impl App {
                                 draft.reply.is_some() && draft.editing.is_none() && !draft.pending
                             })
                         });
+                let scoped_escape = self.settings.draft.is_some()
+                    || self.emoji_management.is_some()
+                    || self.image_view.is_some()
+                    || self.space_settings.is_open();
                 iced::event::listen_with(|event, status, _| Some((event, status)))
-                    .with(reply_handles_escape)
-                    .filter_map(|(reply_handles_escape, (event, status))| {
+                    .with((reply_handles_escape, scoped_escape))
+                    .filter_map(|((reply_handles_escape, scoped_escape), (event, status))| {
                         // A composer reply binding already published Cancel. Do not
                         // also close its thread for the same captured Escape.
                         if reply_handles_escape
+                            && status == iced::event::Status::Captured
+                            && matches!(
+                                &event,
+                                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                    key: iced::keyboard::Key::Named(
+                                        iced::keyboard::key::Named::Escape
+                                    ),
+                                    ..
+                                })
+                            )
+                        {
+                            return None;
+                        }
+                        if scoped_escape
                             && status == iced::event::Status::Captured
                             && matches!(
                                 &event,
@@ -6081,5 +6125,57 @@ mod tests {
         let selected = app.selection.clone();
         let _ = app.update(Message::Room("!three:example.org".into()));
         assert_eq!(app.selection, selected);
+    }
+}
+
+#[cfg(test)]
+mod ux_navigation_tests {
+    use super::*;
+
+    #[test]
+    fn dirty_management_blocks_room_space_and_window_transitions_before_draft_shutdown() {
+        let mut app = tests::demo_app();
+        let original_room = app.selection.room.clone();
+        let original_scope = app.shell.space.clone();
+        let room = original_room.as_ref().unwrap().1.clone();
+        let _ = app.update(Message::RoomSettings(room_settings::Event::Open(room)));
+        let _ = app.update(Message::RoomSettings(room_settings::Event::Name(
+            "Uncommitted name".into(),
+        )));
+        for next in [
+            Message::Room("general".into()),
+            Message::Space(Scope::Home),
+            Message::Close,
+        ] {
+            let _ = app.update(next);
+            assert_eq!(app.selection.room, original_room);
+            assert_eq!(app.shell.space, original_scope);
+            assert!(app.room_settings.is_open());
+            assert!(!app.closing);
+            assert!(!app.selection.shutdown);
+            assert!(!app.draft_persistence.close_requested);
+        }
+    }
+
+    #[test]
+    fn dirty_application_preferences_survive_escape_and_window_close() {
+        let mut app = tests::demo_app();
+        let _ = app.update(Message::Settings(settings::Event::Open));
+        let _ = app.update(Message::Settings(settings::Event::Theme(
+            interconnect::settings::ThemeMode::Dark,
+        )));
+        let _ = app.update(Message::Escape);
+        assert!(app.settings.draft.is_some());
+        assert_eq!(
+            app.settings.current.appearance.theme,
+            interconnect::settings::ThemeMode::Light
+        );
+        let _ = app.update(Message::Close);
+        assert!(app.settings.draft.is_some());
+        assert!(!app.closing);
+        assert!(!app.draft_persistence.close_requested);
+        assert!(!app.selection.shutdown);
+        let _ = app.update(Message::Settings(settings::Event::Cancel));
+        assert!(app.settings.draft.is_none());
     }
 }

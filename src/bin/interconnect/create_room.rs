@@ -634,7 +634,7 @@ impl App {
             border: iced::Border::default().rounded(12),
             ..shell::surface(theme, shell::palette(theme).background)
         });
-        super::focus_scope::view(
+        super::focus_scope::dismissible(
             opaque(
                 mouse_area(
                     container(card)
@@ -647,6 +647,7 @@ impl App {
                 .on_scroll(|_| message(Event::Ignore)),
             ),
             "create-room-focus",
+            Message::Escape,
         )
     }
 }
@@ -670,31 +671,7 @@ fn select<'a, T: Clone + Eq + std::fmt::Display + 'a>(
 }
 
 fn focus_step<T: Send + 'static>(backwards: bool) -> impl iced::advanced::widget::Operation<T> {
-    use iced::advanced::widget::{
-        Operation,
-        operation::{self, focusable},
-    };
-    let next: fn(focusable::Count) -> Box<dyn Operation<T>> = if backwards {
-        |count| {
-            if count.focused == Some(0) {
-                Box::new(focusable::focus(TOPIC.into()))
-            } else {
-                Box::new(focusable::focus_previous())
-            }
-        }
-    } else {
-        |count| {
-            if count.focused == Some(count.total.saturating_sub(1)) {
-                Box::new(focusable::focus(NAME.into()))
-            } else {
-                Box::new(focusable::focus_next())
-            }
-        }
-    };
-    operation::scope(
-        "create-room-dialog".into(),
-        operation::then(focusable::count(), next),
-    )
+    super::focus_scope::cycle("create-room-dialog", backwards)
 }
 
 #[cfg(test)]
@@ -1095,11 +1072,11 @@ mod layout_tests {
             &renderer,
             &mut operation::focusable::focus::<()>(NAME.into()),
         );
-        for expected in [Some(0), Some(1), Some(0), Some(1)] {
+        for expected in (0..8).map(|i| Some(i % 7)) {
             let mut count = operation::map(
                 operation::scope("create-room-dialog".into(), operation::focusable::count()),
                 move |count| {
-                    assert_eq!(count.total, 2);
+                    assert_eq!(count.total, 7);
                     assert_eq!(count.focused, expected);
                 },
             );

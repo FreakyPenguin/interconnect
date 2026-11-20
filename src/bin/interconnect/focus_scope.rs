@@ -17,11 +17,52 @@ pub(super) fn view<'a, Message: 'a>(
     Element::new(Scope {
         content: content.into(),
         id,
+        on_escape: None,
     })
+}
+
+/// Escape dismisses a form in one press, while an open child dropdown or IME
+/// retains precedence. Text fields otherwise consume Escape just to unfocus.
+pub(super) fn dismissible<'a, Message: Clone + 'a>(
+    content: impl Into<Element<'a, Message>>,
+    id: &'static str,
+    dismiss: Message,
+) -> Element<'a, Message> {
+    Element::new(Scope {
+        content: content.into(),
+        id,
+        on_escape: Some(Box::new(move || dismiss.clone())),
+    })
+}
+
+pub(super) fn cycle<T: Send + 'static>(
+    id: &'static str,
+    backwards: bool,
+) -> impl widget::Operation<T> {
+    use widget::operation::{self, focusable};
+    let next: fn(focusable::Count) -> FocusAt = if backwards {
+        |count| FocusAt {
+            target: count
+                .focused
+                .map_or(count.total.saturating_sub(1), |index| {
+                    (index + count.total.saturating_sub(1)) % count.total.max(1)
+                }),
+            index: 0,
+        }
+    } else {
+        |count| FocusAt {
+            target: count
+                .focused
+                .map_or(0, |index| (index + 1) % count.total.max(1)),
+            index: 0,
+        }
+    };
+    operation::scope(id.into(), operation::then(focusable::count(), next))
 }
 struct Scope<'a, Message> {
     content: Element<'a, Message>,
     id: &'static str,
+    on_escape: Option<Box<dyn Fn() -> Message + 'a>>,
 }
 #[derive(Default)]
 struct State {
@@ -167,6 +208,28 @@ impl<Message> Widget<Message, Theme, Renderer> for Scope<'_, Message> {
             shell.capture_event();
             return;
         }
+        let escape = self.on_escape.is_some()
+            && !tree.state.downcast_ref::<State>().composing
+            && matches!(
+                event,
+                Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: Key::Named(Named::Escape),
+                    repeat: false,
+                    ..
+                })
+            );
+        let popup_open = escape
+            && self
+                .content
+                .as_widget_mut()
+                .overlay(
+                    &mut tree.children[0],
+                    layout,
+                    renderer,
+                    viewport,
+                    Vector::ZERO,
+                )
+                .is_some();
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -177,6 +240,10 @@ impl<Message> Widget<Message, Theme, Renderer> for Scope<'_, Message> {
             shell,
             viewport,
         );
+        if escape && !popup_open {
+            shell.publish((self.on_escape.as_ref().expect("escape action"))());
+            shell.capture_event();
+        }
     }
 
     fn draw(
@@ -254,8 +321,8 @@ struct FocusAt {
     target: usize,
     index: usize,
 }
-impl widget::Operation for FocusAt {
-    fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+impl<T> widget::Operation<T> for FocusAt {
+    fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation<T>)) {
         f(self);
     }
     fn focusable(&mut self, _: Option<&widget::Id>, _: Rectangle, state: &mut dyn Focusable) {
@@ -539,6 +606,70 @@ mod tests {
         assert_eq!(count.focused, Some(3));
         assert_eq!(count.total, 4);
     }
+    #[test]
+    fn escape_dismisses_a_focused_input_once_but_closes_a_dropdown_first() {
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = Size::new(300.0, 200.0);
+        let mut input = dismissible(
+            text_input("Name", "value")
+                .on_input(|_| 1)
+                .cursor_blinking(false),
+            "input-escape",
+            9,
+        );
+        let mut tree = Tree::new(&input);
+        let node =
+            input
+                .as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        let (messages, captured, _) = update(
+            &mut input,
+            &mut tree,
+            &node,
+            &renderer,
+            key(Named::Escape, false, false),
+        );
+        assert_eq!(messages, [9]);
+        assert!(captured);
+        let mut picker = dismissible(
+            pick_list(["A", "B"], Some("A"), |_| 2).keyboard_navigation(true),
+            "picker-escape",
+            9,
+        );
+        let mut tree = Tree::new(&picker);
+        let node =
+            picker
+                .as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        update(
+            &mut picker,
+            &mut tree,
+            &node,
+            &renderer,
+            key(Named::Enter, false, false),
+        );
+        let (messages, captured, _) = update(
+            &mut picker,
+            &mut tree,
+            &node,
+            &renderer,
+            key(Named::Escape, false, false),
+        );
+        assert!(messages.is_empty());
+        assert!(captured);
+        assert_eq!(
+            update(
+                &mut picker,
+                &mut tree,
+                &node,
+                &renderer,
+                key(Named::Escape, false, false)
+            )
+            .0,
+            [9]
+        );
+    }
+
     #[test]
     fn traversal_reveals_controls_below_the_scroll_viewport() {
         let mut view = view(
