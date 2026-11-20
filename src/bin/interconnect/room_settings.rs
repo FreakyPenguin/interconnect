@@ -46,7 +46,38 @@ struct Panel {
     draft: Option<Settings>,
     error: Option<String>,
     success: bool,
+    transition: Option<Box<Message>>,
 }
+impl Panel {
+    fn dirty(&self) -> bool {
+        self.avatar.edit().is_some()
+            || self.avatar.is_picking()
+            || self.addresses.dirty()
+            || self
+                .saved
+                .as_ref()
+                .zip(self.draft.as_ref())
+                .is_some_and(|(saved, draft)| {
+                    saved.name != draft.name
+                        || saved.topic != draft.topic
+                        || saved.notifications != draft.notifications
+                        || saved.access != draft.access
+                        || saved.history != draft.history
+                })
+    }
+}
+
+pub(super) fn discard_prompt(keep: Message, discard: Message) -> Element<'static, Message> {
+    container(column![
+        shell::title("Discard unsaved changes?", 20),
+        text("Some edits have not been saved. Keep editing to save them individually. Changes already being saved will continue.").size(13),
+        row![button(text("Keep editing").size(13)).padding([7, 12]).style(shell::primary_button).on_press(keep),
+            button(text("Discard changes").size(13)).padding([7, 12]).style(button::danger).on_press(discard)].spacing(10).wrap(),
+    ].spacing(16))
+        .padding(24).max_width(460)
+        .style(|theme| container::Style { border: iced::Border { color: shell::palette(theme).line, width: 1.0, radius: 12.0.into() }, ..shell::surface(theme, shell::palette(theme).background) }).into()
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Addresses(addresses::Event),
@@ -55,6 +86,8 @@ pub enum Event {
     AvatarSaved(u64, Option<Upload>, Result<Option<OwnedMxcUri>, String>),
     Open(String),
     Close,
+    KeepChanges,
+    DiscardChanges,
     Members,
     Leave,
     Reload,
@@ -87,6 +120,17 @@ fn apply(settings: &mut Settings, change: &Change) {
     }
 }
 impl App {
+    /// Capture a user-requested transition before it can discard a form draft.
+    pub(super) fn guard_room_settings_transition(&mut self, next: Message) -> bool {
+        let Some(panel) = &mut self.room_settings.panel else {
+            return false;
+        };
+        if !panel.dirty() {
+            return false;
+        }
+        panel.transition.get_or_insert_with(|| Box::new(next));
+        true
+    }
     pub(super) fn room_settings_avatar(&self) -> Option<OwnedMxcUri> {
         self.room_settings
             .panel
@@ -109,7 +153,30 @@ impl App {
         }
     }
     pub(super) fn room_settings_event(&mut self, event: Event) -> Task<Message> {
+        if matches!(
+            event,
+            Event::Close | Event::Reload | Event::Members | Event::Leave
+        ) && self.guard_room_settings_transition(message(event.clone()))
+        {
+            return Task::none();
+        }
         match event {
+            Event::KeepChanges => {
+                if let Some(panel) = &mut self.room_settings.panel {
+                    panel.transition = None;
+                }
+            }
+            Event::DiscardChanges => {
+                if let Some(panel) = &mut self.room_settings.panel {
+                    let next = panel.transition.take();
+                    panel.draft = panel.saved.clone();
+                    panel.avatar = avatar_editor::State::default();
+                    panel.addresses = addresses::Editor::default();
+                    if let Some(next) = next {
+                        return self.update(*next);
+                    }
+                }
+            }
             Event::Avatar(session, event) => {
                 let Some(panel) = &mut self.room_settings.panel else {
                     return Task::none();
@@ -251,6 +318,7 @@ impl App {
                     draft: None,
                     error: None,
                     success: false,
+                    transition: None,
                 });
                 self.context_menu = None;
                 self.stop_typing();
@@ -581,6 +649,22 @@ impl App {
     fn room_settings_sized(&self, size: iced::Size) -> Element<'_, Message> {
         let panel = self.room_settings.panel.as_ref().unwrap();
         let busy = panel.pending || self.room_settings.busy.contains(&panel.target.1);
+        if panel.transition.is_some() {
+            return opaque(
+                mouse_area(
+                    container(discard_prompt(
+                        message(Event::KeepChanges),
+                        message(Event::DiscardChanges),
+                    ))
+                    .padding(24)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+                    .style(|theme| shell::surface(theme, shell::palette(theme).scrim)),
+                )
+                .on_press(message(Event::Ignore))
+                .on_scroll(|_| message(Event::Ignore)),
+            );
+        }
         let mut content = column![shell::title("Room settings", 20)].spacing(14);
         if let (Some(draft), Some(saved)) = (&panel.draft, &panel.saved) {
             let enabled = !busy && self.pending_ops < MAX_PENDING_OPERATIONS;
@@ -1086,6 +1170,73 @@ mod tests {
                 .all()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn dirty_room_settings_require_explicit_discard_before_close_or_reload() {
+        let mut app = demo_app();
+        open(&mut app);
+        let original = app
+            .room_settings
+            .panel
+            .as_ref()
+            .unwrap()
+            .saved
+            .as_ref()
+            .unwrap()
+            .name
+            .clone();
+        let _ = app.update(message(Event::Name("Uncommitted room name".into())));
+        let _ = app.update(message(Event::Close));
+        let panel = app.room_settings.panel.as_ref().unwrap();
+        assert!(panel.transition.is_some());
+        assert_eq!(panel.draft.as_ref().unwrap().name, "Uncommitted room name");
+        let _ = app.update(message(Event::KeepChanges));
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_none()
+        );
+        let _ = app.update(message(Event::Reload));
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_some()
+        );
+        let _ = app.update(message(Event::DiscardChanges));
+        assert_eq!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .draft
+                .as_ref()
+                .unwrap()
+                .name,
+            original
+        );
+        let _ = app.update(message(Event::Addresses(addresses::Event::Local(
+            "unfinished".into(),
+        ))));
+        let _ = app.update(message(Event::Members));
+        assert!(
+            app.room_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_some()
+        );
+        assert!(!app.space_settings.is_open());
+        let _ = app.update(message(Event::DiscardChanges));
+        assert!(!app.room_settings.is_open());
+        assert!(app.space_settings.is_open());
     }
 
     #[tokio::test]

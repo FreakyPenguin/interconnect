@@ -64,7 +64,24 @@ struct Panel {
     draft: Option<Settings>,
     error: Option<String>,
     success: bool,
+    transition: Option<Box<Message>>,
 }
+impl Panel {
+    fn dirty(&self) -> bool {
+        self.avatar.edit().is_some()
+            || self.avatar.is_picking()
+            || self
+                .saved
+                .as_ref()
+                .zip(self.draft.as_ref())
+                .is_some_and(|(saved, draft)| {
+                    saved.name != draft.name
+                        || saved.topic != draft.topic
+                        || saved.access != draft.access
+                })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Event {
     Avatar(u64, avatar_editor::Event),
@@ -78,6 +95,8 @@ pub enum Event {
     SidebarMembers(member_management::Event),
     Exit(space_exit::Event),
     Close,
+    KeepChanges,
+    DiscardChanges,
     Reload,
     Name(String),
     Topic(String),
@@ -90,6 +109,16 @@ fn message(event: Event) -> Message {
     Message::SpaceSettings(event)
 }
 impl App {
+    pub(super) fn guard_space_settings_transition(&mut self, next: Message) -> bool {
+        let Some(panel) = &mut self.space_settings.panel else {
+            return false;
+        };
+        if !panel.dirty() {
+            return false;
+        }
+        panel.transition.get_or_insert_with(|| Box::new(next));
+        true
+    }
     pub(super) fn space_settings_avatar(&self) -> Option<OwnedMxcUri> {
         self.space_settings
             .panel
@@ -152,6 +181,7 @@ impl App {
             draft: None,
             error: None,
             success: false,
+            transition: None,
         });
         if self.demo.is_some() {
             return self.member_management_event(
@@ -236,9 +266,36 @@ impl App {
         }
     }
     pub(super) fn space_settings_event(&mut self, event: Event) -> Task<Message> {
+        if matches!(
+            event,
+            Event::Close
+                | Event::Reload
+                | Event::Browse(_)
+                | Event::Open(_)
+                | Event::OpenMembers(_)
+                | Event::Exit(space_exit::Event::Prepare(_))
+        ) && self.guard_space_settings_transition(message(event.clone()))
+        {
+            return Task::none();
+        }
         let opening_space = matches!(&event, Event::Open(_) | Event::Browse(_));
         let browse = matches!(&event, Event::Browse(_));
         match event {
+            Event::KeepChanges => {
+                if let Some(panel) = &mut self.space_settings.panel {
+                    panel.transition = None;
+                }
+            }
+            Event::DiscardChanges => {
+                if let Some(panel) = &mut self.space_settings.panel {
+                    let next = panel.transition.take();
+                    panel.draft = panel.saved.clone();
+                    panel.avatar = avatar_editor::State::default();
+                    if let Some(next) = next {
+                        return self.update(*next);
+                    }
+                }
+            }
             Event::SidebarMembers(member_management::Event::Reload) => {
                 return self.reload_member_sidebar();
             }
@@ -431,6 +488,7 @@ impl App {
                     draft: None,
                     error: None,
                     success: false,
+                    transition: None,
                 });
                 let task = self.space_settings_event(Event::Reload);
                 return if browse {
@@ -676,6 +734,16 @@ impl App {
     }
     pub(super) fn space_settings_view(&self) -> Element<'_, Message> {
         let panel = self.space_settings.panel.as_ref().unwrap();
+        if panel.transition.is_some() {
+            return container(super::room_settings::discard_prompt(
+                message(Event::KeepChanges),
+                message(Event::DiscardChanges),
+            ))
+            .padding(24)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into();
+        }
         if panel.directory.is_some() {
             return self.space_directory_view();
         }
@@ -900,6 +968,52 @@ mod tests {
         let _ = app.update(message(Event::Open("studio-space".into())));
         app.space_settings.panel.as_ref().unwrap().request
     }
+    #[test]
+    fn dirty_space_settings_preserve_edits_until_discard_is_confirmed() {
+        let mut app = demo_app();
+        open(&mut app);
+        let _ = app.update(message(Event::Topic("Uncommitted space topic".into())));
+        let _ = app.update(message(Event::Close));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert!(panel.transition.is_some());
+        assert_eq!(
+            panel.draft.as_ref().unwrap().topic,
+            "Uncommitted space topic"
+        );
+        let _ = app.update(message(Event::KeepChanges));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_none()
+        );
+        let _ = app.update(message(Event::Reload));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_some()
+        );
+        let _ = app.update(message(Event::DiscardChanges));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert!(panel.transition.is_none());
+        assert_eq!(
+            panel.draft.as_ref().unwrap().topic,
+            panel.saved.as_ref().unwrap().topic
+        );
+        let _ = app.update(message(Event::Name("Another unsaved edit".into())));
+        let _ = app.update(message(Event::Exit(space_exit::Event::Prepare(
+            interconnect::space_exit::Action::Leave,
+        ))));
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert!(panel.transition.is_some());
+        assert!(!panel.exit.is_open());
+    }
+
     #[tokio::test]
     async fn avatar_drafts_save_separately_and_late_results_release_once() {
         let mut app = demo_app();

@@ -30,6 +30,9 @@ fn event(event: Event) -> Message {
     message(super::Event::Addresses(event))
 }
 impl Editor {
+    pub(super) fn dirty(&self) -> bool {
+        !self.local.trim().is_empty() || !self.published.trim().is_empty() || self.remove.is_some()
+    }
     pub(super) fn update(
         &mut self,
         saved: &Addresses,
