@@ -107,7 +107,8 @@ registration and sliding sync, use a new, dedicated profile:
 - Cancel at a token/browser step or quit while waiting; no later prompt reply may
   advance another attempt. Registration expires after fifteen minutes overall.
   Cancellation stops the local attempt; it cannot undo a server-created account.
-- Successful registration should open the account and device verification flow.
+- Successful registration should open the account and
+  [key backup and recovery setup](recovery.md), including on a new verified device.
   Quit/resume the dedicated profile and verify account/device/crypto identity is
   reused. If account creation succeeded but session saving failed or the response
   was lost, return to sign-in rather than creating another account.

@@ -46,6 +46,11 @@ Failed unlock/resume preserves the profile. Successful sign-out revokes the
 session and deletes drafts/credentials; encrypted SDK stores remain. Local cleanup
 failures offer retry. See [login validation](validation/connected-ui.md#desktop-login).
 
+Account menu → **Key backup & recovery…** creates a recovery key, imports an
+existing key, or replaces a saved key after confirmation. New accounts are offered
+setup after registration. Save the key privately before acknowledging it; see
+[key backup and recovery](validation/recovery.md) for backup status and recovery.
+
 ## Configuration file
 
 | Platform | Default settings file |

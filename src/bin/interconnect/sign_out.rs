@@ -9,6 +9,7 @@ use interconnect::connected::{Model, SignOut};
 #[derive(Clone, Debug)]
 pub enum Event {
     Open,
+    Recovery,
     Confirm,
     Cancel,
 }
@@ -16,6 +17,19 @@ pub enum Event {
 impl App {
     pub(super) fn sign_out_event(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::Recovery
+                if self.sign_out_open
+                    && matches!(
+                        self.model.sign_out,
+                        SignOut::Idle | SignOut::Failed { revoked: false, .. }
+                    )
+                    && (self.demo.is_some() || self.model.recovery.control.is_some()) =>
+            {
+                let _ = self.sign_out_event(Event::Cancel);
+                return self.update(Message::Verification(
+                    super::verification::Event::OpenRecovery,
+                ));
+            }
             Event::Open if self.context_menu_allowed() && self.pending_ops == 0 => {
                 self.context_menu = None;
                 let save = self.save_drafts();
@@ -86,6 +100,18 @@ impl App {
         ].spacing(16);
         if self.demo.is_some() {
             content = content.push(text("Demo only · no account is signed out.").size(12));
+        }
+        if !busy && !revoked && (self.demo.is_some() || self.model.recovery.control.is_some()) {
+            if self.model.recovery.recovery
+                != matrix_sdk::encryption::recovery::RecoveryState::Enabled
+            {
+                content = content.push(text("Recovery is not ready on this device. Set it up or check your existing recovery key before signing out.").size(13));
+            }
+            content = content.push(
+                button(text("Check key backup & recovery…").size(13))
+                    .on_press(Message::SignOut(Event::Recovery))
+                    .style(shell::quiet_button),
+            );
         }
         if let Some(error) = &self.draft_persistence.error {
             content = content.push(text(error).size(12)).push(

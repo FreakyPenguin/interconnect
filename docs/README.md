@@ -11,4 +11,4 @@ See the [project README](../README.md) for features and screenshots.
   [message formatting](architecture/message-formatting.md), and [file drops](architecture/winit-file-drops.md).
 - Validation: [UI and accounts](validation/connected-ui.md),
   [idle resources](validation/idle-resources.md), [notifications](validation/notifications.md),
-  and [device verification](validation/verification.md).
+  [device verification](validation/verification.md), and [key recovery](validation/recovery.md).

@@ -9,6 +9,7 @@ use matrix_sdk::encryption::VerificationState;
 
 pub struct State {
     pub open: bool,
+    pub recovery: super::recovery::State,
     error: Option<String>,
     confirming: Option<(u64, (u16, u16, u16))>,
     demo: Snapshot,
@@ -18,6 +19,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             open: false,
+            recovery: super::recovery::State::default(),
             error: None,
             confirming: None,
             demo: Snapshot::default(),
@@ -28,6 +30,8 @@ impl Default for State {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open,
+    OpenRecovery,
+    Recovery(super::recovery::Event),
     Close,
     Action(u64, Action),
     PrefetchKeys(u64, bool),
@@ -53,11 +57,41 @@ impl App {
     }
     pub fn verification_update(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::Recovery(event) => return self.recovery_update(event),
+            Event::OpenRecovery
+                if !self.closing
+                    && !self.stopped
+                    && self.settings.draft.is_none()
+                    && self.image_view.is_none()
+                    && (!self.verification.open
+                        || !self.verification_snapshot().phase.active())
+                    && (self.demo.is_some() || self.model.recovery.control.is_some()) =>
+            {
+                if self.verification_snapshot().phase == Phase::Complete
+                    && let Some(control) = &self.model.verification.control
+                    && let Err(error) = control.send(
+                        self.model.verification.revision,
+                        Action::Finish {
+                            prefetch_keys: self.verification.prefetch_keys,
+                        },
+                    )
+                {
+                    self.verification.error = Some(error);
+                    return Task::none();
+                }
+                self.reaction_picker = None;
+                self.composer_picker = None;
+                self.emoji_completion.clear();
+                self.user_completion.clear();
+                self.verification.open = true;
+                self.open_recovery();
+            }
             Event::Open
                 if !self.closing
                     && !self.stopped
                     && self.settings.draft.is_none()
                     && self.image_view.is_none()
+                    && (!self.verification.recovery.open || self.recovery_can_leave())
                     && (self.demo.is_some() || self.model.verification.control.is_some()) =>
             {
                 self.reaction_picker = None;
@@ -65,6 +99,8 @@ impl App {
                 self.emoji_completion.clear();
                 self.user_completion.clear();
                 self.verification.open = true;
+                self.verification.recovery.open = false;
+                self.clear_recovery_input();
                 self.verification.error = None;
                 self.verification.prefetch_keys = true;
                 if self.demo.is_some() {
@@ -95,6 +131,15 @@ impl App {
                 }
             }
             Event::Close => {
+                if self.verification.recovery.open {
+                    if !self.recovery_can_leave() {
+                        return Task::none();
+                    }
+                    self.verification.recovery.open = false;
+                    self.clear_recovery_input();
+                    self.verification.open = false;
+                    return Task::none();
+                }
                 let complete = self.verification_snapshot().phase == Phase::Complete;
                 if self.demo.is_none()
                     && let Some(control) = &self.model.verification.control
@@ -181,6 +226,9 @@ impl App {
     }
 
     pub fn verification_view(&self) -> Element<'_, Message> {
+        if self.verification.recovery.open {
+            return self.recovery_view();
+        }
         iced::widget::responsive(move |size| self.verification_card(size)).into()
     }
     fn verification_card(&self, size: iced::Size) -> Element<'_, Message> {
@@ -266,6 +314,15 @@ impl App {
             content = content.push(text(error).size(12));
         }
         let mut buttons = row![].spacing(8).align_y(iced::Alignment::Center);
+        if !snapshot.phase.active()
+            && (self.demo.is_some() || self.model.recovery.control.is_some())
+        {
+            buttons = buttons.push(
+                button(text("Recovery…").size(13))
+                    .on_press(message(Event::OpenRecovery))
+                    .style(shell::quiet_button),
+            );
+        }
         if !snapshot.phase.active()
             && snapshot.phase != Phase::Complete
             && self.demo.is_none()

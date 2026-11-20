@@ -200,6 +200,14 @@ impl App {
                         dispatch(Message::Verification(super::verification::Event::Open)),
                     ));
                 }
+                if self.demo.is_some() || self.model.recovery.control.is_some() {
+                    actions.push((
+                        "Key backup & recovery…",
+                        dispatch(Message::Verification(
+                            super::verification::Event::OpenRecovery,
+                        )),
+                    ));
+                }
                 if self.pending_ops == 0 {
                     actions.push((
                         "Sign out…",

@@ -3,7 +3,7 @@
 One account per process; native sliding sync and Linux Secret Service or macOS
 Keychain are required.
 
-- No recovery/key-backup UI, account switching/import, legacy sync, or calls.
+- No account switching/import, legacy sync, or calls.
 - No room alias/power-rule editing, encryption changes, bans, upgrades, timed mutes,
   or per-room sounds. Restricted/knock/custom access is read-only.
 - Space links support joined rooms, not existing subspaces/unjoined children.
@@ -48,11 +48,13 @@ compliance checklist.
 - **Media:** no voice-message recording or in-app audio/video playback. Audio/video
   files can still be sent as attachments and downloaded/opened externally.
   Standalone sticker events have text-only presentation; no sticker sending.
-- **Encryption and trust:** no recovery, key-backup, cross-signing setup, or manual
-  room-key import/export UI. Verification supports SAS with your own devices only;
+- **Encryption and trust:** no destructive encryption-identity reset or manual
+  room-key import/export UI. Recovery supports key creation, import, and replacement;
+  see [key backup and recovery](validation/recovery.md).
+  Verification supports SAS with your own devices only;
   no QR verification or verification of other users. See
   [device verification](validation/verification.md).
-- **Account and sessions:** no registration, password changes/reset, account
+- **Account and sessions:** no password changes/reset, account
   deactivation, profile name/avatar editing, or renaming/revoking other devices.
   Login supports password and browser SSO; legacy sync is unsupported.
 - **Room administration:** no alias management, custom power-rule editing,

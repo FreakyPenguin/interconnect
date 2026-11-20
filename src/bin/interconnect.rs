@@ -95,6 +95,8 @@ mod reaction_picker;
 mod reactions;
 #[path = "interconnect/receipts.rs"]
 mod receipts;
+#[path = "interconnect/recovery.rs"]
+mod recovery;
 #[path = "interconnect/room_picker.rs"]
 mod room_picker;
 #[path = "interconnect/room_search.rs"]
@@ -483,6 +485,9 @@ impl App {
     }
     fn update(&mut self, message: Message) -> Task<Message> {
         interconnect::diagnostics::update();
+        if matches!(message, Message::Close | Message::Exit) && self.defer_close_for_recovery() {
+            return Task::none();
+        }
         let changing = draft_persistence::may_change(&message);
         if matches!(message, Message::Close | Message::Exit)
             && self.sign_out_open
@@ -574,7 +579,9 @@ impl App {
             if matches!(
                 &message,
                 Message::Settings(settings::Event::Open)
-                    | Message::Verification(verification::Event::Open)
+                    | Message::Verification(
+                        verification::Event::Open | verification::Event::OpenRecovery
+                    )
                     | Message::ContextMenu(_)
                     | Message::QuickRoom(_)
                     | Message::NewChat(
@@ -683,7 +690,9 @@ impl App {
                             | create_room::Event::Submit
                     )
                     | Message::Settings(settings::Event::Open)
-                    | Message::Verification(verification::Event::Open)
+                    | Message::Verification(
+                        verification::Event::Open | verification::Event::OpenRecovery
+                    )
                     | Message::Send(_)
                     | Message::Edit(..)
             ) {
@@ -704,7 +713,9 @@ impl App {
                 Message::ContextMenu(_)
                     | Message::QuickRoom(_)
                     | Message::Settings(settings::Event::Open)
-                    | Message::Verification(verification::Event::Open)
+                    | Message::Verification(
+                        verification::Event::Open | verification::Event::OpenRecovery
+                    )
                     | Message::EmojiManagement(emoji_management::Event::Open)
                     | Message::Reaction(
                         reaction_picker::Event::Open(_) | reaction_picker::Event::Chip { .. }
@@ -777,7 +788,9 @@ impl App {
                 && matches!(
                     &message,
                     Message::Settings(settings::Event::Open)
-                        | Message::Verification(verification::Event::Open)
+                        | Message::Verification(
+                            verification::Event::Open | verification::Event::OpenRecovery
+                        )
                         | Message::QuickRoom(_)
                         | Message::ContextMenu(_)
                         | Message::ComposerEmoji(_)
@@ -880,7 +893,9 @@ impl App {
             && matches!(
                 message,
                 Message::Settings(settings::Event::Open)
-                    | Message::Verification(verification::Event::Open)
+                    | Message::Verification(
+                        verification::Event::Open | verification::Event::OpenRecovery
+                    )
             )
         {
             return Task::none();
@@ -899,7 +914,9 @@ impl App {
                 | Message::SearchFocus
                 | Message::Focus(_)
                 | Message::Settings(settings::Event::Open)
-                | Message::Verification(verification::Event::Open)
+                | Message::Verification(
+                    verification::Event::Open | verification::Event::OpenRecovery
+                )
         ) {
             self.stop_typing();
         }
@@ -1935,6 +1952,13 @@ impl App {
                     || state.verification.control.is_none() && self.demo.is_none()
                 {
                     self.verification.open = false;
+                }
+                if self.demo.is_none()
+                    && (state.authentication.is_some()
+                        || state.recovery.control.is_none()
+                        || state.recovery.revision >> 32 != self.model.recovery.revision >> 32)
+                {
+                    self.verification.recovery = recovery::State::default();
                 }
                 if !std::sync::Arc::ptr_eq(&self.model.custom_emoji, &state.custom_emoji) {
                     self.emoji_catalog = std::sync::Arc::new(emoji_picker::Catalog::with_custom(

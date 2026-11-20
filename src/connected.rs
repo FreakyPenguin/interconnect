@@ -739,6 +739,7 @@ pub struct Model {
     pub authentication: Option<Authentication>,
     pub account_id: Option<String>,
     pub verification: crate::verification::Snapshot,
+    pub recovery: crate::recovery::Snapshot,
     pub diagnostics: Arc<crate::diagnostics::Diagnostics>,
     pub status: String,
     pub rooms: Arc<Vec<RoomEntry>>,
@@ -780,6 +781,7 @@ impl Default for Model {
             authentication: Some(Authentication::Checking),
             account_id: None,
             verification: Default::default(),
+            recovery: Default::default(),
             diagnostics: Arc::default(),
             status: "Restoring saved session…".into(),
             rooms: Arc::default(),
@@ -991,8 +993,13 @@ async fn run_authenticated(
     let notifications =
         crate::notifications::Service::install(client, selection.clone(), state.clone()).await;
     let stop_verification = tokio_util::sync::CancellationToken::new();
-    let verification = crate::verification::Service::new(client.clone())
-        .run(state.clone(), stop_verification.clone());
+    let verification_service = crate::verification::Service::new(client.clone());
+    let verification = async {
+        tokio::join!(
+            verification_service.run(state.clone(), stop_verification.clone()),
+            crate::recovery::run(client.clone(), state.clone(), stop_verification.clone()),
+        );
+    };
     tokio::pin!(verification);
     let connection = async {
         tokio::select! {

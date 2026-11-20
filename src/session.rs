@@ -228,6 +228,13 @@ async fn client(profile: &Profile, saved: &SavedSession) -> anyhow::Result<Clien
             matrix_sdk_common::cross_process_lock::CrossProcessLockConfig::SingleProcess,
         )
         .homeserver_url(&saved.homeserver)
+        .with_encryption_settings(matrix_sdk::encryption::EncryptionSettings {
+            auto_enable_cross_signing: true,
+            // Recovery setup creates backups explicitly after user consent.
+            auto_enable_backups: false,
+            backup_download_strategy:
+                matrix_sdk::encryption::BackupDownloadStrategy::AfterDecryptionFailure,
+        })
         // Restoration must open the same local store even when offline.
         // Native support is verified by the login discovery step.
         .sliding_sync_version_builder(VersionBuilder::Native)

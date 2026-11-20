@@ -10,6 +10,11 @@ Restoring a saved session and demo startup do not open verification automaticall
 Unknown trust does not delay this sign-in step; the status reminder still requires
 an explicit Unverified state from Matrix.
 
+Registration opens [key backup and recovery](recovery.md) instead, allowing a new
+account to save a recovery key without needing another device. The verification
+dialog's **Recovery…** button also opens this screen; an existing recovery key can
+restore secrets on a new device as an alternative to comparing with another app.
+
 Account menu → Verify device… selects another device on the same account. For
 incoming SAS, explicitly Accept request; requests never auto-accept or steal focus.
 Other users and QR verification are unsupported.

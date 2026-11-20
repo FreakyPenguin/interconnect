@@ -18,6 +18,7 @@ pub mod navigation;
 pub mod navigation_preferences;
 pub mod notifications;
 pub mod people;
+pub mod recovery;
 pub mod room_avatar;
 pub mod room_creation;
 pub mod room_leave;

@@ -22,6 +22,7 @@ pub struct State {
     pub sender: Option<tokio::sync::mpsc::Sender<LoginRequest>>,
     pub browser_error: Option<String>,
     verify_after_login: bool,
+    recover_after_registration: bool,
 }
 
 #[derive(Clone)]
@@ -160,6 +161,8 @@ impl App {
                     self.login.confirm_password = Zeroizing::new(String::new());
                     self.login.browser_error = None;
                     self.login.verify_after_login = true;
+                    self.login.recover_after_registration =
+                        matches!(event, Event::SubmitRegistration);
                     self.model.authentication = Some(Authentication::Waiting { url: None });
                 }
             }
@@ -279,6 +282,17 @@ impl App {
         // Wait for readiness through normal UI events, without a timer or SDK work.
         if self.model.authentication.is_some() || self.model.verification.control.is_none() {
             return Task::none();
+        }
+        if self.login.recover_after_registration {
+            if self.model.recovery.control.is_none() || !self.context_menu_allowed() {
+                return Task::none();
+            }
+            self.login.verify_after_login = false;
+            self.login.recover_after_registration = false;
+            self.context_menu = None;
+            self.shell.spaces.menu = None;
+            self.stop_typing();
+            return self.verification_update(super::verification::Event::OpenRecovery);
         }
         if self.verification.open
             || self.model.verification.trust == matrix_sdk::encryption::VerificationState::Verified
@@ -583,6 +597,11 @@ mod tests {
         interconnect::verification::Snapshot,
         impl std::future::Future<Output = ()>,
     ) {
+        let (model, worker) = security_fixture().await;
+        (model.verification, worker)
+    }
+
+    async fn security_fixture() -> (Model, impl std::future::Future<Output = ()>) {
         let client = matrix_sdk::Client::builder()
             .homeserver_url("https://example.org")
             .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
@@ -603,16 +622,57 @@ mod tests {
             .await
             .unwrap();
         let (state, snapshots) = tokio::sync::watch::channel(Model::default());
-        let mut worker = Box::pin(
-            interconnect::verification::Service::new(client)
-                .run(state, tokio_util::sync::CancellationToken::new()),
-        );
+        let stop = tokio_util::sync::CancellationToken::new();
+        let mut worker = Box::pin(async move {
+            tokio::join!(
+                interconnect::verification::Service::new(client.clone())
+                    .run(state.clone(), stop.clone()),
+                interconnect::recovery::run(client, state, stop),
+            );
+        });
         // Initialize the real command channel, then leave the worker unpolled.
         // UI commands stay local: no discovery, network, or sync is performed.
         assert!(iced::futures::poll!(&mut worker).is_pending());
-        let snapshot = snapshots.borrow().verification.clone();
-        assert!(snapshot.control.is_some());
+        let snapshot = snapshots.borrow().clone();
+        assert!(snapshot.verification.control.is_some());
+        assert!(snapshot.recovery.control.is_some());
         (snapshot, worker)
+    }
+
+    #[tokio::test]
+    async fn registration_offers_recovery_once_even_when_new_device_is_verified() {
+        let (mut ready, _worker) = security_fixture().await;
+        ready.authentication = None;
+        ready.verification.trust = VerificationState::Verified;
+        let (mut app, mut requests) = form();
+        let _ = app.login_update(Event::ToggleRegistration);
+        let _ = app.login_update(Event::Homeserver("https://example.org".into()));
+        let _ = app.login_update(Event::Username("fixture".into()));
+        let _ = app.login_update(Event::Password(Zeroizing::new("fixture-password".into())));
+        let _ = app.login_update(Event::ConfirmPassword(Zeroizing::new(
+            "fixture-password".into(),
+        )));
+        let _ = app.login_update(Event::SubmitRegistration);
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(LoginRequest::SignIn {
+                method: LoginMethod::Register { .. },
+                ..
+            })
+        ));
+        let mut early = ready.clone();
+        early.recovery = Default::default();
+        let _ = app.update(Message::State(Box::new(early)));
+        assert!(!app.verification.open);
+        assert!(app.login.verify_after_login);
+        let _ = app.update(Message::State(Box::new(ready.clone())));
+        assert!(app.verification.open);
+        assert!(app.verification.recovery.open);
+        assert!(!app.login.verify_after_login);
+        let _ = app.update(Message::Escape);
+        assert!(!app.verification.open);
+        let _ = app.update(Message::State(Box::new(ready)));
+        assert!(!app.verification.open);
     }
 
     fn submit(app: &mut App, password: bool) {

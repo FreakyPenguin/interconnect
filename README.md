@@ -84,7 +84,9 @@ cargo run --locked --bin interconnect -- --demo
 Demo uses local sample data without saved accounts or network access. Omit `--demo`
 to sign in; the homeserver must support native sliding sync. Account storage
 requires Linux Secret Service or macOS Keychain. One account is supported per
-process; calls and recovery/key-backup UI are not available yet.
+process; calls are not available yet. New accounts are offered recovery-key setup;
+existing accounts can manage [key backup and recovery](docs/validation/recovery.md)
+from the account menu.
 
 Use `--help` to list options, `--profile work` for a named profile in the regular
 data directory, or `--profile-path /path/to/profile` for an explicit directory.
