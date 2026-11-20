@@ -11,7 +11,12 @@ impl App {
     }
 
     pub(super) fn typing_edited(&mut self, key: &DraftKey) {
-        if self.demo.is_some() || self.closing || self.stopped || !self.window_focused {
+        if self.demo.is_some()
+            || self.closing
+            || self.stopped
+            || !self.window_focused
+            || !self.room_can_compose(&key.room)
+        {
             return;
         }
         if self.draft_key(key.root.is_some()).as_ref() != Some(key) {

@@ -116,6 +116,7 @@ impl App {
 
     pub(super) fn can_edit_message(&self, target: &reaction_picker::Target) -> bool {
         !self.composing
+            && self.room_can_compose(&target.room)
             && self.emoji_management.is_none()
             && self.context_menu_allowed()
             && !self.bookmarks.open

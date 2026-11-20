@@ -258,6 +258,7 @@ impl App {
             && !self.space_settings.is_open()
             && !self.composing
             && self.window_focused
+            && self.room_can_compose(&key.room)
             && self.account_id == trigger.account
             && self.draft_key(key.root.is_some()).as_ref() == Some(key)
             && selected

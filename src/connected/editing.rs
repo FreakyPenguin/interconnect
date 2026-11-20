@@ -239,6 +239,7 @@ impl Composer {
         use matrix_sdk::ruma::events::room::message::{
             MessageType, RoomMessageEventContentWithoutRelation,
         };
+        self.check_active_room()?;
         let prepared = crate::composition::prepare_with_bindings(body, format, bindings).await?;
         let original_mentions: std::collections::BTreeSet<_> =
             original_mentions.into_iter().collect();
@@ -288,6 +289,7 @@ impl Composer {
                 self.check_room_notification_permission().await?;
             }
             replacement = replacement.add_mentions(prepared.notification_mentions());
+            self.check_active_room()?;
             Box::pin(self.0.edit(
                 &item.identifier(),
                 matrix_sdk::room::edit::EditedContent::RoomMessage(replacement),

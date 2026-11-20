@@ -243,6 +243,20 @@ remote sign-out retains them. See [storage boundaries](../architecture/drafts.md
 
 ## Composition and formatting
 
+- Replaced rooms show a persistent notice in place of both room and thread
+  composers, including during loading, pagination failure, or timeline setup
+  failure. Existing drafts, attachments, and reading positions remain associated
+  with the old conversation. Space filtering must not switch the conversation.
+  Following the replacement opens a joined room or offers the ordinary Join form
+  with federation routing hints. Dismissing it must leave the old room open.
+  Redacted tombstones without a destination still disable composition and explain
+  that the replacement is unavailable. Remote upgrades stop typing/completion and
+  reject stale composer actions; already admitted writes may finish.
+  Automated layout/state tests cover both panes, missing/failed history, draft
+  retention, navigation, stale links, and shutdown. Mock sync coverage checks
+  cached/live metadata, redaction, serverless room IDs, and captured send/edit
+  rejection without history requests. Native desktop/federation acceptance remains
+  a dedicated-profile check; no connected account was used for this change.
 - In room and thread composers, type/paste words wider than the field, including
   long identifiers and combining Unicode characters, in Plain text and Markdown
   modes. They should wrap within the field; resize narrower/wider, scroll through

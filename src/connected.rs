@@ -227,6 +227,13 @@ impl std::fmt::Debug for Composer {
     }
 }
 impl Composer {
+    fn check_active_room(&self) -> Result<(), String> {
+        if self.0.room().is_tombstoned() {
+            return Err("This room has been replaced. Continue in the replacement room.".into());
+        }
+        Ok(())
+    }
+
     /// Keep the runtime-owned timeline alive for the duration of the media request.
     pub async fn download_attachment(
         self,
@@ -475,7 +482,9 @@ impl Composer {
         use matrix_sdk::ruma::events::room::message::TextMessageEventContent;
         use matrix_sdk_ui::timeline::{AttachmentConfig, AttachmentSource};
         let reply = parse_reply(reply)?;
+        self.check_active_room()?;
         let prepared = attachment.read().await?;
+        self.check_active_room()?;
         if let Some(event) = reply {
             // Explicit room replies must not inherit the target's thread when
             // it was reached through a focused room timeline or search.
@@ -600,6 +609,7 @@ impl Composer {
         bindings: crate::composition::Bindings,
         reply: Option<String>,
     ) -> Result<(), String> {
+        self.check_active_room()?;
         let reply = parse_reply(reply)?;
         let prepared = crate::composition::prepare_with_bindings(body, format, bindings).await?;
         if prepared.room_mention {
@@ -615,6 +625,7 @@ impl Composer {
         } else {
             content
         };
+        self.check_active_room()?;
         Box::pin(self.0.send(content.into()))
             .await
             .map(|_| ())
@@ -3043,6 +3054,89 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
+        }
+        // Replacement state is projected without paginating history. New room IDs
+        // may omit a server, so retain the tombstone sender's server for joining.
+        assert!(snapshots.borrow().rooms[0].tombstone.is_none());
+        for (batch, content, replacement) in [
+            (
+                "upgraded",
+                json!({"body":"Please continue here", "replacement_room":"!replacement"}),
+                Some("!replacement"),
+            ),
+            (
+                "empty-reason",
+                json!({"body":" ", "replacement_room":"!replacement:remote.example.org"}),
+                Some("!replacement:remote.example.org"),
+            ),
+            ("redacted-upgrade", json!({}), None),
+        ] {
+            let mut tombstone = event("m.room.tombstone", "", content);
+            tombstone["event_id"] = json!(format!("$tombstone-{batch}"));
+            tombstone["sender"] = json!("@upgrader:remote.example.org");
+            if batch == "redacted-upgrade" {
+                tombstone["unsigned"] = json!({"redacted_because":{
+                    "type":"m.room.redaction", "event_id":"$redaction", "sender":"@test:example.org",
+                    "origin_server_ts":2, "content":{}, "redacts":"$tombstone-redacted-upgrade"
+                }});
+            }
+            *response.lock().unwrap() = json!({"next_batch":batch,"rooms":{"join":{
+                "!room:example.org":{"state":{"events":[tombstone]},"timeline":{"events":[],"limited":false}}
+            }}});
+            client
+                .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+                .await
+                .unwrap();
+            let updated = tokio::time::timeout(
+                Duration::from_secs(5),
+                snapshots.wait_for(|s| {
+                    s.rooms[0].tombstone.as_ref().is_some_and(|t| {
+                        t.replacement.as_ref().map(|r| r.room.as_str()) == replacement
+                            && t.body.as_deref()
+                                == (batch == "upgraded").then_some("Please continue here")
+                    })
+                }),
+            )
+            .await
+            .unwrap()
+            .unwrap()
+            .clone();
+            let tombstone = updated.rooms[0].tombstone.as_ref().unwrap();
+            if let Some(address) = &tombstone.replacement {
+                assert_eq!(
+                    address.via,
+                    [matrix_sdk::ruma::server_name!("remote.example.org")]
+                );
+            }
+            assert_eq!(
+                crate::navigation::snapshot(&client).await.unwrap().rooms[0]
+                    .tombstone
+                    .as_ref(),
+                Some(tombstone)
+            );
+            assert!(updated.room.is_none() && updated.thread.is_none());
+            // A composer captured before the upgrade cannot queue into the old room.
+            assert!(
+                composer
+                    .clone()
+                    .send("Retained draft".into())
+                    .await
+                    .unwrap_err()
+                    .contains("replaced")
+            );
+            assert!(
+                composer
+                    .clone()
+                    .edit_message(
+                        "$old".into(),
+                        "Retained edit".into(),
+                        crate::composition::Format::Plain,
+                        Vec::new()
+                    )
+                    .await
+                    .unwrap_err()
+                    .contains("replaced")
+            );
         }
         *response.lock().unwrap() = json!({"next_batch":"three","rooms":{"leave":{"!room:example.org":{"timeline":{"events":[event("m.room.member","@test:example.org",json!({"membership":"leave"}))]}}}}});
         client

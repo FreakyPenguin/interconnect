@@ -20,6 +20,8 @@ pub struct RoomEntry {
     pub name: String,
     pub canonical_alias: Option<String>,
     pub topic: String,
+    /// Cached room state, independent of whether history can be loaded.
+    pub tombstone: Option<Tombstone>,
     /// Joined members, excluding invitations and departed users.
     pub member_count: u64,
     pub can_edit_topic: bool,
@@ -38,6 +40,49 @@ pub struct RoomEntry {
     pub unread: bool,
     /// SDK client-side unread message count; not a claim about thread unread state.
     pub unread_count: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Tombstone {
+    pub body: Option<String>,
+    /// Redacted tombstones may no longer identify a replacement room.
+    pub replacement: Option<crate::room_membership::Address>,
+}
+
+impl Tombstone {
+    async fn from_room(room: &matrix_sdk::Room) -> anyhow::Result<Option<Self>> {
+        let Some(content) = room.tombstone_content() else {
+            return Ok(None);
+        };
+        let mut via = Vec::new();
+        // Room IDs in newer room versions have no server name. The upgrader's
+        // server is a routing hint for reaching the replacement through federation.
+        if let Some(raw) = room
+            .get_state_event_static::<matrix_sdk::ruma::events::room::tombstone::RoomTombstoneEventContent>()
+            .await?
+            && let Ok(matrix_sdk::deserialized_responses::SyncOrStrippedState::Sync(event)) = raw.deserialize()
+        {
+            via.push(event.sender().server_name().to_owned());
+        }
+        let replacement = content
+            .replacement_room
+            .filter(|id| id.as_str() != room.room_id().as_str())
+            .map(|id| {
+                if let Some(server) = id.server_name()
+                    && !via.iter().any(|hint| hint == server)
+                {
+                    via.push(server.to_owned());
+                }
+                crate::room_membership::Address {
+                    room: id.into(),
+                    via,
+                }
+            });
+        Ok(Some(Self {
+            body: content.body.filter(|body| !body.trim().is_empty()),
+            replacement,
+        }))
+    }
 }
 impl RoomEntry {
     /// Explicit tags win over inferred direct grouping. Unknown tags fall back.
@@ -362,6 +407,7 @@ pub async fn snapshot(client: &Client) -> anyhow::Result<Snapshot> {
                 name,
                 canonical_alias: room.canonical_alias().map(|alias| alias.to_string()),
                 topic: room.topic().unwrap_or_default(),
+                tombstone: Tombstone::from_room(&room).await?,
                 member_count: room.joined_members_count(),
                 // Incomplete cached permissions must not hide the conversation.
                 can_edit_topic: levels.as_ref().is_some_and(|levels| {

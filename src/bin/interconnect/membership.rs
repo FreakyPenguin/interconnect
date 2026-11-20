@@ -339,11 +339,17 @@ impl App {
                 self.pending_ops += 1;
                 if self.demo.is_some() {
                     let joined = joining.then(|| Joined {
-                        id: if room.starts_with('!') {
-                            room.clone()
-                        } else {
-                            format!("!demo-joined-{request}:example.org")
-                        },
+                        id: interconnect::room_membership::Address::parse(&room)
+                            .ok()
+                            .and_then(|address| {
+                                address
+                                    .room
+                                    .as_str()
+                                    .parse::<matrix_sdk::ruma::OwnedRoomId>()
+                                    .ok()
+                            })
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| format!("!demo-joined-{request}:example.org")),
                         name: room.clone(),
                         space: false,
                     });

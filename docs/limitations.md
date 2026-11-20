@@ -4,8 +4,9 @@ One account per process; native sliding sync and Linux Secret Service or macOS
 Keychain are required.
 
 - No account switching/import, legacy sync, or calls.
-- No room alias/power-rule editing, encryption changes, bans, upgrades, timed mutes,
-  or per-room sounds. Restricted/knock/custom access is read-only.
+- No room alias/power-rule editing, encryption changes, bans, initiating upgrades,
+  timed mutes, or per-room sounds. Restricted/knock/custom access is read-only.
+  Replaced rooms offer navigation to their replacement; histories remain separate.
 - Space links support joined rooms, not existing subspaces/unjoined children.
   Directory search covers the connected homeserver only; space search covers
   loaded results (1,000 per tab). No knocking or hidden-room discovery.
@@ -58,7 +59,7 @@ compliance checklist.
   deactivation, profile name/avatar editing, or renaming/revoking other devices.
   Login supports password and browser SSO; legacy sync is unsupported.
 - **Room administration:** no alias management, custom power-rule editing,
-  encryption changes, room upgrades, or bans/unbans. Restricted/knock access rules
+  encryption changes, initiating room upgrades, or bans/unbans. Restricted/knock access rules
   are read-only; no knocking or join-request management UI.
 - **Discovery and invitations:** no remote-homeserver directory selection or
   email/phone invitations. Space linking does not cover existing subspaces or

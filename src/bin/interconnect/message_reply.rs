@@ -17,6 +17,7 @@ fn message(event: Event) -> Message {
 impl App {
     pub(super) fn can_reply(&self, target: &reaction_picker::Target) -> bool {
         self.context_menu_allowed()
+            && self.room_can_compose(&target.room)
             && !self.composing
             && self.emoji_management.is_none()
             && !self.bookmarks.open

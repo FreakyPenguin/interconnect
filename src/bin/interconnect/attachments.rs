@@ -51,6 +51,7 @@ impl App {
                 || !self
                     .window_width
                     .is_some_and(|width| self.side_panel_replaces_room(width)))
+            && self.room_can_compose(&target.key.room)
             && self.account_id == target.account
             && self.emoji_management.is_none()
             && self.settings.draft.is_none()

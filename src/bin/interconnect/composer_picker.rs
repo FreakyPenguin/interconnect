@@ -72,6 +72,7 @@ impl App {
         };
         !self.closing
             && !self.stopped
+            && self.room_can_compose(&target.key.room)
             && self.settings.draft.is_none()
             && self.image_view.is_none()
             && self.reaction_picker.is_none()

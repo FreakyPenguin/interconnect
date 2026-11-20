@@ -125,6 +125,8 @@ mod suspended;
 mod thread_activity;
 #[path = "interconnect/timeline.rs"]
 mod timeline;
+#[path = "interconnect/tombstone.rs"]
+mod tombstone;
 #[path = "interconnect/tooltips.rs"]
 mod tooltips;
 #[path = "interconnect/topic.rs"]
@@ -263,6 +265,7 @@ enum Message {
     Reorder(section_reorder::Event),
     SectionsReordered(Option<String>, u64, Result<(), String>),
     OpenMessageLink(String),
+    FollowReplacement(tombstone::Target),
     LinkOpened,
     Bookmark(bookmarks::Event),
     GlobalSearch(global_search::Event),
@@ -1190,6 +1193,7 @@ impl App {
         let mut action_task = Task::none();
         match message {
             Message::OpenMessageLink(link) => action_task = self.open_message_link(link),
+            Message::FollowReplacement(target) => action_task = self.follow_replacement(target),
             Message::LinkOpened => {}
 
             Message::CreateRoom(event) => action_task = self.create_room_event(event),
@@ -1641,8 +1645,9 @@ impl App {
             }
             Message::DeleteWord(key, motion) => return self.delete_word(key, motion),
             Message::Edit(key, action) if !self.closing && !self.stopped => {
-                if (self.draft_key(false).as_ref() == Some(&key)
-                    || self.draft_key(true).as_ref() == Some(&key))
+                if self.room_can_compose(&key.room)
+                    && (self.draft_key(false).as_ref() == Some(&key)
+                        || self.draft_key(true).as_ref() == Some(&key))
                     && let Some(draft) = self.drafts.get_mut(&key)
                     && !draft.pending
                 {
@@ -1665,7 +1670,8 @@ impl App {
                     && !self.composing
                     && self.pending_ops < MAX_PENDING_OPERATIONS =>
             {
-                if self.attachment_picking(&key)
+                if !self.room_can_compose(&key.room)
+                    || self.attachment_picking(&key)
                     || (self.draft_key(false).as_ref() != Some(&key)
                         && self.draft_key(true).as_ref() != Some(&key))
                 {
@@ -2108,6 +2114,11 @@ impl App {
                 .is_none_or(|(generation, _)| *generation != typing.generation)
         }) || self.closing
             || self.stopped
+            || self
+                .selection
+                .room
+                .as_ref()
+                .is_some_and(|(_, room)| !self.room_can_compose(room))
         {
             self.stop_typing();
         }
@@ -2557,6 +2568,9 @@ impl App {
         Some(DraftKey { room, root })
     }
     fn composer_for(&self, key: &DraftKey) -> Option<interconnect::connected::Composer> {
+        if !self.room_can_compose(&key.room) {
+            return None;
+        }
         let thread = key.root.is_some();
         if self.draft_key(thread).as_ref() != Some(key) {
             return None;
@@ -3689,7 +3703,9 @@ impl App {
         }
         content = content.push(message_area);
         let mut writing = column![].spacing(0).width(Length::Fill);
-        if let Some(key) = self.draft_key(thread)
+        if let Some(notice) = self.tombstone_view() {
+            writing = writing.push(notice);
+        } else if let Some(key) = self.draft_key(thread)
             && let Some(draft) = self.drafts.get(&key)
         {
             let edit_key = key.clone();

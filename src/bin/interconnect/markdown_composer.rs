@@ -126,6 +126,7 @@ impl App {
         !self.closing
             && !self.stopped
             && !self.composing
+            && self.room_can_compose(&target.key.room)
             && self.account_id == target.account
             && self.draft_key(thread).as_ref() == Some(&target.key)
             && selection

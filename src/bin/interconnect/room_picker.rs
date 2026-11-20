@@ -351,7 +351,13 @@ impl App {
         let generation = self.pending_room_focus?;
         let pane = super::current_pane(&self.model.room, generation)?;
         self.pending_room_focus = None;
-        if pane.error.is_some() {
+        if pane.error.is_some()
+            || self
+                .selection
+                .room
+                .as_ref()
+                .is_some_and(|(_, room)| !self.room_can_compose(room))
+        {
             return None;
         }
         Some(iced::advanced::widget::operation::focusable::focus(

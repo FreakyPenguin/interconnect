@@ -154,6 +154,7 @@ pub fn rooms() -> Vec<RoomEntry> {
             id: r.id.into(),
             name: r.name.into(),
             canonical_alias: Some(format!("#{}:example.org", r.id)),
+            tombstone: None,
             topic: if r.id == "studio" {
                 "A place for design notes and plans".into()
             } else {

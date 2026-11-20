@@ -151,6 +151,7 @@ impl App {
             && self.image_view.is_none()
             && self.reaction_picker.is_none()
             && self.composer_picker.is_none()
+            && self.room_can_compose(&key.room)
             && self.draft_key(thread).as_ref() == Some(key)
             && selected
                 .as_ref()
