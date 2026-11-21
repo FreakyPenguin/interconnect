@@ -55,6 +55,22 @@ impl Directory {
     pub fn refresh_navigation(&self) {
         let _ = self.1.send(());
     }
+    pub async fn devices(self) -> Result<Vec<crate::device_management::Device>, String> {
+        crate::device_management::load(&self.0).await
+    }
+    pub async fn rename_device(self, id: String, name: String) -> Result<(), String> {
+        crate::device_management::rename(&self.0, &id, &name).await
+    }
+    pub async fn revoke_device(
+        self,
+        id: String,
+        response: Option<(
+            crate::device_management::Challenge,
+            crate::device_management::Reply,
+        )>,
+    ) -> Result<crate::device_management::Revocation, String> {
+        crate::device_management::revoke(&self.0, &id, response).await
+    }
     pub(crate) fn profile_changes(
         &self,
     ) -> tokio::sync::broadcast::Receiver<crate::account_profile::Details> {

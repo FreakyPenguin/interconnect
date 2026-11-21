@@ -29,6 +29,8 @@ mod conversation_history;
 mod create_room;
 #[path = "interconnect/demo.rs"]
 mod demo;
+#[path = "interconnect/devices.rs"]
+mod devices;
 #[path = "interconnect/dialog.rs"]
 mod dialog;
 #[path = "interconnect/downloads.rs"]
@@ -245,6 +247,7 @@ struct App {
     scroll_positions: HashMap<DraftKey, f32>,
     reading_positions: reading_positions::State,
     ignored_users: ignored_users::State,
+    devices: devices::State,
     pending_scroll: [Option<f32>; 2],
     timeline_metrics: [Option<(u64, u64, timeline::Metrics)>; 2],
     thread_activity: thread_activity::State,
@@ -354,6 +357,7 @@ enum Message {
     },
     ConversationHistory(bool),
     IgnoredUsers(ignored_users::Event),
+    Devices(devices::Event),
     OpenLastThread,
     ToggleNavigation,
     Focus(bool),
@@ -481,6 +485,7 @@ impl App {
             scroll_positions: HashMap::new(),
             reading_positions: Default::default(),
             ignored_users: Default::default(),
+            devices: Default::default(),
             pending_scroll: [None, None],
             timeline_metrics: [None, None],
             thread_activity: thread_activity::State::default(),
@@ -633,6 +638,7 @@ impl App {
         if outermost {
             // Early dialog handlers also invalidate covered inline confirmations.
             self.validate_queued_send();
+            self.validate_devices();
             task = Task::batch([task, self.refresh_message_highlights()]);
             if (notification_update || self.notification_history.dirty)
                 && !self.closing
@@ -663,6 +669,9 @@ impl App {
         if let Message::HighlightExpired(expired) = message {
             self.expire_message_highlight(expired);
             return Task::none();
+        }
+        if let Message::Devices(event) = message {
+            return self.devices_event(event);
         }
         if let Message::IgnoredUsers(event) = message {
             return self.ignored_users_event(event);

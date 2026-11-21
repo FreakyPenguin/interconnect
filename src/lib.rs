@@ -6,6 +6,7 @@ pub mod clipboard;
 pub mod composition;
 pub mod connected;
 pub mod custom_emoji;
+pub mod device_management;
 pub mod diagnostics;
 pub mod download;
 pub mod drafts;

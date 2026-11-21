@@ -22,6 +22,11 @@ for server permissions and writes.
 
 ## Layout and actions
 
+- **Settings → Devices** lists local demo devices on demand. Rename and revoke
+  confirmations preserve the conversation; the current device cannot be revoked.
+  Check long names/IDs, Light/Dark, compact width, and keyboard controls. Password
+  and browser UIAA require authorized connected acceptance; demo never opens them.
+
 - **Sidebar actions** offers adding the selected joined space to another writable
   space. The picker fits at 640×480, supports search/Enter/Escape, and excludes
   self/duplicate/cyclic links. Unlink follows the selected breadcrumb parent;

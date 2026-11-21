@@ -88,6 +88,36 @@ After an uncertain response or a concurrent profile change, Reload profile befor
 retrying. Uploading and publishing an avatar are separate operations, so a failed
 save may leave unused media. Demo changes remain in memory for that session.
 
+## Devices and sessions
+
+**Settings → Devices** loads your own devices from the homeserver when opened.
+The current device appears first with **This device**; names, IDs, and available
+last-seen times help identify the others. **Refresh devices** fetches a fresh list.
+There is no background polling. This list is separate from SAS verification;
+use the account menu's verification action to compare device keys.
+
+**Rename…** stages a name and **Rename device** applies it immediately, independently
+of the preferences toolbar Save. Names use 1–128 characters without control
+characters. **Revoke…** requires confirmation of the named device, then any
+homeserver authentication. Revocation signs out that device; it does not remotely
+erase its local data. This panel cannot revoke the current device; use **Sign out**.
+
+Password UIAA prompts accept your account password for this operation only.
+Browser UIAA stages open a fallback page on the authenticated homeserver after
+**Open authentication in browser**; finish there, then **Continue revoking**.
+Multiple stages and rejected passwords can prompt again. Opening a browser alone
+does not complete authentication. Some servers do not expose a fallback page or
+require OAuth-native approval; use another client if their stage cannot finish.
+Passwords, UIAA sessions, and authentication URLs are neither saved nor logged by
+the management code. Leaving this category, closing settings, account changes,
+or a covering dialog clears pending prompts/passwords. Submitted network writes
+finish for their captured device and account; closing a prompt cannot recall an
+accepted request. Refresh after errors or timeouts before retrying.
+
+Device changes preserve the open conversation, draft, and reading position.
+Demo uses an in-memory device list, without accounts, network calls, browser
+launches, or saved configuration changes.
+
 ## Ignored users
 
 Settings → Account → **Ignored users** manages the account-wide Matrix ignore list.

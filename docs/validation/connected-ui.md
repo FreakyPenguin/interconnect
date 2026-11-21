@@ -635,3 +635,31 @@ do not establish live-server interoperability, native prompts/fonts/IME/clipboar
 macOS behavior, GPU rendering, or CPU/wakeups. Record platform, build, renderer,
 and observations with acceptance results; keep private data and run artifacts out
 of this reference and version control.
+
+## Device and session management
+
+Automated mock-homeserver tests cover own-device listing, current-device labels,
+rename validation and exact request bodies, current-device revocation rejection,
+password/bad-password UIAA, multi-stage browser fallback acknowledgements, bounded
+dummy authentication, challenge identity/target binding, and fixed error messages.
+UI tests cover explicit target confirmation, demo isolation, preserved conversation
+and drafts/scroll, stale prompts/accounts/completions, covered/closed prompt cleanup,
+write bookkeeping, refresh after ambiguous failures, and secret Debug redaction.
+These tests do not make real account changes or launch a browser.
+
+Manual acceptance needs an authorized isolated account with a spare device:
+
+- Open Settings → Devices and compare names/IDs/last-seen times with another client.
+  Verify the current device is labelled and cannot be revoked. Rename it and a
+  spare device; Refresh and another client should show the new names.
+- Cancel a spare-device revocation; it must remain signed in. Confirm it, exercise
+  the server's password or browser UIAA (including rejection/retry), then verify
+  only that device loses its session. Keep this client's session and conversation.
+- Check a multi-stage flow if supported. UIAA fallback pages are server-dependent;
+  OAuth-native approvals are not implemented. Unsupported flows must not bypass
+  server authentication, and another client may be required.
+- Close/switch/cover the panel during prompts and pending requests, then reopen and
+  Refresh. Passwords/prompts must clear; admitted requests may already have applied.
+  Check offline/errors and account changes without publishing stale results.
+- Check Light/Dark, keyboard traversal, long device names/IDs, and 640×480 layout.
+  Native acceptance and real cross-device/server behavior remain manual.

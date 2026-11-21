@@ -9,7 +9,9 @@ builds are experimental.
 - No in-app account switching or account import/transfer. Separate accounts can
   use launch-time profiles via `--profile` or `--profile-path`; see
   [account profiles](settings.md#account-profiles). No legacy sync, password
-  changes/reset, account deactivation, or renaming/revoking other devices.
+  changes/reset or account deactivation. Settings → Devices supports device names
+  and revoking other sessions; some servers require an unavailable UIAA fallback
+  or OAuth-native approval flow and must be managed in another client.
 - No voice/video calls, polls UI, location sending/maps, voice recording, or in-app
   audio/video playback. Received calls/polls/locations/stickers use text fallbacks;
   audio/video attachments can be sent and opened externally.

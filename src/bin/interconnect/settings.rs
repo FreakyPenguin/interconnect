@@ -49,15 +49,17 @@ pub enum Category {
     Account,
     Notifications,
     Privacy,
+    Devices,
     Media,
     Advanced,
 }
 impl Category {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::General,
         Self::Account,
         Self::Notifications,
         Self::Privacy,
+        Self::Devices,
         Self::Media,
         Self::Advanced,
     ];
@@ -67,6 +69,7 @@ impl Category {
             Self::Account => "Account",
             Self::Notifications => "Notifications",
             Self::Privacy => "Privacy",
+            Self::Devices => "Devices",
             Self::Media => "Media & emoji",
             Self::Advanced => "Advanced",
         }
@@ -336,6 +339,12 @@ impl App {
             }
             Event::Category(category) if self.settings.draft.is_some() && !self.settings.saving => {
                 self.settings.category = category;
+                let devices = if category == Category::Devices {
+                    self.devices_event(super::devices::Event::Open)
+                } else {
+                    self.devices.dismiss();
+                    Task::none()
+                };
                 let profile = if category == Category::Account {
                     Task::batch([
                         self.account_profile_event(super::account_profile::Event::Open),
@@ -347,6 +356,7 @@ impl App {
                 };
                 return Task::batch([
                     profile,
+                    devices,
                     iced::widget::operation::snap_to(
                         "settings-body",
                         iced::widget::operation::RelativeOffset::START,
@@ -410,6 +420,7 @@ impl App {
                         self.settings.draft = None;
                         self.settings.profile.dismiss();
                         self.ignored_users.dismiss();
+                        self.devices.dismiss();
                         return self.update(*next);
                     }
                 }
@@ -432,6 +443,7 @@ impl App {
             Event::Cancel if !self.settings.saving => {
                 self.settings.profile.dismiss();
                 self.ignored_users.dismiss();
+                self.devices.dismiss();
                 self.settings.draft = None;
                 self.settings.confirm_discard = None;
                 return iced::widget::operation::focus(if self.selection.thread.is_some() {
@@ -638,6 +650,15 @@ impl App {
         }
         self.settings.current = settings;
     }
+    pub(super) fn devices_settings_available(&self) -> bool {
+        self.settings.draft.is_some()
+            && self.settings.category == Category::Devices
+            && !self.settings.busy
+            && !self.settings.saving
+            && self.settings.confirm_discard.is_none()
+            && !self.closing
+            && !self.stopped
+    }
     pub(super) fn ignored_users_available(&self) -> bool {
         self.settings.draft.is_some()
             && self.settings.category == Category::Account
@@ -662,6 +683,7 @@ impl App {
             self.settings.draft = None;
             self.settings.profile.dismiss();
             self.ignored_users.dismiss();
+            self.devices.dismiss();
             self.settings.confirm_discard = None;
             false
         }
@@ -920,6 +942,7 @@ impl App {
                 iced::widget::rule::horizontal(1),
                 self.ignored_users_view(available && self.settings.confirm_discard.is_none()),
             ].spacing(18),
+            Category::Devices => column![self.devices_view(available && self.settings.confirm_discard.is_none())],
             Category::Notifications => column![
                 shell::title("Desktop notifications", 14), notification_controls,
             ],
