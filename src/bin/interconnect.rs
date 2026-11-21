@@ -3616,7 +3616,10 @@ impl App {
                     root: root.into(),
                 },
             );
-            message_row = message_row.push(container(summary).id(format!("thread-entry:{root}")));
+            message_row = message_row.push(
+                container(container(summary).id(timeline::content_id(index)))
+                    .id(format!("thread-entry:{root}")),
+            );
             return container(message_row).id(timeline::row_id(index)).into();
         }
         let attachment_only = message
@@ -3646,24 +3649,17 @@ impl App {
         } else {
             body
         };
-        let mut entry = if activity {
-            column![tooltips::tooltip(
+        let body: Element<'_, Message> = if activity {
+            tooltips::tooltip(
                 body,
                 presentation::time_detail(message),
                 iced::widget::tooltip::Position::Top,
-            )]
-        } else if grouped {
-            column![body]
+            )
+            .into()
         } else {
-            column![
-                presentation::heading(
-                    message,
-                    self.sender_chat_action(message, thread, generation),
-                ),
-                body
-            ]
-            .spacing(4)
+            body
         };
+        let mut entry = column![body].spacing(if !activity && !grouped { 4 } else { 0 });
         if message.edited {
             entry = entry.push(text("edited").size(11).style(shell::muted_text));
         }
@@ -3744,6 +3740,19 @@ impl App {
             }
             entry = entry.push(container(replies).id(format!("thread-entry:{id}")));
         }
+        let content = container(entry).id(timeline::content_id(index));
+        let entry = if activity || grouped {
+            column![content]
+        } else {
+            column![
+                presentation::heading(
+                    message,
+                    self.sender_chat_action(message, thread, generation),
+                ),
+                content
+            ]
+            .spacing(4)
+        };
         let avatar: Element<'_, Message> = if activity {
             container(shell::activity_avatar(
                 &message.display_name,
@@ -5956,6 +5965,121 @@ mod tests {
             .operate(&mut tree, layout::Layout::new(&node), &renderer, &mut probe);
         assert_eq!(probe.rows, 1);
         assert!(probe.status.is_none());
+    }
+
+    #[test]
+    fn history_prepend_keeps_message_text_stable_when_date_and_sender_headers_change() {
+        use iced::advanced::{layout, widget};
+        #[derive(Default)]
+        struct Probe {
+            maximum: f32,
+            translation: f32,
+            origin: f32,
+            body: Option<f32>,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                self.maximum = (content.height - bounds.height).max(0.0);
+                self.translation = translation.y;
+                self.origin = bounds.y;
+            }
+            fn custom(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                state: &mut dyn std::any::Any,
+            ) {
+                if state
+                    .downcast_ref::<selectable::State>()
+                    .is_some_and(|state| state.id == "$reading")
+                {
+                    self.body = Some(bounds.y - self.origin - self.translation);
+                }
+            }
+        }
+        for count in [30, 180, 220] {
+            let mut app = demo_app();
+            let template = app.model.room.as_ref().unwrap().rows[0].clone();
+            let make_row = |i: i64| {
+                let mut row = template.clone();
+                row.key = if i == 0 {
+                    "$reading".into()
+                } else {
+                    format!("$history-{i}")
+                };
+                row.event_id = Some(row.key.clone());
+                row.body = "A stable line of message text.".into();
+                row.formatted = None;
+                row.timestamp_ms = Some(1_700_000_000_000 + i * 60_000);
+                row.thread_root = None;
+                row
+            };
+            let pane = app.model.room.as_mut().unwrap();
+            pane.rows = std::sync::Arc::new((0..count).map(&make_row).collect());
+            pane.read_boundary = None;
+            pane.history = History::Ready;
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+            let mut tree = widget::Tree::empty();
+            let render = |tree: &mut widget::Tree, app: &App, translation: Option<f32>| {
+                let mut view = app.pane(false);
+                tree.diff(view.as_widget());
+                let limits = layout::Limits::new(iced::Size::ZERO, iced::Size::new(600.0, 700.0));
+                let mut node = view.as_widget_mut().layout(tree, &renderer, &limits);
+                if let Some(translation) = translation {
+                    let mut probe = Probe::default();
+                    view.as_widget_mut().operate(
+                        tree,
+                        layout::Layout::new(&node),
+                        &renderer,
+                        &mut probe,
+                    );
+                    view.as_widget_mut().operate(
+                        tree,
+                        layout::Layout::new(&node),
+                        &renderer,
+                        &mut widget::operation::scrollable::scroll_to::<()>(
+                            "room-timeline".into(),
+                            iced::widget::operation::AbsoluteOffset {
+                                x: None,
+                                y: Some(probe.maximum - translation),
+                            },
+                        ),
+                    );
+                    node = view.as_widget_mut().layout(tree, &renderer, &limits);
+                }
+                let mut probe = Probe::default();
+                view.as_widget_mut().operate(
+                    tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    &mut probe,
+                );
+                probe
+            };
+            render(&mut tree, &app, Some(0.0));
+            let top = render(&mut tree, &app, None).body.unwrap();
+            let before = render(&mut tree, &app, Some(top + 10.0)).body.unwrap();
+            assert!((before + 10.0).abs() <= 1.0);
+            let pane = app.model.room.as_mut().unwrap();
+            let mut older: Vec<_> = (-20..0).map(&make_row).collect();
+            older.extend(pane.rows.iter().cloned());
+            pane.rows = std::sync::Arc::new(older);
+            let after = render(&mut tree, &app, None).body.unwrap();
+            assert!(
+                (after - before).abs() <= 1.0,
+                "message text moved from {before} to {after} with {count} rows"
+            );
+        }
     }
 
     #[test]

@@ -101,7 +101,12 @@ impl Projection {
             observed_keys: Arc::new(
                 keys.iter()
                     .enumerate()
-                    .map(|(i, key)| (super::timeline::row_id(i), key.clone()))
+                    .flat_map(|(i, key)| {
+                        [
+                            (super::timeline::row_id(i), key.clone()),
+                            (super::timeline::content_id(i), key.clone()),
+                        ]
+                    })
                     .collect(),
             ),
             indices: keys

@@ -232,7 +232,13 @@ saved/notification targets. Unknown row heights can adjust scrollbar geometry,
 but the visible event and its offset must remain stable through switching rooms,
 closing/reopening threads, pagination,
 resize/interface scaling, edits/redactions, media dimensions, and moving thread
-summaries. Drag a selection across multiple virtual windows in both directions,
+summaries. In particular, read the first loaded message with its text
+partly above the viewport, then fetch an older page from the same sender/day.
+The date divider and sender heading may regroup, but the text must stay at the
+same pixel offset. Repeat across the 192-row virtualization threshold and in a
+thread. The automated room fixture covers short histories, the threshold
+transition, and already virtualized histories; connected/native checks remain
+manual. Drag a selection across multiple virtual windows in both directions,
 then copy after both endpoints leave the viewport. Revealed spoilers stay revealed;
 hidden ones copy placeholders. Covering/unfocusing panes must retain existing
 read-receipt/media suppression: overscan never counts as actually viewed.

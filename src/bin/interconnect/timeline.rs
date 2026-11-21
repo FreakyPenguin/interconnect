@@ -168,6 +168,11 @@ struct Timeline<'a> {
 pub fn row_id(index: usize) -> widget::Id {
     widget::Id::from(format!("timeline-row-{index}"))
 }
+// The outer row supplies visibility/height; this inner point excludes changing
+// date dividers, sender headings, and grouping padding from relayout anchors.
+pub fn content_id(index: usize) -> widget::Id {
+    widget::Id::from(format!("timeline-content-{index}"))
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Metrics {
     pub height: f32,
@@ -190,6 +195,7 @@ struct Row {
     key: String,
     y: f32,
     height: f32,
+    content_y: f32,
 }
 #[derive(Clone)]
 struct Snapshot {
@@ -248,11 +254,19 @@ impl widget::Operation for Measure<'_> {
     }
     fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
         if let Some(key) = id.and_then(|id| self.keys?.get(id)) {
-            self.snapshot.rows.push(Row {
-                key: key.clone(),
-                y: bounds.y - self.origin,
-                height: bounds.height,
-            });
+            let y = bounds.y - self.origin;
+            // Both IDs map to the same event. Container traversal visits the
+            // outer row before its content, keeping visibility on the full row.
+            if let Some(row) = self.snapshot.rows.last_mut().filter(|row| &row.key == key) {
+                row.content_y = y;
+            } else {
+                self.snapshot.rows.push(Row {
+                    key: key.clone(),
+                    y,
+                    height: bounds.height,
+                    content_y: y,
+                });
+            }
         }
     }
 }
@@ -309,7 +323,7 @@ fn anchored_offset(previous: &Snapshot, current: &Snapshot) -> f32 {
         .find_map(|old| {
             current_rows
                 .get(old.key.as_str())
-                .map(|new| new.y - (old.y - previous.metrics.translation))
+                .map(|new| new.content_y - (old.content_y - previous.metrics.translation))
         })
         .unwrap_or(previous.metrics.translation);
     (current.metrics.maximum() - translation).clamp(0.0, current.metrics.maximum())
