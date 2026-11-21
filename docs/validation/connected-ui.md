@@ -231,6 +231,17 @@ thread composer focus, and unchanged space filter. Desktop acceptance remains
 manual. Confirm new navigation after Back clears Forward and dialogs/IME prevent
 history shortcuts from changing the covered conversation.
 
+Explicit message jumps from reply previews, message/file permalinks, notifications,
+saved messages, search results, and pins use the same static tint/outline. Check
+both room and thread panes, text and attachment-only messages, and light/dark
+appearance. The marker lasts three seconds after the loaded target first becomes
+visible; it does not animate. Repeated jumps replace the prior expiry, and obsolete
+callbacks cannot clear a newer target. Returning to a saved reading anchor does
+not start a marker. Expiry must preserve layout, drafts, text selection, and scroll.
+Automated tests cover target routing, delayed visibility/loading, stale expiry,
+light/dark rendered pixels with stable geometry, and file-message link styling.
+Desktop acceptance and connected unavailable-key/history cases remain manual.
+
 ### Links, pills, and permalinks
 
 - Check authored user/room labels and semantic pills for raw Matrix destinations,

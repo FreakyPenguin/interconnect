@@ -105,15 +105,9 @@ impl App {
         } else {
             self.select_room(source.room);
         }
-        let generation = if thread {
-            self.selection.thread.as_ref().unwrap().0
-        } else {
-            self.selection.room.as_ref().unwrap().0
-        };
         // Selecting again gives the asynchronous history view a new generation,
         // rejecting snapshots still arriving from the previous navigation.
-        self.selection.event_focus[usize::from(thread)] = Some((generation, event));
-        self.pending_scroll[usize::from(thread)] = None;
+        self.focus_message_event(thread, event);
         Task::none()
     }
     fn reply_jump_action(&self, row: &MessageRow, thread: bool) -> Option<Message> {

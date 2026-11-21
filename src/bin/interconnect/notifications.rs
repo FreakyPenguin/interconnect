@@ -9,8 +9,20 @@ impl App {
             return false;
         }
         match target {
-            Target::Conversation { room, .. } => {
+            Target::Conversation {
+                room,
+                thread,
+                event,
+            } => {
                 self.model.rooms.iter().any(|entry| &entry.id == room)
+                    && thread.as_ref().is_none_or(|thread| {
+                        self.demo.is_some()
+                            || thread.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()
+                    })
+                    && event.as_ref().is_none_or(|event| {
+                        self.demo.is_some()
+                            || event.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()
+                    })
             }
             Target::Invitation { room } => {
                 self.model.invitations.iter().any(|entry| &entry.id == room)
@@ -84,7 +96,12 @@ impl App {
         }
     }
     pub(super) fn open_notification(&mut self, target: &Target) -> bool {
-        let Target::Conversation { room, thread } = target else {
+        let Target::Conversation {
+            room,
+            thread,
+            event,
+        } = target
+        else {
             return false;
         };
         if !self.model.rooms.iter().any(|entry| &entry.id == room) {
@@ -103,15 +120,16 @@ impl App {
             .room
             .as_ref()
             .is_some_and(|(_, selected)| selected == room);
-        if !same_room {
+        if !same_room || (event.is_some() && thread.is_none()) {
             self.select_room(room.clone());
         }
         if let Some(root) = thread {
-            if self
-                .selection
-                .thread
-                .as_ref()
-                .is_none_or(|(_, open)| open != root)
+            if event.is_some()
+                || self
+                    .selection
+                    .thread
+                    .as_ref()
+                    .is_none_or(|(_, open)| open != root)
             {
                 self.select_thread(root.clone());
             }
@@ -120,6 +138,9 @@ impl App {
             self.visible_rows[1].clear();
             self.pending_scroll[1] = None;
             self.pending_scroll[0] = Some(self.saved_scroll(false));
+        }
+        if let Some(event) = event {
+            self.focus_message_event(thread.is_some(), event.clone());
         }
         if thread.is_none() {
             self.pending_room_focus = self
@@ -148,6 +169,7 @@ mod tests {
         let target = Target::Conversation {
             room: "threads".into(),
             thread: Some("thread-plan".into()),
+            event: None,
         };
         assert!(app.open_notification(&target));
         assert_eq!(app.selection.room.as_ref().unwrap().1, "threads");
@@ -164,7 +186,8 @@ mod tests {
         assert_eq!(app.saved_scroll(true), 90.0);
         assert!(app.open_notification(&Target::Conversation {
             room: "studio".into(),
-            thread: None
+            thread: None,
+            event: None,
         }));
         assert!(app.selection.thread.is_none());
         assert_eq!(app.saved_scroll(false), 210.0);
@@ -176,7 +199,8 @@ mod tests {
         let selected = app.selection.clone();
         assert!(!app.open_notification(&Target::Conversation {
             room: "left-room".into(),
-            thread: None
+            thread: None,
+            event: None,
         }));
         assert_eq!(app.selection, selected);
     }
@@ -195,6 +219,7 @@ mod activation_tests {
         let target = Target::Conversation {
             room: "threads".into(),
             thread: Some("thread-plan".into()),
+            event: None,
         };
         let activation = Arc::new(Activation::new(target.clone(), &session));
         let (control, backend) = tokio::sync::watch::channel(app.selection.clone());

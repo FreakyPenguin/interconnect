@@ -702,6 +702,7 @@ mod tests {
                 target: Target::Conversation {
                     room: "!room:example.org".into(),
                     thread: None,
+                    event: None,
                 },
                 timestamp: 42,
                 title: "Notification fixture".into(),

@@ -33,6 +33,8 @@ All screenshots and GIFs below use local sample data.
 - Manage ignored users in Account settings, or open those controls from People.
 - Click message, invitation, and verification notifications. The toolbar bell
   brings unread activity together with encrypted recent notification history.
+- Message jumps briefly highlight their destination, including reply previews,
+  notifications, and Matrix links to text or file messages.
 
 See [validation guidance](docs/validation/connected-ui.md) for automated coverage
 and connected desktop checks that still need manual validation.

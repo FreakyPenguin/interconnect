@@ -34,8 +34,12 @@ delivery failure. It runs separately from serial desktop delivery, with no polli
 or idle timer. History titles and bodies are bounded plain text; diagnostics omit
 their contents. Read flags and durable history belong to the app UI/storage layer.
 
-Clicks on message alerts open the room/thread, request focus/unminimize, and preserve
-space filter, drafts, and saved positions. Already-open targets keep their timeline.
+Clicks on message alerts open the exact event in its room/thread, request
+focus/unminimize, and preserve the space filter, drafts, and prior reading positions.
+Older message destinations load asynchronously. The destination receives a static
+three-second tint and outline after it becomes visible. Expiry removes only the
+visual marker. Legacy entries recover event IDs from their exact stored message
+identity where available; room-only targets retain conversation navigation.
 Invitation clicks review the current invitation; verification clicks review the
 current flow, without accepting or confirming it. Modals and pending pickers defer
 the latest click. Removed targets/session teardown invalidate clicks. Only the
@@ -112,7 +116,10 @@ Use a dedicated account and second client:
   muted rooms, preview opt-out, duplicates, pagination, reconnect, encrypted messages,
   pending permission, and shutdown.
 - Click room/thread alerts while minimized, in another space, and with drafts/older
-  positions. Verify target and state preservation, including already-open targets.
+  positions. Verify exact event targeting and highlight, including already-open
+  conversations and older encrypted events. Wait during history loading: the full
+  three-second marker starts on visibility. Repeated clicks restart feedback;
+  navigation/account changes reject old expiry callbacks.
 - Click with unsaved Settings, then close it: defer navigation. After leaving room,
   signing out, or quitting, clicks must not restore stale state. Sample must not navigate.
 - Restore cached pending invitations offline and connect with existing invitations:

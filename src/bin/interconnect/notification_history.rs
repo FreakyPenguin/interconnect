@@ -105,6 +105,16 @@ impl App {
             if self.pending_scroll[usize::from(thread)].is_some() {
                 return None;
             }
+            // An explicit event jump may load a live timeline before its first
+            // centered layout. Do not treat the previous zero offset as reading
+            // the newest messages while that destination is still settling.
+            if self.selection.event_focus[usize::from(thread)].is_some()
+                && self.timeline_metrics[usize::from(thread)].is_none_or(|(view, _, metrics)| {
+                    view != *generation || metrics.maximum() - metrics.translation > 1.0
+                })
+            {
+                return None;
+            }
             let pane = current_pane(
                 if thread {
                     &self.model.thread
@@ -130,7 +140,7 @@ impl App {
                 continue;
             }
             let read = match &record.entry.target {
-                Target::Conversation { room, thread } => {
+                Target::Conversation { room, thread, .. } => {
                     self.selection
                         .room
                         .as_ref()
@@ -184,6 +194,7 @@ mod tests {
             target: Target::Conversation {
                 room: "general".into(),
                 thread: None,
+                event: None,
             },
             timestamp,
             title: "Example room".into(),
@@ -337,6 +348,7 @@ mod tests {
         notice.target = Target::Conversation {
             room: app.selection.room.as_ref().unwrap().1.clone(),
             thread: None,
+            event: None,
         };
         publish(&mut app, vec![notice]);
         assert_eq!(app.notification_center.unread_count(), 1);

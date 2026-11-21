@@ -51,13 +51,7 @@ impl App {
         if let Some(root) = root {
             self.select_thread(root);
         }
-        let generation = if thread {
-            self.selection.thread.as_ref().unwrap().0
-        } else {
-            self.selection.room.as_ref().unwrap().0
-        };
-        self.selection.event_focus[usize::from(thread)] = Some((generation, event));
-        self.pending_scroll[usize::from(thread)] = None;
+        self.focus_message_event(thread, event);
         self.expanded_pins = None;
         iced::widget::operation::focus(if thread {
             "thread-composer"

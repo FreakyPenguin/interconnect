@@ -70,9 +70,8 @@ impl App {
     }
 
     pub(super) fn focus_link_event(&mut self, event: matrix_sdk::ruma::OwnedEventId) {
-        if let Some((generation, _)) = self.selection.room.as_ref() {
-            self.selection.event_focus[0] = Some((*generation, event.to_string()));
-            self.pending_scroll[0] = None;
+        if self.selection.room.is_some() {
+            self.focus_message_event(false, event.to_string());
             // Membership completions return before the ordinary update publication.
             if let Some(control) = &self.control {
                 control.send_if_modified(|selection| {

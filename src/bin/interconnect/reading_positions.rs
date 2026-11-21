@@ -34,6 +34,9 @@ impl State {
     }
 }
 impl App {
+    pub(super) fn clear_reading_anchor(&mut self, thread: bool) {
+        self.reading_positions.active[usize::from(thread)] = None;
+    }
     pub(super) fn restore_reading_anchor(&mut self, thread: bool, position: ReadingPosition) {
         let selected = if thread {
             &self.selection.thread

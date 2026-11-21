@@ -1332,6 +1332,7 @@ mod tests {
                 entry: interconnect::notifications::Entry {
                     id: format!("notification-{index}"),
                     target: interconnect::notifications::Target::Conversation {
+                        event: None,
                         room: "studio".into(),
                         thread: None,
                     },

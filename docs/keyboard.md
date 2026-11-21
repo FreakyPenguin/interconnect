@@ -26,6 +26,12 @@ Received reply previews are focusable buttons: Enter/Space opens the original
 message, loading older history when necessary. Thread replies open in their thread;
 its original root opens in the room timeline.
 
+Message destinations opened from reply previews, Matrix message/file links,
+notifications, saved messages, global search, and pins receive a static tint and
+outline for three seconds once visible. Highlight expiry does not change focus or
+scroll; navigating away cancels the old marker. Restored reading positions stay
+unmarked.
+
 Back/forward restores the room, open thread, and reading location without changing
 the selected space filter. History keeps up to 64 locations per direction during
 the session; opening another conversation after Back clears Forward.

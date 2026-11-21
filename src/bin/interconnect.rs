@@ -75,6 +75,8 @@ mod membership;
 mod message_delete;
 #[path = "interconnect/message_edit.rs"]
 mod message_edit;
+#[path = "interconnect/message_highlight.rs"]
+mod message_highlight;
 #[path = "interconnect/message_links.rs"]
 mod message_links;
 #[path = "interconnect/message_reply.rs"]
@@ -200,6 +202,7 @@ const MAX_PENDING_OPERATIONS: usize = 8;
 struct App {
     context_menu: Option<context_menu::State>,
     message_delete: Option<message_delete::State>,
+    message_highlight: message_highlight::State,
     deleting: HashSet<message_delete::Sending>,
     manual_unread_generation: Option<u64>,
     section_reorder: section_reorder::State,
@@ -295,6 +298,7 @@ enum Message {
     Reorder(section_reorder::Event),
     SectionsReordered(Option<String>, u64, Result<(), String>),
     OpenMessageLink(String),
+    HighlightExpired(message_highlight::Expired),
     FollowReplacement(tombstone::Target),
     LinkOpened,
     Bookmark(bookmarks::Event),
@@ -454,6 +458,7 @@ impl App {
             expanded_pins: None,
             context_menu: None,
             message_delete: None,
+            message_highlight: Default::default(),
             deleting: HashSet::new(),
             manual_unread_generation: None,
             section_reorder: Default::default(),
@@ -541,6 +546,7 @@ impl App {
                     target: NoticeTarget::Conversation {
                         room: "threads".into(),
                         thread: Some("review".into()),
+                        event: Some("review-reply-1".into()),
                     },
                     timestamp,
                     title: "Design review".into(),
@@ -615,6 +621,7 @@ impl App {
         if outermost {
             // Early dialog handlers also invalidate covered inline confirmations.
             self.validate_queued_send();
+            task = Task::batch([task, self.refresh_message_highlights()]);
             if (notification_update || self.notification_history.dirty)
                 && !self.closing
                 && !self.draft_persistence.close_requested
@@ -641,6 +648,10 @@ impl App {
         task
     }
     fn update_dispatch(&mut self, message: Message) -> Task<Message> {
+        if let Message::HighlightExpired(expired) = message {
+            self.expire_message_highlight(expired);
+            return Task::none();
+        }
         if let Message::IgnoredUsers(event) = message {
             return self.ignored_users_event(event);
         }
@@ -3972,6 +3983,8 @@ impl App {
             } else {
                 body
             };
+            let body =
+                self.destination_message(body, thread, *generation, message.event_id.as_deref());
             message_row = message_row.push(body);
             let mut message_row = container(message_row).id(timeline::row_id(index));
             if search_focus.as_deref() == Some(projected.key().as_str()) {
@@ -6536,6 +6549,7 @@ mod ux_navigation_tests {
         let target = interconnect::notifications::Target::Conversation {
             room: "general".into(),
             thread: None,
+            event: None,
         };
         let _ = app.update(Message::Notification(target.clone()));
         assert_eq!(app.selection.room, selection);

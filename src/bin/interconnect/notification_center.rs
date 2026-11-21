@@ -165,7 +165,7 @@ impl App {
                     .records
                     .iter()
                     .find(|record| record.entry.id == source.id)
-                    .map(|record| record.entry.target.clone())
+                    .map(|record| record.entry.destination())
                 else {
                     return Task::none();
                 };
@@ -434,6 +434,7 @@ mod tests {
                 NotificationTarget::Conversation {
                     room: "studio".into(),
                     thread: None,
+                    event: None,
                 },
                 false,
             ),
