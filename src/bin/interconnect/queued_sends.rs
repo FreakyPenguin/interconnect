@@ -96,7 +96,10 @@ impl App {
             && !self.queued_sends.pending.contains(&target.sending())
     }
     pub(super) fn queued_send_confirmation_open(&self) -> bool {
-        self.queued_sends.confirm.is_some()
+        self.queued_sends
+            .confirm
+            .as_ref()
+            .is_some_and(|target| self.queued_send_allowed(target))
     }
     pub(super) fn queued_send_pending(&self, transaction: &str) -> bool {
         self.queued_sends
@@ -109,7 +112,7 @@ impl App {
             .queued_sends
             .confirm
             .as_ref()
-            .is_some_and(|target| self.queued_send_row(target).is_none())
+            .is_some_and(|target| !self.queued_send_allowed(target))
         {
             self.queued_sends.confirm = None;
         }
@@ -316,6 +319,73 @@ mod tests {
             generation: app.selection.room.as_ref().unwrap().0,
             transaction: transaction.into(),
         }
+    }
+    #[test]
+    fn covered_confirmation_does_not_suppress_people_escape() {
+        use iced::advanced::subscription::{self, Event as RuntimeEvent};
+        use iced::futures::{FutureExt, StreamExt};
+        let mut app = demo_app();
+        let _ = app.update(Message::WindowFocused(true));
+        app.window_width = Some(400.0);
+        // A previously opened inline confirmation remains in state while a
+        // covering panel is being built; its generation is still the room's.
+        app.queued_sends.confirm = Some(target(&app, "fixture-transaction"));
+        let _ = app.members_event(super::super::members::Event::Open);
+        assert!(app.selection.members.is_some());
+        assert!(app.side_panel_replaces_room(400.0));
+        assert!(!app.queued_send_confirmation_open());
+        let outputs: Vec<_> = subscription::into_recipes(app.subscription())
+            .into_iter()
+            .filter_map(|recipe| {
+                recipe
+                    .stream(Box::pin(iced::futures::stream::iter([
+                        RuntimeEvent::Interaction {
+                            window: iced::window::Id::unique(),
+                            status: iced::event::Status::Captured,
+                            event: iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                                modified_key: iced::keyboard::Key::Named(
+                                    iced::keyboard::key::Named::Escape,
+                                ),
+                                physical_key: iced::keyboard::key::Physical::Unidentified(
+                                    iced::keyboard::key::NativeCode::Unidentified,
+                                ),
+                                location: iced::keyboard::Location::Standard,
+                                modifiers: iced::keyboard::Modifiers::empty(),
+                                text: None,
+                                repeat: false,
+                            }),
+                        },
+                    ])))
+                    .next()
+                    .now_or_never()
+                    .flatten()
+            })
+            .collect();
+        assert!(
+            outputs
+                .iter()
+                .any(|message| matches!(message, Message::Escape))
+        );
+        for message in outputs {
+            let _ = app.update(message);
+        }
+        assert!(
+            app.selection.members.is_none(),
+            "Escape closes the covering People panel"
+        );
+        assert!(app.queued_sends.confirm.is_none());
+    }
+    #[test]
+    fn settings_early_return_clears_hidden_queue_confirmation() {
+        let mut app = demo_app();
+        app.queued_sends.confirm = Some(target(&app, "fixture-transaction"));
+        let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+        assert!(app.settings.draft.is_some());
+        assert!(app.queued_sends.confirm.is_none());
+        assert!(!app.queued_send_confirmation_open());
+        let _ = app.update(Message::Escape);
+        assert!(app.settings.draft.is_none());
     }
     #[test]
     fn stale_confirmation_without_a_current_local_echo_cannot_cancel() {

@@ -537,6 +537,8 @@ impl App {
         // Sign-out can replace App, including its history state.
         self.conversation_history.depth = depth;
         if outermost {
+            // Early dialog handlers also invalidate covered inline confirmations.
+            self.validate_queued_send();
             if account != self.account_id
                 || (self.demo.is_none() && self.model.authentication.is_some())
             {
@@ -2293,7 +2295,6 @@ impl App {
             self.stop_typing();
         }
         self.validate_section_drag();
-        self.validate_queued_send();
         self.validate_message_delete();
         self.validate_redacted_edits();
         self.validate_context_menu();
