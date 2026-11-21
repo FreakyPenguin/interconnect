@@ -33,6 +33,16 @@ The reported operations are:
   the widget scroll operation and a full frame. These are scroll-frame costs,
   not measured input-to-display latency.
 
+Each record also reports the maximum mounted row count observed across rendered
+frames and the final loaded row count. They distinguish bounded widget rendering
+from retained SDK/model history. Small conversations up to 192 projected rows
+use exact full layout; larger histories mount an overscanned window.
+
+Scroll samples now include the corrective relayout following the native scroll
+operation, matching the widget lifecycle needed for newly mounted rows. Older
+captures without that relayout undercount scroll work and are not identical
+workloads. Viewport/counter probes add a small bounded traversal as well.
+
 Median, nearest-rank p95, and maximum are reported in milliseconds. The JSON
 header records revision, dirty state, platform, Rust version, renderer, and
 profile. Samples follow in separate JSON records; compare runs individually

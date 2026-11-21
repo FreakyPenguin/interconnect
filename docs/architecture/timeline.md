@@ -17,7 +17,9 @@ each direction. Unknown rows begin with estimated heights; a Fenwick prefix
 index resolves pixel positions and incorporates measured corrections. Heights
 survive source updates by key. Reflow measures only mounted rows; unmounted
 measurements remain estimates until revisited. A bounded convergence loop fills
-the overscan after estimates change. Rows share widget state by key while
+the overscan after estimates change. A populated window is reused until the
+viewport approaches its buffer boundary, avoiding unnecessary cold shaping on
+small scrolls. Rows share widget state by key while
 mounted and release heavy state as they leave the window.
 
 The timeline observer captures the first actually visible event and its screen

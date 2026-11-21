@@ -43,14 +43,16 @@ struct Heights {
 }
 impl Heights {
     fn new(values: Vec<f32>) -> Self {
-        let mut result = Self {
-            sums: vec![0.0; values.len() + 1],
-            values: vec![0.0; values.len()],
-        };
-        for (index, value) in values.into_iter().enumerate() {
-            result.set(index, value);
+        let values: Vec<_> = values.into_iter().map(|value| value.max(1.0)).collect();
+        let mut sums = vec![0.0; values.len() + 1];
+        for index in 1..sums.len() {
+            sums[index] += values[index - 1];
+            let parent = index + (index & index.wrapping_neg());
+            if parent < sums.len() {
+                sums[parent] += sums[index];
+            }
         }
-        result
+        Self { sums, values }
     }
     fn set(&mut self, index: usize, value: f32) {
         let value = value.max(1.0);
@@ -116,14 +118,9 @@ impl State {
             .collect();
         self.keys = keys.clone();
     }
-    fn range(&self, view: &Viewport) -> Range<usize> {
-        // Small conversations keep exact geometry, including existing tests and
-        // short histories whose entire layout is cheaper than virtualization.
-        if self.keys.len() <= 192 {
-            return 0..self.keys.len();
-        }
+    fn top(&self, view: &Viewport) -> f32 {
         let height = view.height.max(100.0);
-        let top = if let Some(target) = view.target {
+        if let Some(target) = view.target {
             self.heights.prefix(target) - height * 0.5
         } else if let Some((key, offset)) = &view.anchor {
             self.indices
@@ -134,9 +131,43 @@ impl State {
         } else {
             self.heights.total() - height - view.offset
         }
-        .max(0.0);
+        .max(0.0)
+    }
+    fn desired_range(&self, view: &Viewport) -> Range<usize> {
+        if self.keys.len() <= 192 {
+            return 0..self.keys.len();
+        }
+        let height = view.height.max(100.0);
+        let top = self.top(view);
         self.heights.at((top - 2.0 * height).max(0.0))
             ..(self.heights.at(top + 3.0 * height) + 1).min(self.keys.len())
+    }
+    fn range(&self, view: &Viewport) -> Range<usize> {
+        if self.keys.len() <= 192 {
+            return 0..self.keys.len();
+        }
+        if view.target.is_none()
+            && let (Some(first), Some(last)) = (
+                self.mounted.first().and_then(|key| self.indices.get(key)),
+                self.mounted.last().and_then(|key| self.indices.get(key)),
+            )
+        {
+            let height = view.height.max(100.0);
+            let top = self.top(view);
+            let start = self.heights.prefix(*first);
+            let end = self.heights.prefix(*last + 1);
+            let newest_mounted = view.offset > 1.0 || *last + 1 == self.keys.len();
+            if last >= first
+                && *last + 1 - *first == self.mounted.len()
+                && newest_mounted
+                && (*first == 0 || top >= start + height * 0.5)
+                && (*last + 1 == self.keys.len() || top + height <= end - height * 0.5)
+                && end - start <= height * 8.0
+            {
+                return *first..*last + 1;
+            }
+        }
+        self.desired_range(view)
     }
 }
 
@@ -189,6 +220,7 @@ impl Widget<Message, Theme, Renderer> for Rows<'_> {
                 .collect();
             self.children.clear();
             nodes.clear();
+            let mut changed = false;
             for index in range.clone() {
                 let mut row = (self.row)(index);
                 let key = &self.keys[index];
@@ -199,13 +231,18 @@ impl Widget<Message, Theme, Renderer> for Rows<'_> {
                     renderer,
                     &layout::Limits::new(Size::ZERO, Size::new(limits.max().width, f32::INFINITY)),
                 );
+                changed |= (state.heights.values[index] - node.size().height).abs() > 0.5;
                 state.heights.set(index, node.size().height);
                 state.mounted.push(key.clone());
                 self.children.push(row);
                 tree.children.push(child);
                 nodes.push(node);
             }
-            let next = state.range(&self.viewport.borrow());
+            let next = if changed {
+                state.desired_range(&self.viewport.borrow())
+            } else {
+                state.range(&self.viewport.borrow())
+            };
             if next == range {
                 break;
             }
@@ -394,6 +431,7 @@ mod tests {
         );
         let previous = tree.state.downcast_ref::<State>().mounted.clone();
         calls.set(0);
+        viewport.borrow_mut().offset = 100.0;
         rows.as_widget_mut().layout(&mut tree, &renderer, &limits);
         assert_eq!(previous, tree.state.downcast_ref::<State>().mounted);
         assert_eq!(calls.get(), tree.children.len());

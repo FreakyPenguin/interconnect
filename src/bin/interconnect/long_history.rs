@@ -62,6 +62,8 @@ struct Frame {
     renderer: iced::Renderer,
     pixels: tiny_skia::Pixmap,
     mask: tiny_skia::Mask,
+    peak_mounted: usize,
+    loaded: usize,
 }
 impl Frame {
     fn new() -> Self {
@@ -70,6 +72,8 @@ impl Frame {
             renderer: super::test_renderer(Font::with_name("Inter"), iced::Pixels(14.0)),
             pixels: tiny_skia::Pixmap::new(1280, 800).unwrap(),
             mask: tiny_skia::Mask::new(1280, 800).unwrap(),
+            peak_mounted: 0,
+            loaded: 0,
         }
     }
     /// Measure view construction, diff/layout, optional scroll operation, drawing,
@@ -79,7 +83,7 @@ impl Frame {
         self.renderer.reset(bounds);
         let mut view = app.view();
         self.tree.diff(view.as_widget());
-        let node = view.as_widget_mut().layout(
+        let mut node = view.as_widget_mut().layout(
             &mut self.tree,
             &self.renderer,
             &layout::Limits::new(size, size),
@@ -98,6 +102,40 @@ impl Frame {
                 ),
             );
         }
+        if scroll.is_some() {
+            node = view.as_widget_mut().layout(
+                &mut self.tree,
+                &self.renderer,
+                &layout::Limits::new(size, size),
+            );
+        }
+        #[derive(Default)]
+        struct Count(super::virtual_rows::Stats);
+        impl widget::Operation for Count {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn custom(
+                &mut self,
+                _: Option<&widget::Id>,
+                _: Rectangle,
+                state: &mut dyn std::any::Any,
+            ) {
+                if let Some(stats) = state.downcast_ref::<super::virtual_rows::Stats>() {
+                    self.0.mounted += stats.mounted;
+                    self.0.loaded += stats.loaded;
+                }
+            }
+        }
+        let mut count = Count::default();
+        view.as_widget_mut().operate(
+            &mut self.tree,
+            Layout::new(&node),
+            &self.renderer,
+            &mut count,
+        );
+        self.peak_mounted = self.peak_mounted.max(count.0.mounted);
+        self.loaded = count.0.loaded;
         view.as_widget().draw(
             &self.tree,
             &mut self.renderer,
@@ -196,12 +234,23 @@ fn measure() {
         scroll.push(started.elapsed().as_secs_f64() * 1000.0);
     }
     let settled = rss_kib();
+    let mounted = frame.peak_mounted;
+    let loaded_rows = frame.loaded;
+    assert_eq!(
+        loaded_rows,
+        count + samples,
+        "rendering must retain all loaded events"
+    );
+    assert!(
+        mounted <= 192,
+        "the mixed-history fixture must keep widget state bounded"
+    );
     drop(frame);
     drop(app);
     println!(
         "LONG_HISTORY {}",
         serde_json::json!({
-            "events": count, "samples": samples, "optimized": !cfg!(debug_assertions),
+            "events": count, "peak_mounted_rows": mounted, "loaded_rows": loaded_rows, "samples": samples, "optimized": !cfg!(debug_assertions),
             "initial_ms": initial_ms, "append": summarize(append), "resize": summarize(resize), "scroll": summarize(scroll),
             "rss_kib": { "baseline": baseline, "fixture": fixture, "loaded": loaded, "settled": settled, "after_drop": rss_kib() },
         })

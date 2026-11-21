@@ -45,7 +45,10 @@ def main():
             env = dict(os.environ, INTERCONNECT_HISTORY_EVENTS=str(count),
                        INTERCONNECT_HISTORY_SAMPLES=str(args.samples))
             result = subprocess.run(command, cwd=root, env=env, text=True,
-                                    stdout=subprocess.PIPE, check=True)
+                                    stdout=subprocess.PIPE, check=False)
+            if result.returncode:
+                sys.stderr.write(result.stdout)
+                raise SystemExit(result.returncode)
             lines = [line.split("LONG_HISTORY ", 1)[1] for line in result.stdout.splitlines()
                      if "LONG_HISTORY " in line]
             if len(lines) != 1:
