@@ -122,11 +122,7 @@ impl App {
             }
             Event::Close if self.notification_center.open && available => {
                 self.notification_center.close();
-                return iced::widget::operation::focus(if self.selection.thread.is_some() {
-                    "thread-composer"
-                } else {
-                    "room-composer"
-                });
+                return self.request_composer_focus(self.selection.thread.is_some());
             }
             Event::Tab(tab) if self.notification_center.open && available => {
                 self.notification_center.tab = tab

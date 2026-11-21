@@ -110,7 +110,7 @@ impl App {
             }
             Event::Close => {
                 self.room_search = State::default();
-                return iced::widget::operation::focus("room-composer");
+                return self.request_composer_focus(false);
             }
             Event::Edit(query) if self.room_search.open => {
                 self.room_search.query = query;
@@ -148,6 +148,7 @@ impl App {
                 )
                 .padding(0)
                 .style(shell::icon_button)
+                .keyboard_navigation(true)
                 .on_press(message(Event::Open)),
             )
             .id("room-search-button"),
@@ -176,10 +177,12 @@ impl App {
                 matches.len()
             )
         };
-        let mut previous =
-            button(super::icons::icon(super::icons::Kind::ArrowUp)).style(shell::icon_button);
-        let mut next =
-            button(super::icons::icon(super::icons::Kind::ArrowDown)).style(shell::icon_button);
+        let mut previous = button(super::icons::icon(super::icons::Kind::ArrowUp))
+            .style(shell::icon_button)
+            .keyboard_navigation(true);
+        let mut next = button(super::icons::icon(super::icons::Kind::ArrowDown))
+            .style(shell::icon_button)
+            .keyboard_navigation(true);
         if !matches.is_empty() {
             previous = previous.on_press(message(Event::Step(true)));
             next = next.on_press(message(Event::Step(false)));
@@ -204,6 +207,7 @@ impl App {
                 super::tooltips::tooltip(next, "Next match", tooltip::Position::Bottom),
                 super::tooltips::tooltip(
                     button(super::icons::icon(super::icons::Kind::Close))
+                        .keyboard_navigation(true)
                         .style(shell::icon_button)
                         .on_press(message(Event::Close)),
                     "Close search · Escape",

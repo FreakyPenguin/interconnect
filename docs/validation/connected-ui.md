@@ -290,6 +290,18 @@ Desktop acceptance and connected unavailable-key/history cases remain manual.
 
 ### Deferred composer focus
 
+- Follow account-search and saved-message results to an unloaded room. Wait for
+  its matching pane and type: the destination composer must receive input once,
+  preserving the old draft and scroll position. Repeat after returning from
+  Search, Saved messages, or Notifications while the original pane is loading.
+  Tab/F6, IME, another dialog/native picker, unfocus, and navigation must cancel
+  delayed focus. Room settings and draft-close/sign-out prompts also cover focus.
+- Tab from account-search input through Search to the room selector; use arrows
+  to change its selection. In-room search exposes Previous, Next, and Close to
+  keyboard traversal. Existing widget typing tests plus new delayed-result,
+  cover-return, interruption, and dropdown tests exercise the automated path;
+  actual desktop/IME timing and macOS behavior remain manual.
+
 Open a thread with Alt+T while its messages are still loading, then type after
 arrival: input must reach the thread composer and leave the room draft intact.
 Before arrival, switch rooms, close the thread, press F6/Tab, focus the room filter,

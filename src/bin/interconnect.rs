@@ -2763,6 +2763,7 @@ impl App {
         self.selection.members = None;
         self.selection.event_focus = Default::default();
         self.selection.room = Some((self.generation, id));
+        self.pending_room_focus = Some(self.generation);
         self.selection.thread = None;
         self.pending_scroll = [Some(self.saved_scroll(false)), None];
         self.restore_saved_reading_anchor(false);

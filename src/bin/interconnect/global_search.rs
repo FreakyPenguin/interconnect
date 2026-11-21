@@ -320,11 +320,7 @@ impl App {
                     Some(self.saved_scroll(false)),
                     Some(self.saved_scroll(true)),
                 ];
-                return iced::widget::operation::focus(if self.selection.thread.is_some() {
-                    "thread-composer"
-                } else {
-                    "room-composer"
-                });
+                return self.request_composer_focus(self.selection.thread.is_some());
             }
             Event::Edit(query) if self.global_search.open => {
                 self.global_search.invalidate();
@@ -790,6 +786,7 @@ impl App {
         let room_filter = pick_list(rooms, Some(&state.filter_room), |room| {
             message(Event::Room(room))
         })
+        .keyboard_navigation(true)
         .placeholder("All rooms")
         .text_size(12)
         .width(Length::Fill);
@@ -1375,6 +1372,104 @@ mod tests {
         assert_eq!(state.hits.len(), MAX_RESULTS);
         assert_eq!(state.hits[0].timestamp_ms, 299);
         assert_eq!(state.hits.last().unwrap().timestamp_ms, 100);
+    }
+
+    #[test]
+    fn room_filter_is_reachable_by_tab_and_accepts_keyboard_selection() {
+        use iced::advanced::{Shell, layout, mouse, widget};
+        let mut app = demo_app();
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::Edit("needle".into())));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = iced::Size::new(900.0, 700.0);
+        let mut view = app.global_search_view();
+        let mut tree = widget::Tree::new(&view);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        view.as_widget_mut().operate(
+            &mut tree,
+            layout::Layout::new(&node),
+            &renderer,
+            &mut widget::operation::focusable::focus::<()>("global-message-search".into()),
+        );
+        for _ in 0..2 {
+            let mut operation: Box<dyn widget::Operation> =
+                Box::new(widget::operation::focusable::focus_next::<()>());
+            loop {
+                view.as_widget_mut().operate(
+                    &mut tree,
+                    layout::Layout::new(&node),
+                    &renderer,
+                    operation.as_mut(),
+                );
+                if let widget::operation::Outcome::Chain(next) = operation.finish() {
+                    operation = next;
+                } else {
+                    break;
+                }
+            }
+        }
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        view.as_widget_mut().update(
+            &mut tree,
+            &iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown),
+                modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers: iced::keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            }),
+            layout::Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut shell,
+            &iced::Rectangle::with_size(size),
+        );
+        assert!(shell.is_event_captured());
+        assert!(messages.iter().any(|message| matches!(message, Message::GlobalSearch(Event::Room(room)) if room.id.is_some())));
+    }
+
+    #[test]
+    fn a_room_result_requests_delayed_focus_and_respects_later_keyboard_focus_changes() {
+        for interrupt in [false, true] {
+            let mut app = demo_app();
+            let _ = app.update(Message::WindowFocused(true));
+            let _ = app.update(message(Event::Open));
+            let epoch = app.global_search.epoch;
+            deliver(
+                &mut app,
+                epoch,
+                None,
+                true,
+                vec![sample("home", "$result", "needle")],
+                None,
+            );
+            app.demo = None;
+            app.model.authentication = None;
+            let _ = app.update(message(Event::Conversation(
+                epoch,
+                "home".into(),
+                "$result".into(),
+            )));
+            let generation = app.selection.room.as_ref().unwrap().0;
+            assert_eq!(app.pending_room_focus, Some(generation));
+            if interrupt {
+                let _ = app.update(Message::Focus(false));
+            }
+            let mut snapshot = app.model.clone();
+            snapshot.room.as_mut().unwrap().generation = generation;
+            app.pending_scroll = [None, None];
+            let task = app.update(Message::State(Box::new(snapshot)));
+            assert_eq!(task.units(), usize::from(!interrupt));
+            assert!(app.pending_room_focus.is_none());
+        }
     }
 
     #[test]

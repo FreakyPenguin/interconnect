@@ -317,6 +317,12 @@ impl App {
 
     pub(super) fn validate_room_focus(&mut self) {
         let blocked = !self.window_focused
+            || self.composing
+            || self.draft_persistence.close_requested
+            || self.sign_out_open
+            || self.attachment_picker.is_some()
+            || self.clipboard_paste.is_some()
+            || self.room_settings.is_open()
             || self.closing
             || self.stopped
             || self.room_picker.is_some()
@@ -398,6 +404,26 @@ impl App {
             }
             .into(),
         ))
+    }
+
+    pub(super) fn request_composer_focus(&mut self, thread: bool) -> Task<Message> {
+        self.pending_room_focus = if thread {
+            None
+        } else {
+            self.selection
+                .room
+                .as_ref()
+                .map(|(generation, _)| *generation)
+        };
+        self.pending_thread_focus = if thread {
+            self.selection
+                .thread
+                .as_ref()
+                .map(|(generation, _)| *generation)
+        } else {
+            None
+        };
+        self.restore_room_focus()
     }
 
     pub(super) fn restore_room_focus(&mut self) -> Task<Message> {
@@ -1249,6 +1275,44 @@ mod tests {
         assert_eq!(app.drafts[&original].content.text(), "other draft");
         assert_eq!(app.scroll_positions, scroll);
         assert!(app.take_room_focus().is_none());
+    }
+
+    #[test]
+    fn saved_message_jumps_and_cover_returns_defer_focus_until_the_destination_arrives() {
+        for source in ["saved", "search close", "notifications close"] {
+            let (mut app, mut pane) = loading_room(false);
+            match source {
+                "saved" => {
+                    app.bookmarks.open = true;
+                    let _ = app.update(Message::Bookmark(crate::bookmarks::Event::Conversation(
+                        interconnect::bookmarks::Pointer {
+                            room_id: "home".into(),
+                            event_id: "$saved".into(),
+                            via: Vec::new(),
+                        },
+                    )));
+                    pane.generation = app.selection.room.as_ref().unwrap().0;
+                }
+                "search close" => {
+                    let _ = app.update(Message::GlobalSearch(crate::global_search::Event::Open));
+                    let _ = app.update(Message::GlobalSearch(crate::global_search::Event::Close));
+                }
+                "notifications close" => {
+                    let _ = app.update(Message::NotificationCenter(
+                        crate::notification_center::Event::Open,
+                    ));
+                    let _ = app.update(Message::NotificationCenter(
+                        crate::notification_center::Event::Close,
+                    ));
+                }
+                _ => unreachable!(),
+            }
+            assert_eq!(app.pending_room_focus, Some(pane.generation), "{source}");
+            assert!(app.take_room_focus().is_none());
+            app.model.room = Some(pane);
+            assert!(app.take_room_focus().is_some(), "{source}");
+            assert!(app.take_room_focus().is_none());
+        }
     }
 
     fn loading_thread() -> (App, super::super::Pane) {

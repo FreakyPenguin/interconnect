@@ -48,7 +48,9 @@ Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
 the previous match; account-search Enter submits. Account-wide search can filter
 by joined room, exact Matrix sender ID, and inclusive From/Through dates (UTC).
 Changing a filter clears the current results; press Enter or Search to submit.
-Filters also apply to older encrypted history and subsequent server pages.
+Filters also apply to older encrypted history and subsequent server pages. Tab
+reaches the room selector; arrows select a room. In-room search match arrows and
+Close are also keyboard accessible.
 
 Room topic: activate its caret or styled header snippet to expand/collapse the
 full formatted topic below the header. The conversation stays interactive;
@@ -83,7 +85,9 @@ ancestors in overflow. Include subspaces is beside the sidebar filter.
 Expansion/focus alone does not select a space. Account menu supports arrows,
 Tab/Shift+Tab, Enter/Space, and Escape.
 
-Thread navigation waits for the matching pane before focusing its composer.
+Room and thread navigation, including search/saved-message jumps, waits for the
+matching pane before focusing its composer. Returning from Search, Saved messages,
+or Notifications also defers focus if that pane is still loading.
 Changing focus, opening a dialog, or leaving the thread cancels delayed focus.
 Closing Saved messages or dismissing a message/link menu returns focus to the
 corresponding room or thread composer.
