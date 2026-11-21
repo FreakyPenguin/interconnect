@@ -1,5 +1,8 @@
 #![recursion_limit = "256"]
 pub mod account_profile;
+pub mod activation;
+#[cfg(target_os = "macos")]
+pub mod activation_macos;
 pub mod attachment;
 pub mod bookmarks;
 pub mod clipboard;
