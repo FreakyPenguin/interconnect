@@ -246,7 +246,7 @@ impl App {
                 (start.saturating_sub(usize::from(start > 0 && width >= 500.0))..length)
                     .map(crumb_id),
             )
-            .chain([ACCOUNT.into()])
+            .chain(["notification-bell".into(), ACCOUNT.into()])
             .collect()
     }
     fn child_spaces(&self, parent: &[String]) -> Vec<String> {
@@ -374,6 +374,7 @@ impl App {
                     "room-search".into(),
                     "room-composer".into(),
                     "thread-composer".into(),
+                    "notifications-unread".into(),
                 ]);
                 ids.extend(
                     [
@@ -410,6 +411,16 @@ impl App {
             Event::CycleFrom(current, backwards) => {
                 self.stop_typing();
                 self.shell.spaces.menu = None;
+                if self.notification_center.open {
+                    return if current
+                        .as_deref()
+                        .is_some_and(|id| self.trail_ids().iter().any(|candidate| candidate == id))
+                    {
+                        focus("notifications-unread")
+                    } else {
+                        focus(self.location_focus())
+                    };
+                }
                 let region = current.as_deref().map_or(2, |id| {
                     if self.trail_ids().iter().any(|candidate| candidate == id) {
                         0
@@ -789,6 +800,7 @@ impl App {
                 // Give the breadcrumb trail the width between the fixed controls.
                 container(trail).width(Length::Fill).clip(true),
                 demo,
+                self.notification_bell(),
                 account
             ]
             .spacing(6)
@@ -1270,6 +1282,7 @@ mod tests {
         struct Probe {
             toggle: Option<iced::Rectangle>,
             home: Option<iced::Rectangle>,
+            bell: Option<iced::Rectangle>,
             account: Option<iced::Rectangle>,
             crumbs: Vec<iced::Rectangle>,
         }
@@ -1294,6 +1307,9 @@ mod tests {
                 if id == Some(&"account-menu-button".into()) {
                     self.account = Some(bounds);
                 }
+                if id == Some(&"notification-bell-button".into()) {
+                    self.bell = Some(bounds);
+                }
                 for index in 0..3 {
                     if id == Some(&crumb_id(index).into()) {
                         self.crumbs.push(bounds);
@@ -1311,6 +1327,21 @@ mod tests {
             .find(|s| s.id == "grandchild")
             .unwrap()
             .name = "Current space with a longer name".into();
+        app.notification_center.records = (0..128)
+            .map(|index| interconnect::notifications::Record {
+                entry: interconnect::notifications::Entry {
+                    id: format!("notification-{index}"),
+                    target: interconnect::notifications::Target::Conversation {
+                        room: "studio".into(),
+                        thread: None,
+                    },
+                    timestamp: 0,
+                    title: "Unread notification".into(),
+                    body: String::new(),
+                },
+                read: false,
+            })
+            .collect();
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         for width in [320.0, 640.0, 800.0, 1400.0] {
             let size = iced::Size::new(width, 56.0);
@@ -1328,6 +1359,7 @@ mod tests {
             );
             let home = probe.home.unwrap();
             let account = probe.account.unwrap();
+            let bell = probe.bell.unwrap();
             let toggle = probe.toggle.unwrap();
             assert!(toggle.width >= 20.0 && toggle.x < 30.0);
             assert!(home.width >= 20.0 && home.x >= toggle.x + toggle.width);
@@ -1342,8 +1374,8 @@ mod tests {
             );
             let current = probe.crumbs.last().unwrap();
             assert!(
-                current.x + current.width < account.x,
-                "current location overlaps the account at {width}"
+                current.x + current.width < bell.x && bell.x + bell.width <= account.x,
+                "notification bell overlaps the breadcrumb/account at {width}"
             );
             if width >= 800.0 {
                 assert!(

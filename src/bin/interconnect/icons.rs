@@ -54,6 +54,7 @@ pub(super) enum Kind {
     Attach,
     Image,
     Eye,
+    Bell,
 }
 
 pub(super) fn icon<'a, Message: 'a>(kind: Kind) -> Element<'a, Message> {
@@ -134,6 +135,22 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
             };
             use Kind::*;
             match self.kind {
+                Bell => {
+                    line(&[(5.0, 17.0), (6.0, 14.0), (6.0, 9.0)]);
+                    line(&[(18.0, 9.0), (18.0, 14.0), (19.0, 17.0), (5.0, 17.0)]);
+                    line(&[(10.0, 21.0), (14.0, 21.0)]);
+                    frame.stroke(
+                        &Path::new(|p| {
+                            p.move_to(Point::new(6.0, 9.0));
+                            p.bezier_curve_to(
+                                Point::new(6.0, 1.0),
+                                Point::new(18.0, 1.0),
+                                Point::new(18.0, 9.0),
+                            );
+                        }),
+                        stroke,
+                    );
+                }
                 Home => {
                     line(&[(3.0, 10.0), (12.0, 3.0), (21.0, 10.0)]);
                     line(&[

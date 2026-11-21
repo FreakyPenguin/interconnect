@@ -71,6 +71,22 @@ Changing focus, opening a dialog, or leaving the thread cancels delayed focus.
 Closing Saved messages or dismissing a message/link menu returns focus to the
 corresponding room or thread composer.
 
+## Notifications
+
+The bell to the left of your account avatar opens Notifications. Its badge counts
+unread entries. The screen opens on **Unread**; **History** also includes entries
+marked read. Filter by Messages, Invitations, or Verification.
+
+Tab/Shift+Tab traverse the screen; Enter/Space activate a focused entry or control.
+F6/Shift+F6 move between the breadcrumb bar and the notification screen.
+Escape returns to the conversation with its drafts and reading positions intact.
+Opening an entry goes to its conversation/thread, invitation review, or device
+verification prompt. Invitations and verification still need your explicit choice.
+Unavailable entries remain in History and can still be marked read or unread.
+
+**Mark read**, **Mark unread**, and **Mark all read** affect this notification list;
+they do not send conversation read receipts.
+
 ## Composition
 
 | Shortcut | Action |
