@@ -1,5 +1,5 @@
 //! On-demand backwards pagination, separate from the selected UI timelines.
-use super::{Hit, Service};
+use super::{Filters, Hit, Service};
 use matrix_sdk::{
     RoomState,
     room::MessagesOptions,
@@ -52,11 +52,27 @@ impl Service {
         query: String,
         cursor: Option<HistoryCursor>,
     ) -> Result<HistoryPage, String> {
+        self.history_page_filtered(query, cursor, Filters::default())
+            .await
+    }
+
+    pub async fn history_page_filtered(
+        self,
+        query: String,
+        cursor: Option<HistoryCursor>,
+        filters: Filters,
+    ) -> Result<HistoryPage, String> {
         let mut cursor = cursor.unwrap_or_else(|| {
             let mut rooms: Vec<_> = self
                 .0
                 .joined_rooms()
                 .into_iter()
+                .filter(|room| {
+                    filters
+                        .room
+                        .as_deref()
+                        .is_none_or(|id| id == room.room_id().as_str())
+                })
                 .filter(|room| !room.is_space() && !crate::bookmarks::is_bookmarks_room(room))
                 .filter(|room| {
                     room.encryption_state().is_encrypted() || room.encryption_state().is_unknown()
@@ -167,11 +183,13 @@ impl Service {
                 room: current.room.clone(),
                 event: event.event_id.to_string(),
                 sender: event.sender.to_string(),
+                sender_id: event.sender.to_string(),
                 body,
                 thread_root,
                 timestamp_ms: u64::from(event.origin_server_ts.get()).min(i64::MAX as u64) as i64,
             });
         }
+        hits.retain(|hit| filters.matches(hit));
         // Tokens may advance through empty pages. Track cycles so a broken
         // homeserver cannot make an explicit scan loop forever.
         if let Some(next) = response.end.filter(|token| {
@@ -416,6 +434,53 @@ mod tests {
         assert_eq!(second.cursor.finished, 1);
         assert_eq!(second.cursor.missing_keys, 1);
         assert_eq!(second.cursor.scanned, 2);
+    }
+
+    #[tokio::test]
+    async fn filters_limit_rooms_and_check_original_sender_and_timestamp() {
+        let (server, client) = fixture().await;
+        let event = |id: &str, sender: &str, timestamp: u64| json!({"type":"m.room.message","event_id":id,"sender":sender,"origin_server_ts":timestamp,"content":{"msgtype":"m.text","body":"needle"}});
+        Mock::given(method("GET"))
+            .and(path_regex(".*/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!({"start":"latest","chunk":[
+                event("$included", "@alice:example.org", 1000),
+                event("$wrong-sender", "@other:example.org", 1000),
+                event("$before", "@alice:example.org", 999),
+                event("$end", "@alice:example.org", 2000)
+            ],"state":[]}),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let service = Service::new(client);
+        let filters = Filters {
+            room: Some("!encrypted:example.org".into()),
+            sender: Some("@alice:example.org".into()),
+            after_ms: Some(1000),
+            before_ms: Some(2000),
+        };
+        let page = service
+            .clone()
+            .history_page_filtered("needle".into(), None, filters)
+            .await
+            .unwrap();
+        assert_eq!(page.hits.len(), 1);
+        assert_eq!(page.hits[0].event, "$included");
+        assert!(page.cursor.complete());
+        let empty = service
+            .history_page_filtered(
+                "needle".into(),
+                None,
+                Filters {
+                    room: Some("!not-joined:example.org".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(empty.cursor.rooms, 0);
+        assert!(empty.hits.is_empty());
     }
 
     #[tokio::test]

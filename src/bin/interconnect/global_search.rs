@@ -2,11 +2,11 @@
 use super::{App, DraftKey, Message, current_pane, selectable, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, row, rule, scrollable, text, text_input},
+    widget::{button, column, container, pick_list, row, rule, scrollable, text, text_input},
 };
 use interconnect::{
     connected::{MessageRow, RowKind},
-    search::{HistoryCursor, HistoryPage, Hit, Page},
+    search::{Filters, HistoryCursor, HistoryPage, Hit, Page},
 };
 use std::{
     collections::{HashMap, VecDeque},
@@ -23,6 +23,11 @@ pub struct State {
     pub open: bool,
     query: String,
     submitted: String,
+    filter_room: RoomChoice,
+    filter_sender: String,
+    filter_after: String,
+    filter_before: String,
+    filters: Filters,
     epoch: u64,
     cache: HashMap<DraftKey, Cached>,
     recent: VecDeque<DraftKey>,
@@ -40,7 +45,70 @@ pub struct State {
     deep_abort: Option<iced::task::Handle>,
     deep_error: Option<String>,
 }
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoomChoice {
+    id: Option<String>,
+    label: String,
+}
+impl std::fmt::Display for RoomChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(if self.id.is_none() {
+            "All rooms"
+        } else {
+            &self.label
+        })
+    }
+}
+
+fn date_bound(value: &str, next_day: bool) -> Result<Option<i64>, String> {
+    if value.trim().is_empty() {
+        return Ok(None);
+    }
+    let date = chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+        .ok()
+        .filter(|date| date.format("%Y-%m-%d").to_string() == value.trim())
+        .ok_or_else(|| "Use YYYY-MM-DD for dates.".to_owned())?;
+    let date = if next_day {
+        date.succ_opt()
+            .ok_or_else(|| "Date is out of range.".to_owned())?
+    } else {
+        date
+    };
+    Ok(Some(
+        date.and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp_millis(),
+    ))
+}
 impl State {
+    fn read_filters(&self) -> Result<Filters, String> {
+        let sender = self.filter_sender.trim();
+        if !sender.is_empty() && sender.parse::<matrix_sdk::ruma::OwnedUserId>().is_err() {
+            return Err("Enter a full Matrix user ID, such as @alice:example.org.".into());
+        }
+        let filters = Filters {
+            room: self.filter_room.id.clone(),
+            sender: (!sender.is_empty()).then(|| sender.to_owned()),
+            after_ms: date_bound(&self.filter_after, false)?,
+            before_ms: date_bound(&self.filter_before, true)?,
+        };
+        if let (Some(start), Some(end)) = (filters.after_ms, filters.before_ms)
+            && start >= end
+        {
+            return Err("The end date must be on or after the start date.".into());
+        }
+        Ok(filters)
+    }
+    fn invalidate(&mut self) {
+        self.cancel();
+        self.hits.clear();
+        self.submitted.clear();
+        self.error = None;
+        self.next = None;
+        self.history = None;
+        self.deep_error = None;
+    }
     pub(super) fn message_deleted(&mut self, room: &str, event: &str) {
         self.cancel();
         self.hits
@@ -109,6 +177,10 @@ pub enum Event {
     Open,
     Close,
     Edit(String),
+    Room(RoomChoice),
+    Sender(String),
+    After(String),
+    Before(String),
     Submit,
     More,
     History,
@@ -128,15 +200,17 @@ fn hit(room: &str, row: &MessageRow) -> Option<Hit> {
         room: room.into(),
         event: row.event_id.clone()?,
         sender: row.display_name.clone(),
+        sender_id: row.sender.clone(),
         body: row.body.clone(),
         thread_root: row.thread_root.clone(),
         timestamp_ms: row.timestamp_ms.unwrap_or(0),
     })
 }
 
-fn local_results(
+fn local_results_filtered(
     snapshots: Vec<Arc<Vec<Hit>>>,
     query: &str,
+    filters: &Filters,
     cancel: &tokio_util::sync::CancellationToken,
 ) -> Page {
     let folded = query.trim().to_lowercase();
@@ -153,7 +227,7 @@ fn local_results(
             if cancel.is_cancelled() {
                 return Page::default();
             }
-            if hit.body.to_lowercase().contains(&folded) {
+            if filters.matches(hit) && hit.body.to_lowercase().contains(&folded) {
                 matches.push(hit.clone());
             }
         }
@@ -163,6 +237,15 @@ fn local_results(
         hits: state.hits,
         next: None,
     }
+}
+
+#[cfg(test)]
+fn local_results(
+    snapshots: Vec<Arc<Vec<Hit>>>,
+    query: &str,
+    cancel: &tokio_util::sync::CancellationToken,
+) -> Page {
+    local_results_filtered(snapshots, query, &Filters::default(), cancel)
 }
 
 impl App {
@@ -244,14 +327,24 @@ impl App {
                 });
             }
             Event::Edit(query) if self.global_search.open => {
-                self.global_search.cancel();
+                self.global_search.invalidate();
                 self.global_search.query = query;
-                self.global_search.hits.clear();
-                self.global_search.submitted.clear();
-                self.global_search.error = None;
-                self.global_search.next = None;
-                self.global_search.history = None;
-                self.global_search.deep_error = None;
+            }
+            Event::Room(room) if self.global_search.open => {
+                self.global_search.invalidate();
+                self.global_search.filter_room = room;
+            }
+            Event::Sender(sender) if self.global_search.open => {
+                self.global_search.invalidate();
+                self.global_search.filter_sender = sender;
+            }
+            Event::After(date) if self.global_search.open => {
+                self.global_search.invalidate();
+                self.global_search.filter_after = date;
+            }
+            Event::Before(date) if self.global_search.open => {
+                self.global_search.invalidate();
+                self.global_search.filter_before = date;
             }
             Event::Submit if self.global_search.open && !self.closing && !self.stopped => {
                 return self.start_global_search(false);
@@ -309,7 +402,10 @@ impl App {
                         let hits = page
                             .hits
                             .into_iter()
-                            .filter(|hit| self.model.rooms.iter().any(|room| room.id == hit.room))
+                            .filter(|hit| {
+                                self.global_search.filters.matches(hit)
+                                    && self.model.rooms.iter().any(|room| room.id == hit.room)
+                            })
                             .collect();
                         self.global_search.merge(hits);
                         let complete = page.cursor.complete();
@@ -345,7 +441,10 @@ impl App {
                         let hits = page
                             .hits
                             .into_iter()
-                            .filter(|hit| self.model.rooms.iter().any(|room| room.id == hit.room))
+                            .filter(|hit| {
+                                self.global_search.filters.matches(hit)
+                                    && self.model.rooms.iter().any(|room| room.id == hit.room)
+                            })
                             .collect();
                         self.global_search.merge(hits);
                         if !local {
@@ -389,7 +488,15 @@ impl App {
         if query.is_empty() {
             return Task::none();
         }
+        let filters = match self.global_search.read_filters() {
+            Ok(filters) => filters,
+            Err(error) => {
+                self.global_search.error = Some(error);
+                return Task::none();
+            }
+        };
         self.global_search.cancel();
+        self.global_search.filters = filters.clone();
         self.global_search.error = None;
         if !more {
             self.global_search.hits.clear();
@@ -434,12 +541,15 @@ impl App {
             let cancel = tokio_util::sync::CancellationToken::new();
             self.global_search.local_cancel = Some(cancel.clone());
             let query = query.clone();
+            let filters = filters.clone();
             let account = account.clone();
             tasks.push(Task::perform(
                 async move {
-                    tokio::task::spawn_blocking(move || local_results(snapshots, &query, &cancel))
-                        .await
-                        .map_err(|_| "Local search could not finish. Try again.".into())
+                    tokio::task::spawn_blocking(move || {
+                        local_results_filtered(snapshots, &query, &filters, &cancel)
+                    })
+                    .await
+                    .map_err(|_| "Local search could not finish. Try again.".into())
                 },
                 move |result| message(Event::Loaded(epoch, account.clone(), true, result)),
             ));
@@ -448,9 +558,10 @@ impl App {
             if let Some(service) = self.model.search.clone() {
                 self.global_search.server_loading = true;
                 let next = self.global_search.next.clone();
-                tasks.push(Task::perform(service.search(query, next), move |result| {
-                    message(Event::Loaded(epoch, account.clone(), false, result))
-                }));
+                tasks.push(Task::perform(
+                    service.search_filtered(query, next, filters),
+                    move |result| message(Event::Loaded(epoch, account.clone(), false, result)),
+                ));
             } else {
                 self.global_search.error =
                     Some("Server search is not ready. Local results are still shown.".into());
@@ -472,8 +583,14 @@ impl App {
         let account = self.account_id.clone();
         let cursor = self.global_search.history.clone();
         let query = self.global_search.submitted.clone();
+        let filters = self.global_search.filters.clone();
         let (task, abort) = Task::perform(
-            async move { service.history_page(query, cursor).await.map(Box::new) },
+            async move {
+                service
+                    .history_page_filtered(query, cursor, filters)
+                    .await
+                    .map(Box::new)
+            },
             move |result| {
                 message(Event::HistoryLoaded(
                     epoch,
@@ -665,12 +782,49 @@ impl App {
                 Some(message(Event::More)),
             ));
         }
+        let mut rooms = vec![RoomChoice::default()];
+        rooms.extend(self.model.rooms.iter().map(|room| RoomChoice {
+            id: Some(room.id.clone()),
+            label: format!("{} ({})", room.name, room.id),
+        }));
+        let room_filter = pick_list(rooms, Some(&state.filter_room), |room| {
+            message(Event::Room(room))
+        })
+        .placeholder("All rooms")
+        .text_size(12)
+        .width(Length::Fill);
+        let sender = text_input("Sender: @user:server", &state.filter_sender)
+            .id("search-filter-sender")
+            .cursor_blinking(false)
+            .size(12)
+            .padding(7)
+            .on_input(|value| message(Event::Sender(value)))
+            .on_submit(message(Event::Submit));
+        let after = text_input("From: YYYY-MM-DD", &state.filter_after)
+            .id("search-filter-after")
+            .cursor_blinking(false)
+            .size(12)
+            .padding(7)
+            .on_input(|value| message(Event::After(value)))
+            .on_submit(message(Event::Submit));
+        let before = text_input("Through: YYYY-MM-DD", &state.filter_before)
+            .id("search-filter-before")
+            .cursor_blinking(false)
+            .size(12)
+            .padding(7)
+            .on_input(|value| message(Event::Before(value)))
+            .on_submit(message(Event::Submit));
         let controls = column![
             heading,
             text(coverage).size(12).style(shell::muted_text),
             row![input, search]
                 .spacing(8)
                 .align_y(iced::Alignment::Center),
+            row![room_filter, sender].spacing(8),
+            row![after, before].spacing(8),
+            text("Dates include both selected days (UTC). Filters apply when you search.")
+                .size(11)
+                .style(shell::muted_text),
             text(format!("{} results", state.hits.len()))
                 .size(12)
                 .style(shell::muted_text),
@@ -716,6 +870,7 @@ mod tests {
             room: room.into(),
             event: event.into(),
             sender: "Alice".into(),
+            sender_id: "@alice:example.org".into(),
             body: body.into(),
             thread_root: None,
             timestamp_ms: 1234,
@@ -1062,6 +1217,86 @@ mod tests {
         assert_eq!(app.selection.thread, selected.thread);
         assert_eq!(app.drafts[&key].content.text(), "Draft");
         assert_eq!(app.scroll_positions[&key], 120.0);
+    }
+
+    #[test]
+    fn filters_use_exact_identities_and_dates_before_result_limits() {
+        let mut state = State {
+            filter_room: RoomChoice {
+                id: Some("studio".into()),
+                label: "Studio".into(),
+            },
+            filter_sender: " @alice:example.org ".into(),
+            filter_after: "2026-01-02".into(),
+            filter_before: "2026-01-02".into(),
+            ..Default::default()
+        };
+        let filters = state.read_filters().unwrap();
+        let start = filters.after_ms.unwrap();
+        let mut included = sample("studio", "included", "needle");
+        included.timestamp_ms = start;
+        let mut wrong_sender = included.clone();
+        wrong_sender.sender_id = "@someone:example.org".into(); // same display name
+        let mut end = included.clone();
+        end.timestamp_ms = filters.before_ms.unwrap();
+        let mut many = vec![wrong_sender; 300];
+        many.extend([included.clone(), end]);
+        let page = local_results_filtered(
+            vec![Arc::new(many)],
+            "needle",
+            &filters,
+            &tokio_util::sync::CancellationToken::new(),
+        );
+        assert_eq!(page.hits, vec![included]);
+        state.filter_before = "2026-01-01".into();
+        assert!(state.read_filters().is_err());
+        state.filter_before = "2026-02-30".into();
+        assert!(state.read_filters().is_err());
+        state.filter_before.clear();
+        state.filter_sender = "Alice".into();
+        assert!(state.read_filters().is_err());
+    }
+
+    #[test]
+    fn filter_changes_cancel_search_and_reject_old_pages_without_touching_conversation() {
+        let mut app = demo_app();
+        let room = app.selection.room.clone();
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::Edit("needle".into())));
+        let _ = app.update(message(Event::Submit));
+        for event in [
+            Event::Sender("@alice:example.org".into()),
+            Event::After("2026-01-01".into()),
+            Event::Before("2026-01-02".into()),
+            Event::Room(RoomChoice {
+                id: Some("studio".into()),
+                label: "Studio".into(),
+            }),
+        ] {
+            let epoch = app.global_search.epoch;
+            let generation = app.global_search.deep_generation;
+            let _ = app.update(message(event));
+            deliver(
+                &mut app,
+                epoch,
+                None,
+                false,
+                vec![sample("studio", "late", "needle")],
+                Some("old-token".into()),
+            );
+            let _ = app.update(message(Event::HistoryLoaded(
+                epoch,
+                generation,
+                None,
+                Ok(history_result(vec![sample("studio", "late", "needle")])),
+            )));
+            assert!(app.global_search.hits.is_empty());
+            assert!(app.global_search.next.is_none());
+            assert!(app.global_search.history.is_none());
+            assert!(!app.global_search.loading());
+            assert!(app.global_search.submitted.is_empty());
+            assert_eq!(app.selection.room, room);
+        }
     }
 
     #[test]

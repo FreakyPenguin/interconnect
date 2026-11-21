@@ -203,6 +203,21 @@ Linux private Secret Service fixtures and CI tests do not validate Keychain poli
 
 ## Navigation and timelines
 
+- In account-wide search, combine a joined room, full Matrix sender ID, and
+  From/Through dates (inclusive UTC days). Check duplicate sender display names,
+  midnight boundaries, malformed dates/user IDs, and reversed ranges. Changing
+  any filter cancels local/server/history work, clears results and continuation,
+  and requires a new submission; late pages must not restore old results.
+  Verify filtered results and navigation in demo without network access.
+- Repeat against a test homeserver with local cached messages, server pagination,
+  and explicit older encrypted history. Room/sender restrictions are sent to
+  server search; dates are checked on returned events, so a page can have no
+  matches and still offer Load more. History scans only the selected encrypted
+  room, if any; unavailable keys retain the ordinary scan diagnostics.
+  Automated fixtures cover shared filter semantics, server request fields,
+  history filtering, stale pages, and local filtering before the result cap.
+  Live interoperability and desktop dropdown/focus behavior remain manual.
+
 - Rapidly switch/paginate/send: late results must not replace or act on another pane.
 - Newest panes follow arrivals; older positions stay anchored through arrivals,
   pagination, resize, sidebar toggles, and space filtering.

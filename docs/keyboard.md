@@ -37,7 +37,10 @@ the selected space filter. History keeps up to 64 locations per direction during
 the session; opening another conversation after Back clears Forward.
 
 Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
-the previous match; account-search Enter submits.
+the previous match; account-search Enter submits. Account-wide search can filter
+by joined room, exact Matrix sender ID, and inclusive From/Through dates (UTC).
+Changing a filter clears the current results; press Enter or Search to submit.
+Filters also apply to older encrypted history and subsequent server pages.
 
 Room topic: activate its caret or styled header snippet to expand/collapse the
 full formatted topic below the header. The conversation stays interactive;

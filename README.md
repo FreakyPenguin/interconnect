@@ -20,6 +20,8 @@ All screenshots and GIFs below use local sample data.
 
 ## In development for 0.4.0
 
+- Narrow account-wide message search by room, sender, and date range.
+
 - Follow reply previews to their originals, then use conversation back/forward
   history to return to the room, thread, and reading location you left.
 - Restore room/thread reading positions across restarts using encrypted event

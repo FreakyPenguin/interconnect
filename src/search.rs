@@ -22,9 +22,29 @@ pub struct Hit {
     pub room: String,
     pub event: String,
     pub sender: String,
+    pub sender_id: String,
     pub body: String,
     pub thread_root: Option<String>,
     pub timestamp_ms: i64,
+}
+/// Exact identity filters and UTC timestamp bounds (inclusive start, exclusive end).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Filters {
+    pub room: Option<String>,
+    pub sender: Option<String>,
+    pub after_ms: Option<i64>,
+    pub before_ms: Option<i64>,
+}
+impl Filters {
+    pub fn matches(&self, hit: &Hit) -> bool {
+        self.room.as_ref().is_none_or(|room| room == &hit.room)
+            && self
+                .sender
+                .as_ref()
+                .is_none_or(|sender| sender == &hit.sender_id)
+            && self.after_ms.is_none_or(|start| hit.timestamp_ms >= start)
+            && self.before_ms.is_none_or(|end| hit.timestamp_ms < end)
+    }
 }
 #[derive(Clone, Debug, Default)]
 pub struct Page {
@@ -39,10 +59,25 @@ impl Service {
     }
 
     pub async fn search(self, query: String, next: Option<String>) -> Result<Page, String> {
+        self.search_filtered(query, next, Filters::default()).await
+    }
+
+    pub async fn search_filtered(
+        self,
+        query: String,
+        next: Option<String>,
+        filters: Filters,
+    ) -> Result<Page, String> {
         let rooms: Vec<_> = self
             .0
             .joined_rooms()
             .iter()
+            .filter(|room| {
+                filters
+                    .room
+                    .as_deref()
+                    .is_none_or(|id| id == room.room_id().as_str())
+            })
             .map(|room| room.room_id().to_owned())
             .collect();
         if rooms.is_empty() {
@@ -52,6 +87,16 @@ impl Service {
         criteria.keys = Some(vec![search::SearchKeys::ContentBody]);
         criteria.order_by = Some(search::OrderBy::Recent);
         criteria.filter.rooms = Some(rooms.clone());
+        criteria.filter.senders = filters
+            .sender
+            .as_ref()
+            .map(|sender| {
+                sender
+                    .parse::<matrix_sdk::ruma::OwnedUserId>()
+                    .map(|id| vec![id])
+            })
+            .transpose()
+            .map_err(|_| "Enter a full Matrix user ID, such as @alice:example.org.".to_owned())?;
         criteria.filter.types = Some(vec!["m.room.message".into()]);
         criteria.filter.limit = Some(uint!(30));
         criteria.event_context.before_limit = uint!(0);
@@ -99,11 +144,13 @@ impl Service {
                 room: event.room_id.to_string(),
                 event: event.event_id.to_string(),
                 sender,
+                sender_id: event.sender.to_string(),
                 body: event.content.body().to_owned(),
                 thread_root,
                 timestamp_ms: u64::from(event.origin_server_ts.get()).min(i64::MAX as u64) as i64,
             });
         }
+        hits.retain(|hit| filters.matches(hit));
         Ok(Page {
             hits,
             next: results
@@ -159,6 +206,30 @@ mod tests {
                 {"result":event("!other:example.org", "$denied")},
                 {"result":{"type":"m.room.message","event_id":"$redacted","room_id":"!room:example.org","sender":"@alice:example.org","origin_server_ts":1234,"content":{}}}
             ]}}}))).expect(1).mount(&server).await;
+        let mut impostor = event("!room:example.org", "$wrong");
+        impostor["sender"] = json!("@impostor:example.org");
+        Mock::given(method("POST")).and(path("/_matrix/client/v3/search"))
+            .and(body_partial_json(json!({"search_categories":{"room_events":{"filter":{"rooms":["!room:example.org"],"senders":["@alice:example.org"]}}}})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"search_categories":{"room_events":{"next_batch":"filtered-next","results":[
+                {"result":event("!room:example.org", "$included")},
+                {"result":impostor}
+            ]}}}))).expect(1).with_priority(1).mount(&server).await;
+        let filtered = Service::new(client.clone())
+            .search_filtered(
+                "hello".into(),
+                None,
+                Filters {
+                    room: Some("!room:example.org".into()),
+                    sender: Some("@alice:example.org".into()),
+                    after_ms: Some(1234),
+                    before_ms: Some(1235),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(filtered.hits.len(), 1);
+        assert_eq!(filtered.hits[0].event, "$included");
+        assert_eq!(filtered.next.as_deref(), Some("filtered-next"));
         let page = Service::new(client)
             .search(" hello ".into(), Some("page2".into()))
             .await

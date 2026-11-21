@@ -1271,6 +1271,10 @@ impl App {
                     | Message::GlobalSearch(
                         global_search::Event::Open
                             | global_search::Event::Edit(_)
+                            | global_search::Event::Room(_)
+                            | global_search::Event::Sender(_)
+                            | global_search::Event::After(_)
+                            | global_search::Event::Before(_)
                             | global_search::Event::Submit
                             | global_search::Event::More
                             | global_search::Event::History
