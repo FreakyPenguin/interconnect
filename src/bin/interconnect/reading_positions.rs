@@ -1,12 +1,14 @@
 //! Event-driven reading anchors, persisted by the encrypted draft writer.
 use super::{App, DraftKey, current_pane};
 use interconnect::drafts::ReadingPosition;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub struct State {
     pub positions: HashMap<DraftKey, ReadingPosition>,
     active: [Option<(u64, ReadingPosition)>; 2],
+    // Per-session only: estimated geometry must reopen by event, not old pixels.
+    virtualized: HashSet<DraftKey>,
 }
 impl State {
     pub fn from_saved(saved: &[ReadingPosition]) -> Self {
@@ -34,6 +36,21 @@ impl State {
     }
 }
 impl App {
+    pub(super) fn remember_virtualized_conversations(&mut self) {
+        for thread in [false, true] {
+            let selected = if thread {
+                &self.selection.thread
+            } else {
+                &self.selection.room
+            };
+            if let Some((generation, _)) = selected
+                && self.timeline_projection[usize::from(thread)].virtualized(*generation)
+                && let Some(key) = self.draft_key(thread)
+            {
+                self.reading_positions.virtualized.insert(key);
+            }
+        }
+    }
     pub(super) fn clear_reading_anchor(&mut self, thread: bool) {
         self.reading_positions.active[usize::from(thread)] = None;
     }
@@ -63,7 +80,12 @@ impl App {
         let index = usize::from(thread);
         self.reading_positions.active[index] = None;
         if let Some(key) = self.draft_key(thread)
-            && !self.scroll_positions.contains_key(&key)
+            && (!self.scroll_positions.contains_key(&key)
+                || (self.reading_positions.virtualized.contains(&key)
+                    && self
+                        .scroll_positions
+                        .get(&key)
+                        .is_some_and(|offset| *offset > 1.0)))
             && let Some(position) = self.reading_positions.positions.get(&key).cloned()
         {
             self.restore_reading_anchor(thread, position);
@@ -168,6 +190,66 @@ mod tests {
             root: key.root.clone(),
             event: "$saved".into(),
             offset: -12,
+        }
+    }
+
+    #[test]
+    fn virtual_room_and_thread_reopen_by_event_while_explicit_newest_still_wins() {
+        use std::sync::Arc;
+        for thread in [false, true] {
+            let mut app = crate::tests::demo_app();
+            let room = app.selection.room.as_ref().unwrap().1.clone();
+            if thread {
+                app.select_thread("$virtual-root".into());
+            }
+            let key = app.draft_key(thread).unwrap();
+            let generation = if thread {
+                app.selection.thread.as_ref().unwrap().0
+            } else {
+                app.selection.room.as_ref().unwrap().0
+            };
+            let mut pane = app.model.room.as_ref().unwrap().clone();
+            pane.generation = generation;
+            let template = pane.rows[0].clone();
+            pane.rows = Arc::new(
+                (0..500)
+                    .map(|i| {
+                        let mut row = template.clone();
+                        row.key = format!("virtual-{i}");
+                        row.event_id = Some(format!("$virtual-{i}"));
+                        row.thread_root = thread.then(|| "$virtual-root".into());
+                        row.thread_replies = 0;
+                        row
+                    })
+                    .collect(),
+            );
+            let root = thread.then_some("$virtual-root");
+            let _ = app.timeline_projection[usize::from(thread)].get(&pane, root, false);
+            let mut saved = position(&key);
+            saved.event = "$virtual-250".into();
+            saved.offset = -19;
+            app.reading_positions
+                .positions
+                .insert(key.clone(), saved.clone());
+            app.scroll_positions.insert(key.clone(), 500.0);
+            app.select_room("home".into());
+            app.select_room(room.clone());
+            if thread {
+                app.select_thread("$virtual-root".into());
+            }
+            assert_eq!(app.reading_anchor(thread), Some(saved));
+            assert_eq!(app.pending_scroll[usize::from(thread)], None);
+
+            // An explicit newest position overrides a not-yet-updated saved anchor.
+            app.scroll_positions.insert(key, 0.0);
+            app.select_room("home".into());
+            app.select_room(room);
+            if thread {
+                app.select_thread("$virtual-root".into());
+            }
+            assert!(app.reading_anchor(thread).is_none());
+            assert!(app.selection.event_focus[usize::from(thread)].is_none());
+            assert_eq!(app.pending_scroll[usize::from(thread)], Some(0.0));
         }
     }
     #[test]

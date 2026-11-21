@@ -213,7 +213,8 @@ reports mounted versus loaded counts; see [long-history measurements](long-histo
 For connected desktop acceptance, load a long test history and check wheel,
 trackpad, scrollbar dragging, paging, jump-to-newest, and distant reply/search/
 saved/notification targets. Unknown row heights can adjust scrollbar geometry,
-but the visible event and its offset must remain stable through pagination,
+but the visible event and its offset must remain stable through switching rooms,
+closing/reopening threads, pagination,
 resize/interface scaling, edits/redactions, media dimensions, and moving thread
 summaries. Drag a selection across multiple virtual windows in both directions,
 then copy after both endpoints leave the viewport. Revealed spoilers stay revealed;

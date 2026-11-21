@@ -2405,6 +2405,7 @@ impl App {
                 }
             }
             Message::CloseThread => {
+                self.remember_virtualized_conversations();
                 self.timeline_projection[1].clear();
                 self.pending_thread_focus = None;
                 self.visible_rows[1].clear();
@@ -2764,6 +2765,7 @@ impl App {
         }
     }
     fn select_room(&mut self, id: String) {
+        self.remember_virtualized_conversations();
         self.timeline_projection
             .iter()
             .for_each(timeline_projection::Cache::clear);
@@ -2788,6 +2790,7 @@ impl App {
             .or_default();
     }
     fn select_thread(&mut self, id: String) {
+        self.remember_virtualized_conversations();
         self.timeline_projection[1].clear();
         self.notification_center.close();
         self.pending_room_focus = None;

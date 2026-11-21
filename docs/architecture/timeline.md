@@ -28,7 +28,11 @@ mounted and release heavy state as they leave the window.
 
 The timeline observer captures the first actually visible event and its screen
 offset. After measurement corrections, prepend, or reflow, it restores that
-logical anchor. Bottom-following remains separate. An explicit event target
+logical anchor. Previously virtualized conversations also reopen by their saved
+event-relative anchor when away from newest; old bottom pixel offsets refer to
+estimates that are rebuilt with a new pane. Short histories keep exact in-session
+pixel restoration, and an explicit newest position overrides a stale saved anchor.
+Bottom-following remains separate. An explicit event target
 mounts its indexed neighborhood immediately, then centers the measured target
 or restores its saved event-relative offset. Native scroll operations request
 their newly needed layout on the next update; they do not require constructing

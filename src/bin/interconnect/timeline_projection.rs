@@ -136,6 +136,11 @@ struct Entry {
 #[derive(Default)]
 pub(super) struct Cache(RefCell<Option<Entry>>);
 impl Cache {
+    pub fn virtualized(&self, generation: u64) -> bool {
+        self.0.borrow().as_ref().is_some_and(|entry| {
+            entry.generation == generation && entry.projection.keys.len() > 192
+        })
+    }
     pub fn clear(&self) {
         self.0.borrow_mut().take();
     }
