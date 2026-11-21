@@ -140,10 +140,8 @@ impl App {
             &self.model.room
         };
         let (generation, _) = selection.as_ref()?;
-        current_pane(pane, *generation)?
-            .rows
-            .iter()
-            .find(|row| row.event_id.as_deref() == Some(event))
+        self.timeline_projection[usize::from(thread)]
+            .row(current_pane(pane, *generation)?, event)
             .or_else(|| {
                 thread
                     .then(|| self.thread_original_in_room())

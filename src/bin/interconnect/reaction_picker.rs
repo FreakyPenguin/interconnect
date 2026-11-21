@@ -151,6 +151,11 @@ impl App {
             return None;
         }
         if target.thread
+            && self
+                .selection
+                .thread
+                .as_ref()
+                .is_some_and(|(_, root)| root == &target.event)
             && let Some(row) = self
                 .thread_original_in_room()
                 .filter(|row| row.event_id.as_ref() == Some(&target.event))
@@ -162,10 +167,8 @@ impl App {
         } else {
             &self.model.room
         };
-        current_pane(pane, target.generation)?
-            .rows
-            .iter()
-            .find(|row| row.event_id.as_ref() == Some(&target.event))
+        self.timeline_projection[usize::from(target.thread)]
+            .row(current_pane(pane, target.generation)?, &target.event)
             .or_else(|| {
                 target
                     .thread

@@ -22,6 +22,7 @@ pub(super) struct Projection {
     pub selection_source: Arc<dyn super::selection::Source>,
     pub observed_keys: Arc<HashMap<iced::advanced::widget::Id, String>>,
     pub indices: HashMap<String, usize>,
+    source_events: HashMap<String, usize>,
     pub preview_roots: HashSet<String>,
     pub unread_index: Option<usize>,
 }
@@ -88,7 +89,14 @@ impl Projection {
                 _ => None,
             })
             .collect();
+        let mut source_events = HashMap::new();
+        for (index, row) in source.iter().enumerate() {
+            if let Some(event) = &row.event_id {
+                source_events.entry(event.clone()).or_insert(index);
+            }
+        }
         Self {
+            source_events,
             selection_source: super::selection::message_source(pane.rows.clone(), selectable),
             observed_keys: Arc::new(
                 keys.iter()
@@ -130,6 +138,26 @@ pub(super) struct Cache(RefCell<Option<Entry>>);
 impl Cache {
     pub fn clear(&self) {
         self.0.borrow_mut().take();
+    }
+    /// Reuse the complete source-event index for hot row actions/reply previews.
+    /// Before a matching projection exists, retain the ordinary guarded lookup.
+    pub fn row<'a>(&self, pane: &'a Pane, event: &str) -> Option<&'a MessageRow> {
+        let cached = self
+            .0
+            .borrow()
+            .as_ref()
+            .filter(|entry| {
+                entry.generation == pane.generation
+                    && Weak::ptr_eq(&entry.source, &Arc::downgrade(&pane.rows))
+            })
+            .map(|entry| entry.projection.source_events.get(event).copied());
+        match cached {
+            Some(index) => index.and_then(|index| pane.rows.get(index)),
+            None => pane
+                .rows
+                .iter()
+                .find(|row| row.event_id.as_deref() == Some(event)),
+        }
     }
     pub fn get(&self, pane: &Pane, root: Option<&str>, expanded: bool) -> Arc<Projection> {
         let mut cache = self.0.borrow_mut();
@@ -177,5 +205,25 @@ mod tests {
             "cached projection must not retain SDK handles"
         );
         cache.clear();
+    }
+
+    #[test]
+    fn event_lookup_uses_current_source_and_falls_back_after_snapshot_changes() {
+        let app = crate::tests::demo_app();
+        let mut pane = app.model.room.as_ref().unwrap().clone();
+        let cache = Cache::default();
+        let event = pane.rows[1].event_id.clone().unwrap();
+        assert_eq!(cache.row(&pane, &event).unwrap().key, pane.rows[1].key);
+        let _ = cache.get(&pane, None, false);
+        assert_eq!(cache.row(&pane, &event).unwrap().key, pane.rows[1].key);
+        assert!(cache.row(&pane, "$missing").is_none());
+        let mut inserted = pane.rows[0].clone();
+        inserted.event_id = Some("$inserted".into());
+        inserted.key = "inserted".into();
+        Arc::make_mut(&mut pane.rows).insert(0, inserted);
+        assert_eq!(cache.row(&pane, &event).unwrap().key, pane.rows[2].key);
+        let _ = cache.get(&pane, None, false);
+        assert_eq!(cache.row(&pane, "$inserted").unwrap().key, "inserted");
+        assert_eq!(cache.row(&pane, &event).unwrap().key, pane.rows[2].key);
     }
 }

@@ -3303,21 +3303,14 @@ impl App {
     fn thread_original(&self) -> Option<&MessageRow> {
         let (generation, root) = self.selection.thread.as_ref()?;
         current_pane(&self.model.thread, *generation)
-            .and_then(|pane| {
-                pane.rows
-                    .iter()
-                    .find(|row| row.event_id.as_ref() == Some(root))
-            })
+            .and_then(|pane| self.timeline_projection[1].row(pane, root))
             .or_else(|| self.thread_original_in_room())
     }
 
     fn thread_original_in_room(&self) -> Option<&MessageRow> {
         let (_, root) = self.selection.thread.as_ref()?;
         let (generation, _) = self.selection.room.as_ref()?;
-        current_pane(&self.model.room, *generation)?
-            .rows
-            .iter()
-            .find(|row| row.event_id.as_ref() == Some(root))
+        self.timeline_projection[0].row(current_pane(&self.model.room, *generation)?, root)
     }
 
     fn thread_activity_view<'a>(

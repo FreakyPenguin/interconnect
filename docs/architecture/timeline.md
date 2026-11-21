@@ -10,6 +10,10 @@ indices and stable event/summary keys. It is reused while the SDK row snapshot,
 generation, thread root, projection mode, and read boundary are unchanged.
 Grouping, dates, thread previews, and unread decoration consult the full
 projection, so a mount boundary cannot become a false conversation boundary.
+A complete source-event index also resolves visible message actions, reply
+previews, and thread originals without rescanning loaded history for each row.
+Before a matching snapshot/generation has a cached index, lookups retain the
+ordinary guarded fallback against current data.
 
 Conversations of at most 192 projected rows use exact full layout. Longer
 conversations mount the visible region plus roughly two viewport heights in
