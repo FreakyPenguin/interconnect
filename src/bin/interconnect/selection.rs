@@ -8,7 +8,116 @@ use iced::advanced::{
 };
 use iced::widget::text_editor::{Action, Motion};
 use iced::{Event, Point, Rectangle, Renderer, Theme, Vector};
-use std::{any::Any, time::Duration};
+use interconnect::message_document::Document;
+use std::{
+    any::Any,
+    borrow::Cow,
+    collections::{BTreeSet, HashMap},
+    sync::{Arc, Weak},
+    time::Duration,
+};
+
+/// Ordered logical text, independent of which rows currently have widgets.
+/// Implementations retain lightweight projection indices, not shaped paragraphs.
+/// `id` is the selectable body identity (normally `MessageRow::key`).
+pub(super) trait Source: Send + Sync {
+    fn index(&self, id: &str) -> Option<usize>;
+    fn text(&self, index: usize) -> Option<Text<'_>>;
+}
+pub(super) struct Text<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub body: Cow<'a, str>,
+    pub document: Option<&'a Arc<Document>>,
+}
+/// Model adapter for projected body rows. `indices` contains source row indices
+/// in display order and excludes summaries/attachment-only rows without text.
+pub(super) fn message_source(
+    rows: Arc<Vec<interconnect::connected::MessageRow>>,
+    indices: Vec<usize>,
+) -> Arc<dyn Source> {
+    struct Descriptor {
+        source: usize,
+        id: String,
+        name: String,
+        document: Option<Arc<Document>>,
+        activity: bool,
+    }
+    struct Messages {
+        rows: Weak<Vec<interconnect::connected::MessageRow>>,
+        descriptors: Vec<Option<Descriptor>>,
+        by_id: HashMap<String, usize>,
+    }
+    impl Source for Messages {
+        fn index(&self, id: &str) -> Option<usize> {
+            self.by_id.get(id).copied()
+        }
+        fn text(&self, index: usize) -> Option<Text<'_>> {
+            let descriptor = self.descriptors.get(index)?.as_ref()?;
+            // Tree state must not keep SDK handles alive or turn an in-place
+            // append into a clone of every loaded MessageRow. Upgrade only for
+            // the explicit selection/copy/reveal query and return owned text.
+            let snapshot = self.rows.upgrade()?;
+            let row = snapshot.get(descriptor.source)?;
+            Some(Text {
+                id: &descriptor.id,
+                name: &descriptor.name,
+                body: Cow::Owned(if descriptor.activity {
+                    format!("{} · {}", row.display_name, row.body)
+                } else {
+                    row.body.clone()
+                }),
+                document: descriptor.document.as_ref(),
+            })
+        }
+    }
+    let descriptors: Vec<_> = indices
+        .into_iter()
+        .map(|source| {
+            let row = rows.get(source)?;
+            let activity = row.kind == interconnect::connected::RowKind::Activity;
+            Some(Descriptor {
+                source,
+                id: if activity {
+                    row.event_id.as_deref().unwrap_or(&row.body)
+                } else {
+                    &row.key
+                }
+                .to_owned(),
+                name: if activity { "" } else { &row.display_name }.to_owned(),
+                document: if activity {
+                    None
+                } else {
+                    row.formatted.clone()
+                },
+                activity,
+            })
+        })
+        .collect();
+    let by_id = descriptors
+        .iter()
+        .enumerate()
+        .filter_map(|(index, descriptor)| {
+            descriptor
+                .as_ref()
+                .map(|descriptor| (descriptor.id.clone(), index))
+        })
+        .collect();
+    Arc::new(Messages {
+        rows: Arc::downgrade(&rows),
+        descriptors,
+        by_id,
+    })
+}
+
+struct Semantic {
+    document: Arc<Document>,
+    revealed: BTreeSet<usize>,
+}
+struct Logical {
+    name: String,
+    body: String,
+}
 
 type Content<'a> = dyn Widget<Message, Theme, Renderer> + 'a;
 #[derive(Clone)]
@@ -22,6 +131,8 @@ pub struct Selection {
     range: Option<(Endpoint, Endpoint)>,
     dragging: bool,
     pointer: Option<Point>,
+    source: Option<Arc<dyn Source>>,
+    semantic: HashMap<String, Semantic>,
 }
 #[derive(Clone)]
 struct Row {
@@ -147,8 +258,166 @@ impl widget::Operation for Apply {
         }
     }
 }
+fn same_document(a: &Arc<Document>, b: &Arc<Document>) -> bool {
+    Arc::ptr_eq(a, b) || a.as_ref() == b.as_ref()
+}
 impl Selection {
+    pub(super) fn set_source(&mut self, source: Option<Arc<dyn Source>>) {
+        if match (&self.source, &source) {
+            (Some(previous), Some(current)) => Arc::ptr_eq(previous, current),
+            (None, None) => true,
+            _ => false,
+        } {
+            return;
+        }
+        self.source = source;
+        // Drop state for removed/edited messages without materializing text.
+        if let Some(source) = &self.source {
+            self.semantic.retain(|id, semantic| {
+                source
+                    .index(id)
+                    .and_then(|index| source.text(index))
+                    .and_then(|text| text.document)
+                    .is_some_and(|document| same_document(document, &semantic.document))
+            });
+        }
+    }
+    fn logical(&self, index: usize) -> Option<Logical> {
+        let text = self.source.as_ref()?.text(index)?;
+        let body = text.document.map_or_else(
+            || text.body.into_owned(),
+            |document| {
+                let revealed = self
+                    .semantic
+                    .get(text.id)
+                    .filter(|semantic| same_document(document, &semantic.document))
+                    .map(|semantic| &semantic.revealed);
+                document.text(revealed.unwrap_or(&BTreeSet::new()))
+            },
+        );
+        Some(Logical {
+            name: text.name.to_owned(),
+            body,
+        })
+    }
+    fn extent(&self) -> Option<(usize, usize, Position, Position)> {
+        let source = self.source.as_ref()?;
+        let (a, b) = self.range.as_ref()?;
+        let ai = source.index(&a.id)?;
+        let bi = source.index(&b.id)?;
+        if self.logical(ai)?.body != a.body || self.logical(bi)?.body != b.body {
+            return None;
+        }
+        Some(if (ai, order(a.position)) <= (bi, order(b.position)) {
+            (ai, bi, a.position, b.position)
+        } else {
+            (bi, ai, b.position, a.position)
+        })
+    }
+    /// Capture only semantic spoiler state before a mounted subtree is evicted.
+    pub(super) fn capture_semantics(
+        &mut self,
+        content: &mut Content<'_>,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+    ) {
+        struct Capture<'a>(&'a mut HashMap<String, Semantic>);
+        impl widget::Operation for Capture<'_> {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn custom(&mut self, _: Option<&widget::Id>, _: Rectangle, state: &mut dyn Any) {
+                let Some(state) = state.downcast_mut::<selectable::State>() else {
+                    return;
+                };
+                let Some(rich) = &state.rich else {
+                    return;
+                };
+                if self
+                    .0
+                    .get(&state.id)
+                    .is_some_and(|saved| !same_document(&saved.document, &rich.document))
+                {
+                    self.0.remove(&state.id);
+                }
+                // Reveals are monotonic. A newly mounted, not-yet-restored widget
+                // must not erase the saved nonempty state with its default state.
+                if !rich.revealed().is_empty() {
+                    self.0.insert(
+                        state.id.clone(),
+                        Semantic {
+                            document: rich.document.clone(),
+                            revealed: rich.revealed().clone(),
+                        },
+                    );
+                }
+            }
+        }
+        content.operate(tree, layout, renderer, &mut Capture(&mut self.semantic));
+    }
+    /// Returns true if restored spoilers changed text and require another layout.
+    pub(super) fn restore_semantics(
+        &self,
+        content: &mut Content<'_>,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+    ) -> bool {
+        struct Restore<'a> {
+            semantic: &'a HashMap<String, Semantic>,
+            changed: bool,
+        }
+        impl widget::Operation for Restore<'_> {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn custom(&mut self, _: Option<&widget::Id>, _: Rectangle, state: &mut dyn Any) {
+                let Some(state) = state.downcast_mut::<selectable::State>() else {
+                    return;
+                };
+                let Some(saved) = self.semantic.get(&state.id) else {
+                    return;
+                };
+                let Some(rich) = &mut state.rich else {
+                    return;
+                };
+                if same_document(&saved.document, &rich.document)
+                    && rich.restore_revealed(&saved.revealed)
+                {
+                    state.body = rich.text();
+                    state.content = iced::widget::text_editor::Content::with_text(&state.body);
+                    self.changed = true;
+                }
+            }
+        }
+        let mut restore = Restore {
+            semantic: &self.semantic,
+            changed: false,
+        };
+        content.operate(tree, layout, renderer, &mut restore);
+        restore.changed
+    }
     fn ranges(&self, rows: &[Row]) -> Option<Vec<(String, Cursor)>> {
+        if let Some(source) = &self.source {
+            let (lo, hi, from, to) = self.extent()?;
+            return Some(
+                rows.iter()
+                    .filter_map(|row| {
+                        let index = source.index(&row.id)?;
+                        (lo..=hi).contains(&index).then(|| {
+                            (
+                                row.id.clone(),
+                                Cursor {
+                                    selection: Some(if index == lo { from } else { start() }),
+                                    position: if index == hi { to } else { end(&row.body) },
+                                },
+                            )
+                        })
+                    })
+                    .collect(),
+            );
+        }
         let (a, b) = self.range.as_ref()?;
         let ai = rows
             .iter()
@@ -182,6 +451,7 @@ impl Selection {
         layout: Layout<'_>,
         renderer: &Renderer,
     ) {
+        self.capture_semantics(content, tree, layout, renderer);
         if self.range.is_none() {
             return;
         }
@@ -281,6 +551,28 @@ impl Selection {
         layout: Layout<'_>,
         renderer: &Renderer,
     ) -> Option<String> {
+        if self.source.is_some() {
+            let (lo, hi, from, to) = self.extent()?;
+            let mut parts = Vec::new();
+            for index in lo..=hi {
+                let Some(row) = self.logical(index) else {
+                    continue;
+                };
+                let cursor = Cursor {
+                    selection: Some(if index == lo { from } else { start() }),
+                    position: if index == hi { to } else { end(&row.body) },
+                };
+                if let Some(selected) = fragment(&row.body, cursor).filter(|text| !text.is_empty())
+                {
+                    parts.push(if lo != hi && !row.name.is_empty() {
+                        format!("{}:\n{selected}", row.name.replace(['\r', '\n'], " "))
+                    } else {
+                        selected.to_owned()
+                    });
+                }
+            }
+            return (!parts.is_empty()).then(|| parts.join("\n\n"));
+        }
         let rows = read(content, tree, layout, renderer).rows;
         let ranges = self.ranges(&rows)?;
         let multi = ranges.len() > 1;
@@ -313,6 +605,7 @@ impl Selection {
         viewport: &Rectangle,
         generation: u64,
     ) {
+        self.capture_semantics(content, tree, layout, renderer);
         if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -614,6 +907,266 @@ mod tests {
             iced::time::Instant::now(),
         ))
     }
+    struct ModelText {
+        id: String,
+        name: String,
+        body: String,
+        document: Option<Arc<Document>>,
+    }
+    struct Model(Vec<ModelText>);
+    impl Source for Model {
+        fn index(&self, id: &str) -> Option<usize> {
+            self.0.iter().position(|row| row.id == id)
+        }
+        fn text(&self, index: usize) -> Option<Text<'_>> {
+            let row = self.0.get(index)?;
+            Some(Text {
+                id: &row.id,
+                name: &row.name,
+                body: Cow::Borrowed(&row.body),
+                document: row.document.as_ref(),
+            })
+        }
+    }
+    fn logical_endpoint(id: &str, body: &str, position: Position) -> Endpoint {
+        Endpoint {
+            id: id.into(),
+            body: body.into(),
+            position,
+        }
+    }
+
+    #[test]
+    fn logical_selection_survives_both_endpoints_unmounted_and_copies_intermediate_canonical_text()
+    {
+        let document = Arc::new(Document::parse("<p>café <img src='mxc://example.org/a' alt='diagram'> <span data-mx-spoiler>private</span> <span data-mx-maths='x^2'>x squared</span></p>").unwrap());
+        let middle = document.text(&BTreeSet::new());
+        assert!(!middle.contains("private"));
+        assert!(middle.contains("diagram"));
+        for reverse in [false, true] {
+            let mut selection = Selection::default();
+            selection.set_source(Some(Arc::new(Model(vec![
+                ModelText {
+                    id: "a".into(),
+                    name: "Alice".into(),
+                    body: "start\r\n  keep\tspace".into(),
+                    document: None,
+                },
+                ModelText {
+                    id: "middle".into(),
+                    name: "Maya".into(),
+                    body: "fallback must never be copied".into(),
+                    document: Some(document.clone()),
+                },
+                ModelText {
+                    id: "b".into(),
+                    name: "Bob".into(),
+                    body: "ending".into(),
+                    document: None,
+                },
+            ]))));
+            let a = logical_endpoint("a", "start\r\n  keep\tspace", start());
+            let b = logical_endpoint("b", "ending", end("ending"));
+            selection.range = Some(if reverse { (b, a) } else { (a, b) });
+            let mut h = Harness::new();
+            let mut element: Element<'_, Message> =
+                scrollable(selectable::named_view("middle", &middle, "Maya"))
+                    .id("room-timeline")
+                    .height(200)
+                    .into();
+            let node = h.layout(&mut element);
+            selection.restore(
+                element.as_widget_mut(),
+                &mut h.tree,
+                Layout::new(&node),
+                &h.renderer,
+            );
+            assert!(selection.range.is_some());
+            let text = selection
+                .copy(
+                    element.as_widget_mut(),
+                    &mut h.tree,
+                    Layout::new(&node),
+                    &h.renderer,
+                )
+                .unwrap();
+            assert_eq!(
+                text,
+                format!("Alice:\nstart\r\n  keep\tspace\n\nMaya:\n{middle}\n\nBob:\nending")
+            );
+            let mounted = h.read(&mut element, &node);
+            assert_eq!(mounted.rows.len(), 1);
+            assert_eq!(mounted.rows[0].cursor.selection, Some(start()));
+            assert_eq!(mounted.rows[0].cursor.position, end(&middle));
+            // A real source edit still invalidates the old logical range.
+            selection.set_source(Some(Arc::new(Model(vec![
+                ModelText {
+                    id: "a".into(),
+                    name: "Alice".into(),
+                    body: "edited".into(),
+                    document: None,
+                },
+                ModelText {
+                    id: "b".into(),
+                    name: "Bob".into(),
+                    body: "ending".into(),
+                    document: None,
+                },
+            ]))));
+            selection.restore(
+                element.as_widget_mut(),
+                &mut h.tree,
+                Layout::new(&node),
+                &h.renderer,
+            );
+            assert!(selection.range.is_none());
+        }
+    }
+
+    #[test]
+    fn message_source_does_not_retain_loaded_rows_or_force_copy_on_append() {
+        let row = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        let mut loaded = Arc::new(vec![row.clone()]);
+        let source = message_source(loaded.clone(), vec![0]);
+        assert_eq!(Arc::strong_count(&loaded), 1);
+        assert_eq!(source.text(0).unwrap().body, row.body);
+        assert_eq!(
+            Arc::strong_count(&loaded),
+            1,
+            "text queries only upgrade temporarily"
+        );
+        let first_body_allocation = loaded[0].body.as_ptr();
+        Arc::make_mut(&mut loaded).push(row);
+        assert_eq!(
+            loaded[0].body.as_ptr(),
+            first_body_allocation,
+            "appending must not clone the existing row contents"
+        );
+        assert!(
+            source.text(0).is_none(),
+            "an old weak source becomes unavailable until the next layout source refresh"
+        );
+        let source = message_source(loaded.clone(), vec![0]);
+        assert!(source.text(0).is_some());
+        drop(loaded);
+        assert!(
+            source.text(0).is_none(),
+            "widget state cannot retain an abandoned snapshot"
+        );
+    }
+
+    #[test]
+    fn spoiler_semantics_survive_widget_eviction_but_do_not_cross_document_revisions() {
+        let mut row = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        row.key = "rich".into();
+        row.formatted = Some(Arc::new(
+            Document::parse("before <span data-mx-spoiler>revealed secret</span> after").unwrap(),
+        ));
+        let mut selection = Selection::default();
+        let loaded_rows = Arc::new(vec![row.clone()]);
+        selection.set_source(Some(message_source(loaded_rows.clone(), vec![0])));
+        let mut h = Harness::new();
+        let mut element = selectable::message_view(&row);
+        let node = h.layout(&mut element);
+        struct Reveal;
+        impl widget::Operation for Reveal {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn custom(&mut self, _: Option<&widget::Id>, _: Rectangle, state: &mut dyn Any) {
+                let Some(state) = state.downcast_mut::<selectable::State>() else {
+                    return;
+                };
+                let rich = state.rich.as_mut().unwrap();
+                rich.restore_revealed(&BTreeSet::from([1]));
+                state.body = rich.text();
+                state.content = iced::widget::text_editor::Content::with_text(&state.body);
+            }
+        }
+        element
+            .as_widget_mut()
+            .operate(&mut h.tree, Layout::new(&node), &h.renderer, &mut Reveal);
+        selection.capture_semantics(
+            element.as_widget_mut(),
+            &mut h.tree,
+            Layout::new(&node),
+            &h.renderer,
+        );
+        assert!(
+            selection
+                .logical(0)
+                .unwrap()
+                .body
+                .contains("revealed secret")
+        );
+        drop(element);
+        h.tree = Tree::empty(); // A bounded virtual list evicts the heavy tree.
+        let mut remounted = selectable::message_view(&row);
+        let node = h.layout(&mut remounted);
+        assert!(
+            !h.read(&mut remounted, &node).rows[0]
+                .body
+                .contains("revealed secret")
+        );
+        assert!(selection.restore_semantics(
+            remounted.as_widget_mut(),
+            &mut h.tree,
+            Layout::new(&node),
+            &h.renderer
+        ));
+        let node = h.layout(&mut remounted);
+        assert!(
+            h.read(&mut remounted, &node).rows[0]
+                .body
+                .contains("revealed secret")
+        );
+        assert!(!selection.restore_semantics(
+            remounted.as_widget_mut(),
+            &mut h.tree,
+            Layout::new(&node),
+            &h.renderer
+        ));
+        drop(remounted);
+        row.formatted = Some(Arc::new(
+            Document::parse("before <span data-mx-spoiler>different secret</span> after").unwrap(),
+        ));
+        let edited_rows = Arc::new(vec![row.clone()]);
+        selection.set_source(Some(message_source(edited_rows.clone(), vec![0])));
+        let mut edited = selectable::message_view(&row);
+        let node = h.layout(&mut edited);
+        assert!(!selection.restore_semantics(
+            edited.as_widget_mut(),
+            &mut h.tree,
+            Layout::new(&node),
+            &h.renderer
+        ));
+        assert!(
+            !selection
+                .logical(0)
+                .unwrap()
+                .body
+                .contains("different secret")
+        );
+    }
+
     #[test]
     fn formatted_and_plain_messages_share_cross_row_copy_and_idle_behavior() {
         let mut formatted = crate::demo::Demo::default()

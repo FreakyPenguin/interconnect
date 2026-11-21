@@ -109,6 +109,18 @@ impl State {
     pub fn text(&self) -> String {
         self.document.text(&self.revealed)
     }
+    /// Lightweight interaction state survives eviction of paragraph/layout state.
+    pub(super) fn revealed(&self) -> &BTreeSet<usize> {
+        &self.revealed
+    }
+    pub(super) fn restore_revealed(&mut self, revealed: &BTreeSet<usize>) -> bool {
+        if &self.revealed == revealed {
+            return false;
+        }
+        self.revealed.clone_from(revealed);
+        self.width = None;
+        true
+    }
     pub fn set_theme(&mut self, mode: interconnect::settings::ThemeMode) {
         if self.mode != mode {
             self.mode = mode;
