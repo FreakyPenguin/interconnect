@@ -123,11 +123,30 @@ impl App {
         Some(Place {
             room,
             root,
-            events: self
-                .selection
-                .event_focus
-                .clone()
-                .map(|event| event.map(|(_, event)| event)),
+            events: std::array::from_fn(|index| {
+                let selected = if index == 1 {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                };
+                // A completed jump's focus remains in Selection after scrolling.
+                // Once layout has settled, an explicit scroll to newest wins over
+                // that stale target. Before the first matching layout, retain the
+                // requested event so Back can resume an interrupted jump.
+                let newest = self
+                    .scroll_positions
+                    .get(&keys[index])
+                    .is_some_and(|offset| *offset <= 1.0)
+                    && self.reading_anchor(index == 1).is_none()
+                    && self.pending_scroll[index].is_none()
+                    && selected.as_ref().is_some_and(|(generation, _)| {
+                        self.timeline_metrics[index].is_some_and(|(view, _, _)| view == *generation)
+                    });
+                self.selection.event_focus[index]
+                    .as_ref()
+                    .filter(|_| !newest)
+                    .map(|(_, event)| event.clone())
+            }),
             offsets: keys
                 .each_ref()
                 .map(|key| self.scroll_positions.get(key).copied().unwrap_or(0.0)),
@@ -335,6 +354,88 @@ mod tests {
             app.selection.event_focus[0].as_ref().unwrap().1,
             "$original"
         );
+    }
+
+    #[test]
+    fn manually_scrolling_to_newest_after_a_jump_returns_to_newest_through_history() {
+        for thread in [false, true] {
+            let mut app = demo_app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let index = usize::from(thread);
+            let generation = if thread {
+                app.selection.thread.as_ref().unwrap().0
+            } else {
+                app.selection.room.as_ref().unwrap().0
+            };
+            let key = app.draft_key(thread).unwrap();
+            app.focus_message_event(thread, "$jumped-event".into());
+            app.scroll_positions.insert(key.clone(), 240.0);
+            // The scroll event can precede the next geometry report. A matching
+            // generation proves the jump was laid out, not its last translation.
+            app.timeline_metrics[index] = Some((
+                generation,
+                1,
+                super::super::timeline::Metrics {
+                    height: 400.0,
+                    content_height: 1200.0,
+                    translation: 560.0,
+                },
+            ));
+            let _ = app.update(Message::Scrolled {
+                thread,
+                generation,
+                offset: 0.0,
+            });
+            assert!(app.selection.event_focus[index].is_some());
+            navigate(&mut app, "general");
+            step(&mut app, true);
+            assert_eq!(room(&app), "studio");
+            assert_eq!(
+                app.selection.thread.as_ref().map(|(_, root)| root.as_str()),
+                thread.then_some("review")
+            );
+            assert!(
+                app.selection.event_focus[index].is_none(),
+                "settled newest position must beat an earlier jump"
+            );
+            assert_eq!(app.scroll_positions[&key], 0.0);
+        }
+    }
+    #[test]
+    fn leaving_a_jump_before_its_first_layout_retains_the_requested_event() {
+        for thread in [false, true] {
+            let mut app = demo_app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let index = usize::from(thread);
+            let generation = if thread {
+                app.selection.thread.as_ref().unwrap().0
+            } else {
+                app.selection.room.as_ref().unwrap().0
+            };
+            let key = app.draft_key(thread).unwrap();
+            app.scroll_positions.insert(key, 0.0);
+            app.focus_message_event(thread, "$pending-event".into());
+            // Metrics from the previous selected view cannot make a requested
+            // event look like a completed jump followed by scrolling to newest.
+            app.timeline_metrics[index] = Some((
+                generation.wrapping_sub(1),
+                1,
+                super::super::timeline::Metrics::default(),
+            ));
+            navigate(&mut app, "general");
+            step(&mut app, true);
+            assert_eq!(
+                app.selection.event_focus[index]
+                    .as_ref()
+                    .map(|(_, event)| event.as_str()),
+                Some("$pending-event")
+            );
+            assert!(app.pending_scroll[index].is_none());
+        }
     }
 
     #[test]
