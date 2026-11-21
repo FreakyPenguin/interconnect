@@ -2,7 +2,7 @@
 use clap::Parser;
 use std::path::PathBuf;
 
-#[derive(Debug, Parser)]
+#[derive(Parser)]
 #[command(name = "interconnect", version, about = "A desktop Matrix client")]
 #[command(
     after_help = "Named profiles use $XDG_DATA_HOME/interconnect/profiles/NAME or\n~/.local/share/interconnect/profiles/NAME on Linux, and\n~/Library/Application Support/interconnect/profiles/NAME on macOS.\nThe default profile name is 'default'."
@@ -27,17 +27,75 @@ pub(super) struct Arguments {
     /// Show local sample data, ignoring saved accounts, profiles, and settings
     #[arg(long)]
     pub(super) demo: bool,
+
+    /// Open a matrix: or https://matrix.to link in an active profile
+    #[arg(long, value_name = "MATRIX_URI")]
+    open: Option<String>,
+
+    /// Local profile-picker fixture, independent of active accounts
+    #[arg(long, hide = true, requires = "demo")]
+    pub(super) demo_picker: bool,
+}
+
+impl std::fmt::Debug for Arguments {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Arguments(<redacted>)")
+    }
 }
 
 impl Arguments {
+    pub(super) fn parse_private() -> Self {
+        Self::try_parse().unwrap_or_else(|error| private_error(error).exit())
+    }
+    fn positional_link(&self) -> bool {
+        self.directory.as_ref().is_some_and(|value| {
+            value.split_once(':').is_some_and(|(scheme, _)| {
+                ["matrix", "http", "https"]
+                    .iter()
+                    .any(|known| scheme.eq_ignore_ascii_case(known))
+            })
+        })
+    }
+    pub(super) fn external_link(&self) -> anyhow::Result<Option<interconnect::activation::Link>> {
+        let positional = self.directory.as_ref().filter(|_| self.positional_link());
+        anyhow::ensure!(
+            self.open.is_none() || positional.is_none(),
+            "Supply only one Matrix link"
+        );
+        self.open
+            .as_ref()
+            .or(positional)
+            .map(|input| interconnect::activation::Link::parse(input).map_err(anyhow::Error::msg))
+            .transpose()
+    }
+    pub(super) fn explicit_profile(&self) -> bool {
+        self.profile.is_some()
+            || self.profile_path.is_some()
+            || (self.directory.is_some() && !self.positional_link())
+    }
     pub(super) fn profile_directory(&self) -> anyhow::Result<String> {
         if self.demo {
             return Ok(String::new());
         }
-        if let Some(path) = self.profile_path.as_ref().or(self.directory.as_ref()) {
+        if let Some(path) = self
+            .profile_path
+            .as_ref()
+            .or(self.directory.as_ref().filter(|_| !self.positional_link()))
+        {
             return Ok(path.clone());
         }
         interconnect::session::named_profile_directory(self.profile.as_deref().unwrap_or("default"))
+    }
+}
+
+fn private_error(error: clap::Error) -> clap::Error {
+    use clap::error::ErrorKind;
+    match error.kind() {
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion => error,
+        kind => clap::Error::raw(
+            kind,
+            "Invalid startup arguments. Use interconnect --help for supported options.",
+        ),
     }
 }
 
@@ -159,5 +217,50 @@ mod tests {
             assert!(parsed.demo);
             assert_eq!(parsed.profile_directory().unwrap(), "");
         }
+    }
+    #[test]
+    fn external_links_are_not_misclassified_as_profile_directories() {
+        for uri in [
+            "matrix:roomid/fixture:example.org",
+            "MATRIX:roomid/fixture:example.org",
+            "HTTPS://MATRIX.TO/#/!fixture:example.org",
+        ] {
+            let args = parse(&[uri]).unwrap();
+            assert!(args.external_link().unwrap().is_some());
+            assert!(!args.explicit_profile());
+            assert_eq!(
+                args.profile_directory().unwrap(),
+                interconnect::session::default_profile_directory().unwrap()
+            );
+        }
+        for uri in [
+            "http://matrix.to/#/!fixture:example.org",
+            "https://unrelated.example.org/",
+        ] {
+            assert!(parse(&[uri]).unwrap().external_link().is_err());
+        }
+        let args = parse(&[
+            "--profile",
+            "work",
+            "--open",
+            "matrix:roomid/fixture:example.org",
+        ])
+        .unwrap();
+        assert!(args.explicit_profile());
+        assert!(args.external_link().unwrap().is_some());
+        assert!(!format!("{args:?}").contains("fixture"));
+        assert!(parse(&["--demo-picker"]).is_err());
+        assert!(parse(&["--demo", "--demo-picker"]).unwrap().demo_picker);
+        let error = Arguments::try_parse_from([
+            "interconnect",
+            "matrix:roomid/private:example.org",
+            "matrix:roomid/other:example.org",
+        ])
+        .unwrap_err();
+        assert!(
+            !private_error(error)
+                .to_string()
+                .contains("private:example.org")
+        );
     }
 }

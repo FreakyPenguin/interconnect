@@ -141,6 +141,13 @@ impl Startup {
             .map(|(_, settings)| settings.graphics.clone())
             .unwrap_or_default()
     }
+    pub(super) fn theme_mode(&self) -> ThemeMode {
+        self.loaded
+            .as_ref()
+            .and_then(|loaded| loaded.as_ref().ok())
+            .map(|(_, settings)| settings.appearance.theme)
+            .unwrap_or_default()
+    }
 }
 #[derive(Clone, Debug)]
 pub enum Event {

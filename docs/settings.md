@@ -75,6 +75,63 @@ existing key, or replaces a saved key after confirmation. New accounts are offer
 setup after registration. Save the key privately before acknowledging it; see
 [key backup and recovery](validation/recovery.md) for backup status and recovery.
 
+## External Matrix links
+
+Installed Linux desktop entries and macOS bundles advertise the `matrix:` scheme.
+Choose Interconnect in your desktop's link-handler settings; the client does not
+change your default handler automatically. The CLI also accepts `matrix:` and
+`https://matrix.to` destinations:
+
+```sh
+interconnect 'matrix:roomid/example:example.org/e/event?via=example.org'
+interconnect --profile work --open 'https://matrix.to/#/!example:example.org'
+```
+
+An unscoped link goes to the sole running profile. When several profiles are
+active, a separate picker shows their profile labels, account names, and Matrix
+IDs; choose the intended account. It does not guess from recent focus. With no
+active profiles the default profile starts. `--profile` or `--profile-path` plus
+`--open` targets that profile directly and starts it if necessary. Existing
+profile-directory positional arguments remain supported; use `--open` when
+combining a link with an explicit profile option. Ordinary second launches of
+the same profile request its existing window instead of opening another store.
+
+Links wait in memory through sign-in, account restoration, and blocking dialogs.
+Room/event/user destinations reuse in-app link navigation and existing join/chat
+confirmation. No link sends a message or joins a room automatically. Conversation
+drafts and reading positions are preserved. Signing out cancels pending links for
+the previous account; links received on the sign-in screen can wait for sign-in.
+Closing the application or cancelling the picker discards its pending requests.
+
+The picker rechecks the selected process incarnation and Matrix account before
+delivery. If a profile closed, changed accounts, or cannot respond, Refresh and
+choose again. A busy or uncertain endpoint is not treated as no active profiles.
+Delivery acknowledgements mean admission to a bounded in-memory queue, not that
+navigation or joining has completed. Retries of the same request are deduplicated
+against the receiver's last 256 accepted request IDs; this is not a persistent
+delivery service.
+
+On macOS, an unscoped app launch with running profiles first shows the SDK-free
+welcome/picker so a cold URL AppleEvent can arrive before any new account store is
+opened. A normal launch in that situation can select an active profile or **Open
+default profile**. Warm OS URLs always use the same global selection policy,
+even if the receiving app originally started with `--profile`. Native focus is
+requested along with attention; the window manager/compositor decides whether
+the destination can be raised (Wayland does not guarantee focus stealing).
+
+Activation uses private same-user Unix sockets and lifetime profile locks, with
+no idle polling or always-running broker. Linux uses a private directory under
+`XDG_RUNTIME_DIR` when suitably short; the fallback and macOS path is
+`/tmp/interconnect-activation-UID`. Socket metadata is not account storage.
+Incoming links are limited to 8192 bytes and 16 pending requests per receiver;
+full queues reject delivery. Raw links and picker metadata are redacted in Debug.
+Demo avoids discovery, sockets, saved accounts, and handler registration. The
+local picker can be inspected with `cargo run --locked --bin interconnect --
+--demo --demo-picker`; demo `--open` links only navigate sample data.
+
+The package handles `matrix:` URLs, not all HTTPS URLs. Browsers retain ownership
+of ordinary `https://matrix.to` clicks unless explicitly passed to the client.
+
 ## Account profile
 
 Settings → Account edits the signed-in account's display name and avatar.

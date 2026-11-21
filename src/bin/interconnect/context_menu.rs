@@ -109,6 +109,9 @@ impl iced::advanced::widget::Operation for LinkAt {
 }
 impl App {
     pub(super) fn context_menu_allowed(&self) -> bool {
+        if self.activation_picker_open() {
+            return false;
+        }
         if self.sign_out_open || self.membership.open || self.draft_persistence.close_requested {
             return false;
         }

@@ -1,6 +1,8 @@
 #![recursion_limit = "256"]
 #[path = "interconnect/account_profile.rs"]
 mod account_profile;
+#[path = "interconnect/activation.rs"]
+mod activation;
 #[path = "interconnect/appearance.rs"]
 mod appearance;
 #[path = "interconnect/attachments.rs"]
@@ -175,7 +177,6 @@ mod virtual_rows;
 #[path = "interconnect/space_settings.rs"]
 mod space_settings;
 
-use clap::Parser;
 use context_menu::space_management;
 use iced::{
     Element, Length, Subscription, Task,
@@ -208,6 +209,7 @@ struct Draft {
 const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
+    activation: activation::State,
     timeline_projection: [timeline_projection::Cache; 2],
     context_menu: Option<context_menu::State>,
     message_delete: Option<message_delete::State>,
@@ -299,6 +301,7 @@ struct App {
 }
 #[derive(Clone, Debug)]
 enum Message {
+    Activation(activation::Event),
     Notification(interconnect::notifications::Target),
     NotificationCenter(notification_center::Event),
     ContextMenu(context_menu::Event),
@@ -446,6 +449,7 @@ enum Message {
 impl App {
     fn new() -> Self {
         Self {
+            activation: Default::default(),
             notification_center: Default::default(),
             notification_history: Default::default(),
             bookmarks: bookmarks::State::default(),
@@ -663,9 +667,19 @@ impl App {
                 self.conversation_history.record(before, after);
             }
         }
-        task
+        if outermost {
+            Task::batch([task, self.activate_external()])
+        } else {
+            task
+        }
     }
     fn update_dispatch(&mut self, message: Message) -> Task<Message> {
+        if let Message::Activation(event) = message {
+            return self.activation_event(event);
+        }
+        if self.activation_picker_open() && matches!(message, Message::Escape) {
+            return self.cancel_activation_picker();
+        }
         if let Message::HighlightExpired(expired) = message {
             self.expire_message_highlight(expired);
             return Task::none();
@@ -1268,6 +1282,7 @@ impl App {
             return self.update(dismiss);
         }
         if self.membership.open
+            || self.activation_picker_open()
             || self.emoji_management.is_some()
             || self.create_room.is_some()
             || self.new_chat.is_some()
@@ -2186,6 +2201,7 @@ impl App {
                 }
             }
             Message::Login(_)
+            | Message::Activation(_)
             | Message::Verification(_)
             | Message::SignOut(_)
             | Message::Membership(_) => unreachable!(),
@@ -2946,6 +2962,7 @@ impl App {
     }
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch([
+            self.activation_subscription(),
             iced::system::theme_changes()
                 .map(|mode| Message::Settings(settings::Event::SystemTheme(mode))),
             self.section_drag_subscription(),
@@ -3161,6 +3178,9 @@ impl App {
         .into()
     }
     fn view_content(&self) -> Element<'_, Message> {
+        if self.activation_picker_open() {
+            return self.activation_picker_view();
+        }
         if !self.draft_persistence.close_requested
             && self.demo.is_none()
             && let Some(authentication) = &self.model.authentication
@@ -4629,7 +4649,7 @@ impl iced::Executor for UiExecutor {
     }
 }
 
-fn run_ui(run: impl FnOnce() -> iced::Result) -> anyhow::Result<()> {
+fn run_ui(run: impl FnOnce() -> anyhow::Result<()>) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let result = {
         // Covers normal UI teardown and error paths outside Executor::enter.
@@ -4645,16 +4665,80 @@ fn run_ui(run: impl FnOnce() -> iced::Result) -> anyhow::Result<()> {
 }
 
 fn main() -> anyhow::Result<()> {
-    let arguments = cli::Arguments::parse();
-    let profile = arguments.profile_directory()?;
-    let startup = settings::Startup::load(arguments.config, arguments.demo);
+    let arguments = cli::Arguments::parse_private();
+    let initial_link = arguments.external_link()?;
+    let startup = settings::Startup::load(arguments.config.clone(), arguments.demo);
     configure_graphics_environment(&startup.graphics())?;
     interconnect::init_tracing();
-    run_ui(|| {
-        iced::application(
+    // Keep activation ownership until runtime-safe SDK/store cleanup completes.
+    let mut activation_server = None;
+    let result = run_ui(|| {
+        let launch = if arguments.demo {
+            None
+        } else {
+            Some(tokio::runtime::Handle::current().block_on(activation::prepare(&arguments))?)
+        };
+        if matches!(launch, Some(activation::Launch::Forwarded)) {
+            return Ok(());
+        }
+        let native = (!arguments.demo).then(interconnect::activation::Handle::local);
+        #[cfg(target_os = "macos")]
+        let _native_guard = {
+            if arguments.demo {
+                None
+            } else {
+                let queue = native.clone().expect("real activation queue");
+                Some(
+                    interconnect::activation_macos::install(std::sync::Arc::new(move |url| {
+                        queue.native_link(&url)
+                    }))
+                    .map_err(anyhow::Error::msg)?,
+                )
+            }
+        };
+        if arguments.demo_picker {
+            return run_activation_picker(activation::Picker::demo());
+        }
+        let (profile, server, registry, request) = match launch {
+            Some(activation::Launch::Picker(mut picker)) => {
+                picker.native = native;
+                picker.theme = startup.theme_mode();
+                return run_activation_picker(picker);
+            }
+            Some(activation::Launch::Profile {
+                profile,
+                server,
+                registry,
+                request,
+            }) => (profile, Some(server), Some(registry), request),
+            None => (
+                String::new(),
+                None,
+                None,
+                initial_link.map(|link| interconnect::activation::Request::new(Some(link))),
+            ),
+            Some(activation::Launch::Forwarded) => unreachable!(),
+        };
+        activation_server = server;
+        let handle = activation_server
+            .as_ref()
+            .map(interconnect::activation::Server::handle)
+            .or_else(|| {
+                request
+                    .as_ref()
+                    .map(|_| interconnect::activation::Handle::local())
+            });
+        if let (Some(handle), Some(request)) = (&handle, request) {
+            handle.enqueue(request).map_err(anyhow::Error::msg)?;
+        }
+        let native_cleanup = native.clone();
+        let result = iced::application(
             move || {
                 let (mut app, task) = App::boot(startup.clone());
                 app.profile = profile.clone();
+                app.activation.handle = handle.clone();
+                app.activation.registry = registry.clone();
+                app.activation.native = native.clone();
                 (app, task)
             },
             App::update,
@@ -4671,7 +4755,47 @@ fn main() -> anyhow::Result<()> {
         .subscription(App::subscription)
         .exit_on_close_request(false)
         .run()
-    })
+        .map_err(Into::into);
+        if let Some(server) = &activation_server {
+            server.handle().update(None, "", false);
+        }
+        if let Some(native) = &native_cleanup {
+            native.update(None, "", false);
+        }
+        result
+    });
+    drop(activation_server);
+    result
+}
+
+fn run_activation_picker(picker: activation::Picker) -> anyhow::Result<()> {
+    let picker = std::sync::Mutex::new(Some(picker));
+    let mut window = branding::window_settings();
+    window.size = iced::Size::new(640.0, 480.0);
+    iced::application(
+        move || {
+            (
+                picker.lock().unwrap().take().expect("picker starts once"),
+                Task::batch([
+                    iced::widget::operation::focus_next(),
+                    iced::system::theme().map(activation::PickerEvent::SystemTheme),
+                ]),
+            )
+        },
+        activation::Picker::desktop_update,
+        activation::Picker::view,
+    )
+    .title("Interconnect · Choose profile")
+    .theme(activation::Picker::iced_theme)
+    .default_font(iced::Font::with_name("Inter"))
+    .font(include_bytes!("../../assets/fonts/Inter-Regular.otf").as_slice())
+    .font(include_bytes!("../../assets/fonts/Inter-SemiBold.otf").as_slice())
+    .window(window)
+    .executor::<UiExecutor>()
+    .subscription(activation::Picker::subscription)
+    .exit_on_close_request(false)
+    .run()
+    .map_err(Into::into)
 }
 
 /// Iced 0.14 reads adapter preference from the environment. Re-exec before

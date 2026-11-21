@@ -356,6 +356,7 @@ fn message(event: Event) -> Message {
 impl App {
     pub(super) fn devices_available(&self) -> bool {
         self.devices_settings_available()
+            && !self.activation_picker_open()
             && !self.sign_out_open
             && !self.verification.open
             && self.emoji_management.is_none()

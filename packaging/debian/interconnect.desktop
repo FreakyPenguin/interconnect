@@ -2,7 +2,8 @@
 Type=Application
 Name=Interconnect
 Comment=Matrix desktop client
-Exec=interconnect
+Exec=interconnect %u
+MimeType=x-scheme-handler/matrix;
 Icon=interconnect
 StartupWMClass=interconnect
 Terminal=false

@@ -24,8 +24,11 @@ builds are experimental.
   Room notification presets support account default, all
   messages, mentions/keywords, and mute; there is no general push-rule editor,
   timed mute, or per-room sound.
-- Matrix links navigate within the app, but there is no startup URI handling or
-  desktop Matrix URI scheme registration.
+- Matrix links support startup and running-profile activation, with a picker for
+  multiple active profiles. Packages advertise `matrix:`; choosing the default
+  handler remains a desktop action, and `matrix.to` HTTPS links are not claimed.
+  Delivery queues are bounded/in-memory; native focus is compositor-controlled.
+  Packaged macOS AppleEvent delivery still needs native acceptance.
 
 ## Rooms and spaces
 

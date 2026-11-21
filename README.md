@@ -20,6 +20,8 @@ All screenshots and GIFs below use local sample data.
 
 ## In development for 0.4.0
 
+- Open external Matrix links in a running profile, with an account picker when several are active.
+
 - List and rename your devices, and revoke other sessions with homeserver authentication.
 
 - Link existing joined spaces beneath multiple parents, with cycle checks and route-specific unlinking.

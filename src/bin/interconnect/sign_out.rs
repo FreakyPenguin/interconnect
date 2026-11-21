@@ -78,6 +78,11 @@ impl App {
         let mut clean = Self::new();
         clean.profile = self.profile.clone();
         clean.settings = std::mem::take(&mut self.settings);
+        clean.activation = std::mem::take(&mut self.activation);
+        if let Some(handle) = &clean.activation.handle {
+            handle.clear();
+            handle.update(None, "Not signed in", !self.closing);
+        }
         clean.settings.profile.reset_account();
         clean.login.sender = self.login.sender.take();
         clean.login.homeserver = std::mem::take(&mut self.login.homeserver);

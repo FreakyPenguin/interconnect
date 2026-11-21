@@ -669,3 +669,72 @@ Manual acceptance needs an authorized isolated account with a spare device:
   Check offline/errors and account changes without publishing stale results.
 - Check Light/Dark, keyboard traversal, long device names/IDs, and 640×480 layout.
   Native acceptance and real cross-device/server behavior remain manual.
+
+## External Matrix activation and profile selection
+
+The package advertises `matrix:` only; ordinary HTTPS ownership is unchanged.
+Do not change the user's default handler or open real account profiles for these
+tests. Use demo for UI and private fake endpoints for IPC/native acceptance.
+
+Automated tests cover validated/case-normalized CLI links, explicit profile
+selection, zero/one/many active-profile routing, actual Unix-socket delivery and
+deduplication, queue/frame limits, stale process/account identity, endpoint locks
+and permissions, stalled live owners versus stale sockets, startup/sign-in and
+covered-dialog deferral, preserved drafts/scroll/event focus, shutdown rejection,
+sign-out ownership, and stale picker completions. Native queue admission and
+picker exit are atomic; accepted links are retained in the bounded source queue
+until the UI can route them. No account store is opened by discovery or picker.
+
+For an isolated native fixture, run the built library test executable with
+`--exact activation::tests::fixture_process --nocapture` and
+`INTERCONNECT_ACTIVATION_FIXTURE=/tmp/SHORT_PRIVATE_DIR` (mode 0700). The helper
+publishes two fake profiles under that directory, writes `ready.json`, and records
+fake deliveries in `received.jsonl`. Optional
+`INTERCONNECT_ACTIVATION_FIXTURE_SINGLE=work` exposes one fake profile. Set only the
+test client's `XDG_RUNTIME_DIR` to the fixture directory, with an absolute
+`WAYLAND_DISPLAY` if needed, so it cannot discover the real client's sockets.
+The fixture creates no profile/account directories. Never publish fake profiles
+in the user's real activation directory. Keep all artifacts outside the repo.
+
+- One fake profile: opening a link must forward and exit before creating a UI or
+  account store. Test with renderer re-exec variables absent as well.
+- Two profiles: the SDK-free picker shows both account identities, supports
+  Tab/Shift+Tab, Enter, Escape/Cancel, refresh, and 640×480 layout. Choosing one
+  must deliver only there. An explicit `--profile-path ... --open ...` bypasses it.
+- Close/restart/change the selected fake target before choosing; the picker must
+  report failure and require refresh, without choosing another account. An
+  unresponsive locked endpoint must not be interpreted as zero active profiles.
+- Inspect Light/Dark and GPU/software rendering. With a real authorized test
+  profile, hold a link through sign-in, settings/edit/confirmation dialogs, IME
+  composition, and account restoration. It must navigate when safe, retaining
+  drafts/scroll and join confirmation. Signing out cancels previous-account links.
+- On macOS, test installed bundle cold and warm URL delivery with zero, one, and
+  several active profiles, including a receiver originally launched explicitly
+  for another profile. The no-URI welcome must retain the native handler until
+  GURL delivery; pending links must not be replaced by later URLs. macOS bridge
+  sources were compiled/linted in an isolated aarch64-apple-darwin harness on
+  Linux, which does not establish native packaged AppleEvent acceptance.
+
+Focus/attention is requested, but compositor policies (especially Wayland) decide
+whether a background window can be raised. Activation ACKs indicate bounded
+in-memory admission, not durable navigation or server-side completion.
+
+Linux/Wayland native acceptance for this change used the real locked debug
+binary, an on-screen nested Sway desktop, and isolated fake profile endpoints.
+Intel ARL IntegratedGpu / Vulkan / Mesa 25.0.7 and forced tiny-skia both rendered
+the 640×480 picker cleanly in Light/Dark. GPU Tab/Enter delivered only to Work;
+software mouse selection delivered only to Personal, while Cancel,
+Escape, and native window close delivered nothing and exited. Refresh sent no
+link. Killing the fake endpoints produced a visible failure, then an empty
+refreshed list without automatic default-profile/store creation. Single-profile
+handoff, renderer re-exec, explicit-profile bypass, focus-only launch, and invalid
+URI diagnostic redaction passed without a display or account initialization.
+The software picker added 0.0 procfs CPU seconds over a five-second idle sample
+(quantized measurement; scheduler wakeups were not measured).
+
+These native checks did not touch saved accounts, send Matrix messages, change
+the default handler, or establish live-server joins/sign-in. Packaged macOS
+AppleEvents, fresh default-profile credential prompts, and OS handler selection
+remain native/manual acceptance. Run artifacts are outside version control:
+`/tmp/interconnect-activation-native-results.json` and the corresponding
+`interconnect-activation-wgpu-*` / `interconnect-activation-tiny-skia-*` captures.
