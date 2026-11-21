@@ -44,6 +44,7 @@ impl App {
         };
         !self.closing
             && !self.stopped
+            && !self.notification_center.open
             && !self.bookmarks.open
             && !self.global_search.open
             && !self.space_settings.is_open()
@@ -629,6 +630,30 @@ mod tests {
                 .any(|row| row.body == "fixture.txt" && row.thread_root.is_none())
         );
         assert_eq!(app.pending_ops, 0);
+    }
+
+    #[test]
+    fn notification_center_rejects_stale_attachment_inputs_for_the_covered_composer() {
+        let mut app = demo_app();
+        let room = target(&app, false);
+        app.drafts.get_mut(&room.key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("covered draft");
+        let _ = app.update(Message::NotificationCenter(
+            super::super::notification_center::Event::Open,
+        ));
+        assert!(app.notification_center.open);
+        assert!(!app.attachment_target_valid(&room));
+        for event in [
+            Event::Pick(room.clone()),
+            Event::Drop(room.clone(), vec!["/unused-fixture".into()]),
+            Event::Paste(room.clone()),
+        ] {
+            let _ = app.update(Message::Attachment(event));
+            assert!(app.attachment_picker.is_none());
+            assert!(app.clipboard_paste.is_none());
+            assert!(app.drafts[&room.key].attachments.is_empty());
+            assert_eq!(app.drafts[&room.key].content.text(), "covered draft");
+        }
     }
 
     #[tokio::test]

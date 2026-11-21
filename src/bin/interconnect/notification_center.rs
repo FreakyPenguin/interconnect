@@ -112,6 +112,8 @@ impl App {
                 self.shell.spaces.menu = None;
                 self.pending_room_focus = None;
                 self.pending_thread_focus = None;
+                self.stop_image_playback();
+                self.inline_gif = None;
                 self.notification_center.open = true;
                 self.notification_center.tab = Tab::Unread;
                 self.notification_center.filter = Filter::All;
@@ -547,6 +549,32 @@ mod tests {
         assert_eq!(app.selection, selection);
         assert!(app.notification_center.open);
     }
+    #[test]
+    fn manual_unread_for_expired_requests_survives_the_update_wrapper_and_later_snapshots() {
+        let mut app = crate::tests::demo_app();
+        let _ = app.update(message(Event::Open));
+        app.notification_center.records = records();
+        app.notification_center.records[1].read = true;
+        app.model.invitations = Default::default();
+        app.model.invitations_ready = true;
+        app.model.verification.incoming = None;
+        let _ = app.update(message(Event::Read(source(&app, "invite"), false)));
+        let _ = app.update(message(Event::Read(source(&app, "verify"), false)));
+        let _ = app.update(message(Event::Tab(Tab::History)));
+        let model = app.model.clone();
+        let _ = app.update(Message::State(Box::new(model)));
+        for id in ["invite", "verify"] {
+            assert!(
+                !app.notification_center
+                    .records
+                    .iter()
+                    .find(|record| record.entry.id == id)
+                    .unwrap()
+                    .read
+            );
+        }
+    }
+
     #[test]
     fn covering_form_blocks_queued_notification_actions() {
         let mut app = crate::tests::demo_app();

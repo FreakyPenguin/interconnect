@@ -136,6 +136,7 @@ impl App {
                 generation,
                 row,
             } if self.image_view.is_none()
+                && !self.notification_center.open
                 && self.reaction_picker.is_none()
                 && self.composer_picker.is_none()
                 && self.settings.draft.is_none()
@@ -166,6 +167,7 @@ impl App {
                 generation,
                 row,
             } if self.image_view.is_none()
+                && !self.notification_center.open
                 && self.settings.draft.is_none()
                 && self.reaction_picker.is_none()
                 && self.composer_picker.is_none()
@@ -768,6 +770,47 @@ mod tests {
                     let _ = app.update(Message::Image(Event::Close));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn notification_center_stops_inline_playback_and_pending_decodes_without_resuming() {
+        for pending in [false, true] {
+            let mut app = sample();
+            let _ = app.update(Message::WindowFocused(true));
+            let loaded = app.model.images.clone();
+            if pending {
+                app.model.images = Default::default();
+                app.demo = None;
+                app.model.authentication = None;
+            }
+            toggle_inline(&mut app);
+            let original = app.inline_gif.as_ref().unwrap().original.clone();
+            assert_eq!(app.inline_gif.as_ref().unwrap().pending, pending);
+            assert_eq!(app.image_subscription().units(), usize::from(!pending));
+            assert!(app.context_menu_allowed(), "pending={pending}");
+            let _ = app.update(Message::NotificationCenter(
+                super::super::notification_center::Event::Open,
+            ));
+            assert!(app.notification_center.open);
+            assert!(app.inline_gif.is_none());
+            assert!(!app.selection.images.contains(&original));
+            assert_eq!(app.image_subscription().units(), 0);
+            // Previously captured timeline controls cannot restart hidden media.
+            toggle_inline(&mut app);
+            open_gif(&mut app);
+            assert!(app.image_view.is_none());
+            assert!(app.inline_gif.is_none());
+            assert_eq!(app.image_subscription().units(), 0);
+            let mut model = app.model.clone();
+            model.images = loaded;
+            let _ = app.update(Message::State(Box::new(model)));
+            let _ = app.update(Message::NotificationCenter(
+                super::super::notification_center::Event::Close,
+            ));
+            assert!(!app.notification_center.open);
+            assert!(app.inline_gif.is_none());
+            assert_eq!(app.image_subscription().units(), 0);
         }
     }
 
