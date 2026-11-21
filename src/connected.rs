@@ -57,6 +57,7 @@ pub struct Selection {
     pub image_retry: u64,
     pub notifications: crate::settings::Notifications,
     pub conversation_visible: bool,
+    pub verification_visible: bool,
     pub presence: PresenceDemand,
     /// Source rooms for the currently displayed saved messages only.
     pub bookmark_rooms: Vec<String>,
@@ -797,6 +798,7 @@ pub struct Model {
     pub status: String,
     pub rooms: Arc<Vec<RoomEntry>>,
     pub invitations: Arc<Vec<crate::room_membership::Invitation>>,
+    pub invitations_ready: bool,
     pub spaces: Arc<Vec<SpaceEntry>>,
     pub all_rooms_in_home: bool,
     pub sections: Arc<Vec<crate::navigation::SectionEntry>>,
@@ -810,6 +812,7 @@ pub struct Model {
     pub presence_loading: bool,
     pub images: crate::media::Snapshot<crate::image_media::Key>,
     pub media_error: Option<String>,
+    pub notification_history: Arc<Vec<crate::notifications::Entry>>,
     pub notification_error: Option<String>,
     pub notification_activation: Option<Arc<crate::notifications::Activation>>,
     pub receipt_errors: [Option<(u64, String)>; 2],
@@ -839,6 +842,7 @@ impl Default for Model {
             status: "Restoring saved session…".into(),
             rooms: Arc::default(),
             invitations: Arc::default(),
+            invitations_ready: false,
             spaces: Arc::default(),
             all_rooms_in_home: false,
             sections: crate::navigation::sections_from_settings(&serde_json::Value::Null).into(),
@@ -852,6 +856,7 @@ impl Default for Model {
             presence_loading: false,
             images: Default::default(),
             media_error: None,
+            notification_history: Arc::default(),
             notification_error: None,
             notification_activation: None,
             receipt_errors: Default::default(),
@@ -1162,7 +1167,7 @@ async fn connected(
     tokio::pin!(emoji);
     let presence = presence::run(client, selection.clone(), state);
     tokio::pin!(presence);
-    let navigation = navigation_updates(client, state);
+    let navigation = navigation_updates(client, state, sync);
     tokio::pin!(navigation);
     let bookmarks_service = state.borrow().bookmarks_service.clone();
     let bookmarks = async {
@@ -1414,7 +1419,8 @@ async fn account_profile_updates(client: &Client, state: &watch::Sender<Model>) 
     }
 }
 
-async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
+async fn navigation_updates(client: &Client, state: &watch::Sender<Model>, sync: &SyncService) {
+    let mut sync_updates = sync.room_list_service().state();
     // Explicit creation also refreshes navigation before its first sync arrives.
     let mut refresh = state
         .borrow()
@@ -1438,10 +1444,18 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
     let mut metadata = client.room_info_notable_update_receiver();
     loop {
         let invitations = crate::room_membership::invitations(client).await;
+        // Cached invitations are available offline, but initial server results
+        // remain a silent notification baseline until the first successful sync.
+        let synced = matches!(
+            sync_updates.get(),
+            RoomState::SettingUp | RoomState::Running | RoomState::Recovering
+        );
         state.send_if_modified(|s| {
-            if *s.invitations == invitations {
+            let ready = s.invitations_ready || synced;
+            if s.invitations_ready == ready && *s.invitations == invitations {
                 false
             } else {
+                s.invitations_ready = ready;
                 s.invitations = Arc::new(invitations);
                 true
             }
@@ -1487,6 +1501,7 @@ async fn navigation_updates(client: &Client, state: &watch::Sender<Model>) {
             _ = settings_updates.recv() => {},
             event = rooms.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
             event = metadata.recv() => if matches!(event, Err(tokio::sync::broadcast::error::RecvError::Closed)) { return; },
+            event = sync_updates.next() => if event.is_none() { return; },
         }
         // Superseded notifications need one fresh snapshot, not one DB scan each.
         while rooms.try_recv().is_ok() {}
@@ -2869,7 +2884,8 @@ mod tests {
             .await;
         let (state, mut snapshots) = watch::channel(Model::default());
         let watched = client.clone();
-        let task = tokio::spawn(async move { navigation_updates(&watched, &state).await });
+        let sync = build_sync(watched.clone()).await.unwrap();
+        let task = tokio::spawn(async move { navigation_updates(&watched, &state, &sync).await });
         client
             .sync_once(SyncSettings::default().timeout(Duration::ZERO))
             .await

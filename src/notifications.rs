@@ -1,5 +1,5 @@
-//! Desktop delivery is independent of replaceable UI snapshots and timeline views.
-//! Only SDK push-rule notifications enter this bounded, session-owned worker.
+//! Bounded, session-owned inbox collection and desktop delivery are independent.
+//! SDK push rules supply messages; SDK snapshots supply invitations and verification.
 use std::{
     collections::{HashSet, VecDeque},
     time::{SystemTime, UNIX_EPOCH},
@@ -10,7 +10,7 @@ use matrix_sdk::{
     Client, Room, RoomState, deserialized_responses::RawAnySyncOrStrippedTimelineEvent,
     sync::Notification,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     pin::Pin,
     sync::{Arc, Weak},
@@ -28,11 +28,48 @@ const QUEUE_LIMIT: usize = 64;
 const SEEN_LIMIT: usize = 2048;
 const MAX_AGE_MS: u64 = 120_000;
 
-/// Conversation identity retained locally, never included in the OS payload.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Target {
-    pub room: String,
-    pub thread: Option<String>,
+/// Destination retained locally, never included in the OS payload.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Target {
+    Conversation {
+        room: String,
+        thread: Option<String>,
+    },
+    Invitation {
+        room: String,
+    },
+    Verification {
+        flow: String,
+        device: String,
+    },
+}
+
+pub const HISTORY_LIMIT: usize = 256;
+
+/// A bounded inbox entry. Timestamp is milliseconds since the Unix epoch.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Entry {
+    pub id: String,
+    pub target: Target,
+    pub timestamp: u64,
+    pub title: String,
+    pub body: String,
+}
+impl std::fmt::Debug for Entry {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Entry")
+            .field("id", &self.id)
+            .field("target", &self.target)
+            .field("timestamp", &self.timestamp)
+            .finish_non_exhaustive()
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Record {
+    pub entry: Entry,
+    pub read: bool,
 }
 
 /// A click is valid only while its authenticated worker is alive.
@@ -59,7 +96,9 @@ type PendingResponse = Pin<Box<dyn Future<Output = (bool, Target)> + Send>>;
 type Response = Pin<Box<dyn Future<Output = bool> + Send>>;
 
 // Never derive Debug: event previews must not appear in diagnostics.
+#[derive(Clone)]
 struct Candidate {
+    category: Category,
     room: String,
     room_name: String,
     id: String,
@@ -67,6 +106,13 @@ struct Candidate {
     timestamp: u64,
     thread: Option<String>,
     body: String,
+}
+
+#[derive(Clone)]
+enum Category {
+    Message,
+    Invitation,
+    Verification { flow: String, device: String },
 }
 
 #[derive(Deserialize)]
@@ -134,6 +180,7 @@ impl Candidate {
         })
         .flatten();
         Some(Self {
+            category: Category::Message,
             room: room.into(),
             room_name: plain(room_name, 100),
             id: event.event_id,
@@ -144,14 +191,80 @@ impl Candidate {
         })
     }
 
+    fn invitation(invitation: &crate::room_membership::Invitation, timestamp: u64) -> Self {
+        Self {
+            category: Category::Invitation,
+            room: invitation.id.clone(),
+            room_name: plain(&invitation.name, 100),
+            id: invitation.id.clone(),
+            sender: invitation.inviter.clone().unwrap_or_default(),
+            timestamp,
+            thread: None,
+            body: if invitation.space { "space" } else { "room" }.into(),
+        }
+    }
+    fn verification(incoming: &crate::verification::Incoming, timestamp: u64) -> Self {
+        Self {
+            category: Category::Verification {
+                flow: incoming.flow.clone(),
+                device: incoming.device.clone(),
+            },
+            room: String::new(),
+            room_name: String::new(),
+            id: incoming.flow.clone(),
+            sender: String::new(),
+            timestamp,
+            thread: None,
+            body: String::new(),
+        }
+    }
+    fn target(&self) -> Target {
+        match &self.category {
+            Category::Message => Target::Conversation {
+                room: self.room.clone(),
+                thread: self.thread.clone(),
+            },
+            Category::Invitation => Target::Invitation {
+                room: self.room.clone(),
+            },
+            Category::Verification { flow, device } => Target::Verification {
+                flow: flow.clone(),
+                device: device.clone(),
+            },
+        }
+    }
+    fn history_id(&self) -> String {
+        // Encode identity tuples rather than concatenate unescaped Matrix IDs.
+        // This stays stable across restarts and cannot collide across categories.
+        match &self.category {
+            Category::Message => format!(
+                "message:{}",
+                serde_json::to_string(&(&self.room, &self.id)).expect("string tuple")
+            ),
+            Category::Invitation => format!("invitation:{}", self.room),
+            Category::Verification { flow, device } => format!(
+                "verification:{}",
+                serde_json::to_string(&(flow, device)).expect("string tuple")
+            ),
+        }
+    }
+    fn fresh(&self, started: u64, now: u64) -> bool {
+        self.timestamp >= started
+            && now.saturating_sub(self.timestamp) <= MAX_AGE_MS
+            && self.timestamp <= now.saturating_add(MAX_AGE_MS)
+    }
     fn eligible(&self, selection: &Selection, started: u64, now: u64) -> bool {
         if selection.shutdown
+            || selection.sign_out != 0
             || !selection.notifications.enabled
-            || self.timestamp < started
-            || now.saturating_sub(self.timestamp) > MAX_AGE_MS
-            || self.timestamp > now.saturating_add(MAX_AGE_MS)
+            || !self.fresh(started, now)
         {
             return false;
+        }
+        match &self.category {
+            Category::Invitation => return true,
+            Category::Verification { .. } => return !selection.verification_visible,
+            Category::Message => {}
         }
         if !selection.conversation_visible
             || selection
@@ -161,8 +274,6 @@ impl Candidate {
         {
             return true;
         }
-        // Room timelines hide thread replies; only an open matching thread
-        // suppresses those. Both the room and thread panes can be visible.
         self.thread.as_ref().is_some_and(|root| {
             selection
                 .thread
@@ -170,15 +281,51 @@ impl Candidate {
                 .is_none_or(|(_, open)| open != root)
         })
     }
-
+    fn current(&self, model: &Model) -> bool {
+        target_current(&self.target(), model)
+    }
     fn preview(&self, show: bool) -> (String, String) {
-        if show {
-            (
+        if !show {
+            return (
+                "Interconnect".into(),
+                match self.category {
+                    Category::Message => "New Matrix message",
+                    Category::Invitation => "New room invitation",
+                    Category::Verification { .. } => "Device verification requested",
+                }
+                .into(),
+            );
+        }
+        match &self.category {
+            Category::Message => (
                 plain(&self.room_name, 100),
                 plain(&format!("{}: {}", self.sender, self.body), 300),
-            )
-        } else {
-            ("Interconnect".into(), "New Matrix message".into())
+            ),
+            Category::Invitation => (
+                plain(&format!("Invitation to {}", self.room_name), 100),
+                if self.sender.is_empty() {
+                    format!("You were invited to this {}", self.body)
+                } else {
+                    plain(
+                        &format!("{} invited you to this {}", self.sender, self.body),
+                        300,
+                    )
+                },
+            ),
+            Category::Verification { device, .. } => (
+                "Device verification requested".into(),
+                plain(&format!("Review the request from device {device}"), 300),
+            ),
+        }
+    }
+    fn entry(&self, show_preview: bool) -> Entry {
+        let (title, body) = self.preview(show_preview);
+        Entry {
+            id: self.history_id(),
+            target: self.target(),
+            timestamp: self.timestamp,
+            title,
+            body,
         }
     }
 }
@@ -207,7 +354,7 @@ struct Seen {
 }
 impl Seen {
     fn insert(&mut self, candidate: &Candidate) -> bool {
-        let key = (candidate.room.clone(), candidate.id.clone());
+        let key = (candidate.room.clone(), candidate.history_id());
         if !self.ids.insert(key.clone()) {
             return false;
         }
@@ -218,6 +365,87 @@ impl Seen {
         }
         true
     }
+}
+
+fn target_current(target: &Target, model: &Model) -> bool {
+    match target {
+        Target::Conversation { .. } => true,
+        Target::Invitation { room } => model.invitations.iter().any(|invite| &invite.id == room),
+        Target::Verification { flow, device } => model
+            .verification
+            .incoming
+            .as_ref()
+            .is_some_and(|incoming| &incoming.flow == flow && &incoming.device == device),
+    }
+}
+#[derive(Default)]
+struct Attention {
+    invitations_ready: bool,
+    invitations: HashSet<String>,
+    invitations_source: Option<Arc<Vec<crate::room_membership::Invitation>>>,
+    incoming: Option<(String, String)>,
+    last_timestamp: u64,
+}
+impl Attention {
+    fn timestamp(&mut self, now: u64) -> u64 {
+        self.last_timestamp = now.max(self.last_timestamp.saturating_add(1));
+        self.last_timestamp
+    }
+
+    /// The first completed invitation snapshot is history-only. Later membership
+    /// transitions notify, while metadata changes and our own publications do not.
+    fn observe(&mut self, model: &Model, timestamp: u64) -> Vec<(Candidate, bool)> {
+        let mut notices = Vec::new();
+        if (!self.invitations_ready && model.invitations_ready)
+            || self
+                .invitations_source
+                .as_ref()
+                .is_none_or(|source| !Arc::ptr_eq(source, &model.invitations))
+        {
+            for invitation in model.invitations.iter() {
+                if !self.invitations.contains(&invitation.id) {
+                    let timestamp = self.timestamp(timestamp);
+                    notices.push((
+                        Candidate::invitation(invitation, timestamp),
+                        self.invitations_ready && model.invitations_ready,
+                    ));
+                }
+            }
+            self.invitations = model
+                .invitations
+                .iter()
+                .map(|invite| invite.id.clone())
+                .collect();
+            self.invitations_source = Some(model.invitations.clone());
+            self.invitations_ready |= model.invitations_ready;
+        }
+        let incoming = model
+            .verification
+            .incoming
+            .as_ref()
+            .map(|incoming| (incoming.flow.clone(), incoming.device.clone()));
+        if incoming != self.incoming {
+            if let Some(incoming) = &model.verification.incoming {
+                let timestamp = self.timestamp(timestamp);
+                notices.push((Candidate::verification(incoming, timestamp), true));
+            }
+            self.incoming = incoming;
+        }
+        notices
+    }
+}
+fn record(state: &watch::Sender<Model>, entry: Entry) {
+    state.send_if_modified(|model| {
+        if model.notification_history.iter().any(|old| old == &entry) {
+            return false;
+        }
+        let history = Arc::make_mut(&mut model.notification_history);
+        history.retain(|old| old.id != entry.id);
+        history.push(entry);
+        history.sort_by(|a, b| b.timestamp.cmp(&a.timestamp).then_with(|| b.id.cmp(&a.id)));
+        history.truncate(HISTORY_LIMIT);
+        true
+    });
 }
 
 pub(crate) struct Service {
@@ -261,97 +489,116 @@ impl Service {
         .await;
     }
 
-    async fn run_with<A, AF, S, SF>(mut self, mut authorize: A, mut show: S)
+    async fn run_with<A, AF, S, SF>(mut self, mut authorize: A, show: S)
     where
         A: FnMut() -> AF,
-        AF: Future<Output = Result<(), String>>,
-        S: FnMut(String, String) -> SF,
-        SF: Future<Output = Result<Option<Response>, String>>,
+        AF: Future<Output = Result<(), String>> + Send + 'static,
+        S: FnMut(String, String) -> SF + Send + 'static,
+        SF: Future<Output = Result<Option<Response>, String>> + Send + 'static,
     {
+        type Delivery<S> =
+            Pin<Box<dyn Future<Output = (Target, S, Result<Option<Response>, String>)> + Send>>;
         let mut seen = Seen::default();
+        let mut attention = Attention::default();
+        let mut models = self.state.subscribe();
         let session = Arc::new(());
         let mut responses: Vec<PendingResponse> = Vec::new();
+        let mut pending = VecDeque::<Candidate>::new();
+        let mut show = Some(show);
+        let mut delivery: Option<Delivery<S>> = None;
         let mut shutdown = self.selection.clone();
-        'worker: loop {
-            let candidate = tokio::select! {
+        let mut notices = attention.observe(&models.borrow_and_update(), now_ms());
+        loop {
+            for (candidate, native) in notices.drain(..) {
+                // Invitation transitions are deduplicated by the snapshot observer,
+                // allowing a later reinvitation to replace the same stable entry.
+                let fresh = candidate.fresh(self.started, now_ms());
+                let unseen =
+                    matches!(candidate.category, Category::Invitation) || seen.insert(&candidate);
+                if !fresh || !unseen {
+                    continue;
+                }
+                record(
+                    &self.state,
+                    candidate.entry(self.selection.borrow().notifications.show_preview),
+                );
+                if native && candidate.eligible(&self.selection.borrow(), self.started, now_ms()) {
+                    if pending.len() >= QUEUE_LIMIT {
+                        pending.pop_front();
+                    }
+                    pending.push_back(candidate);
+                }
+            }
+            if delivery.is_none() {
+                while let Some(candidate) = pending.pop_front() {
+                    if !candidate.eligible(&self.selection.borrow(), self.started, now_ms())
+                        || !candidate.current(&models.borrow())
+                    {
+                        continue;
+                    }
+                    let authorization = authorize();
+                    let mut show_callback = show.take().expect("one desktop delivery at a time");
+                    let selection = self.selection.clone();
+                    let model = models.clone();
+                    let started = self.started;
+                    delivery = Some(Box::pin(async move {
+                        let target = candidate.target();
+                        let result = async {
+                            authorization.await?;
+                            let preview = {
+                                let selection = selection.borrow();
+                                if !candidate.eligible(&selection, started, now_ms())
+                                    || !candidate.current(&model.borrow())
+                                {
+                                    return Ok(None);
+                                }
+                                candidate.preview(selection.notifications.show_preview)
+                            };
+                            show_callback(preview.0, preview.1).await
+                        }
+                        .await;
+                        (target, show_callback, result)
+                    }));
+                    break;
+                }
+            }
+            tokio::select! {
                 biased;
                 _ = shutdown.wait_for(|s| s.shutdown || s.sign_out != 0) => break,
                 ((clicked, target), index, _) = async { select_all(responses.iter_mut()).await }, if !responses.is_empty() => {
                     drop(responses.remove(index));
-                    if clicked {
+                    if clicked && target_current(&target, &models.borrow()) {
                         self.state.send_modify(|state| state.notification_activation = Some(Arc::new(Activation::new(target, &session))));
                     }
-                    continue;
+                }
+                (target, callback, result) = async { delivery.as_mut().expect("active delivery").await }, if delivery.is_some() => {
+                    delivery = None;
+                    show = Some(callback);
+                    match result {
+                        Ok(Some(response)) => {
+                            if responses.len() >= QUEUE_LIMIT { drop(responses.remove(0)); }
+                            responses.push(Box::pin(async move { (response.await, target) }));
+                            self.state.send_if_modified(|state| state.notification_error.take().is_some());
+                        }
+                        Ok(None) => {}
+                        Err(error) => { self.state.send_if_modified(|state| {
+                            if state.notification_error.as_ref() == Some(&error) { false } else { state.notification_error = Some(error); true }
+                        }); }
+                    }
+                }
+                changed = models.changed() => {
+                    if changed.is_err() { break; }
+                    notices = attention.observe(&models.borrow_and_update(), now_ms());
                 }
                 candidate = self.events.recv() => {
-                    let Some(candidate) = candidate else { break };
-                    candidate
+                    let Some(candidate) = candidate else { break; };
+                    notices.push((candidate, true));
                 }
-            };
-            // Record even suppressed events to avoid re-alerting after focus changes.
-            if !seen.insert(&candidate)
-                || !candidate.eligible(&self.selection.borrow(), self.started, now_ms())
-            {
-                continue;
             }
-            let mut shutdown = self.selection.clone();
-            let delivery = async {
-                authorize().await?;
-                // Permission can take time. Re-check current focus, settings
-                // and age before sharing content with the desktop service.
-                let preview = {
-                    let selection = self.selection.borrow();
-                    if !candidate.eligible(&selection, self.started, now_ms()) {
-                        return Ok(None);
-                    }
-                    candidate.preview(selection.notifications.show_preview)
-                };
-                show(preview.0, preview.1).await
-            };
-            let result = {
-                tokio::pin!(delivery);
-                loop {
-                    tokio::select! {
-                        biased;
-                        _ = shutdown.wait_for(|s| s.shutdown || s.sign_out != 0) => break 'worker,
-                        ((clicked, target), index, _) = async { select_all(responses.iter_mut()).await }, if !responses.is_empty() => {
-                            drop(responses.remove(index));
-                            if clicked {
-                                self.state.send_modify(|state| state.notification_activation = Some(Arc::new(Activation::new(target, &session))));
-                            }
-                        }
-                        result = &mut delivery => break result,
-                    }
-                }
-            };
-            if matches!(result, Ok(None)) {
-                continue;
-            }
-            let result = result.map(|response| {
-                if let Some(response) = response {
-                    // Bound retained OS handles; keep the newest alerts clickable.
-                    if responses.len() >= QUEUE_LIMIT {
-                        drop(responses.remove(0));
-                    }
-                    let target = Target {
-                        room: candidate.room.clone(),
-                        thread: candidate.thread.clone(),
-                    };
-                    responses.push(Box::pin(async move { (response.await, target) }));
-                }
-            });
-            self.state.send_if_modified(|state| {
-                if state.notification_error == result.as_ref().err().cloned() {
-                    false
-                } else {
-                    state.notification_error = result.err();
-                    true
-                }
-            });
         }
+        drop(delivery);
         drop(responses);
         drop(session);
-        // The connection owns shutdown; remain inert until it drops this worker.
         std::future::pending::<()>().await;
     }
 }
@@ -408,7 +655,7 @@ async fn show(title: &str, body: &str, observe: bool) -> Result<Option<Response>
                         title,
                         body,
                         if observe {
-                            vec!["default", "Open conversation"]
+                            vec!["default", "Open notification"]
                         } else {
                             Vec::new()
                         },

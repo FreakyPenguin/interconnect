@@ -438,7 +438,7 @@ mod dbus {
         let calls = calls.lock().unwrap();
         assert_eq!(calls.len(), 4);
         assert_eq!(calls[0].0, "Interconnect");
-        assert_eq!(calls[0].4, ["default", "Open conversation"]);
+        assert_eq!(calls[0].4, ["default", "Open notification"]);
         assert_eq!(calls[0].1, "Sample room");
         assert_eq!(calls[0].2, "&lt;b&gt;hello &amp; goodbye&lt;/b&gt;");
         assert_eq!(
@@ -499,8 +499,13 @@ async fn clicks_are_bounded_session_owned_and_independent_of_delivery() {
     })
     .await
     .unwrap();
-    assert_eq!(activation.target.room, "!room:example.org");
-    assert_eq!(activation.target.thread.as_deref(), Some("$thread"));
+    assert_eq!(
+        activation.target,
+        Target::Conversation {
+            room: "!room:example.org".into(),
+            thread: Some("$thread".into())
+        }
+    );
     assert!(activation.is_active());
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
@@ -509,4 +514,474 @@ async fn clicks_are_bounded_session_owned_and_independent_of_delivery() {
         "queued UI clicks expire with the session"
     );
     assert!(observers.iter().all(|observer| observer.is_closed()));
+}
+
+fn invitation(room: &str) -> crate::room_membership::Invitation {
+    crate::room_membership::Invitation {
+        id: room.into(),
+        name: "Private invitation room".into(),
+        inviter: Some("@inviter:example.org".into()),
+        space: false,
+    }
+}
+async fn wait_model(
+    updates: &mut watch::Receiver<Model>,
+    predicate: impl Fn(&Model) -> bool,
+) -> Model {
+    tokio::time::timeout(Duration::from_secs(3), updates.wait_for(predicate))
+        .await
+        .expect("notification worker publishes the expected state")
+        .unwrap()
+        .clone()
+}
+#[test]
+fn attention_baseline_metadata_and_reinvitation_are_event_driven() {
+    let mut attention = Attention::default();
+    let mut model = Model::default();
+    assert!(attention.observe(&model, 100).is_empty());
+    model.invitations_ready = true;
+    model.invitations = Arc::new(vec![invitation("!invite:example.org")]);
+    let baseline = attention.observe(&model, 100);
+    assert_eq!(baseline.len(), 1);
+    assert!(!baseline[0].1, "initial pending invitations are silent");
+    assert!(attention.observe(&model, 100).is_empty());
+    Arc::make_mut(&mut model.invitations)[0].name = "Renamed room".into();
+    assert!(
+        attention.observe(&model, 100).is_empty(),
+        "metadata does not re-alert"
+    );
+    model.invitations = Arc::default();
+    assert!(attention.observe(&model, 100).is_empty());
+    model.invitations = Arc::new(vec![invitation("!invite:example.org")]);
+    let fresh = attention.observe(&model, 100);
+    assert!(fresh[0].1);
+    assert_eq!(fresh[0].0.history_id(), baseline[0].0.history_id());
+    assert!(
+        fresh[0].0.timestamp > baseline[0].0.timestamp,
+        "live episodes differ even within one clock tick"
+    );
+    model.verification.incoming = Some(crate::verification::Incoming {
+        flow: "flow".into(),
+        device: "OTHER".into(),
+    });
+    let verification = attention.observe(&model, 100);
+    assert_eq!(verification.len(), 1);
+    assert!(verification[0].1);
+    assert!(attention.observe(&model, 100).is_empty());
+}
+#[test]
+fn category_targets_previews_ids_and_debug_do_not_leak_hidden_previews() {
+    let invite = Candidate::invitation(&invitation("!invite:example.org"), 100);
+    assert_eq!(
+        invite.target(),
+        Target::Invitation {
+            room: "!invite:example.org".into()
+        }
+    );
+    assert_eq!(
+        invite.preview(false),
+        ("Interconnect".into(), "New room invitation".into())
+    );
+    assert!(!invite.entry(false).body.contains("inviter"));
+    let verification = Candidate::verification(
+        &crate::verification::Incoming {
+            flow: "flow".into(),
+            device: "DEVICE".into(),
+        },
+        100,
+    );
+    assert_eq!(
+        verification.target(),
+        Target::Verification {
+            flow: "flow".into(),
+            device: "DEVICE".into()
+        }
+    );
+    assert_eq!(
+        verification.preview(false),
+        (
+            "Interconnect".into(),
+            "Device verification requested".into()
+        )
+    );
+    let mut selection = Selection::default();
+    assert!(verification.eligible(&selection, 0, 100));
+    selection.verification_visible = true;
+    assert!(!verification.eligible(&selection, 0, 100));
+    assert!(invite.eligible(&selection, 0, 100));
+    let mut message = parse(event()).unwrap();
+    message.room = "!a:b:$c".into();
+    message.id = "$d".into();
+    let mut other = parse(event()).unwrap();
+    other.room = "!a:b".into();
+    other.id = "$c:$d".into();
+    assert_ne!(message.history_id(), other.history_id());
+    assert_ne!(invite.history_id(), verification.history_id());
+    let mut entry = invite.entry(true);
+    entry.title = "preview-title-canary".into();
+    entry.body = "preview-body-canary".into();
+    let debug = format!("{:?}", Record { entry, read: false });
+    assert!(!debug.contains("preview-title-canary"));
+    assert!(!debug.contains("preview-body-canary"));
+}
+#[tokio::test]
+async fn inbox_records_when_native_alerts_are_disabled_or_focused_and_is_bounded() {
+    let (events, receiver) = mpsc::channel(QUEUE_LIMIT);
+    let mut selected = Selection::default();
+    selected.notifications.enabled = false;
+    selected.notifications.show_preview = false;
+    selected.room = Some((1, "!room:example.org".into()));
+    selected.conversation_visible = true;
+    let (_control, selection) = watch::channel(selected);
+    let (state, mut updates) = watch::channel(Model::default());
+    let service = Service {
+        events: receiver,
+        selection,
+        state,
+        started: 0,
+    };
+    let task = tokio::spawn(service.run_with(
+        || async {
+            panic!("disabled native alerts never ask desktop permission");
+            #[allow(unreachable_code)]
+            Ok(())
+        },
+        |_, _| async {
+            panic!("disabled native alerts never deliver");
+            #[allow(unreachable_code)]
+            Ok(None)
+        },
+    ));
+    let timestamp = now_ms();
+    for index in 0..HISTORY_LIMIT + 20 {
+        let mut candidate = parse(event()).unwrap();
+        candidate.id = format!("$inbox-{index}");
+        candidate.timestamp = timestamp + index as u64;
+        events.send(candidate).await.ok().unwrap();
+    }
+    let model = wait_model(&mut updates, |model| {
+        model
+            .notification_history
+            .first()
+            .is_some_and(|entry| entry.timestamp == timestamp + HISTORY_LIMIT as u64 + 19)
+    })
+    .await;
+    assert_eq!(model.notification_history.len(), HISTORY_LIMIT);
+    assert!(
+        model
+            .notification_history
+            .iter()
+            .all(|entry| entry.title == "Interconnect" && entry.body == "New Matrix message")
+    );
+    assert!(
+        model
+            .notification_history
+            .iter()
+            .all(|entry| entry.timestamp >= timestamp + 20)
+    );
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+}
+#[tokio::test]
+async fn permission_wait_does_not_delay_history_and_initial_invites_stay_silent() {
+    let (events, receiver) = mpsc::channel(QUEUE_LIMIT);
+    let (_control, selection) = watch::channel(Selection::default());
+    let initial = Model {
+        invitations_ready: true,
+        invitations: Arc::new(vec![invitation("!initial:example.org")]),
+        ..Default::default()
+    };
+    let (state, mut updates) = watch::channel(initial);
+    let publisher = state.clone();
+    let service = Service {
+        events: receiver,
+        selection,
+        state,
+        started: 0,
+    };
+    let (authorized, mut started) = mpsc::channel(QUEUE_LIMIT);
+    let permission = Arc::new(tokio::sync::Semaphore::new(0));
+    let permit = permission.clone();
+    let (delivered, mut previews) = mpsc::channel(QUEUE_LIMIT);
+    let task = tokio::spawn(service.run_with(
+        move || {
+            let authorized = authorized.clone();
+            let permission = permission.clone();
+            async move {
+                authorized.send(()).await.unwrap();
+                permission.acquire().await.unwrap().forget();
+                Ok(())
+            }
+        },
+        move |title, body| {
+            let delivered = delivered.clone();
+            async move {
+                delivered.send((title, body)).await.unwrap();
+                Ok(None)
+            }
+        },
+    ));
+    wait_model(&mut updates, |model| model.notification_history.len() == 1).await;
+    assert!(
+        started.try_recv().is_err(),
+        "baseline invitations never ask native permission"
+    );
+    let mut first = parse(event()).unwrap();
+    first.timestamp = now_ms();
+    events.send(first).await.ok().unwrap();
+    started.recv().await.unwrap();
+    let mut second = parse(event()).unwrap();
+    second.id = "$second".into();
+    second.timestamp = now_ms();
+    events.send(second).await.ok().unwrap();
+    publisher.send_modify(|model| {
+        model.invitations = Arc::new(vec![
+            invitation("!initial:example.org"),
+            invitation("!new:example.org"),
+        ]);
+        model.verification.incoming = Some(crate::verification::Incoming {
+            flow: "flow".into(),
+            device: "OTHER".into(),
+        });
+    });
+    let model = wait_model(&mut updates, |model| model.notification_history.len() == 5).await;
+    assert!(model.notification_history.iter().any(|entry| matches!(entry.target, Target::Invitation { ref room } if room == "!new:example.org")));
+    assert!(model.notification_history.iter().any(
+        |entry| matches!(entry.target, Target::Verification { ref flow, .. } if flow == "flow")
+    ));
+    assert!(
+        previews.try_recv().is_err(),
+        "permission is still pending while all history is collected"
+    );
+    permit.add_permits(1);
+    previews.recv().await.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+}
+#[tokio::test]
+async fn invitation_and_verification_clicks_review_only_current_targets() {
+    let (events, receiver) = mpsc::channel(QUEUE_LIMIT);
+    let (_control, selection) = watch::channel(Selection::default());
+    let initial = Model {
+        invitations_ready: true,
+        ..Default::default()
+    };
+    let (state, mut updates) = watch::channel(initial);
+    let publisher = state.clone();
+    let service = Service {
+        events: receiver,
+        selection,
+        state,
+        started: 0,
+    };
+    let (delivered, mut handles) = mpsc::channel(QUEUE_LIMIT);
+    let task = tokio::spawn(service.run_with(
+        || async { Ok(()) },
+        move |title, body| {
+            let delivered = delivered.clone();
+            async move {
+                let (click, response) = tokio::sync::oneshot::channel();
+                delivered.send((title, body, click)).await.unwrap();
+                Ok(Some(
+                    Box::pin(async move { response.await.unwrap_or(false) }) as Response,
+                ))
+            }
+        },
+    ));
+    // Let the empty initial snapshot establish the silent baseline first.
+    let mut barrier = parse(event()).unwrap();
+    barrier.timestamp = now_ms();
+    events.send(barrier).await.ok().unwrap();
+    let (_, _, click) = handles.recv().await.unwrap();
+    drop(click);
+    publisher.send_modify(|model| {
+        model.invitations = Arc::new(vec![invitation("!live:example.org")]);
+        model.verification.incoming = Some(crate::verification::Incoming {
+            flow: "flow".into(),
+            device: "OTHER".into(),
+        });
+    });
+    let (title, _, invitation_click) = handles.recv().await.unwrap();
+    assert!(title.contains("Invitation"));
+    let (_, _, expired_verification_click) = handles.recv().await.unwrap();
+    invitation_click.send(true).unwrap();
+    wait_model(&mut updates, |model| {
+        model
+            .notification_activation
+            .as_ref()
+            .is_some_and(|activation| {
+                activation.target
+                    == Target::Invitation {
+                        room: "!live:example.org".into(),
+                    }
+            })
+    })
+    .await;
+    publisher.send_modify(|model| {
+        model.notification_activation = None;
+        model.verification.incoming = None;
+    });
+    expired_verification_click.send(true).unwrap();
+    let mut barrier = parse(event()).unwrap();
+    barrier.id = "$barrier".into();
+    barrier.timestamp = now_ms();
+    events.send(barrier).await.ok().unwrap();
+    let (_, _, click) = handles.recv().await.unwrap();
+    drop(click);
+    assert!(
+        updates.borrow().notification_activation.is_none(),
+        "expired flow cannot reactivate verification"
+    );
+    publisher.send_modify(|model| {
+        model.verification.incoming = Some(crate::verification::Incoming {
+            flow: "new-flow".into(),
+            device: "OTHER".into(),
+        })
+    });
+    let (_, _, verification_click) = handles.recv().await.unwrap();
+    verification_click.send(true).unwrap();
+    let model = wait_model(&mut updates, |model| {
+        model
+            .notification_activation
+            .as_ref()
+            .is_some_and(|activation| {
+                activation.target
+                    == Target::Verification {
+                        flow: "new-flow".into(),
+                        device: "OTHER".into(),
+                    }
+            })
+    })
+    .await;
+    assert_eq!(
+        model.verification.incoming.as_ref().unwrap().flow,
+        "new-flow"
+    );
+    assert!(
+        matches!(model.verification.phase, crate::verification::Phase::Idle),
+        "clicking never accepts the request"
+    );
+    let activation = model.notification_activation.unwrap();
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+    assert!(!activation.is_active());
+}
+#[tokio::test]
+async fn native_failure_preserves_history_and_verification_suppression_is_independent() {
+    let (events, receiver) = mpsc::channel(QUEUE_LIMIT);
+    let selected = Selection {
+        verification_visible: true,
+        ..Default::default()
+    };
+    let (_control, selection) = watch::channel(selected);
+    let (state, mut updates) = watch::channel(Model::default());
+    let publisher = state.clone();
+    let service = Service {
+        events: receiver,
+        selection,
+        state,
+        started: 0,
+    };
+    let (delivered, mut previews) = mpsc::channel(QUEUE_LIMIT);
+    let task = tokio::spawn(service.run_with(
+        || async { Ok(()) },
+        move |title, body| {
+            let delivered = delivered.clone();
+            async move {
+                delivered.send((title, body)).await.unwrap();
+                Err("fixture desktop denial".into())
+            }
+        },
+    ));
+    publisher.send_modify(|model| {
+        model.verification.incoming = Some(crate::verification::Incoming {
+            flow: "reviewing".into(),
+            device: "OTHER".into(),
+        })
+    });
+    wait_model(&mut updates, |model| model.notification_history.len() == 1).await;
+    assert!(
+        previews.try_recv().is_err(),
+        "active verification review suppresses native duplicate only"
+    );
+    let mut candidate = parse(event()).unwrap();
+    candidate.timestamp = now_ms();
+    events.send(candidate).await.ok().unwrap();
+    previews.recv().await.unwrap();
+    let model = wait_model(&mut updates, |model| {
+        model.notification_error.as_deref() == Some("fixture desktop denial")
+    })
+    .await;
+    assert_eq!(model.notification_history.len(), 2);
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
+}
+
+#[test]
+fn cached_and_first_server_invitations_are_silent_before_live_transitions() {
+    let mut attention = Attention::default();
+    let mut model = Model {
+        invitations: Arc::new(vec![invitation("!cached:example.org")]),
+        ..Default::default()
+    };
+    let cached = attention.observe(&model, 100);
+    assert_eq!(cached.len(), 1);
+    assert!(
+        !cached[0].1,
+        "offline cached invite enters history silently"
+    );
+    model.invitations_ready = true;
+    Arc::make_mut(&mut model.invitations).push(invitation("!server-baseline:example.org"));
+    let server = attention.observe(&model, 100);
+    assert_eq!(server.len(), 1);
+    assert!(
+        !server[0].1,
+        "first successful sync does not replay existing invitations"
+    );
+    Arc::make_mut(&mut model.invitations).push(invitation("!live:example.org"));
+    let live = attention.observe(&model, 100);
+    assert_eq!(live.len(), 1);
+    assert!(live[0].1, "later invitations get native alerts");
+}
+#[tokio::test]
+async fn focused_messages_enter_history_without_native_authorization() {
+    let (events, receiver) = mpsc::channel(QUEUE_LIMIT);
+    let selected = Selection {
+        room: Some((1, "!room:example.org".into())),
+        conversation_visible: true,
+        ..Default::default()
+    };
+    assert!(selected.notifications.enabled);
+    let (_control, selection) = watch::channel(selected);
+    let (state, mut updates) = watch::channel(Model::default());
+    let service = Service {
+        events: receiver,
+        selection,
+        state,
+        started: 0,
+    };
+    let task = tokio::spawn(service.run_with(
+        || async {
+            panic!("focused messages never ask desktop permission");
+            #[allow(unreachable_code)]
+            Ok(())
+        },
+        |_, _| async {
+            panic!("focused messages never deliver native alerts");
+            #[allow(unreachable_code)]
+            Ok(None)
+        },
+    ));
+    let mut candidate = parse(event()).unwrap();
+    candidate.timestamp = now_ms();
+    events.send(candidate).await.ok().unwrap();
+    let model = wait_model(&mut updates, |model| model.notification_history.len() == 1).await;
+    assert_eq!(model.notification_history[0].title, "Sample room");
+    assert!(
+        model.notification_history[0]
+            .body
+            .contains("Sample message")
+    );
+    task.abort();
+    assert!(task.await.unwrap_err().is_cancelled());
 }

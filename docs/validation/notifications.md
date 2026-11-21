@@ -2,30 +2,55 @@
 
 ## Behavior
 
-Settings → Notifications controls alerts/previews (both default on). Previews off
-uses “New Matrix message” without room/sender/body. Send sample notification uses
-fixed text, works in demo with alerts off, and has no navigation target. Delivery
-errors appear in Settings; OS acceptance does not guarantee a visible banner.
+Settings → Notifications controls native alerts/previews (both default on).
+Previews off uses category-only text without room/sender/body/device details,
+including when entries are collected for the app's notification history. Preview
+changes apply when entries arrive; enabling previews later does not reconstruct
+previously hidden text. Send sample notification uses fixed text, works in demo
+with alerts off, and has no navigation target. Delivery errors appear in Settings;
+OS acceptance does not guarantee a visible banner.
 
-Alerts follow SDK push rules independently of open timelines/spaces. Own messages,
-muted rooms, edits, reactions, redactions, and state events stay quiet. Undecryptable
-messages use “Encrypted message” when rules request an alert; late decryption does
-not update it. A focused, uncovered room suppresses ordinary messages; thread
-replies suppress only with that thread open. Older scroll position does not change
-suppression. Unfocused/covered panes can notify.
+Message alerts follow SDK push rules independently of open timelines/spaces. Own
+messages, muted rooms, edits, reactions, redactions, and ordinary state events stay
+quiet. Undecryptable messages use “Encrypted message” when rules request an alert;
+late decryption does not update it. A focused, uncovered room suppresses native
+alerts for ordinary messages; thread replies suppress only with that thread open.
+Older scroll position does not change suppression. Unfocused/covered panes can
+notify. These native suppression rules do not prevent history collection.
 
-Clicks open the room/thread, request focus/unminimize, and preserve space filter,
-drafts, and saved positions. Already-open targets keep their timeline. Modals and
-pending pickers defer the latest click. Removed rooms/session teardown invalidate
-clicks. Only the newest 64 alerts retain observers; older banners may remain inert.
-Preview opt-out still supports clicks; room/thread IDs stay in-process.
+Invitations and supported incoming device-verification requests are observed from
+session-owned SDK snapshots. Cached invitations enter history silently, including
+while offline. Invitations discovered by the first successful room-list sync also
+form a silent baseline; later invitation transitions can produce native alerts.
+Metadata changes do not re-alert; reinvitations update the same stable history
+entry with a newer timestamp. Verification requests enter history and can alert
+immediately, except while the verification dialog is already visible. Resolved or
+superseded requests cannot activate an old native verification target.
 
-Events before worker registration or outside a two-minute age/future window are
-discarded. A 2048-ID cache deduplicates; room-list sync requests 20 events/room;
-large gaps/clock skew can lose alerts. The 64-event queue drops overflow. Serial
-delivery has a 10-second deadline; macOS permission has 60 seconds. Recheck settings,
-focus, age, and shutdown after permission. No polling, inline reply, sound policy,
-or cold-start navigation; OS-handed requests cannot be recalled.
+The worker retains the newest 256 entries, with stable IDs by message event,
+invited room, or verification flow/device. History collection continues with native
+alerts disabled, a focused conversation, pending desktop permission, or native
+delivery failure. It runs separately from serial desktop delivery, with no polling
+or idle timer. History titles and bodies are bounded plain text; diagnostics omit
+their contents. Read flags and durable history belong to the app UI/storage layer.
+
+Clicks on message alerts open the room/thread, request focus/unminimize, and preserve
+space filter, drafts, and saved positions. Already-open targets keep their timeline.
+Invitation clicks review the current invitation; verification clicks review the
+current flow, without accepting or confirming it. Modals and pending pickers defer
+the latest click. Removed targets/session teardown invalidate clicks. Only the
+newest 64 alerts retain observers; older banners may remain inert. Preview opt-out
+still supports clicks; destination IDs stay in-process. Native actions use the
+category-independent “Open notification” label.
+
+Message events before worker registration or outside a two-minute age/future
+window are discarded. A 2048-ID cache deduplicates messages/verification flows;
+room-list sync requests 20 events/room; large gaps/clock skew can lose entries or
+alerts. The 64-event SDK queue drops overflow; the native pending queue retains
+only the newest 64 alerts while delivery is slow. Serial delivery has a 10-second
+deadline; macOS permission has 60 seconds. Recheck settings, focus, request validity,
+age, and shutdown after permission. No polling, inline reply, sound policy, or
+cold-start navigation; OS-handed requests cannot be recalled.
 
 ## Linux
 
@@ -60,9 +85,22 @@ Use a dedicated account and second client:
   positions. Verify target and state preservation, including already-open targets.
 - Click with unsaved Settings, then close it: defer navigation. After leaving room,
   signing out, or quitting, clicks must not restore stale state. Sample must not navigate.
+- Restore cached pending invitations offline and connect with existing invitations:
+  collect history silently. Receive a fresh invitation after initial sync; check the
+  native banner and click to review without joining. Decline/withdraw/reinvite and
+  rename the room: only a new invitation transition should alert.
+- Request supported device verification from another own device, with the dialog
+  open/closed and previews on/off. Click to review; no accept/confirm command may be
+  sent by a click. Cancel/replace the flow before clicking its old banner: ignore it.
+- While desktop permission is pending or denied, receive messages, invitations, and
+  verification requests: history must still update. Check generic previews in both
+  native payloads and newly collected history. Native alerts off and focused-room
+  suppression must leave collection active.
 
-Automated policy/queue/observer/lifecycle tests and a private D-Bus daemon fixture
-cover payloads, actions, mismatched IDs, dismissal, escaped previews, and rejection.
+Automated policy/history/queue/observer/lifecycle tests and a private D-Bus daemon
+fixture cover payloads, actions, mismatched IDs, dismissal, escaped previews,
+rejection, silent invitation baselines, reinvitations, superseded verification
+flows, session leases, preview opt-out, and collection during pending permission.
 They do not establish native banners/focus, macOS permission UI, or connected delivery.
 An isolated Apple Silicon adapter compile/lint check does not establish full app
 build/runtime acceptance. Measure idle behavior [separately](idle-resources.md).

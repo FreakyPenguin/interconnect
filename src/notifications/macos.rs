@@ -77,7 +77,7 @@ fn center() -> Retained<UNUserNotificationCenter> {
         center.setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
         let action = UNNotificationAction::actionWithIdentifier_title_options(
             &NSString::from_str(OPEN),
-            &NSString::from_str("Open conversation"),
+            &NSString::from_str("Open notification"),
             UNNotificationActionOptions::Foreground,
         );
         let category =
