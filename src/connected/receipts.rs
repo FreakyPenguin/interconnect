@@ -44,10 +44,11 @@ pub(super) async fn run(
         if next.shutdown {
             return;
         }
-        let target = desired(&next, generation, thread);
+        let target = desired(&next, generation, thread)
+            .map(|target| (target, next.privacy.public_read_receipts));
         if target != attempted {
             attempted = target.clone();
-            if let Some(target) = target {
+            if let Some((target, public)) = target {
                 let request = tokio::time::timeout(Duration::from_secs(15), async {
                     let Some(event) = &target.event else {
                         // An arrival may have superseded the empty viewport before this task ran.
@@ -69,7 +70,14 @@ pub(super) async fn run(
                         .parse()
                         .map_err(|_| "Invalid read receipt event".to_owned())?;
                     timeline
-                        .send_single_receipt(ReceiptType::Read, event.clone())
+                        .send_single_receipt(
+                            if public {
+                                ReceiptType::Read
+                            } else {
+                                ReceiptType::ReadPrivate
+                            },
+                            event.clone(),
+                        )
                         .await
                         .map_err(|e| e.to_string())?;
                     // A thread never moves the room's fully-read marker.
@@ -84,15 +92,18 @@ pub(super) async fn run(
                 tokio::pin!(request);
                 let result = loop {
                     tokio::select! {
-                        result = &mut request => break Some(result.unwrap_or_else(|_| Err("Read receipt timed out".into()))),
+                        biased;
                         changed = selection.changed() => {
                             if changed.is_err() { return; }
-                            if desired(&selection.borrow_and_update(), generation, thread).as_ref() != Some(&target) {
-                                // Navigation, loss of focus, or a newer viewport cancels this request.
+                            let current = selection.borrow_and_update();
+                            if desired(&current, generation, thread).as_ref() != Some(&target)
+                                || current.privacy.public_read_receipts != public {
+                                // Policy, navigation, focus, or viewport changes cancel this request.
                                 attempted = None;
                                 break None;
                             }
                         }
+                        result = &mut request => break Some(result.unwrap_or_else(|_| Err("Read receipt timed out".into()))),
                     }
                 };
                 if let Some(result) = result {
@@ -237,6 +248,138 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn enabling_sharing_after_synced_private_receipt_can_publish_same_event() {
+        let (server, timeline) = fixture(false).await;
+        Mock::given(method("GET")).and(path("/_matrix/client/v3/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"next_batch":"private","rooms":{"join":{"!room:example.org":{
+                "timeline":{"events":[],"limited":false},
+                "ephemeral":{"events":[{"type":"m.receipt","content":{"$reply":{"m.read.private":{"@test:example.org":{"ts":4}}}}}]}
+            }}}}))).with_priority(1).expect(1).mount(&server).await;
+        timeline
+            .room()
+            .client()
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if timeline
+                    .latest_user_read_receipt(timeline.room().own_user_id())
+                    .await
+                    .is_some_and(|(event, _)| event.as_str() == "$reply")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        Mock::given(method("POST"))
+            .and(path_regex(".*/receipt/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/account_data/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        let (control, requests) = watch::channel(selection(false));
+        let (state, _) = watch::channel(Model::default());
+        let worker = tokio::spawn(run(timeline, requests, 1, false, state));
+        wait_requests(&server, 4).await;
+        control.send_modify(|s| s.shutdown = true);
+        worker.await.unwrap();
+        assert!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r.url.path().ends_with("/receipt/m.read/$reply"))
+        );
+    }
+
+    #[tokio::test]
+    async fn privacy_switch_at_same_event_revisits_receipts_and_preserves_markers() {
+        let (server, timeline) = fixture(false).await;
+        Mock::given(method("POST"))
+            .and(path_regex(".*/receipt/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(6)
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/account_data/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        let (control, requests) = watch::channel(selection(false));
+        let (state, _) = watch::channel(Model::default());
+        let worker = tokio::spawn(run(timeline, requests, 1, false, state));
+        wait_requests(&server, 4).await;
+        control.send_modify(|s| s.privacy.public_read_receipts = false);
+        wait_requests(&server, 8).await;
+        control.send_modify(|s| s.privacy.public_read_receipts = true);
+        wait_requests(&server, 12).await;
+        control.send_modify(|s| s.shutdown = true);
+        worker.await.unwrap();
+        let paths: Vec<_> = server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path().contains("/receipt/"))
+            .map(|r| r.url.path().to_owned())
+            .collect();
+        for (path, kind) in paths.iter().zip([
+            "m.read",
+            "m.fully_read",
+            "m.read.private",
+            "m.fully_read",
+            "m.read",
+            "m.fully_read",
+        ]) {
+            assert!(path.ends_with(&format!("/receipt/{kind}/$reply")), "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn private_thread_receipts_keep_thread_scope_and_do_not_clear_room() {
+        let (server, timeline) = fixture(true).await;
+        Mock::given(method("POST"))
+            .and(path_regex(".*/receipt/m.read.private/.*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let mut initial = selection(true);
+        initial.privacy.public_read_receipts = false;
+        let (control, requests) = watch::channel(initial);
+        let (state, _) = watch::channel(Model::default());
+        let worker = tokio::spawn(run(timeline, requests, 2, true, state));
+        wait_requests(&server, 1).await;
+        control.send_modify(|s| s.shutdown = true);
+        worker.await.unwrap();
+        let requests = server.received_requests().await.unwrap();
+        let receipt = requests
+            .iter()
+            .find(|r| r.url.path().contains("/receipt/"))
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&receipt.body).unwrap(),
+            json!({"thread_id":"$root"})
+        );
+        assert!(
+            !requests
+                .iter()
+                .any(|r| r.method == "PUT" || r.url.path().contains("m.fully_read"))
+        );
     }
 
     #[tokio::test]

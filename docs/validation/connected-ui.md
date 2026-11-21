@@ -339,11 +339,25 @@ focus and interruption routing; connected latency and desktop focus remain manua
 
 ## Read receipts and unread clearing
 
-Focused, uncovered newest room panes send public read/fully-read updates. Older,
+Focused, uncovered newest room panes send read/fully-read updates (public by
+default, private when Privacy → Share read receipts is off). Older,
 unfocused, or covered panes must not clear new activity. Threads update their
 receipt without advancing room fully-read; reader labels are room-scoped.
 Test arrivals, manual Mark unread, reopen, and offline failure/recovery without a
 recurring retry timer.
+
+Privacy automation uses mock homeservers: default/partial TOML and round-trip
+persistence; Save/Cancel/Defaults and demo isolation; disabling active outgoing
+typing; unchanged-event public/private mode changes; private thread scope and
+preserved room markers. No live account writes are part of these tests.
+
+Connected acceptance remains manual with an authorized isolated test account:
+turn typing off while composing and confirm a peer stops seeing the indicator;
+ensure incoming indicators still appear. With sharing off, read room/thread
+messages and check unread counts on another own device, while a peer sees no new
+public receipt. Restore sharing at the same viewport and check the public receipt
+advances. Check Save/Cancel/Defaults, account changes, loss of focus, offline
+errors, and cancellation during navigation. Existing public receipts remain.
 
 ### Unread catch-up divider
 

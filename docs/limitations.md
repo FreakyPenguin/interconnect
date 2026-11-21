@@ -17,8 +17,9 @@ builds are experimental.
   no QR or verification of other users. [Recovery](validation/recovery.md) supports
   key creation/import/replacement, but no destructive identity reset or manual
   room-key export/import.
-- No abuse reports, receipt privacy controls, or setting to disable outgoing
-  typing indicators. Room notification presets support account default, all
+- No abuse reports. Privacy settings control outgoing typing and public read
+  receipts; private read state still reaches your homeserver and other own devices.
+  Room notification presets support account default, all
   messages, mentions/keywords, and mute; there is no general push-rule editor,
   timed mute, or per-room sound.
 - Matrix links navigate within the app, but there is no startup URI handling or

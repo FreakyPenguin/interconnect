@@ -24,6 +24,7 @@ pub struct Settings {
     pub media: Media,
     pub notifications: Notifications,
     pub presence: Presence,
+    pub privacy: Privacy,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -36,6 +37,7 @@ impl Default for Settings {
             media: Media::default(),
             notifications: Notifications::default(),
             presence: Presence::default(),
+            privacy: Privacy::default(),
         }
     }
 }
@@ -138,6 +140,21 @@ impl Default for Notifications {
         Self {
             enabled: true,
             show_preview: true,
+        }
+    }
+}
+/// Outgoing activity only; private receipts still synchronize account read state.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Privacy {
+    pub send_typing: bool,
+    pub public_read_receipts: bool,
+}
+impl Default for Privacy {
+    fn default() -> Self {
+        Self {
+            send_typing: true,
+            public_read_receipts: true,
         }
     }
 }
@@ -338,6 +355,14 @@ impl Store {
             settings.appearance.limit_room_width.into(),
         );
         replace(
+            &mut document["privacy"]["send_typing"],
+            settings.privacy.send_typing.into(),
+        );
+        replace(
+            &mut document["privacy"]["public_read_receipts"],
+            settings.privacy.public_read_receipts.into(),
+        );
+        replace(
             &mut document["notifications"]["enabled"],
             settings.notifications.enabled.into(),
         );
@@ -448,6 +473,19 @@ fn read(path: &Path) -> anyhow::Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn privacy_defaults_preserve_older_settings_and_partial_tables() {
+        for source in ["", "[privacy]", "[privacy]\nsend_typing = true"] {
+            assert_eq!(decode(source).unwrap().privacy, Privacy::default());
+        }
+        let privacy = decode("[privacy]\npublic_read_receipts = false")
+            .unwrap()
+            .privacy;
+        assert!(privacy.send_typing);
+        assert!(!privacy.public_read_receipts);
+        assert!(decode("[privacy]\nsend_typing = 'false'").is_err());
+    }
 
     #[test]
     fn theme_defaults_support_old_files_and_all_variants() {
@@ -571,6 +609,8 @@ mod tests {
         settings.graphics.low_power = false;
         settings.media.gif_playback = GifPlayback::Duration;
         settings.media.gif_seconds = 17;
+        settings.privacy.send_typing = false;
+        settings.privacy.public_read_receipts = false;
         settings.notifications.enabled = false;
         settings.notifications.show_preview = false;
         settings.presence.poll_enabled = true;

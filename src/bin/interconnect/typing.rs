@@ -11,7 +11,8 @@ impl App {
     }
 
     pub(super) fn typing_edited(&mut self, key: &DraftKey) {
-        if self.demo.is_some()
+        if !self.settings.current.privacy.send_typing
+            || self.demo.is_some()
             || self.closing
             || self.stopped
             || !self.window_focused
@@ -71,6 +72,20 @@ impl App {
 mod tests {
     use crate::Message;
     use iced::widget::text_editor::{Action, Edit};
+
+    #[test]
+    fn disabled_outgoing_typing_preserves_drafts_and_received_labels() {
+        let mut app = crate::tests::demo_app();
+        let label = app.typing_label();
+        app.demo = None;
+        app.window_focused = true;
+        app.settings.current.privacy.send_typing = false;
+        let key = app.draft_key(false).unwrap();
+        let _ = app.update(Message::Edit(key.clone(), Action::Edit(Edit::Insert('x'))));
+        assert!(app.selection.typing.is_none());
+        assert_eq!(app.drafts[&key].content.text(), "x");
+        assert_eq!(app.typing_label(), label);
+    }
 
     #[test]
     fn typing_tracks_edits_and_stops_without_disturbing_drafts_or_space_selection() {

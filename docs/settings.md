@@ -4,6 +4,30 @@ Open Settings with **Ctrl+,** (macOS: **Command+,**). Settings are application-w
 Save applies preferences; Close asks before discarding edits. Defaults fills
 defaults, and Advanced → Reload rereads the file. Demo ignores saved settings/accounts, including `--config`.
 
+## Privacy
+
+**Privacy → Send typing indicators** and **Share read receipts** both default to
+on, including when loading an older settings file. Changes take effect on Save;
+Cancel discards them and Defaults stages both controls as on. These are
+application-wide preferences, independent of the selected account. Demo keeps
+changes in memory without reading or writing saved settings.
+
+Turning typing off stops an active outgoing indication and suppresses new ones;
+incoming typing indicators remain available. Turning read sharing off sends
+Matrix `m.read.private` receipts instead of `m.read` for rooms and threads. Your
+homeserver and other devices on your account still receive your read position,
+so unread counts can clear across devices. Room `m.fully_read` markers still
+advance; thread receipts do not move those room markers. Local reading positions
+and the opening catch-up divider are preserved. Unsupported-server errors are
+shown without falling back to a public receipt.
+
+Previously shared receipts cannot be withdrawn, and other Matrix clients have
+their own preferences. An already delivered request cannot be recalled. Restoring
+sharing allows the current eligible viewport to publish a public receipt again.
+Settings do not create a background timer or change the focus/visibility rules
+for marking messages read. The TOML keys are `[privacy].send_typing` and
+`[privacy].public_read_receipts`.
+
 ## Account profiles
 
 | Platform | Default profile directory |

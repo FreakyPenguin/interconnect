@@ -49,3 +49,10 @@ low_power = true
 gif_playback = "once"
 # Whole seconds, from 1 to 300. Used only with "duration".
 gif_seconds = 5
+
+[privacy]
+# Outgoing only; received typing indicators are unaffected.
+send_typing = true
+# false uses private receipts: account unread state still syncs with your server.
+# Room fully-read markers are preserved. Previously public receipts remain visible.
+public_read_receipts = true

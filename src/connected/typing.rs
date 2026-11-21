@@ -107,7 +107,10 @@ async fn notice(room: &Room, typing: bool) {
 fn desired(selection: &Selection) -> Option<(&str, &Activity)> {
     let (generation, room) = selection.room.as_ref()?;
     let activity = selection.typing.as_ref()?;
-    (!selection.shutdown && activity.generation == *generation && activity.at.elapsed() < IDLE)
+    (!selection.shutdown
+        && selection.privacy.send_typing
+        && activity.generation == *generation
+        && activity.at.elapsed() < IDLE)
         .then_some((room.as_str(), activity))
 }
 
@@ -119,7 +122,7 @@ pub(super) async fn outgoing(
     let mut active: Option<Room> = None;
     let mut seen = None;
     let mut expires = None;
-    loop {
+    'worker: loop {
         if stop.is_cancelled() {
             break;
         }
@@ -130,6 +133,7 @@ pub(super) async fn outgoing(
             .is_some_and(|room| wanted.is_none_or(|(id, _)| room.room_id().as_str() != id))
         {
             notice(&active.take().unwrap(), false).await;
+            continue;
         }
         if let Some((id, activity)) = wanted {
             if seen.as_ref() != Some(activity) {
@@ -138,8 +142,28 @@ pub(super) async fn outgoing(
                 if let Ok(id) = id.parse::<matrix_sdk::ruma::OwnedRoomId>()
                     && let Some(room) = client.get_room(&id)
                 {
-                    notice(&room, true).await;
-                    active = Some(room);
+                    active = Some(room.clone());
+                    let sending = notice(&room, true);
+                    tokio::pin!(sending);
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = stop.cancelled() => break 'worker,
+                            changed = selection.changed() => {
+                                if changed.is_err() {
+                                    break 'worker;
+                                }
+                                if desired(&selection.borrow_and_update())
+                                        .is_none_or(|(wanted, _)| wanted != room.room_id().as_str())
+                                {
+                                    break;
+                                }
+                            }
+                            _ = &mut sending => break,
+                        }
+                    }
+                    // A consumed policy/navigation update must be reconciled immediately.
+                    continue;
                 }
             }
         } else {
@@ -245,6 +269,66 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn disabling_during_inflight_notice_stops_promptly_without_idle_deadline() {
+        let (server, client, _) = fixture().await;
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/typing/.*"))
+            .and(wiremock::matchers::body_partial_json(
+                json!({"typing":true}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({}))
+                    .set_delay(Duration::from_secs(1)),
+            )
+            .with_priority(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let (control, selection) = watch::channel(Selection {
+            room: Some((1, "!room:example.org".into())),
+            typing: Some(Activity {
+                generation: 1,
+                at: Instant::now(),
+            }),
+            ..Default::default()
+        });
+        let stop = CancellationToken::new();
+        let worker = tokio::spawn(outgoing(client, selection, stop.clone()));
+        requests(&server, 1).await;
+        control.send_modify(|s| s.privacy.send_typing = false);
+        let sent = tokio::time::timeout(Duration::from_millis(500), requests(&server, 2))
+            .await
+            .unwrap();
+        assert_eq!(sent[1], json!({"typing":false}));
+        stop.cancel();
+        worker.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn disabling_typing_stops_active_notice_and_suppresses_fresh_edits() {
+        let (server, client, _) = fixture().await;
+        let (control, selection) = watch::channel(Selection {
+            room: Some((1, "!room:example.org".into())),
+            typing: Some(Activity {
+                generation: 1,
+                at: Instant::now(),
+            }),
+            ..Default::default()
+        });
+        let stop = CancellationToken::new();
+        let worker = tokio::spawn(outgoing(client, selection, stop.clone()));
+        requests(&server, 1).await;
+        control.send_modify(|s| s.privacy.send_typing = false);
+        assert_eq!(requests(&server, 2).await[1], json!({"typing":false}));
+        control.send_modify(|s| s.typing.as_mut().unwrap().at = Instant::now());
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        stop.cancel();
+        worker.await.unwrap();
+        assert_eq!(requests(&server, 2).await.len(), 2);
     }
 
     #[tokio::test]

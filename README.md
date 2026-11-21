@@ -20,6 +20,8 @@ All screenshots and GIFs below use local sample data.
 
 ## In development for 0.4.0
 
+- Choose whether to send typing indicators and share read receipts in Privacy settings.
+
 - Long histories render nearby rows while retaining loaded messages and cross-message selection.
 
 - Narrow account-wide message search by room, sender, and date range.

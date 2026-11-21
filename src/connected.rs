@@ -41,6 +41,7 @@ pub use pinned::Pinned;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Selection {
     pub typing: Option<TypingActivity>,
+    pub privacy: crate::settings::Privacy,
     pub read: [Option<ReadTarget>; 2],
     pub room: Option<(u64, String)>,
     pub thread: Option<(u64, String)>,

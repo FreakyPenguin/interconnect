@@ -48,14 +48,16 @@ pub enum Category {
     General,
     Account,
     Notifications,
+    Privacy,
     Media,
     Advanced,
 }
 impl Category {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 6] = [
         Self::General,
         Self::Account,
         Self::Notifications,
+        Self::Privacy,
         Self::Media,
         Self::Advanced,
     ];
@@ -64,6 +66,7 @@ impl Category {
             Self::General => "General",
             Self::Account => "Account",
             Self::Notifications => "Notifications",
+            Self::Privacy => "Privacy",
             Self::Media => "Media & emoji",
             Self::Advanced => "Advanced",
         }
@@ -157,6 +160,8 @@ pub enum Event {
     GifSeconds(String),
     GpuEnabled(bool),
     LowPower(bool),
+    SendTyping(bool),
+    PublicReadReceipts(bool),
     NotificationsEnabled(bool),
     NotificationPreview(bool),
     PresencePolling(bool),
@@ -176,6 +181,7 @@ fn message(event: Event) -> Message {
 impl App {
     pub(super) fn update_notification_context(&mut self) {
         self.refresh_presence_demand();
+        self.selection.privacy = self.settings.current.privacy.clone();
         self.selection.notifications = self.settings.current.notifications.clone();
         self.selection.verification_visible = self.verification.open && self.window_focused;
         self.selection.conversation_visible = !self.notification_center.open
@@ -295,6 +301,16 @@ impl App {
             Event::InterfaceScale(scale) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     draft.appearance.interface_scale = scale;
+                }
+            }
+            Event::SendTyping(enabled) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.privacy.send_typing = enabled;
+                }
+            }
+            Event::PublicReadReceipts(enabled) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.privacy.public_read_receipts = enabled;
                 }
             }
             Event::NotificationsEnabled(enabled) if !self.settings.busy => {
@@ -617,6 +633,9 @@ impl App {
                 self.shell.narrow_navigation = false;
             }
         }
+        if !settings.privacy.send_typing {
+            self.stop_typing();
+        }
         self.settings.current = settings;
     }
     pub(super) fn ignored_users_available(&self) -> bool {
@@ -904,6 +923,16 @@ impl App {
             Category::Notifications => column![
                 shell::title("Desktop notifications", 14), notification_controls,
             ],
+            Category::Privacy => column![
+                shell::title("Outgoing activity", 14),
+                checkbox(draft.privacy.send_typing).label("Send typing indicators")
+                    .keyboard_navigation(true).on_toggle_maybe(available.then_some(|value| message(Event::SendTyping(value)))),
+                caption("Let other people see when you type. Indicators you receive are unaffected."),
+                checkbox(draft.privacy.public_read_receipts).label("Share read receipts")
+                    .keyboard_navigation(true).on_toggle_maybe(available.then_some(|value| message(Event::PublicReadReceipts(value)))),
+                caption("When off, private receipts still update unread counts and your account’s read state across devices. Your homeserver still receives read positions. Previously shared receipts remain visible; other clients have their own settings."),
+                caption("Applies when you save. Room fully-read markers and local reading positions are preserved."),
+            ].spacing(12),
             Category::Media => column![
                 column![
                     shell::title("GIF playback", 14),
@@ -1132,6 +1161,41 @@ fn caption<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn privacy_is_applied_only_on_save_and_defaults_restore_sharing() {
+        let mut app = super::super::tests::demo_app();
+        let (control, backend) = tokio::sync::watch::channel(app.selection.clone());
+        app.control = Some(control);
+        let original_read = app.selection.read.clone();
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::SendTyping(false)));
+        let _ = app.update(message(Event::PublicReadReceipts(false)));
+        assert_eq!(backend.borrow().privacy, settings::Privacy::default());
+        let _ = app.update(message(Event::Cancel));
+        assert_eq!(app.settings.current.privacy, settings::Privacy::default());
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::SendTyping(false)));
+        let _ = app.update(message(Event::PublicReadReceipts(false)));
+        app.selection.typing = Some(interconnect::connected::TypingActivity {
+            generation: app.selection.room.as_ref().unwrap().0,
+            at: std::time::Instant::now(),
+        });
+        let _ = app.update(message(Event::Save));
+        assert!(!backend.borrow().privacy.send_typing);
+        assert!(!backend.borrow().privacy.public_read_receipts);
+        assert!(backend.borrow().typing.is_none());
+        assert_eq!(app.selection.read, original_read);
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::Defaults));
+        assert!(!backend.borrow().privacy.send_typing);
+        let _ = app.update(message(Event::Save));
+        assert_eq!(backend.borrow().privacy, settings::Privacy::default());
+        assert!(
+            app.settings.path.is_none(),
+            "demo never saves an account file"
+        );
+    }
 
     #[test]
     fn category_changes_preserve_drafts_and_dirty_close_requires_a_choice() {
