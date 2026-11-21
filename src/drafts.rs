@@ -19,6 +19,10 @@ use std::{
 const FILE: &str = "drafts.json";
 const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_TEXT_BYTES: usize = 8 * 1024 * 1024;
+pub const MAX_NOTIFICATIONS: usize = crate::notifications::HISTORY_LIMIT;
+const MAX_NOTIFICATION_ID_BYTES: usize = 2048;
+const MAX_NOTIFICATION_TITLE_BYTES: usize = 4096;
+const MAX_NOTIFICATION_BODY_BYTES: usize = 8192;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
@@ -48,11 +52,14 @@ pub struct Snapshot {
     pub entries: Vec<Entry>,
     #[serde(default)]
     pub reading_positions: Vec<ReadingPosition>,
+    #[serde(default)]
+    pub notifications: Vec<crate::notifications::Record>,
 }
 impl std::fmt::Debug for Snapshot {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Drafts")
             .field("count", &self.entries.len())
+            .field("notifications", &self.notifications.len())
             .finish()
     }
 }
@@ -138,9 +145,51 @@ impl Snapshot {
                 "Duplicate reading position"
             );
         }
+        ensure!(
+            self.notifications.len() <= MAX_NOTIFICATIONS,
+            "Too many saved notifications"
+        );
+        let mut notifications = HashSet::new();
+        for record in &self.notifications {
+            let entry = &record.entry;
+            ensure!(valid_notification(entry), "Invalid saved notification");
+            ensure!(
+                notifications.insert(&entry.id),
+                "Duplicate saved notification"
+            );
+        }
         Ok(())
     }
 }
+/// Validate an individual inbox entry before accepting it into local history.
+/// Producers can discard malformed remote metadata without blocking draft saves.
+pub fn valid_notification(entry: &crate::notifications::Entry) -> bool {
+    if entry.id.is_empty()
+        || entry.id.len() > MAX_NOTIFICATION_ID_BYTES
+        || entry.id.chars().any(char::is_control)
+        || entry.title.len() > MAX_NOTIFICATION_TITLE_BYTES
+        || entry.body.len() > MAX_NOTIFICATION_BODY_BYTES
+    {
+        return false;
+    }
+    use crate::notifications::Target;
+    match &entry.target {
+        Target::Conversation { room, thread } => {
+            room.len() <= 1024
+                && room.parse::<matrix_sdk::ruma::OwnedRoomId>().is_ok()
+                && thread.as_ref().is_none_or(|thread| {
+                    thread.len() <= 1024 && thread.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()
+                })
+        }
+        Target::Invitation { room } => {
+            room.len() <= 1024 && room.parse::<matrix_sdk::ruma::OwnedRoomId>().is_ok()
+        }
+        Target::Verification { flow, device } => [flow, device].into_iter().all(|id| {
+            !id.trim().is_empty() && id.len() <= 1024 && !id.chars().any(char::is_control)
+        }),
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct Record {
     account: String,
@@ -316,6 +365,7 @@ mod tests {
     }
     fn snapshot() -> Snapshot {
         Snapshot {
+            notifications: vec![],
             reading_positions: vec![ReadingPosition {
                 room: "!room:example.org".into(),
                 root: Some("$thread".into()),
@@ -345,6 +395,202 @@ mod tests {
                 },
             ],
         }
+    }
+    fn notification_records() -> Vec<crate::notifications::Record> {
+        use crate::notifications::{Entry, Record, Target};
+        [
+            Target::Conversation {
+                room: "!private-inbox-fixture:example.org".into(),
+                thread: Some("$private-inbox-thread-fixture".into()),
+            },
+            Target::Invitation {
+                room: "!private-invitation-fixture:example.org".into(),
+            },
+            Target::Verification {
+                flow: "private-verification-flow-fixture".into(),
+                device: "PRIVATE_DEVICE_FIXTURE".into(),
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, target)| Record {
+            entry: Entry {
+                id: format!("private-notification-id-fixture-{index}"),
+                target,
+                timestamp: 1_799_999_000_000 + index as u64,
+                title: "Private inbox title fixture 🌱".into(),
+                body: "Private notification body fixture\nsecond line".into(),
+            },
+            read: index % 2 == 0,
+        })
+        .collect()
+    }
+    #[test]
+    fn earlier_snapshot_formats_default_to_no_notification_history() {
+        let oldest: Snapshot = serde_json::from_value(serde_json::json!({"entries":[]})).unwrap();
+        assert!(oldest.notifications.is_empty());
+        let mut current = serde_json::to_value(snapshot()).unwrap();
+        current.as_object_mut().unwrap().remove("notifications");
+        let earlier: Snapshot = serde_json::from_value(current).unwrap();
+        assert!(earlier.notifications.is_empty());
+        assert_eq!(earlier.reading_positions, snapshot().reading_positions);
+        assert!(earlier.validate().is_ok());
+    }
+    #[test]
+    fn notification_history_bounds_and_duplicate_ids_are_enforced() {
+        let mut saved = snapshot();
+        let record = notification_records().remove(0);
+        saved.notifications = (0..MAX_NOTIFICATIONS)
+            .map(|index| {
+                let mut record = record.clone();
+                record.entry.id = format!("bounded-notification-{index}");
+                record
+            })
+            .collect();
+        assert!(saved.validate().is_ok());
+        saved.notifications.push(record.clone());
+        assert!(saved.validate().is_err());
+        saved.notifications = vec![record.clone(), record.clone()];
+        assert!(saved.validate().is_err());
+        for (field, limit) in [
+            ("id", MAX_NOTIFICATION_ID_BYTES),
+            ("title", MAX_NOTIFICATION_TITLE_BYTES),
+            ("body", MAX_NOTIFICATION_BODY_BYTES),
+        ] {
+            saved.notifications = vec![record.clone()];
+            let entry = &mut saved.notifications[0].entry;
+            match field {
+                "id" => entry.id = "x".repeat(limit + 1),
+                "title" => entry.title = "x".repeat(limit + 1),
+                _ => entry.body = "x".repeat(limit + 1),
+            }
+            assert!(saved.validate().is_err(), "oversized {field}");
+        }
+        for invalid in ["", "invalid\nidentity"] {
+            saved.notifications = vec![record.clone()];
+            saved.notifications[0].entry.id = invalid.into();
+            assert!(saved.validate().is_err());
+        }
+    }
+    #[test]
+    fn notification_targets_validate_rooms_threads_and_verification_identities() {
+        use crate::notifications::Target;
+        let mut saved = snapshot();
+        let valid = notification_records();
+        saved.notifications = valid.clone();
+        assert!(saved.validate().is_ok());
+        for invalid in [
+            Target::Conversation {
+                room: "invalid".into(),
+                thread: None,
+            },
+            Target::Conversation {
+                room: "!room:example.org".into(),
+                thread: Some("invalid".into()),
+            },
+            Target::Invitation {
+                room: "invalid".into(),
+            },
+            Target::Verification {
+                flow: "".into(),
+                device: "DEVICE".into(),
+            },
+            Target::Verification {
+                flow: "flow".into(),
+                device: "".into(),
+            },
+            Target::Verification {
+                flow: "f".repeat(1025),
+                device: "DEVICE".into(),
+            },
+            Target::Verification {
+                flow: "flow".into(),
+                device: "d".repeat(1025),
+            },
+            Target::Verification {
+                flow: "flow\n".into(),
+                device: "DEVICE".into(),
+            },
+        ] {
+            saved.notifications = vec![valid[0].clone()];
+            saved.notifications[0].entry.target = invalid;
+            assert!(saved.validate().is_err());
+        }
+    }
+    #[tokio::test]
+    async fn inbox_history_and_read_state_are_encrypted_and_account_isolated_across_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut saved = snapshot();
+        saved.notifications = notification_records();
+        open(directory.path(), "@me:example.org")
+            .await
+            .unwrap()
+            .store
+            .save(Arc::new(saved.clone()))
+            .await
+            .unwrap();
+        let bytes = fs::read(directory.path().join(FILE)).unwrap();
+        for private in [
+            "private-notification-id-fixture",
+            "Private inbox title fixture",
+            "Private notification body fixture",
+            "!private-inbox-fixture:example.org",
+            "$private-inbox-thread-fixture",
+            "private-verification-flow-fixture",
+            "PRIVATE_DEVICE_FIXTURE",
+        ] {
+            assert!(
+                !bytes
+                    .windows(private.len())
+                    .any(|window| window == private.as_bytes()),
+                "inbox fields must be encrypted"
+            );
+        }
+        let restored = open(directory.path(), "@me:example.org").await.unwrap();
+        assert_eq!(*restored.saved, saved);
+        assert_eq!(
+            restored
+                .saved
+                .notifications
+                .iter()
+                .map(|record| record.read)
+                .collect::<Vec<_>>(),
+            [true, false, true]
+        );
+        let other = open(directory.path(), "@other:example.org").await.unwrap();
+        assert!(other.saved.notifications.is_empty());
+        saved.notifications[1].read = true;
+        restored.store.save(Arc::new(saved.clone())).await.unwrap();
+        assert_eq!(
+            *open(directory.path(), "@me:example.org")
+                .await
+                .unwrap()
+                .saved,
+            saved
+        );
+        let mut invalid = saved.clone();
+        invalid.notifications[0].entry.body = "x".repeat(MAX_NOTIFICATION_BODY_BYTES + 1);
+        let store = open(directory.path(), "@me:example.org")
+            .await
+            .unwrap()
+            .store;
+        assert!(store.save(Arc::new(invalid)).await.is_err());
+        assert_eq!(
+            *open(directory.path(), "@me:example.org")
+                .await
+                .unwrap()
+                .saved,
+            saved,
+            "invalid histories must preserve the previous saved file"
+        );
+        let diagnostics = format!(
+            "{:?}",
+            open(directory.path(), "@me:example.org")
+                .await
+                .unwrap()
+                .saved
+        );
+        assert!(!diagnostics.contains("Private"));
     }
     #[test]
     fn old_snapshots_default_to_no_reading_positions_and_invalid_anchors_are_rejected() {
