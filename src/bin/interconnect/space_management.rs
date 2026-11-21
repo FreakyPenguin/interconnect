@@ -27,11 +27,44 @@ pub enum Event {
     Completed(u64, Result<(), String>),
 }
 impl App {
+    pub(crate) fn space_child_available(&self, id: &str) -> bool {
+        self.model.rooms.iter().any(|room| room.id == id)
+            || self.model.spaces.iter().any(|space| space.id == id)
+    }
+    /// Only the parent in the chosen route may be unlinked. Other parents stay intact.
+    pub(crate) fn removable_subspace(&self) -> Option<(&SpaceEntry, &str)> {
+        let Scope::Space(child) = &self.shell.space else {
+            return None;
+        };
+        let path = self.location_path();
+        if path.last() != Some(child) || path.len() < 2 {
+            return None;
+        }
+        let parent = &path[path.len() - 2];
+        self.model
+            .spaces
+            .iter()
+            .find(|space| {
+                &space.id == parent && space.can_manage_rooms && space.children.contains(child)
+            })
+            .map(|space| (space, child.as_str()))
+    }
+    fn removal_matches(&self, room: &str, parent: &str, target: &Target) -> bool {
+        match target {
+            Target::Room(id) if id == room => self
+                .removable_space(room)
+                .is_some_and(|space| space.id == parent),
+            Target::Sections => self
+                .removable_subspace()
+                .is_some_and(|(space, child)| space.id == parent && child == room),
+            _ => false,
+        }
+    }
     pub(crate) fn removable_space(&self, room: &str) -> Option<&SpaceEntry> {
         let Scope::Space(id) = &self.shell.space else {
             return None;
         };
-        if !self.model.rooms.iter().any(|r| r.id == room) {
+        if !self.space_child_available(room) {
             return None;
         }
         self.model
@@ -40,14 +73,15 @@ impl App {
             .find(|s| &s.id == id && s.can_manage_rooms && s.children.iter().any(|id| id == room))
     }
     pub(crate) fn addable_spaces(&self, room: &str) -> Vec<&SpaceEntry> {
-        if !self.model.rooms.iter().any(|r| r.id == room) {
+        if !self.space_child_available(room) {
             return Vec::new();
         }
+        let parents = interconnect::space_management::linkable_parents(&self.model.spaces, room);
         let mut spaces: Vec<_> = self
             .model
             .spaces
             .iter()
-            .filter(|s| s.can_manage_rooms && !s.children.iter().any(|id| id == room))
+            .filter(|s| parents.contains(&s.id))
             .collect();
         spaces.sort_by_cached_key(|s| (s.name.to_lowercase(), s.id.clone()));
         spaces
@@ -62,11 +96,10 @@ impl App {
                 || match s.change {
                     Change::Remove => {
                         !self.context_menu_allowed()
-                            || self
-                                .removable_space(&s.room)
-                                .is_none_or(|space| space.id != s.space)
                             || !self.context_menu.as_ref().is_some_and(|menu| {
-                                menu.target == Target::Room(s.room.clone())
+                                self.removal_matches(&s.room, &s.space, &menu.target)
+                                    && (menu.target != Target::Sections
+                                        || menu.space_path == self.location_path())
                                     && menu.pending == Some(s.request)
                             })
                     }
@@ -101,24 +134,33 @@ impl App {
         }
     }
     pub(crate) fn remove_room_from_selected_space(&mut self, target: Target) -> Task<Message> {
-        let Target::Room(room) = target else {
-            return Task::none();
+        let (room, space) = match &target {
+            Target::Room(room) => {
+                let Some(space) = self.removable_space(room) else {
+                    return Task::none();
+                };
+                (room.clone(), space.id.clone())
+            }
+            Target::Sections => {
+                let Some((space, child)) = self.removable_subspace() else {
+                    return Task::none();
+                };
+                (child.to_owned(), space.id.clone())
+            }
+            _ => return Task::none(),
         };
         if !self.context_menu_allowed()
             || self.space_management.is_some()
             || self.pending_ops >= crate::MAX_PENDING_OPERATIONS
             || !self.context_menu.as_ref().is_some_and(|menu| {
-                menu.target == Target::Room(room.clone())
+                menu.target == target
                     && menu.account == self.account_id
+                    && (target != Target::Sections || menu.space_path == self.location_path())
                     && menu.pending.is_none()
             })
         {
             return Task::none();
         }
-        let Some(space) = self.removable_space(&room) else {
-            return Task::none();
-        };
-        let space = space.id.clone();
         self.change_room_space(room, space, Change::Remove)
     }
     pub(crate) fn add_room_to_selected_space(
@@ -154,6 +196,7 @@ impl App {
                 Change::Remove => space.children.retain(|id| id != &room),
             }
             self.context_menu = None;
+            self.validate_space_navigation();
             if matches!(change, Change::Add) {
                 return self.quick_room_event(crate::room_picker::Event::Close);
             }
@@ -197,7 +240,8 @@ impl App {
         });
         Task::perform(
             async move {
-                tokio::select! {
+                let refresh = service.clone();
+                let result = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => Err("Space change cancelled. Check the room list before retrying.".into()),
                     result = async move {
@@ -206,7 +250,11 @@ impl App {
                             Change::Remove => service.remove_room_from_space(space, room).await,
                         }
                     } => result,
-                }
+                };
+                // Cancellation may follow an accepted write. Refresh the captured
+                // account even when the picker/menu no longer accepts its result.
+                refresh.refresh_navigation();
+                result
             },
             move |result| Message::SpaceManagement(Event::Completed(request, result)),
         )
@@ -444,6 +492,211 @@ mod tests {
         )));
         assert!(app.context_menu.is_none());
         assert!(app.space_add_picker_matches(room));
+    }
+    fn open_space_actions(app: &mut App) {
+        let _ = app.update(Message::ContextMenu(Menu::Open(
+            Target::Sections,
+            iced::Point::ORIGIN,
+        )));
+    }
+    #[test]
+    fn adding_existing_subspace_preserves_conversation_and_supports_shared_parents() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Space(Scope::Space("design-space".into())));
+        let selection = app.selection.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("unsent");
+        app.scroll_positions.insert(key.clone(), 123.0);
+        let path = app.location_path();
+        open_space_actions(&mut app);
+        let _ = app.update(Message::ContextMenu(Menu::Choose(
+            Target::Sections,
+            "Add this space to another space…".into(),
+        )));
+        assert!(app.space_add_picker_matches("design-space"));
+        let candidates: Vec<_> = app
+            .addable_spaces("design-space")
+            .into_iter()
+            .map(|space| space.id.as_str())
+            .collect();
+        assert!(candidates.contains(&"community-space"));
+        assert!(!candidates.contains(&"product-space")); // Existing direct parent.
+        assert!(!candidates.contains(&"design-space")); // Self.
+        let _ = app.update(Message::QuickRoom(crate::room_picker::Event::Edit(
+            "Community".into(),
+        )));
+        let _ = app.update(Message::QuickRoom(crate::room_picker::Event::Submit));
+        assert!(app.room_picker.is_none());
+        for parent in ["product-space", "community-space"] {
+            assert!(
+                app.model
+                    .spaces
+                    .iter()
+                    .find(|s| s.id == parent)
+                    .unwrap()
+                    .children
+                    .contains(&"design-space".into())
+            );
+        }
+        assert_eq!(app.selection.room, selection.room);
+        assert_eq!(app.selection.thread, selection.thread);
+        assert_eq!(app.location_path(), path);
+        assert_eq!(app.drafts[&key].content.text(), "unsent");
+        assert_eq!(app.scroll_positions[&key], 123.0);
+    }
+
+    #[test]
+    fn subspace_removal_uses_chosen_parent_route_and_normalizes_it_after_unlinking() {
+        let mut app = demo_app();
+        std::sync::Arc::make_mut(&mut app.model.spaces)
+            .iter_mut()
+            .find(|s| s.id == "community-space")
+            .unwrap()
+            .children
+            .push("design-space".into());
+        let route = vec!["community-space".into(), "design-space".into()];
+        let _ = app.update(Message::SpaceNavigation(
+            crate::space_navigation::Event::Choose(route),
+        ));
+        let selected = app.selection.room.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("draft");
+        app.scroll_positions.insert(key.clone(), 67.0);
+        open_space_actions(&mut app);
+        let _ = app.update(Message::ContextMenu(Menu::Choose(
+            Target::Sections,
+            "Remove this subspace from parent".into(),
+        )));
+        assert!(
+            !app.model
+                .spaces
+                .iter()
+                .find(|s| s.id == "community-space")
+                .unwrap()
+                .children
+                .contains(&"design-space".into())
+        );
+        assert!(
+            app.model
+                .spaces
+                .iter()
+                .find(|s| s.id == "product-space")
+                .unwrap()
+                .children
+                .contains(&"design-space".into())
+        );
+        assert_eq!(app.shell.space, Scope::Space("design-space".into()));
+        assert!(interconnect::navigation::valid_space_path(
+            &app.model.spaces,
+            &app.shell.spaces.path
+        ));
+        assert_eq!(app.selection.room, selected);
+        assert_eq!(app.drafts[&key].content.text(), "draft");
+        assert_eq!(app.scroll_positions[&key], 67.0);
+    }
+
+    #[test]
+    fn stale_breadcrumb_menu_cannot_remove_from_a_different_parent() {
+        let mut app = demo_app();
+        let _ = app.update(Message::Space(Scope::Space("design-space".into())));
+        open_space_actions(&mut app);
+        let spaces = app.model.spaces.clone();
+        // Change the route without delivering the ordinary navigation validation first.
+        app.shell.space = Scope::Space("product-space".into());
+        app.shell.spaces.path = vec!["studio-space".into(), "product-space".into()];
+        let _ = app.update(Message::ContextMenu(Menu::Choose(
+            Target::Sections,
+            "Remove this subspace from parent".into(),
+        )));
+        assert_eq!(app.model.spaces, spaces);
+        assert!(app.context_menu.is_none());
+    }
+
+    #[test]
+    fn pending_subspace_unlink_rejects_route_account_and_permission_changes() {
+        for reason in 0..3 {
+            let mut app = demo_app();
+            let _ = app.update(Message::Space(Scope::Space("design-space".into())));
+            open_space_actions(&mut app);
+            app.generation += 1;
+            let request = app.generation;
+            app.context_menu.as_mut().unwrap().pending = Some(request);
+            let cancel = tokio_util::sync::CancellationToken::new();
+            app.space_management = Some(State {
+                request,
+                account: app.account_id.clone(),
+                space: "product-space".into(),
+                room: "design-space".into(),
+                cancel: cancel.clone(),
+                change: Change::Remove,
+            });
+            match reason {
+                0 => {
+                    app.shell.space = Scope::Home;
+                }
+                1 => {
+                    app.account_id = Some("another".into());
+                }
+                _ => {
+                    std::sync::Arc::make_mut(&mut app.model.spaces)
+                        .iter_mut()
+                        .find(|s| s.id == "product-space")
+                        .unwrap()
+                        .can_manage_rooms = false;
+                }
+            }
+            app.validate_space_management();
+            assert!(cancel.is_cancelled());
+            assert!(app.context_menu.is_none());
+            let _ = app.update(Message::SpaceManagement(Event::Completed(
+                request,
+                Err("late".into()),
+            )));
+            assert!(app.model.navigation_error.is_none());
+        }
+    }
+
+    #[test]
+    fn subspace_picker_rechecks_cycles_and_cancels_pending_changes_on_hierarchy_update() {
+        let mut app = demo_app();
+        let _ = app.update(Message::QuickRoom(
+            crate::room_picker::Event::AddRoomToSpace("studio-space".into()),
+        ));
+        let before = app.model.spaces.clone();
+        // Descendant candidate must not be accepted, even with a forged choice.
+        let _ = app.update(Message::QuickRoom(crate::room_picker::Event::ChooseSpace(
+            vec!["studio-space".into(), "product-space".into()],
+        )));
+        assert_eq!(app.model.spaces, before);
+        app.generation += 1;
+        let request = app.generation;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        app.room_picker.as_mut().unwrap().pending = Some(request);
+        app.space_management = Some(State {
+            request,
+            account: app.account_id.clone(),
+            space: "community-space".into(),
+            room: "studio-space".into(),
+            cancel: cancel.clone(),
+            change: Change::Add,
+        });
+        // Sync discovers a path from the proposed child back to its parent.
+        std::sync::Arc::make_mut(&mut app.model.spaces)
+            .iter_mut()
+            .find(|s| s.id == "design-space")
+            .unwrap()
+            .children
+            .push("community-space".into());
+        app.validate_space_management();
+        assert!(cancel.is_cancelled());
+        assert!(app.room_picker.is_none());
+        let _ = app.update(Message::SpaceManagement(Event::Completed(
+            request,
+            Err("stale".into()),
+        )));
+        assert!(app.model.navigation_error.is_none());
     }
     fn pending_add(app: &mut App) -> (u64, tokio_util::sync::CancellationToken) {
         open_add(app, "studio");

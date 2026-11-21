@@ -9,4 +9,4 @@ See [limitations](limitations.md) for existing gaps.
 - Custom palettes and independent text-size controls.
 - Optional scrollable code blocks with configurable preview lines.
 - Advanced room settings (power rules, encryption, upgrades) and bans.
-- Space aliases and links to existing subspaces/unjoined children.
+- Space aliases and links to unjoined children.

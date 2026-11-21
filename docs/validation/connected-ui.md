@@ -200,6 +200,22 @@ Linux private Secret Service fixtures and CI tests do not validate Keychain poli
 - Remove is available only for a direct link in the selected writable space.
   Connected add sends `m.space.child` with non-empty `via`; removal empties `via`.
   Neither changes child parent metadata, room membership, or other links.
+- For existing subspaces, navigate to Design and use **Sidebar actions → Add this
+  space to another space…** to add Community as a second parent. Studio → Product
+  must remain linked. Navigate through Community → Design, then **Remove this
+  subspace from parent**; only Community’s direct link is removed. The breadcrumb
+  finds another route and the current conversation, draft, and scroll remain.
+- Self/duplicate links and descendants that would introduce a cycle are excluded.
+  Shared parents remain eligible; permission loss, changed links, account changes,
+  and route changes reject stale operations. Root spaces have no unlink action.
+  Graph checking uses known joined-space state, not an unjoined hierarchy crawl,
+  and cannot make remote concurrent edits atomic. Check the tree after timeouts.
+
+Mock homeserver and UI tests cover joined subspaces, parent-only add/remove writes,
+shared-parent preservation, duplicates, self/cycle rejection, permissions, stale
+routes/completions, and conversation/draft/scroll preservation. Connected server
+writes and native Light/Dark/compact acceptance remain manual with an authorized
+test account; these automated fixtures do not establish that acceptance.
 
 ## Navigation and timelines
 

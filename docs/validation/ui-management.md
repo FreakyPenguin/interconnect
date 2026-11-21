@@ -22,6 +22,10 @@ for server permissions and writes.
 
 ## Layout and actions
 
+- **Sidebar actions** offers adding the selected joined space to another writable
+  space. The picker fits at 640×480, supports search/Enter/Escape, and excludes
+  self/duplicate/cyclic links. Unlink follows the selected breadcrumb parent;
+  other parents and the open conversation remain. See the connected link checks.
 - Room settings groups details, notifications, security/access, addresses, and
   membership. Values use the available width; Save icons have field-specific
   tooltips. Unchanged fields show Saved. Long history options must fit.

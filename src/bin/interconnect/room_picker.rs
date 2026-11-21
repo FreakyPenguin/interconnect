@@ -75,6 +75,8 @@ impl SpaceIndex {
             }
         }
         let mut entries = Vec::new();
+        let parents = add_room
+            .map(|child| interconnect::space_management::linkable_parents(&snapshot, child));
         if add_room.is_none() {
             entries.push(SpaceCandidate {
                 path: Vec::new(),
@@ -85,9 +87,10 @@ impl SpaceIndex {
             });
         }
         for space in snapshot.iter() {
-            if add_room.is_some_and(|room| {
-                !space.can_manage_rooms || space.children.iter().any(|id| id == room)
-            }) {
+            if parents
+                .as_ref()
+                .is_some_and(|parents| !parents.contains(&space.id))
+            {
                 continue;
             }
             let Some(path) = paths.remove(&space.id) else {
@@ -282,7 +285,7 @@ impl App {
         if state
             .add_room
             .as_ref()
-            .is_some_and(|id| !self.model.rooms.iter().any(|r| &r.id == id))
+            .is_some_and(|id| !self.space_child_available(id))
             || index.account != self.account_id
             || self.closing
             || self.stopped
@@ -468,7 +471,7 @@ impl App {
                     return Task::none();
                 }
                 let add_room = if let Event::AddRoomToSpace(room) = &event {
-                    if !self.model.rooms.iter().any(|r| &r.id == room) {
+                    if !self.space_child_available(room) {
                         return Task::none();
                     }
                     Some(room.clone())
@@ -720,10 +723,16 @@ impl App {
                 .padding(16),
             );
         }
+        let adding_space = state
+            .add_room
+            .as_ref()
+            .is_some_and(|id| self.model.spaces.iter().any(|s| &s.id == id));
         let card = container(
             column![
                 shell::title(
-                    if state.add_room.is_some() {
+                    if adding_space {
+                        "Add this space to another space"
+                    } else if state.add_room.is_some() {
                         "Add room to space"
                     } else if state.mode == Mode::Spaces {
                         "Switch space"
@@ -733,7 +742,9 @@ impl App {
                     18
                 ),
                 text_input(
-                    if state.add_room.is_some() {
+                    if adding_space {
+                        "Choose a parent space…"
+                    } else if state.add_room.is_some() {
                         "Add room to space…"
                     } else if state.mode == Mode::Spaces {
                         "Switch to space…"

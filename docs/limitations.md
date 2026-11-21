@@ -35,9 +35,11 @@ builds are experimental.
 - Invitations, member removal, invitation revocation, and Member/Moderator/Admin
   role changes are supported; no custom numeric role entry or self-role changes.
   Membership/permissions are synced snapshots.
-- Adding existing space children accepts joined non-space rooms only, not
-  existing subspaces or unjoined children. Creating and linking new subspaces is
-  supported. Disband is partial/retryable, not atomic or a purge; child rooms/history/aliases/
+- Adding existing space children accepts joined rooms and subspaces, including
+  shared parents. Self/duplicate links and cycles through known joined-space
+  state are rejected; unknown/unjoined paths and concurrent server changes cannot
+  be checked atomically. Unjoined children cannot be linked. Creating and linking
+  new subspaces is supported. Disband is partial/retryable, not atomic or a purge; child rooms/history/aliases/
   external references remain.
 - Directory search covers the connected homeserver. Space search covers loaded
   results (1,000 per tab). No knocking, hidden-room discovery, remote-homeserver

@@ -48,6 +48,7 @@ pub struct State {
     form: Option<section_management::Form>,
     pending: Option<u64>,
     error: Option<String>,
+    space_path: Vec<String>,
 }
 enum Action {
     CreateSection,
@@ -228,6 +229,17 @@ impl App {
             }
             Target::Sections => {
                 let mut actions = vec![("New section…", Action::CreateSection)];
+                if let interconnect::navigation::Scope::Space(id) = &self.shell.space {
+                    actions.push((
+                        "Add this space to another space…",
+                        dispatch(Message::QuickRoom(
+                            super::room_picker::Event::AddRoomToSpace(id.clone()),
+                        )),
+                    ));
+                    if self.removable_subspace().is_some() {
+                        actions.push(("Remove this subspace from parent", Action::RemoveFromSpace));
+                    }
+                }
                 if self.can_create_space() {
                     actions.push((
                         if matches!(self.shell.space, interconnect::navigation::Scope::Space(_)) {
@@ -434,7 +446,9 @@ impl App {
     }
     pub(super) fn validate_context_menu(&mut self) {
         if self.context_menu.as_ref().is_some_and(|state| {
-            state.account != self.account_id || self.context_actions(&state.target).is_empty()
+            state.account != self.account_id
+                || (state.target == Target::Sections && state.space_path != self.location_path())
+                || self.context_actions(&state.target).is_empty()
         }) {
             self.context_menu = None;
         }
@@ -455,6 +469,7 @@ impl App {
                         form: None,
                         pending: None,
                         error: None,
+                        space_path: self.location_path(),
                     });
                     self.emoji_completion.clear();
                     self.user_completion.clear();
@@ -562,6 +577,7 @@ impl App {
                 }
             }
             Event::Choose(target, label) => {
+                self.validate_context_menu();
                 if !self
                     .context_menu
                     .as_ref()

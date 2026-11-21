@@ -230,6 +230,24 @@ writable space. Spaces are unencrypted and support private/public access. If
 creation succeeds but linking fails, **Retry adding to space** reuses the created
 ID. Check the tree before retrying after a timeout.
 
+To link an existing joined space, navigate to it and open the sidebar’s
+**Sidebar actions** menu (above the room filter), then **Add this space to another
+space…**. Search and choose a writable parent. This adds a direct child link;
+existing parents remain. The current conversation, drafts, scroll positions,
+and selected space stay open. You need permission in the parent, not the child.
+Self links, existing direct links, and cycles through known joined spaces are
+excluded and checked again before sending. The client does not fetch unjoined
+space hierarchies; unknown paths and concurrent changes remain possible.
+
+Navigate to a subspace through the parent you want to detach, then choose
+**Remove this subspace from parent** in the same menu. Only that breadcrumb
+parent’s direct link is removed. The subspace remains joined and keeps other
+parents, child rooms, and child-side parent metadata. Its breadcrumb falls back
+to another route or to a root while the conversation stays open. Removal needs
+the parent’s permission. Errors remain in the menu/picker; after cancellation
+or a timeout, check the tree before retrying because a request may have reached
+the server.
+
 Space settings edits name/topic and invitation/public access. The member editor
 is shared with **People** and **Room settings → Members & invitations**: search
 by name/ID, page 50 members at a time, invite, remove/revoke invitations, and set
