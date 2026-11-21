@@ -645,17 +645,21 @@ impl App {
         )
     }
     pub(super) fn visible_rooms(&self) -> Vec<String> {
+        self.ordered_rooms(false)
+    }
+    pub(super) fn ordered_rooms(&self, account_wide: bool) -> Vec<String> {
         let members = self.scope_members(&self.shell.space);
         let mut rooms: Vec<_> = self
             .model
             .rooms
             .iter()
             .filter(|room| {
-                navigation::location_includes(&self.shell.space, &members, room)
-                    && room
-                        .name
-                        .to_lowercase()
-                        .contains(&self.shell.query.to_lowercase())
+                account_wide
+                    || (navigation::location_includes(&self.shell.space, &members, room)
+                        && room
+                            .name
+                            .to_lowercase()
+                            .contains(&self.shell.query.to_lowercase()))
             })
             .collect();
         rooms.sort_by_cached_key(|r| {

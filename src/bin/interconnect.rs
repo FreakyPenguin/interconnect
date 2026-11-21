@@ -157,6 +157,8 @@ mod topic_snippet;
 mod typing;
 #[path = "interconnect/unread.rs"]
 mod unread;
+#[path = "interconnect/unread_navigation.rs"]
+mod unread_navigation;
 #[path = "interconnect/user_completion.rs"]
 mod user_completion;
 #[path = "interconnect/utilities.rs"]
@@ -341,6 +343,10 @@ enum Message {
     SearchFocus,
     SearchOpen,
     AdjacentRoom(bool),
+    UnreadRoom {
+        previous: bool,
+        account_wide: bool,
+    },
     ConversationHistory(bool),
     IgnoredUsers(ignored_users::Event),
     OpenLastThread,
@@ -678,6 +684,7 @@ impl App {
                 Message::Room(_)
                     | Message::Space(_)
                     | Message::AdjacentRoom(_)
+                    | Message::UnreadRoom { .. }
                     | Message::ConversationHistory(_)
                     | Message::SpaceNavigation(space_navigation::Event::Choose(_))
                     | Message::GlobalSearch(global_search::Event::Open)
@@ -1099,6 +1106,7 @@ impl App {
                 | Message::RoomSearch(_)
                 | Message::SearchFocus
                 | Message::AdjacentRoom(_)
+                | Message::UnreadRoom { .. }
                 | Message::OpenLastThread
                 | Message::OpenThreadLatest(_)
                 | Message::ToggleNavigation
@@ -1209,6 +1217,7 @@ impl App {
                 | Message::ConversationHistory(_)
                 | Message::Members(_)
                 | Message::AdjacentRoom(_)
+                | Message::UnreadRoom { .. }
                 | Message::OpenLastThread
                 | Message::OpenThreadLatest(_)
                 | Message::GlobalSearch(global_search::Event::Open)
@@ -1286,6 +1295,7 @@ impl App {
                     | Message::SearchFocus
                     | Message::SearchOpen
                     | Message::AdjacentRoom(_)
+                    | Message::UnreadRoom { .. }
                     | Message::OpenLastThread
                     | Message::ToggleNavigation
                     | Message::TogglePins(_)
@@ -1799,6 +1809,12 @@ impl App {
             }
             Message::ConversationHistory(backwards) => {
                 action_task = self.navigate_history(backwards);
+            }
+            Message::UnreadRoom {
+                previous,
+                account_wide,
+            } => {
+                return self.navigate_unread(previous, account_wide);
             }
             Message::AdjacentRoom(previous) => {
                 let rooms = self.visible_rooms();
@@ -4408,6 +4424,9 @@ fn shell_shortcut(
     if let Some(backwards) = conversation_history::shortcut(key, modifiers) {
         return Some(Message::ConversationHistory(backwards));
     }
+    if let Some(message) = unread_navigation::shortcut(key, modifiers) {
+        return Some(message);
+    }
     if create_room::is_shortcut(key, modifiers) {
         return Some(Message::CreateRoom(create_room::Event::Open));
     }
@@ -4441,8 +4460,12 @@ fn shell_shortcut(
         }
         Key::Named(Named::Tab) => Some(Message::Focus(modifiers.shift())),
         Key::Named(Named::Escape) => Some(Message::Escape),
-        Key::Named(Named::ArrowUp) if modifiers.alt() => Some(Message::AdjacentRoom(true)),
-        Key::Named(Named::ArrowDown) if modifiers.alt() => Some(Message::AdjacentRoom(false)),
+        Key::Named(Named::ArrowUp) if modifiers == iced::keyboard::Modifiers::ALT => {
+            Some(Message::AdjacentRoom(true))
+        }
+        Key::Named(Named::ArrowDown) if modifiers == iced::keyboard::Modifiers::ALT => {
+            Some(Message::AdjacentRoom(false))
+        }
         Key::Character("t") if modifiers.alt() => Some(Message::OpenLastThread),
         Key::Character("f" | "F")
             if (modifiers.command() || modifiers.control()) && modifiers.shift() =>

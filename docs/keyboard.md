@@ -17,6 +17,8 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 | Ctrl+F / Ctrl+Shift+F | Search loaded room messages / account-wide messages. |
 | Ctrl+, | Settings. |
 | Alt+Up / Alt+Down | Previous/next visible room, wrapping. |
+| Alt+Shift+Up / Alt+Shift+Down | Previous/next unread room within the selected space and room filter. |
+| Ctrl+Alt+Shift+Up / Ctrl+Alt+Shift+Down (macOS: Command+Option+Shift+Up/Down) | Previous/next unread room across the account. |
 | Alt+Left / Alt+Right (macOS: Command+[ / Command+]) | Back/forward through conversation history. |
 | Alt+T | Thread on latest non-thread room message; focus thread composer. |
 | Tab / Shift+Tab | Traverse focusable controls; dialogs cycle within their active form. |
@@ -35,6 +37,12 @@ unmarked.
 Back/forward restores the room, open thread, and reading location without changing
 the selected space filter. History keeps up to 64 locations per direction during
 the session; opening another conversation after Back clears Forward.
+
+Unread navigation follows the room list's section/name ordering, wraps once,
+skips the current room, and leaves the conversation unchanged if no other unread
+room exists. Collapsed sections remain reachable. Account-wide navigation ignores
+the space and room-text filters while preserving them. Room metadata determines
+unread status; notification-inbox flags and process-local thread badges are separate.
 
 Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
 the previous match; account-search Enter submits. Account-wide search can filter

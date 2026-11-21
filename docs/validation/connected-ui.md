@@ -203,6 +203,15 @@ Linux private Secret Service fixtures and CI tests do not validate Keychain poli
 
 ## Navigation and timelines
 
+- Use Alt+Shift+Up/Down for unread rooms within the current space/text filter;
+  add Ctrl (Command on macOS) to search the account. Check both directions,
+  wrapping, collapsed sections, a current room outside the filter, and no other
+  unread room. Preserve space/filter, room/thread drafts, saved positions, and
+  back/forward history. Modals, IME, pending native pickers, and shutdown must
+  prevent navigation. Automated demo tests cover ordering, wrapping, guards,
+  history, and scope; live SDK unread changes and OS shortcut conflicts remain
+  desktop checks. Notification-inbox read flags do not determine this action.
+
 - In account-wide search, combine a joined room, full Matrix sender ID, and
   From/Through dates (inclusive UTC days). Check duplicate sender display names,
   midnight boundaries, malformed dates/user IDs, and reversed ranges. Changing

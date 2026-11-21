@@ -60,6 +60,7 @@ pub(super) fn tracks(message: &Message) -> bool {
             | Message::OpenThreadLatest(_)
             | Message::OpenLastThread
             | Message::AdjacentRoom(_)
+            | Message::UnreadRoom { .. }
             | Message::SearchOpen
             | Message::QuickRoom(_)
             | Message::Replying(_)
