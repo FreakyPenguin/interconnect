@@ -595,6 +595,41 @@ mod tests {
                 .any(|(key, y)| key == &anchor.0 && (*y - anchor.1).abs() < 1.0)
         );
 
+        // A jump above the mounted window must not persist
+        // an offscreen row as if it were the first visible reading anchor.
+        widget.as_widget_mut().operate(
+            &mut tree,
+            Layout::new(&node),
+            &renderer,
+            &mut widget::operation::scrollable::scroll_to::<()>(
+                "room-timeline".into(),
+                iced::widget::operation::AbsoluteOffset {
+                    x: None,
+                    y: Some(resized.metrics.maximum()),
+                },
+            ),
+        );
+        let mut pending_messages = Vec::new();
+        let mut pending_shell = Shell::new(&mut pending_messages);
+        widget.as_widget_mut().update(
+            &mut tree,
+            &Event::Window(iced::window::Event::RedrawRequested(
+                iced::time::Instant::now(),
+            )),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut iced::advanced::clipboard::Null,
+            &mut pending_shell,
+            &Rectangle::with_size(node.size()),
+        );
+        assert!(
+            !pending_messages
+                .iter()
+                .any(|message| matches!(message, Message::ReadingPosition { event: Some(_), .. })),
+            "offscreen reading anchor emitted before corrective layout: {pending_messages:?}"
+        );
+
         // An explicit native operation is followed by its invalidated layout.
         widget.as_widget_mut().operate(
             &mut tree,

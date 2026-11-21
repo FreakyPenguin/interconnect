@@ -601,6 +601,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
                             .iter()
                             .find(|row| {
                                 row.y + row.height > metrics.translation
+                                    && row.y < metrics.translation + metrics.height
                                     && row.key.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()
                             })
                             .map(|row| {

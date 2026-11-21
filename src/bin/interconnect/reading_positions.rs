@@ -194,6 +194,40 @@ mod tests {
     }
 
     #[test]
+    fn closing_a_thread_restores_virtual_room_by_event_not_old_pixels() {
+        let mut app = crate::tests::demo_app();
+        let key = app.draft_key(false).unwrap();
+        let saved = position(&key);
+        let pane = app.model.room.as_mut().unwrap();
+        let base = pane.rows[0].clone();
+        pane.rows = std::sync::Arc::new(
+            (0..250)
+                .map(|i| {
+                    let mut row = base.clone();
+                    row.key = format!("$closing-room-{i}");
+                    row.event_id = Some(if i == 100 {
+                        saved.event.clone()
+                    } else {
+                        row.key.clone()
+                    });
+                    row
+                })
+                .collect(),
+        );
+        let _ = app.timeline_projection[0].get(pane, None, false);
+        app.reading_positions
+            .positions
+            .insert(key.clone(), saved.clone());
+        app.scroll_positions.insert(key, 150.0);
+        app.select_thread("$virtual-root".into());
+        app.demo = None;
+        app.model.authentication = None;
+        let _ = app.update(crate::Message::CloseThread);
+        assert_eq!(app.reading_anchor(false), Some(saved));
+        assert!(app.pending_scroll[0].is_none());
+    }
+
+    #[test]
     fn virtual_room_and_thread_reopen_by_event_while_explicit_newest_still_wins() {
         use std::sync::Arc;
         for thread in [false, true] {

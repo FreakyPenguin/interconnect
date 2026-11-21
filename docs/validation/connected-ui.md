@@ -220,6 +220,13 @@ summaries. Drag a selection across multiple virtual windows in both directions,
 then copy after both endpoints leave the viewport. Revealed spoilers stay revealed;
 hidden ones copy placeholders. Covering/unfocusing panes must retain existing
 read-receipt/media suppression: overscan never counts as actually viewed.
+After a scrollbar jump beyond the mounted window, reading-position reports must
+wait for an actually visible event. Close a thread over an older room position:
+the room must retain its event-relative offset as it widens, with newest-following
+checked separately. Automated regressions cover the transient offscreen-report
+case and event-anchor restoration on thread close; native reflow remains a desktop
+acceptance check.
+
 Native GPU latency, IME/focus, very long individual messages, and live homeserver
 interoperability remain manual checks. Loaded SDK history has no new retention cap.
 

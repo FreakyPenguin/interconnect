@@ -2413,6 +2413,7 @@ impl App {
                 self.selection.event_focus[1] = None;
                 self.pending_scroll[1] = None;
                 self.pending_scroll[0] = Some(self.saved_scroll(false));
+                self.restore_saved_reading_anchor(false);
                 action_task = iced::widget::operation::focus("room-composer");
             }
             _ => {}
