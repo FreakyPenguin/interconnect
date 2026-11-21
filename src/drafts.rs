@@ -174,11 +174,20 @@ pub fn valid_notification(entry: &crate::notifications::Entry) -> bool {
     }
     use crate::notifications::Target;
     match &entry.target {
-        Target::Conversation { room, thread } => {
+        Target::Conversation {
+            room,
+            thread,
+            event,
+        } => {
             room.len() <= 1024
                 && room.parse::<matrix_sdk::ruma::OwnedRoomId>().is_ok()
                 && thread.as_ref().is_none_or(|thread| {
                     thread.len() <= 1024 && thread.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()
+                })
+                && event.as_ref().is_none_or(|event| {
+                    event.len() <= 1024
+                        && !event.chars().any(char::is_control)
+                        && event.parse::<matrix_sdk::ruma::OwnedEventId>().is_ok()
                 })
         }
         Target::Invitation { room } => {
@@ -402,6 +411,7 @@ mod tests {
             Target::Conversation {
                 room: "!private-inbox-fixture:example.org".into(),
                 thread: Some("$private-inbox-thread-fixture".into()),
+                event: Some("$private-inbox-event-fixture".into()),
             },
             Target::Invitation {
                 room: "!private-invitation-fixture:example.org".into(),
@@ -435,6 +445,35 @@ mod tests {
         assert!(earlier.notifications.is_empty());
         assert_eq!(earlier.reading_positions, snapshot().reading_positions);
         assert!(earlier.validate().is_ok());
+    }
+    #[test]
+    fn older_notification_targets_default_to_conversation_navigation() {
+        use crate::notifications::Target;
+        let mut saved = snapshot();
+        saved.notifications = notification_records();
+        let mut old = serde_json::to_value(&saved).unwrap();
+        old["notifications"][0]["entry"]["target"]
+            .as_object_mut()
+            .unwrap()
+            .remove("event");
+        let restored: Snapshot = serde_json::from_value(old).unwrap();
+        assert!(restored.validate().is_ok());
+        assert!(matches!(
+            &restored.notifications[0].entry.target,
+            Target::Conversation { event: None, .. }
+        ));
+        assert_eq!(restored.notifications[0].read, saved.notifications[0].read);
+        let serialized = serde_json::to_value(&restored).unwrap();
+        assert!(
+            serialized["notifications"][0]["entry"]["target"]
+                .get("event")
+                .is_none()
+        );
+        let serialized = serde_json::to_value(&saved).unwrap();
+        assert_eq!(
+            serialized["notifications"][0]["entry"]["target"]["event"],
+            "$private-inbox-event-fixture"
+        );
     }
     #[test]
     fn notification_history_bounds_and_duplicate_ids_are_enforced() {
@@ -483,10 +522,27 @@ mod tests {
             Target::Conversation {
                 room: "invalid".into(),
                 thread: None,
+                event: None,
             },
             Target::Conversation {
                 room: "!room:example.org".into(),
                 thread: Some("invalid".into()),
+                event: None,
+            },
+            Target::Conversation {
+                room: "!room:example.org".into(),
+                thread: None,
+                event: Some("invalid".into()),
+            },
+            Target::Conversation {
+                room: "!room:example.org".into(),
+                thread: None,
+                event: Some(format!("${}", "x".repeat(1024))),
+            },
+            Target::Conversation {
+                room: "!room:example.org".into(),
+                thread: None,
+                event: Some("$event\n".into()),
             },
             Target::Invitation {
                 room: "invalid".into(),

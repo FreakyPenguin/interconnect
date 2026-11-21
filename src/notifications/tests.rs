@@ -503,7 +503,8 @@ async fn clicks_are_bounded_session_owned_and_independent_of_delivery() {
         activation.target,
         Target::Conversation {
             room: "!room:example.org".into(),
-            thread: Some("$thread".into())
+            thread: Some("$thread".into()),
+            event: Some(format!("${QUEUE_LIMIT}")),
         }
     );
     assert!(activation.is_active());
@@ -610,6 +611,16 @@ fn category_targets_previews_ids_and_debug_do_not_leak_hidden_previews() {
     assert!(!verification.eligible(&selection, 0, 100));
     assert!(invite.eligible(&selection, 0, 100));
     let mut message = parse(event()).unwrap();
+    assert_eq!(
+        message.target(),
+        Target::Conversation {
+            room: "!room:example.org".into(),
+            thread: None,
+            event: Some("$message".into()),
+        }
+    );
+    assert_eq!(message.entry(false).target, message.target());
+    assert_eq!(message.entry(false).body, "New Matrix message");
     message.room = "!a:b:$c".into();
     message.id = "$d".into();
     let mut other = parse(event()).unwrap();
@@ -984,4 +995,93 @@ async fn focused_messages_enter_history_without_native_authorization() {
     );
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
+}
+
+#[test]
+fn legacy_message_identity_recovers_the_original_event_without_mutating_saved_records() {
+    let entry = Entry {
+        id: format!(
+            "message:{}",
+            serde_json::to_string(&("!room:example.org", "$original/with+symbols")).unwrap()
+        ),
+        target: Target::Conversation {
+            room: "!room:example.org".into(),
+            thread: Some("$thread".into()),
+            event: None,
+        },
+        timestamp: 1,
+        title: "A generic preview".into(),
+        body: "New Matrix message".into(),
+    };
+    assert_eq!(
+        entry.destination(),
+        Target::Conversation {
+            room: "!room:example.org".into(),
+            thread: Some("$thread".into()),
+            event: Some("$original/with+symbols".into()),
+        }
+    );
+    assert!(matches!(
+        entry.target,
+        Target::Conversation { event: None, .. }
+    ));
+    let mut explicit = entry;
+    explicit.target = Target::Conversation {
+        room: "!room:example.org".into(),
+        thread: None,
+        event: Some("$explicit".into()),
+    };
+    assert_eq!(
+        explicit.destination(),
+        explicit.target,
+        "explicit event wins over legacy identity"
+    );
+}
+#[test]
+fn malformed_or_mismatched_legacy_identities_keep_conversation_navigation() {
+    let mut entry = Entry {
+        id: String::new(),
+        target: Target::Conversation {
+            room: "!room:example.org".into(),
+            thread: None,
+            event: None,
+        },
+        timestamp: 1,
+        title: String::new(),
+        body: String::new(),
+    };
+    for identity in [
+        "other:[\"!room:example.org\",\"$event\"]".to_owned(),
+        "message:invalid-json".into(),
+        "message:[\"!other:example.org\",\"$event\"]".into(),
+        "message:[\"!room:example.org\",\"invalid\"]".into(),
+        "message:[\"!room:example.org\",\"$event\",\"extra\"]".into(),
+        "message:{\"room\":\"!room:example.org\",\"event\":\"$event\"}".into(),
+        format!(
+            "message:{}",
+            serde_json::to_string(&("!room:example.org", "$event\n")).unwrap()
+        ),
+        format!(
+            "message:{}",
+            serde_json::to_string(&("!room:example.org", format!("${}", "x".repeat(1024))))
+                .unwrap()
+        ),
+    ] {
+        entry.id = identity;
+        assert_eq!(
+            entry.destination(),
+            entry.target,
+            "invalid identity {:?}",
+            entry.id
+        );
+    }
+    entry.id = "message:[\"!room:example.org\",\"$event\"]".into();
+    entry.target = Target::Invitation {
+        room: "!room:example.org".into(),
+    };
+    assert_eq!(
+        entry.destination(),
+        entry.target,
+        "message IDs cannot reinterpret another category"
+    );
 }

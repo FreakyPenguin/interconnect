@@ -35,6 +35,8 @@ pub enum Target {
     Conversation {
         room: String,
         thread: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        event: Option<String>,
     },
     Invitation {
         room: String,
@@ -55,6 +57,40 @@ pub struct Entry {
     pub timestamp: u64,
     pub title: String,
     pub body: String,
+}
+impl Entry {
+    /// Older records encoded the original event only in the stable message ID.
+    /// Recover that exact destination without inferring from display text.
+    pub fn destination(&self) -> Target {
+        let Target::Conversation {
+            room,
+            thread,
+            event: None,
+        } = &self.target
+        else {
+            return self.target.clone();
+        };
+        let recovered = self
+            .id
+            .strip_prefix("message:")
+            .filter(|identity| identity.len() <= 2048)
+            .and_then(|identity| serde_json::from_str::<(String, String)>(identity).ok());
+        let Some((source, event)) = recovered else {
+            return self.target.clone();
+        };
+        if &source != room
+            || event.len() > 1024
+            || event.chars().any(char::is_control)
+            || event.parse::<matrix_sdk::ruma::OwnedEventId>().is_err()
+        {
+            return self.target.clone();
+        }
+        Target::Conversation {
+            room: room.clone(),
+            thread: thread.clone(),
+            event: Some(event),
+        }
+    }
 }
 impl std::fmt::Debug for Entry {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -223,6 +259,7 @@ impl Candidate {
             Category::Message => Target::Conversation {
                 room: self.room.clone(),
                 thread: self.thread.clone(),
+                event: Some(self.id.clone()),
             },
             Category::Invitation => Target::Invitation {
                 room: self.room.clone(),
