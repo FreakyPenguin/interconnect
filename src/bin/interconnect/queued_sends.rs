@@ -87,6 +87,7 @@ impl App {
                     .is_some_and(|width| self.side_panel_replaces_room(width)))
             && !self.composing
             && self.emoji_management.is_none()
+            && !self.notification_center.open
             && !self.bookmarks.open
             && !self.global_search.open
             && !self.space_settings.is_open()

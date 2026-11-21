@@ -23,6 +23,9 @@ pub struct State {
     discard_close: bool,
 }
 impl State {
+    pub(super) fn belongs_to(&self, account: &Option<String>) -> bool {
+        self.initialized && &self.account == account
+    }
     pub(super) fn dirty(&self) -> bool {
         self.revision != self.saved_revision
     }
@@ -149,6 +152,8 @@ impl App {
                 self.draft_persistence.current = loaded.saved.clone();
                 self.reading_positions =
                     super::reading_positions::State::from_saved(&loaded.saved.reading_positions);
+                self.notification_center.records = loaded.saved.notifications.clone();
+                self.notification_history = Default::default();
                 self.draft_persistence.error = None;
                 for saved in &loaded.saved.entries {
                     let key = DraftKey {
@@ -195,12 +200,15 @@ impl App {
             .collect();
         entries.sort_by(|a, b| (&a.room, &a.root).cmp(&(&b.room, &b.root)));
         let reading_positions = self.reading_positions.snapshot();
+        let notifications = self.notification_center.records.clone();
         if self.draft_persistence.current.entries != entries
             || self.draft_persistence.current.reading_positions != reading_positions
+            || self.draft_persistence.current.notifications != notifications
         {
             self.draft_persistence.current = Arc::new(Snapshot {
                 entries,
                 reading_positions,
+                notifications,
             });
             self.draft_persistence.revision += 1;
             self.draft_persistence.cancel_timer();
@@ -251,7 +259,10 @@ impl App {
     }
 
     pub(super) fn schedule_draft_save(&mut self) -> Task<Message> {
-        if self.demo.is_some() || !self.draft_persistence.initialized || self.sign_out_open {
+        if self.demo.is_some()
+            || !self.draft_persistence.initialized
+            || self.selection.sign_out != 0
+        {
             return Task::none();
         }
         if self.draft_persistence.close_requested {
@@ -445,6 +456,8 @@ mod tests {
     fn app(loaded: Loaded) -> App {
         let mut app = crate::tests::demo_app();
         app.demo = None;
+        app.model.notification_history = Arc::default();
+        app.notification_center.reset();
         app.model.authentication = None;
         app.model.status = "Connected".into();
         app.model.account_id = Some("@me:example.org".into());
@@ -478,6 +491,7 @@ mod tests {
             },
         );
         let snapshot = Snapshot {
+            notifications: vec![],
             reading_positions: vec![],
             entries: first
                 .drafts
@@ -531,6 +545,185 @@ mod tests {
             .save(app.draft_persistence.current.clone())
             .await;
         let _ = app.update(message(Event::Saved { request, result }));
+    }
+
+    #[tokio::test]
+    async fn notification_arrivals_during_signout_can_be_saved_before_confirming() {
+        use interconnect::notifications::{Entry as Notice, Target};
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = app(loaded(directory.path()).await);
+        let _ = app.update(Message::SignOut(super::super::sign_out::Event::Open));
+        assert!(app.sign_out_open);
+        let mut model = app.model.clone();
+        model.notification_history = vec![Notice {
+            id: "during-signout".into(),
+            target: Target::Invitation {
+                room: "!invite:example.org".into(),
+            },
+            timestamp: 42,
+            title: "Invite".into(),
+            body: "Example".into(),
+        }]
+        .into();
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.draft_persistence.dirty());
+        assert!(
+            app.draft_persistence.timer.is_some(),
+            "incoming history must be schedulable while reviewing sign-out"
+        );
+        let _ = app.save_drafts();
+        complete_save(&mut app).await;
+        assert!(!app.draft_persistence.blocks_sign_out());
+        assert!(app.sign_out_open);
+    }
+
+    #[tokio::test]
+    async fn notifications_after_shutdown_starts_do_not_dirty_the_flushed_snapshot() {
+        use interconnect::notifications::{Entry as Notice, Target};
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = app(loaded(directory.path()).await);
+        let _ = app.update(Message::Close);
+        assert!(app.closing);
+        let mut model = app.model.clone();
+        model.notification_history = vec![Notice {
+            id: "late".into(),
+            target: Target::Invitation {
+                room: "!invite:example.org".into(),
+            },
+            timestamp: 42,
+            title: "Invite".into(),
+            body: "Example".into(),
+        }]
+        .into();
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.notification_center.records.is_empty());
+        assert!(!app.draft_persistence.dirty());
+        assert!(app.draft_persistence.pending.is_none());
+    }
+
+    #[tokio::test]
+    async fn account_replacement_waits_for_its_own_history_store_before_merging() {
+        use interconnect::notifications::{Entry as Notice, Target};
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = app(loaded(directory.path()).await);
+        let mut model = app.model.clone();
+        model.account_id = Some("@other:example.org".into());
+        model.saved_drafts = None;
+        model.notification_history = vec![Notice {
+            id: "other".into(),
+            target: Target::Invitation {
+                room: "!invite:example.org".into(),
+            },
+            timestamp: 42,
+            title: "Invite".into(),
+            body: "Example".into(),
+        }]
+        .into();
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.notification_center.records.is_empty());
+        assert!(!app.draft_persistence.belongs_to(&app.account_id));
+    }
+
+    #[tokio::test]
+    async fn close_flush_is_not_extended_by_later_notification_arrivals() {
+        use interconnect::notifications::{Entry as Notice, Target};
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = app(loaded(directory.path()).await);
+        type_text(&mut app, 'x');
+        let _ = app.update(Message::Close);
+        assert!(app.draft_persistence.close_requested);
+        let mut model = app.model.clone();
+        model.notification_history = vec![Notice {
+            id: "late".into(),
+            target: Target::Invitation {
+                room: "!invite:example.org".into(),
+            },
+            timestamp: 42,
+            title: "Invite".into(),
+            body: "Example".into(),
+        }]
+        .into();
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.notification_center.records.is_empty());
+        assert!(app.draft_persistence.current.notifications.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deferred_native_click_after_settings_close_captures_durable_read_state() {
+        use interconnect::notifications::{Activation, Entry as Notice, Record, Target};
+        let directory = tempfile::tempdir().unwrap();
+        let mut app = app(loaded(directory.path()).await);
+        let target = Target::Invitation {
+            room: "!invite:example.org".into(),
+        };
+        app.model.invitations = vec![interconnect::room_membership::Invitation {
+            id: "!invite:example.org".into(),
+            name: "Example".into(),
+            inviter: None,
+            space: false,
+        }]
+        .into();
+        app.notification_center.records = vec![Record {
+            entry: Notice {
+                id: "deferred".into(),
+                target: target.clone(),
+                timestamp: 42,
+                title: "Invite".into(),
+                body: "Example".into(),
+            },
+            read: false,
+        }];
+        app.capture_persistent_drafts();
+        let _ = app.save_drafts();
+        complete_save(&mut app).await;
+        let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+        let session = Arc::new(());
+        app.pending_notification = Some(Arc::new(Activation::new(target, &session)));
+        let _ = app.update(Message::Settings(super::super::settings::Event::Cancel));
+        assert!(app.membership.open);
+        assert!(app.notification_center.records[0].read);
+        assert!(app.draft_persistence.current.notifications[0].read);
+        assert!(app.draft_persistence.dirty());
+        let _ = app.save_drafts();
+        complete_save(&mut app).await;
+        let restored = super::tests::app(loaded(directory.path()).await);
+        assert!(restored.notification_center.records[0].read);
+    }
+
+    #[tokio::test]
+    async fn restart_restores_notification_history_and_read_state_with_drafts() {
+        use interconnect::notifications::{Entry as Notice, Record, Target};
+        let directory = tempfile::tempdir().unwrap();
+        let mut first = app(loaded(directory.path()).await);
+        type_text(&mut first, 'x');
+        first.notification_center.records = vec![Record {
+            entry: Notice {
+                id: "message-fixture".into(),
+                target: Target::Conversation {
+                    room: "!room:example.org".into(),
+                    thread: None,
+                },
+                timestamp: 42,
+                title: "Notification fixture".into(),
+                body: "Private fixture preview".into(),
+            },
+            read: true,
+        }];
+        first.capture_persistent_drafts();
+        let _ = first.save_drafts();
+        complete_save(&mut first).await;
+        let restored = app(loaded(directory.path()).await);
+        assert_eq!(
+            restored.notification_center.records,
+            first.notification_center.records
+        );
+        assert_eq!(
+            restored.drafts[&restored.draft_key(false).unwrap()]
+                .content
+                .text(),
+            "x"
+        );
+        assert!(!restored.draft_persistence.dirty());
     }
 
     #[tokio::test]

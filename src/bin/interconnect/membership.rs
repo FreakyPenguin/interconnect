@@ -9,6 +9,7 @@ use interconnect::{connected::Model, navigation::Scope, room_membership::Joined}
 #[derive(Default)]
 pub struct State {
     pub open: bool,
+    pub(super) focus_invitation: Option<String>,
     mode: Mode,
     input: String,
     link_event: Option<matrix_sdk::ruma::OwnedEventId>,
@@ -270,6 +271,7 @@ impl App {
                     }
                     _ => Mode::Invitations,
                 };
+                self.membership.focus_invitation = None;
                 self.membership.input.clear();
                 self.membership.link_event = None;
                 self.context_menu = None;
@@ -538,7 +540,11 @@ impl App {
             let mut entries = column![].spacing(14).width(Length::Fill);
             let title = match &self.membership.mode {
                 Mode::Invitations => {
-                    for invitation in self.model.invitations.iter() {
+                    let mut invitations: Vec<_> = self.model.invitations.iter().collect();
+                    invitations.sort_by_key(|invitation| {
+                        self.membership.focus_invitation.as_ref() != Some(&invitation.id)
+                    });
+                    for invitation in invitations {
                         let mut entry = column![
                             shell::title(&invitation.name, 15),
                             text(&invitation.id)

@@ -757,6 +757,16 @@ impl App {
             }
             // Keep a stable bottom slot: ordinary connection status belongs in
             // the account menu, while actionable states can still surface here.
+            let body: Element<'_, Message> = if self.notification_center.open {
+                widget::stack![
+                    super::suspended::view(body.into(), true),
+                    self.notification_center_view(),
+                ]
+                .into()
+            } else {
+                // Retain the same wrapper/tree when opening and closing the inbox.
+                widget::stack![super::suspended::view(body.into(), false)].into()
+            };
             let status = self
                 .utility_banner()
                 .unwrap_or_else(|| container(widget::space().height(0)).into());

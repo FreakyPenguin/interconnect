@@ -108,11 +108,16 @@ impl App {
                         user: "@jamie:example.org".into(),
                         device: "DEMO".into(),
                         trust: VerificationState::Unverified,
-                        phase: Phase::Devices(vec![Device {
-                            id: "OTHER-DEMO".into(),
-                            name: "Example phone".into(),
-                            verified: false,
-                        }]),
+                        incoming: self.model.verification.incoming.clone(),
+                        phase: if self.model.verification.incoming.is_some() {
+                            Phase::Idle
+                        } else {
+                            Phase::Devices(vec![Device {
+                                id: "OTHER-DEMO".into(),
+                                name: "Example phone".into(),
+                                verified: false,
+                            }])
+                        },
                         revision: self.verification.demo.revision + 1,
                         ..Snapshot::default()
                     };

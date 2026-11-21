@@ -83,6 +83,10 @@ mod message_reply;
 mod navigation_control;
 #[path = "interconnect/new_chat.rs"]
 mod new_chat;
+#[path = "interconnect/notification_center.rs"]
+mod notification_center;
+#[path = "interconnect/notification_history.rs"]
+mod notification_history;
 #[path = "interconnect/notifications.rs"]
 mod notifications;
 #[path = "interconnect/panel_resize.rs"]
@@ -199,6 +203,8 @@ struct App {
     deleting: HashSet<message_delete::Sending>,
     manual_unread_generation: Option<u64>,
     section_reorder: section_reorder::State,
+    notification_center: notification_center::State,
+    notification_history: notification_history::State,
     bookmarks: bookmarks::State,
     global_search: global_search::State,
     settings: settings::State,
@@ -281,6 +287,7 @@ struct App {
 #[derive(Clone, Debug)]
 enum Message {
     Notification(interconnect::notifications::Target),
+    NotificationCenter(notification_center::Event),
     ContextMenu(context_menu::Event),
     RoomSectionMoved(Option<String>, u64, Result<(), String>),
     RoomMarkedUnread(Option<String>, u64, Result<(), String>),
@@ -420,6 +427,8 @@ enum Message {
 impl App {
     fn new() -> Self {
         Self {
+            notification_center: Default::default(),
+            notification_history: Default::default(),
             bookmarks: bookmarks::State::default(),
             global_search: global_search::State::default(),
             settings: settings::State::default(),
@@ -520,6 +529,57 @@ impl App {
             space: false,
         }]
         .into();
+        self.model.invitations_ready = true;
+        let timestamp = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap_or(0);
+        use interconnect::notifications::{
+            Entry as Notice, Record as NoticeRecord, Target as NoticeTarget,
+        };
+        let notices = vec![
+            NoticeRecord {
+                entry: Notice {
+                    id: "demo-message".into(),
+                    target: NoticeTarget::Conversation {
+                        room: "threads".into(),
+                        thread: Some("review".into()),
+                    },
+                    timestamp,
+                    title: "Design review".into(),
+                    body: "Maya mentioned you in a thread.".into(),
+                },
+                read: false,
+            },
+            NoticeRecord {
+                entry: Notice {
+                    id: "demo-invitation".into(),
+                    target: NoticeTarget::Invitation {
+                        room: "!invitation:example.org".into(),
+                    },
+                    timestamp: timestamp.saturating_sub(60_000),
+                    title: "Room invitation".into(),
+                    body: "Maya invited you to Weekend plans.".into(),
+                },
+                read: false,
+            },
+            NoticeRecord {
+                entry: Notice {
+                    id: "demo-verification".into(),
+                    target: NoticeTarget::Verification {
+                        flow: "completed-demo".into(),
+                        device: "EXAMPLE-PHONE".into(),
+                    },
+                    timestamp: timestamp.saturating_sub(120_000),
+                    title: "Verification request".into(),
+                    body: "An earlier request from your example phone.".into(),
+                },
+                read: true,
+            },
+        ];
+        self.model.notification_history = notices
+            .iter()
+            .map(|record| record.entry.clone())
+            .collect::<Vec<_>>()
+            .into();
+        self.notification_center.records = notices;
         self.shell.space = Scope::Space("studio-space".into());
         self.model.status = "Design preview · local sample data".into();
         self.model.images = demo::images();
@@ -527,18 +587,48 @@ impl App {
         self.update(Message::Room("studio".into()))
     }
     fn update(&mut self, message: Message) -> Task<Message> {
+        let notification_change = matches!(
+            &message,
+            Message::NotificationCenter(_) | Message::Notification(_)
+        );
+        let notification_update = notification_change
+            || matches!(
+                &message,
+                Message::State(_)
+                    | Message::TimelineVisible { .. }
+                    | Message::WindowFocused(_)
+                    | Message::Membership(_)
+                    | Message::Verification(_)
+                    | Message::Room(_)
+                    | Message::Thread(_)
+                    | Message::CloseThread
+            );
         let depth = self.conversation_history.depth;
         let outermost = depth == 0;
         let track = outermost && conversation_history::tracks(&message);
         let before = track.then(|| self.history_place()).flatten();
         let account = self.account_id.clone();
         self.conversation_history.depth += 1;
-        let task = self.update_dispatch(message);
+        let mut task = self.update_dispatch(message);
         // Sign-out can replace App, including its history state.
         self.conversation_history.depth = depth;
         if outermost {
             // Early dialog handlers also invalidate covered inline confirmations.
             self.validate_queued_send();
+            if (notification_update || self.notification_history.dirty)
+                && !self.closing
+                && !self.draft_persistence.close_requested
+                && !self.selection.shutdown
+                && self.selection.sign_out == 0
+            {
+                let changed =
+                    self.merge_notification_history() | self.reconcile_notification_reads();
+                let dirty = std::mem::take(&mut self.notification_history.dirty);
+                if notification_change || changed || dirty {
+                    self.capture_persistent_drafts();
+                    task = Task::batch([task, self.schedule_draft_save()]);
+                }
+            }
             if account != self.account_id
                 || (self.demo.is_none() && self.model.authentication.is_some())
             {
@@ -582,6 +672,7 @@ impl App {
                     | Message::GlobalSearch(global_search::Event::Open)
                     | Message::Bookmark(bookmarks::Event::Open)
                     | Message::Notification(_)
+                    | Message::NotificationCenter(notification_center::Event::Open)
             );
         if leaving_management
             && (self.guard_room_settings_transition(message.clone())
@@ -645,6 +736,12 @@ impl App {
         ])
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
+        if let Message::NotificationCenter(event) = message {
+            let task = self.notification_center_event(event);
+            self.refresh_media_demand();
+            self.publish_notification_context();
+            return task;
+        }
         // Formatting completions must survive other dialogs covering the reader.
         if let Message::Topic(event @ topic::Event::Rendered(..)) = message {
             return self.topic_event(event);
@@ -1242,6 +1339,11 @@ impl App {
         {
             return self.update(Message::SpaceSettings(space_settings::Event::Close));
         }
+        if matches!(message, Message::Escape) && self.notification_center.open {
+            return self.update(Message::NotificationCenter(
+                notification_center::Event::Close,
+            ));
+        }
         if matches!(message, Message::Escape) && self.global_search.open {
             return self.update(Message::GlobalSearch(global_search::Event::Close));
         }
@@ -1255,7 +1357,10 @@ impl App {
             self.pending_navigation = None;
         }
 
-        if (self.bookmarks.open || self.global_search.open || self.space_settings.is_open())
+        if (self.notification_center.open
+            || self.bookmarks.open
+            || self.global_search.open
+            || self.space_settings.is_open())
             && matches!(
                 message,
                 Message::Edit(..)
@@ -1787,6 +1892,7 @@ impl App {
             } if self.context_menu_allowed()
                 && self.context_menu.is_none()
                 && self.emoji_management.is_none()
+                && !self.notification_center.open
                 && !self.bookmarks.open
                 && !self.global_search.open
                 && !self.space_settings.is_open()
@@ -2113,6 +2219,9 @@ impl App {
                         self.drafts.clear();
                         self.scroll_positions.clear();
                         self.reading_positions = Default::default();
+                        self.pending_notification = None;
+                        self.notification_center.reset();
+                        self.notification_history = Default::default();
                         self.pending_scroll = [None, None];
                         self.selection.room = None;
                         self.selection.thread = None;
@@ -2212,7 +2321,7 @@ impl App {
             }
             Message::Exit => return self.update(Message::Close),
             Message::Notification(target) if !self.closing && !self.stopped => {
-                self.open_notification(&target);
+                action_task = self.notification_task(&target);
             }
             Message::Room(id) if !self.closing && !self.stopped => {
                 self.select_room(id);
@@ -2511,7 +2620,11 @@ impl App {
         custom_keys.extend(self.completion_emoji_images());
         custom_keys.extend(self.preview_emoji_images());
         let mut previews = 0;
-        if self.bookmarks.open || self.global_search.open || self.space_settings.is_open() {
+        if self.notification_center.open
+            || self.bookmarks.open
+            || self.global_search.open
+            || self.space_settings.is_open()
+        {
             return;
         }
         for (index, (selected, snapshot)) in [
@@ -2607,6 +2720,7 @@ impl App {
         }
     }
     fn select_room(&mut self, id: String) {
+        self.notification_center.close();
         self.pending_room_focus = None;
         self.pending_thread_focus = None;
         self.shell.narrow_navigation = false;
@@ -2626,6 +2740,7 @@ impl App {
             .or_default();
     }
     fn select_thread(&mut self, id: String) {
+        self.notification_center.close();
         self.pending_room_focus = None;
         self.bookmarks.close();
         self.global_search.close();
@@ -2647,7 +2762,11 @@ impl App {
             .unwrap_or(0.0)
     }
     fn restore_scroll(&mut self) -> Task<Message> {
-        if self.bookmarks.open || self.global_search.open || self.space_settings.is_open() {
+        if self.notification_center.open
+            || self.bookmarks.open
+            || self.global_search.open
+            || self.space_settings.is_open()
+        {
             return Task::none();
         }
         let mut tasks = Vec::new();
@@ -2853,7 +2972,8 @@ impl App {
                                 draft.reply.is_some() && draft.editing.is_none() && !draft.pending
                             })
                         });
-                let scoped_escape = self.queued_send_confirmation_open()
+                let scoped_escape = self.notification_center.open
+                    || self.queued_send_confirmation_open()
                     || self.settings.draft.is_some()
                     || self.emoji_management.is_some()
                     || self.image_view.is_some()
@@ -6413,7 +6533,7 @@ mod ux_navigation_tests {
         let _ = app.update(Message::SpaceSettings(space_settings::Event::Name(
             "Unsaved space".into(),
         )));
-        let target = interconnect::notifications::Target {
+        let target = interconnect::notifications::Target::Conversation {
             room: "general".into(),
             thread: None,
         };

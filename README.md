@@ -31,6 +31,8 @@ All screenshots and GIFs below use local sample data.
 - Cancel queued messages and uploads, with confirmation explaining the case where
   a send is already in flight.
 - Manage ignored users in Account settings, or open those controls from People.
+- Click message, invitation, and verification notifications. The toolbar bell
+  brings unread activity together with encrypted recent notification history.
 
 See [validation guidance](docs/validation/connected-ui.md) for automated coverage
 and connected desktop checks that still need manual validation.

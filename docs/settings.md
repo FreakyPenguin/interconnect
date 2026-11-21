@@ -117,6 +117,15 @@ unknown keys. Invalid/unsupported TOML, non-UTF-8, files over 64 KiB, and symlin
 block saving; the last valid settings remain active. External edits require Reload
 before Save. There is no file watcher or filesystem compare-and-swap guarantee.
 
+## Notifications and recent history
+
+Settings → Notifications controls native alerts and previews. These choices do
+not disable the in-app inbox. The bell to the left of the account avatar shows
+unread message, invitation, and verification notifications; switch to History to include read entries. Read controls and up to 256 history entries persist
+encrypted in the current account profile. They are device-local and do not change
+Matrix read receipts. Preview changes apply to newly captured entries.
+See [notification behavior and validation](validation/notifications.md).
+
 ## Network proxies
 
 Set proxy environment variables before launching Interconnect. Matrix requests

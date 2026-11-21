@@ -226,6 +226,7 @@ impl App {
                 self.stop_typing();
                 self.bookmarks.close();
                 self.remember_search_messages();
+                self.notification_center.close();
                 self.global_search.open = true;
                 return iced::widget::operation::focus("global-message-search")
                     .chain(iced::widget::operation::select_all("global-message-search"));

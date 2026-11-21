@@ -525,6 +525,7 @@ impl App {
                 self.stop_typing();
                 self.emoji_completion.clear();
                 self.user_completion.clear();
+                self.notification_center.close();
                 self.global_search.close();
                 self.bookmarks.close();
                 self.context_menu = None;

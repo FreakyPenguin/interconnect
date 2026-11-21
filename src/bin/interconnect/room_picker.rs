@@ -333,6 +333,7 @@ impl App {
             || self.message_delete.is_some()
             || self.context_menu.is_some()
             || self.room_search.open
+            || self.notification_center.open
             || self.bookmarks.open
             || self.global_search.open
             || self.space_settings.is_open()

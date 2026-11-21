@@ -52,6 +52,36 @@ deadline; macOS permission has 60 seconds. Recheck settings, focus, request vali
 age, and shutdown after permission. No polling, inline reply, sound policy, or
 cold-start navigation; OS-handed requests cannot be recalled.
 
+## Notification screen and history
+
+The bell immediately left of the account avatar opens **Notifications**. The badge
+counts unread entries across Messages (including threads), Invitations, and
+Verification. **Unread** is the default; **History** includes read entries.
+A category selector narrows either view. Opening the screen alone does not mark
+anything read. Open an entry, mark it read/unread, or use **Mark all read**.
+Expired invitations and verification requests remain in history with unavailable
+navigation; their read controls still work. Native clicks on active invitations
+put that invitation first in the review dialog.
+
+History and read flags are local to the profile/device, share encrypted draft
+storage, and survive a normal restart. The newest 256 entries are retained; this
+is observed notification history, not a homeserver-wide or cross-device archive.
+Messages follow SDK push rules even when native alerts are disabled. Reading the
+latest visible conversation clears matching older message notifications; reading
+older history does not. Inbox read controls do not send Matrix read receipts.
+Opening the inbox suspends the underlying conversation widgets and inline GIFs,
+preserving room/thread drafts and live scroll positions without hidden input,
+read receipts, media demand, or animation timers. Closing it returns to the same
+conversation. Demo contains only local sample history and performs no delivery.
+
+Automated UI/store tests cover category filters, read controls, unavailable and
+stale-account activation, small-window layout, keyboard dismissal, idle redraws,
+mounted timeline preservation, encrypted restart/read-state restoration, and
+history arriving during sign-out or shutdown. Manually check native clicks on
+Linux/macOS, toolbar placement at different scales, and connected history across
+restart using an authorized isolated account. No connected desktop acceptance is
+claimed by the automated tests.
+
 ## Linux
 
 Uses `org.freedesktop.Notifications` on the session bus. Containers need the

@@ -114,6 +114,7 @@ impl App {
     fn presence_controls_allowed(&self) -> bool {
         self.context_menu_allowed()
             && self.emoji_management.is_none()
+            && !self.notification_center.open
             && !self.bookmarks.open
             && !self.global_search.open
             && !self.space_settings.is_open()

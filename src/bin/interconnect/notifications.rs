@@ -1,9 +1,33 @@
-//! Native activation uses the same draft and scroll ownership as room navigation.
+//! Native and inbox activation share guarded, account-bound navigation.
 use super::{App, Message};
 use iced::Task;
 use interconnect::notifications::Target;
 
 impl App {
+    pub(super) fn notification_target_available(&self, target: &Target) -> bool {
+        if self.closing || self.stopped || self.selection.sign_out != 0 {
+            return false;
+        }
+        match target {
+            Target::Conversation { room, .. } => {
+                self.model.rooms.iter().any(|entry| &entry.id == room)
+            }
+            Target::Invitation { room } => {
+                self.model.invitations.iter().any(|entry| &entry.id == room)
+            }
+            Target::Verification { flow, device } => {
+                (self.demo.is_some() || self.model.verification.control.is_some())
+                    && self
+                        .model
+                        .verification
+                        .incoming
+                        .as_ref()
+                        .is_some_and(|incoming| {
+                            &incoming.flow == flow && &incoming.device == device
+                        })
+            }
+        }
+    }
     pub(super) fn activate_notification(&mut self) -> Task<Message> {
         let Some(activation) = self.pending_notification.as_ref() else {
             return Task::none();
@@ -12,17 +36,16 @@ impl App {
             self.pending_notification = None;
             return Task::none();
         }
-        // Preserve modal edits and pending writes. Apply after the dialog closes.
-        if !self.context_menu_allowed() {
+        // Native clicks defer until the covered form can safely relinquish input.
+        if !self.context_menu_allowed()
+            || self.space_settings.is_open()
+            || self.emoji_management.is_some()
+            || self.composing
+        {
             return Task::none();
         }
         let activation = self.pending_notification.take().unwrap();
-        if !self
-            .model
-            .rooms
-            .iter()
-            .any(|room| room.id == activation.target.room)
-        {
+        if !self.notification_target_available(&activation.target) {
             return Task::none();
         }
         let navigate = self.update(Message::Notification(activation.target.clone()));
@@ -33,11 +56,41 @@ impl App {
         });
         Task::batch([navigate, focus])
     }
-
+    pub(super) fn notification_task(&mut self, target: &Target) -> Task<Message> {
+        if !self.context_menu_allowed()
+            || !self.notification_target_available(target)
+            || self.composing
+        {
+            return Task::none();
+        }
+        self.notification_center.close();
+        self.stop_image_playback();
+        self.mark_notification_target_read(target);
+        match target {
+            Target::Conversation { .. } => {
+                self.open_notification(target);
+                Task::none()
+            }
+            Target::Invitation { room } => {
+                let task = self.membership_event(super::membership::Event::Open);
+                if self.membership.open {
+                    self.membership.focus_invitation = Some(room.clone());
+                }
+                task
+            }
+            Target::Verification { .. } => {
+                self.verification_update(super::verification::Event::Open)
+            }
+        }
+    }
     pub(super) fn open_notification(&mut self, target: &Target) -> bool {
-        if !self.model.rooms.iter().any(|room| room.id == target.room) {
+        let Target::Conversation { room, thread } = target else {
+            return false;
+        };
+        if !self.model.rooms.iter().any(|entry| &entry.id == room) {
             return false;
         }
+        self.notification_center.close();
         self.stop_typing();
         self.context_menu = None;
         self.shell.spaces.menu = None;
@@ -49,16 +102,16 @@ impl App {
             .selection
             .room
             .as_ref()
-            .is_some_and(|(_, room)| room == &target.room);
+            .is_some_and(|(_, selected)| selected == room);
         if !same_room {
-            self.select_room(target.room.clone());
+            self.select_room(room.clone());
         }
-        if let Some(root) = &target.thread {
+        if let Some(root) = thread {
             if self
                 .selection
                 .thread
                 .as_ref()
-                .is_none_or(|(_, thread)| thread != root)
+                .is_none_or(|(_, open)| open != root)
             {
                 self.select_thread(root.clone());
             }
@@ -68,7 +121,7 @@ impl App {
             self.pending_scroll[1] = None;
             self.pending_scroll[0] = Some(self.saved_scroll(false));
         }
-        if target.thread.is_none() {
+        if thread.is_none() {
             self.pending_room_focus = self
                 .selection
                 .room
@@ -92,7 +145,7 @@ mod tests {
         app.drafts.get_mut(&original).unwrap().content =
             text_editor::Content::with_text("unfinished");
         app.scroll_positions.insert(original.clone(), 210.0);
-        let target = Target {
+        let target = Target::Conversation {
             room: "threads".into(),
             thread: Some("thread-plan".into()),
         };
@@ -109,7 +162,7 @@ mod tests {
             "the same conversation keeps its timeline"
         );
         assert_eq!(app.saved_scroll(true), 90.0);
-        assert!(app.open_notification(&Target {
+        assert!(app.open_notification(&Target::Conversation {
             room: "studio".into(),
             thread: None
         }));
@@ -121,7 +174,7 @@ mod tests {
         assert!(app.open_notification(&target));
         assert_eq!(app.pending_scroll[1], Some(90.0));
         let selected = app.selection.clone();
-        assert!(!app.open_notification(&Target {
+        assert!(!app.open_notification(&Target::Conversation {
             room: "left-room".into(),
             thread: None
         }));
@@ -139,7 +192,7 @@ mod activation_tests {
     fn state_click_waits_for_modal_close_and_is_consumed_once() {
         let mut app = super::super::tests::demo_app();
         let session = Arc::new(());
-        let target = Target {
+        let target = Target::Conversation {
             room: "threads".into(),
             thread: Some("thread-plan".into()),
         };
@@ -154,7 +207,13 @@ mod activation_tests {
         assert!(app.pending_notification.is_some());
         // No SDK event or timer is needed after closing a modal.
         let _ = app.update(Message::Settings(super::super::settings::Event::Cancel));
-        assert_eq!(backend.borrow().room.as_ref().unwrap().1, target.room);
+        assert_eq!(
+            backend.borrow().room.as_ref().unwrap().1,
+            match &target {
+                Target::Conversation { room, .. } => room.as_str(),
+                _ => unreachable!(),
+            }
+        );
         assert_eq!(backend.borrow().thread.as_ref().unwrap().1, "thread-plan");
         assert!(app.pending_notification.is_none());
         let _ = app.update(Message::Room("studio".into()));
@@ -170,5 +229,109 @@ mod activation_tests {
         let _ = app.update(Message::WindowFocused(true));
         assert!(app.pending_notification.is_none());
         assert_eq!(app.selection.room.as_ref().unwrap().1, "studio");
+    }
+}
+
+#[cfg(test)]
+mod category_tests {
+    use super::*;
+    use crate::{notification_center, tests::demo_app};
+    use interconnect::notifications::Activation;
+    use std::sync::Arc;
+
+    fn app() -> App {
+        let mut app = demo_app();
+        app.model.invitations = vec![interconnect::room_membership::Invitation {
+            id: "!invitation:example.org".into(),
+            name: "Example invitation".into(),
+            inviter: Some("@other:example.org".into()),
+            space: false,
+        }]
+        .into();
+        app
+    }
+    #[test]
+    fn invitation_click_reviews_that_invite_without_accepting_or_switching_conversation() {
+        let mut app = app();
+        let selected = app.selection.clone();
+        let invitations = app.model.invitations.len();
+        let target = Target::Invitation {
+            room: "!invitation:example.org".into(),
+        };
+        let _ = app.update(Message::NotificationCenter(
+            notification_center::Event::Open,
+        ));
+        let _ = app.update(Message::Notification(target));
+        assert!(app.membership.open);
+        assert_eq!(
+            app.membership.focus_invitation.as_deref(),
+            Some("!invitation:example.org")
+        );
+        assert!(!app.notification_center.open);
+        assert_eq!(app.model.invitations.len(), invitations);
+        assert_eq!(app.selection.room, selected.room);
+        assert_eq!(app.selection.thread, selected.thread);
+        assert_eq!(app.pending_ops, 0);
+    }
+    #[test]
+    fn verification_click_reviews_only_the_current_request_without_accepting_it() {
+        let mut app = demo_app();
+        app.model.verification.incoming = Some(interconnect::verification::Incoming {
+            flow: "flow".into(),
+            device: "PHONE".into(),
+        });
+        let target = Target::Verification {
+            flow: "flow".into(),
+            device: "PHONE".into(),
+        };
+        let original = app.model.verification.revision;
+        let _ = app.update(Message::Notification(target));
+        assert!(app.verification.open);
+        assert_eq!(app.model.verification.revision, original);
+        assert_eq!(
+            app.model.verification.incoming.as_ref().unwrap().flow,
+            "flow"
+        );
+        assert_eq!(app.pending_ops, 0);
+        let _ = app.update(Message::Verification(
+            super::super::verification::Event::Close,
+        ));
+        let _ = app.update(Message::Notification(Target::Verification {
+            flow: "expired".into(),
+            device: "PHONE".into(),
+        }));
+        assert!(!app.verification.open);
+    }
+    #[test]
+    fn native_invitation_and_verification_clicks_defer_and_expire_with_the_session() {
+        for verification in [false, true] {
+            let mut app = app();
+            app.model.verification.incoming = Some(interconnect::verification::Incoming {
+                flow: "flow".into(),
+                device: "PHONE".into(),
+            });
+            let target = if verification {
+                Target::Verification {
+                    flow: "flow".into(),
+                    device: "PHONE".into(),
+                }
+            } else {
+                Target::Invitation {
+                    room: "!invitation:example.org".into(),
+                }
+            };
+            let session = Arc::new(());
+            let _ = app.update(Message::Settings(super::super::settings::Event::Open));
+            let mut model = app.model.clone();
+            model.notification_activation = Some(Arc::new(Activation::new(target, &session)));
+            let _ = app.update(Message::State(Box::new(model)));
+            assert!(app.pending_notification.is_some());
+            assert!(!app.membership.open && !app.verification.open);
+            let _ = app.update(Message::Settings(super::super::settings::Event::Cancel));
+            assert!(app.pending_notification.is_none());
+            assert_eq!(app.membership.open, !verification);
+            assert_eq!(app.verification.open, verification);
+            assert_eq!(app.pending_ops, 0);
+        }
     }
 }

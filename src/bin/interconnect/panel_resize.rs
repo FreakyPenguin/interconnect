@@ -44,6 +44,7 @@ impl App {
                         .thread
                         .as_ref()
                         .is_some_and(|(current, _)| *current == generation)
+                    && !self.notification_center.open
                     && !self.global_search.open
                     && !self.space_settings.is_open()
                     && !self.bookmarks.open =>
@@ -52,6 +53,7 @@ impl App {
             }
             Target::People(generation)
                 if self.selection.members == Some(generation)
+                    && !self.notification_center.open
                     && !self.global_search.open
                     && !self.space_settings.is_open()
                     && !self.bookmarks.open =>

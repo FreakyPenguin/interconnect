@@ -85,6 +85,7 @@ impl App {
         match event {
             Event::Open
                 if self.selection.room.is_some()
+                    && !self.notification_center.open
                     && !self.bookmarks.open
                     && !self.global_search.open
                     && !self.space_settings.is_open() =>

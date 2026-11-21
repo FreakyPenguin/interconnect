@@ -178,6 +178,7 @@ impl App {
             Event::Open if !self.closing && !self.stopped => {
                 self.stop_typing();
                 self.global_search.close();
+                self.notification_center.close();
                 self.bookmarks.open = true;
                 self.bookmarks.limit = 20;
                 self.bookmarks.error = None;
