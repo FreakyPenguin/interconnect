@@ -203,6 +203,25 @@ Linux private Secret Service fixtures and CI tests do not validate Keychain poli
 
 ## Navigation and timelines
 
+Long loaded room/thread timelines mount only the viewport plus overscan; short
+histories retain exact full layout. Automated fixtures exercise prefix-height
+updates, bounded mounting, offscreen selection/copy/spoilers, deep targets,
+prepending, row-height/width changes, newest navigation, cache release, and a
+settled widget without redraw/layout deadlines. The headless performance fixture
+reports mounted versus loaded counts; see [long-history measurements](long-history.md).
+
+For connected desktop acceptance, load a long test history and check wheel,
+trackpad, scrollbar dragging, paging, jump-to-newest, and distant reply/search/
+saved/notification targets. Unknown row heights can adjust scrollbar geometry,
+but the visible event and its offset must remain stable through pagination,
+resize/interface scaling, edits/redactions, media dimensions, and moving thread
+summaries. Drag a selection across multiple virtual windows in both directions,
+then copy after both endpoints leave the viewport. Revealed spoilers stay revealed;
+hidden ones copy placeholders. Covering/unfocusing panes must retain existing
+read-receipt/media suppression: overscan never counts as actually viewed.
+Native GPU latency, IME/focus, very long individual messages, and live homeserver
+interoperability remain manual checks. Loaded SDK history has no new retention cap.
+
 - Use Alt+Shift+Up/Down for unread rooms within the current space/text filter;
   add Ctrl (Command on macOS) to search the account. Check both directions,
   wrapping, collapsed sections, a current room outside the filter, and no other

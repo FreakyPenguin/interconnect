@@ -8,7 +8,8 @@ See the [project README](../README.md) for features and screenshots.
 - [Current limitations](limitations.md) and [ideas](todo.md)
 - [Development](development.md): build, packaging, and desktop/container setup.
 - [Architecture](architecture/client.md), [draft storage](architecture/drafts.md),
-  [message formatting](architecture/message-formatting.md), and [file drops](architecture/winit-file-drops.md).
+  [message formatting](architecture/message-formatting.md),
+  [virtual timelines](architecture/timeline.md), and [file drops](architecture/winit-file-drops.md).
 - Validation: [UI and accounts](validation/connected-ui.md),
-  [idle resources](validation/idle-resources.md), [notifications](validation/notifications.md),
+  [idle resources](validation/idle-resources.md), [long histories](validation/long-history.md), [notifications](validation/notifications.md),
   [device verification](validation/verification.md), and [key recovery](validation/recovery.md).

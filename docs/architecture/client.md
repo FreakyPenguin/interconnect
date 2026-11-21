@@ -76,6 +76,12 @@ anchors fall back once to the ordinary timeline. Drafts clear on SDK queue admis
 echoes show pending/sent/failed states; retry reuses the original transaction.
 Shutdown waits for admission/retry operations and flushes drafts.
 
+Room/thread panes use [variable-height virtual rows](timeline.md) for long loaded
+histories. Cached projections and a prefix-height index retain lightweight metadata;
+only the viewport and overscan own paragraph/editor/widget state. Model-backed
+selection and sparse spoiler state survive row unmounting. Small conversations
+retain exact full geometry. Widget virtualization does not discard SDK history.
+
 Room/thread panes follow arrivals only when already at newest; otherwise message
 anchors preserve position across arrivals/pagination. Closed-pane offsets remain
 in memory. Search/creation commands capture account and target identity; late

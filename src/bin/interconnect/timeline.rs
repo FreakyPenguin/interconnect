@@ -7,7 +7,7 @@ use iced::advanced::{
     widget::{self, Tree},
 };
 use iced::{Element, Event, Length, Rectangle, Renderer, Size, Theme, Vector};
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 #[cfg(test)]
 pub fn view(
@@ -74,6 +74,7 @@ pub fn focused_history_view(
     )
 }
 
+#[cfg(test)]
 pub fn reading_history_view(
     generation: u64,
     keys: Vec<Option<String>>,
@@ -95,6 +96,9 @@ pub fn reading_history_view(
             .filter_map(|(index, key)| key.map(|key| (row_id(index), key)))
             .collect(),
         content,
+        virtualization: None,
+        virtual_keys: None,
+        selection_source: None,
     })
 }
 
@@ -118,6 +122,35 @@ fn make_view(
             .filter_map(|(index, key)| key.map(|key| (row_id(index), key)))
             .collect(),
         content,
+        virtualization: None,
+        virtual_keys: None,
+        selection_source: None,
+    })
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn virtual_history_view<'a>(
+    generation: u64,
+    keys: Arc<HashMap<widget::Id, String>>,
+    content: Element<'a, Message>,
+    history: (bool, u64, bool),
+    observe_visible: bool,
+    target: Option<String>,
+    reading_anchor: Option<interconnect::drafts::ReadingPosition>,
+    viewport: super::virtual_rows::SharedViewport,
+    target_index: Option<usize>,
+    selection_source: Arc<dyn super::selection::Source>,
+) -> Element<'a, Message> {
+    Element::new(Timeline {
+        generation,
+        history: Some(history),
+        observe_visible,
+        target,
+        reading_anchor,
+        keys: HashMap::new(),
+        content,
+        virtualization: Some((viewport, target_index)),
+        virtual_keys: Some(keys),
+        selection_source: Some(selection_source),
     })
 }
 struct Timeline<'a> {
@@ -128,6 +161,9 @@ struct Timeline<'a> {
     reading_anchor: Option<interconnect::drafts::ReadingPosition>,
     keys: HashMap<widget::Id, String>,
     content: Element<'a, Message>,
+    virtualization: Option<(super::virtual_rows::SharedViewport, Option<usize>)>,
+    virtual_keys: Option<Arc<HashMap<widget::Id, String>>>,
+    selection_source: Option<Arc<dyn super::selection::Source>>,
 }
 pub fn row_id(index: usize) -> widget::Id {
     widget::Id::from(format!("timeline-row-{index}"))
@@ -230,8 +266,29 @@ impl Timeline<'_> {
             .operate(&mut tree.children[0], layout, renderer, &mut measure);
         if let Some(snapshot) = &mut tree.state.downcast_mut::<Identity>().snapshot {
             snapshot.metrics = measure.snapshot.metrics;
+            if let Some((viewport, _)) = &self.virtualization {
+                let mut view = viewport.borrow_mut();
+                view.offset = snapshot.metrics.distance_from_bottom();
+                view.height = snapshot.metrics.height;
+                view.anchor = visible_anchor(snapshot);
+            }
         }
     }
+}
+
+fn visible_anchor(snapshot: &Snapshot) -> Option<(String, f32)> {
+    (snapshot.metrics.distance_from_bottom() > 1.0)
+        .then(|| {
+            snapshot
+                .rows
+                .iter()
+                .find(|row| {
+                    row.y + row.height > snapshot.metrics.translation
+                        && row.y < snapshot.metrics.translation + snapshot.metrics.height
+                })
+                .map(|row| (row.key.clone(), row.y - snapshot.metrics.translation))
+        })
+        .flatten()
 }
 
 fn anchored_offset(previous: &Snapshot, current: &Snapshot) -> f32 {
@@ -327,11 +384,44 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let node = self
+        if let Some((viewport, target_index)) = &self.virtualization {
+            let identity = tree.state.downcast_ref::<Identity>();
+            let mut view = viewport.borrow_mut();
+            view.height = limits.max().height;
+            view.target = (!identity.focused).then_some(*target_index).flatten();
+            if let Some(snapshot) = &identity.snapshot {
+                view.offset = snapshot.metrics.distance_from_bottom();
+                view.anchor = visible_anchor(snapshot);
+            }
+        }
+        tree.state
+            .downcast_mut::<Identity>()
+            .selection
+            .set_source(self.selection_source.clone());
+        let mut node = self
             .content
             .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits);
-        let mut measure = Measure::new(Some(&self.keys));
+        for _ in 0..3 {
+            if !tree
+                .state
+                .downcast_ref::<Identity>()
+                .selection
+                .restore_semantics(
+                    self.content.as_widget_mut(),
+                    &mut tree.children[0],
+                    Layout::new(&node),
+                    renderer,
+                )
+            {
+                break;
+            }
+            node = self
+                .content
+                .as_widget_mut()
+                .layout(&mut tree.children[0], renderer, limits);
+        }
+        let mut measure = Measure::new(Some(self.virtual_keys.as_deref().unwrap_or(&self.keys)));
         self.content.as_widget_mut().operate(
             &mut tree.children[0],
             Layout::new(&node),
@@ -382,6 +472,15 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         {
             identity.media_visible = None;
         }
+        if let Some((viewport, _)) = &self.virtualization {
+            let mut view = viewport.borrow_mut();
+            view.offset = current.metrics.distance_from_bottom();
+            view.height = current.metrics.height;
+            view.anchor = visible_anchor(&current);
+            if identity.focused {
+                view.target = None;
+            }
+        }
         identity.snapshot = Some(current);
         identity.selection.restore(
             self.content.as_widget_mut(),
@@ -426,7 +525,23 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             viewport,
             self.generation,
         );
+        tree.state
+            .downcast_mut::<Identity>()
+            .selection
+            .capture_semantics(
+                self.content.as_widget_mut(),
+                &mut tree.children[0],
+                layout,
+                renderer,
+            );
         self.remember_scroll(tree, layout, renderer);
+        if self
+            .virtualization
+            .as_ref()
+            .is_some_and(|(viewport, _)| viewport.borrow().needs_layout())
+        {
+            shell.invalidate_layout();
+        }
         if let Some((thread, _, _)) = self.history {
             let identity = tree.state.downcast_mut::<Identity>();
             if let Some(snapshot) = &identity.snapshot {

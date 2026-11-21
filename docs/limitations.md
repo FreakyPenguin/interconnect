@@ -55,6 +55,8 @@ builds are experimental.
 - Text drafts and event-anchored reading positions persist encrypted. Attachments
   and unfinished edits do not survive restart. Restoring an old position requires
   available history/keys; unavailable anchors fall back to the newest timeline. No complete offline
-  history, timeline virtualization, or configurable storage retention.
+  history or configurable storage retention. Long timelines virtualize row widgets;
+  scrollbar geometry uses estimated offscreen heights, and individual very long
+  messages still lay out as a whole. Loaded SDK data remains in memory.
 
 See [ideas](todo.md) and [validation boundaries](validation/connected-ui.md#validation-scope).

@@ -145,6 +145,8 @@ mod suspended;
 mod thread_activity;
 #[path = "interconnect/timeline.rs"]
 mod timeline;
+#[path = "interconnect/timeline_projection.rs"]
+mod timeline_projection;
 #[path = "interconnect/tombstone.rs"]
 mod tombstone;
 #[path = "interconnect/tooltips.rs"]
@@ -165,6 +167,8 @@ mod user_completion;
 mod utilities;
 #[path = "interconnect/verification.rs"]
 mod verification;
+#[path = "interconnect/virtual_rows.rs"]
+mod virtual_rows;
 
 #[path = "interconnect/space_settings.rs"]
 mod space_settings;
@@ -202,6 +206,7 @@ struct Draft {
 const MAX_PENDING_OPERATIONS: usize = 8;
 
 struct App {
+    timeline_projection: [timeline_projection::Cache; 2],
     context_menu: Option<context_menu::State>,
     message_delete: Option<message_delete::State>,
     message_highlight: message_highlight::State,
@@ -462,6 +467,7 @@ impl App {
             composing: false,
             shell: shell::State::default(),
             expanded_pins: None,
+            timeline_projection: Default::default(),
             context_menu: None,
             message_delete: None,
             message_highlight: Default::default(),
@@ -2206,6 +2212,9 @@ impl App {
                     self.global_search.reset();
                 }
                 if state.authentication.is_some() || state.account_id != self.account_id {
+                    self.timeline_projection
+                        .iter()
+                        .for_each(timeline_projection::Cache::clear);
                     self.settings.profile.reset_account();
                     self.space_settings.reset();
                     self.room_settings.dismiss();
@@ -2254,6 +2263,9 @@ impl App {
                         self.notification_center.reset();
                         self.notification_history = Default::default();
                         self.pending_scroll = [None, None];
+                        self.timeline_projection
+                            .iter()
+                            .for_each(timeline_projection::Cache::clear);
                         self.selection.room = None;
                         self.selection.thread = None;
                         self.preferences_ready = false;
@@ -2393,6 +2405,7 @@ impl App {
                 }
             }
             Message::CloseThread => {
+                self.timeline_projection[1].clear();
                 self.pending_thread_focus = None;
                 self.visible_rows[1].clear();
                 self.selection.thread = None;
@@ -2751,6 +2764,9 @@ impl App {
         }
     }
     fn select_room(&mut self, id: String) {
+        self.timeline_projection
+            .iter()
+            .for_each(timeline_projection::Cache::clear);
         self.notification_center.close();
         self.pending_room_focus = None;
         self.pending_thread_focus = None;
@@ -2772,6 +2788,7 @@ impl App {
             .or_default();
     }
     fn select_thread(&mut self, id: String) {
+        self.timeline_projection[1].clear();
         self.notification_center.close();
         self.pending_room_focus = None;
         self.bookmarks.close();
@@ -3536,6 +3553,289 @@ impl App {
     fn pane(&self, thread: bool) -> Element<'_, Message> {
         iced::widget::responsive(move |size| self.pane_sized(thread, size)).into()
     }
+    #[allow(clippy::too_many_arguments)]
+    fn timeline_row<'a>(
+        &'a self,
+        projected: thread_activity::Row<'a>,
+        previous_row: Option<thread_activity::Row<'a>>,
+        index: usize,
+        thread: bool,
+        generation: u64,
+        selected_id: &'a str,
+        unread_start: bool,
+        preview_roots: &std::collections::HashSet<String>,
+        search_focus: Option<&str>,
+    ) -> Element<'a, Message> {
+        let message = projected.message();
+        let previous = previous_row.and_then(|row| match row {
+            thread_activity::Row::Event(event) => Some(event),
+            _ => None,
+        });
+        let activity = message.kind == RowKind::Activity;
+        let grouped = !unread_start && presentation::grouped(previous, message);
+        let new_date = presentation::date(message).filter(|date| {
+            previous_row
+                .and_then(|row| presentation::date(row.message()))
+                .as_ref()
+                != Some(date)
+        });
+        let mut message_row = column![];
+        if let Some(date) = new_date {
+            message_row = message_row.push(
+                container(
+                    text(date.format("%A, %d %B %Y").to_string())
+                        .size(11)
+                        .style(shell::muted_text),
+                )
+                .center_x(Length::Fill)
+                .padding([12, 0]),
+            );
+        }
+        if unread_start {
+            message_row = message_row.push(unread::divider());
+        }
+        if let thread_activity::Row::Thread {
+            root,
+            latest,
+            original,
+            replies,
+        } = projected
+        {
+            let summary = self.thread_activity_view(root, latest, original, replies);
+            let summary = context_menu::trigger(
+                summary,
+                context_menu::Target::Thread {
+                    room: selected_id.to_owned(),
+                    generation,
+                    root: root.into(),
+                },
+            );
+            message_row = message_row.push(container(summary).id(format!("thread-entry:{root}")));
+            return container(message_row).id(timeline::row_id(index)).into();
+        }
+        let attachment_only = message
+            .download
+            .as_ref()
+            .is_some_and(|file| message.body == file.filename);
+        let body = if attachment_only {
+            Element::from(iced::widget::Space::new().height(0))
+        } else if activity {
+            selectable::activity_view(
+                message.event_id.as_deref().unwrap_or(&message.body),
+                &message.body,
+                &message.display_name,
+            )
+        } else {
+            selectable::message_view_with_search(
+                message,
+                self.inline_assets(),
+                Some(inline_image::Context { thread, generation }),
+                (!thread).then(|| self.room_search_query()).flatten(),
+                self.effective_theme(),
+            )
+        };
+        let body: Element<'_, Message> = if let Some(preview) = self.reply_context(message, thread)
+        {
+            column![preview, body].spacing(4).into()
+        } else {
+            body
+        };
+        let mut entry = if activity {
+            column![tooltips::tooltip(
+                body,
+                presentation::time_detail(message),
+                iced::widget::tooltip::Position::Top,
+            )]
+        } else if grouped {
+            column![body]
+        } else {
+            column![
+                presentation::heading(
+                    message,
+                    self.sender_chat_action(message, thread, generation),
+                ),
+                body
+            ]
+            .spacing(4)
+        };
+        if message.edited {
+            entry = entry.push(text("edited").size(11).style(shell::muted_text));
+        }
+        if message.download.is_some() || message.image.is_some() {
+            entry = entry.push(self.attachment_card(message, thread, generation, true));
+        }
+        if let Some(badges) = self.reaction_chips(message, thread, generation) {
+            entry = entry.push(badges);
+        }
+        if !thread && !message.read_by.is_empty() {
+            let count = message.read_by.len();
+            let label = if count == 1 {
+                "Read by 1 person".to_owned()
+            } else {
+                format!("Read by {count} people")
+            };
+            entry = entry.push(tooltips::tooltip(
+                text(label).size(11).style(shell::muted_text),
+                message.read_by.join("\n"),
+                iced::widget::tooltip::Position::Top,
+            ));
+        }
+        if !message.send_state.is_empty() && message.send_state != "Sent" {
+            entry = entry.push(text(&message.send_state).size(11).style(move |theme| {
+                iced::widget::text::Style {
+                    color: Some(if message.retry.is_some() {
+                        shell::palette(theme).danger
+                    } else {
+                        shell::palette(theme).muted
+                    }),
+                }
+            }));
+        }
+        if let Some(retry) = &message.retry {
+            let mut control = button(if self.retrying.contains(&retry.transaction) {
+                "Retrying…"
+            } else {
+                "Retry"
+            });
+            if !self.closing
+                && !self.stopped
+                && !self.retrying.contains(&retry.transaction)
+                && !self.queued_send_pending(&retry.transaction)
+            {
+                control = control.on_press(Message::Retry(retry.clone()));
+            }
+            entry = entry.push(control);
+            if let Some(error) = self.retry_errors.get(&retry.transaction) {
+                entry = entry.push(text(error));
+            }
+        }
+        if let Some(control) = self.queued_send_controls(message, thread, generation) {
+            entry = entry.push(control);
+        }
+        if !thread
+            && message.thread_replies > 0
+            && let Some(id) = &message.event_id
+            && !preview_roots.contains(id.as_str())
+        {
+            let mut label = if message.thread_replies == 1 {
+                "1 reply  ›".into()
+            } else {
+                format!("{} replies  ›", message.thread_replies)
+            };
+            let unread = self
+                .selection
+                .room
+                .as_ref()
+                .map_or(0, |(_, room)| self.thread_activity.unread(room, id));
+            if unread > 0 {
+                label = format!("• {label} · {unread} new");
+            }
+            let mut replies = button(text(label).size(12))
+                .style(shell::quiet_button)
+                .padding([4, 0]);
+            if !self.closing && !self.stopped {
+                replies = replies.on_press(Message::Thread(id.clone()));
+            }
+            entry = entry.push(container(replies).id(format!("thread-entry:{id}")));
+        }
+        let avatar: Element<'_, Message> = if activity {
+            container(shell::activity_avatar(
+                &message.display_name,
+                message
+                    .avatar_url
+                    .as_ref()
+                    .and_then(|uri| self.model.avatars.get(uri)),
+            ))
+            .center_x(32)
+            .into()
+        } else if grouped {
+            iced::widget::space().width(32).into()
+        } else {
+            shell::presence_avatar(
+                &message.display_name,
+                message
+                    .avatar_url
+                    .as_ref()
+                    .and_then(|uri| self.model.avatars.get(uri)),
+                self.model
+                    .presence
+                    .get(&message.sender)
+                    .copied()
+                    .unwrap_or_default(),
+            )
+        };
+        let body: Element<'_, Message> = row![avatar, entry.width(Length::Fill)].spacing(12).into();
+        let body = if grouped {
+            iced::widget::hover(
+                body,
+                container(tooltips::tooltip(
+                    text(presentation::time_label(message))
+                        .size(10)
+                        .style(shell::muted_text),
+                    presentation::time_detail(message),
+                    iced::widget::tooltip::Position::Top,
+                ))
+                .center_x(32)
+                .height(18),
+            )
+        } else {
+            body
+        };
+        let body = container(body).padding(iced::Padding {
+            top: if activity {
+                if previous.is_some_and(|row| row.kind == RowKind::Activity) && new_date.is_none() {
+                    4.0
+                } else {
+                    12.0
+                }
+            } else if grouped {
+                5.0
+            } else {
+                16.0
+            },
+            ..iced::Padding::ZERO
+        });
+        let body: Element<'_, Message> = if !activity && let Some(id) = &message.event_id {
+            let reply =
+                (!thread && !self.closing && !self.stopped).then(|| Message::Thread(id.clone()));
+            shell::message_actions(
+                self.bookmark_feedback(
+                    self.pin_feedback(body.into(), message, thread, generation),
+                    message,
+                ),
+                shell::MessageActions {
+                    reply,
+                    ordinary_reply: self.reply_action(message, thread, generation),
+                    reaction: self.reaction_action(message, thread, generation),
+                    edit: self.message_edit_action(message, thread, generation),
+                    delete: self.delete_action(message, thread, generation),
+                    pin: self.pin_action(message, thread, generation),
+                    bookmark: self.bookmark_action(message, thread, generation),
+                    popup: self
+                        .delete_popup(thread, generation, id)
+                        .or_else(|| self.reaction_popup(thread, generation, id)),
+                },
+            )
+        } else {
+            body.into()
+        };
+        let body = if !activity {
+            self.message_context(body, message, thread, generation)
+        } else {
+            body
+        };
+        let body = self.destination_message(body, thread, generation, message.event_id.as_deref());
+        message_row = message_row.push(body);
+        let mut message_row = container(message_row).id(timeline::row_id(index));
+        if search_focus == Some(projected.key().as_str()) {
+            message_row = message_row.style(|theme| container::Style {
+                background: Some(shell::palette(theme).selected.into()),
+                ..Default::default()
+            });
+        }
+        message_row.into()
+    }
+
     fn pane_sized(&self, thread: bool, size: iced::Size) -> Element<'_, Message> {
         let selected = if thread {
             &self.selection.thread
@@ -3713,309 +4013,48 @@ impl App {
             .map(|(_, event)| event.clone());
         let search_focus = (!thread).then(|| self.room_search_target()).flatten();
         let event_focus = search_focus.clone().or(event_focus);
-        let rows = if !thread && (event_focus.is_some() || self.room_search_active()) {
-            pane_rows.iter().map(thread_activity::Row::Event).collect()
-        } else {
-            thread_activity::project(pane_rows, thread.then_some(selected_id.as_str()))
+        let empty = Pane {
+            generation: *generation,
+            rows: Default::default(),
+            read_boundary: None,
+            error: None,
+            history: History::Loading,
+            history_revision: 0,
+            load_older: None,
+            composer: None,
         };
-        let unread_index = (!thread)
-            .then(|| current_pane(snapshot, *generation))
-            .flatten()
-            .and_then(|pane| unread::divider_index(pane, &rows));
-        let preview_roots: std::collections::HashSet<_> = rows
-            .iter()
-            .filter_map(|row| match row {
-                thread_activity::Row::Thread { root, .. } => Some(*root),
-                _ => None,
-            })
-            .collect();
-        let mut messages = column![history_controls].spacing(0).padding(iced::Padding {
-            top: 16.0,
-            right: 24.0,
-            bottom: 8.0,
-            left: 24.0,
+        let projection = self.timeline_projection[usize::from(thread)].get(
+            pane.unwrap_or(&empty),
+            thread.then_some(selected_id.as_str()),
+            !thread && (event_focus.is_some() || self.room_search_active()),
+        );
+        let unread_index = projection.unread_index;
+        let viewport = std::rc::Rc::new(std::cell::RefCell::new(virtual_rows::Viewport::default()));
+        let row_projection = projection.clone();
+        let row_focus = search_focus.clone();
+        let rows = virtual_rows::view(projection.keys.clone(), viewport.clone(), move |index| {
+            self.timeline_row(
+                row_projection.row(pane_rows, index),
+                index
+                    .checked_sub(1)
+                    .map(|i| row_projection.row(pane_rows, i)),
+                index,
+                thread,
+                *generation,
+                selected_id,
+                unread_index == Some(index),
+                &row_projection.preview_roots,
+                row_focus.as_deref(),
+            )
         });
-        for (index, projected) in rows.iter().copied().enumerate() {
-            let message = projected.message();
-            let previous_row = index.checked_sub(1).map(|i| rows[i]);
-            let previous = previous_row.and_then(|row| match row {
-                thread_activity::Row::Event(event) => Some(event),
-                _ => None,
+        let messages = column![history_controls, rows]
+            .spacing(0)
+            .padding(iced::Padding {
+                top: 16.0,
+                right: 24.0,
+                bottom: 8.0,
+                left: 24.0,
             });
-            let activity = message.kind == RowKind::Activity;
-            let unread_start = unread_index == Some(index);
-            let grouped = !unread_start && presentation::grouped(previous, message);
-            let new_date = presentation::date(message).filter(|date| {
-                previous_row
-                    .and_then(|row| presentation::date(row.message()))
-                    .as_ref()
-                    != Some(date)
-            });
-            let mut message_row = column![];
-            if let Some(date) = new_date {
-                message_row = message_row.push(
-                    container(
-                        text(date.format("%A, %d %B %Y").to_string())
-                            .size(11)
-                            .style(shell::muted_text),
-                    )
-                    .center_x(Length::Fill)
-                    .padding([12, 0]),
-                );
-            }
-            if unread_start {
-                message_row = message_row.push(unread::divider());
-            }
-            if let thread_activity::Row::Thread {
-                root,
-                latest,
-                original,
-                replies,
-            } = projected
-            {
-                let summary = self.thread_activity_view(root, latest, original, replies);
-                let summary = context_menu::trigger(
-                    summary,
-                    context_menu::Target::Thread {
-                        room: selected_id.clone(),
-                        generation: *generation,
-                        root: root.into(),
-                    },
-                );
-                message_row =
-                    message_row.push(container(summary).id(format!("thread-entry:{root}")));
-                messages = messages.push(container(message_row).id(timeline::row_id(index)));
-                continue;
-            }
-            let attachment_only = message
-                .download
-                .as_ref()
-                .is_some_and(|file| message.body == file.filename);
-            let body = if attachment_only {
-                Element::from(iced::widget::Space::new().height(0))
-            } else if activity {
-                selectable::activity_view(
-                    message.event_id.as_deref().unwrap_or(&message.body),
-                    &message.body,
-                    &message.display_name,
-                )
-            } else {
-                selectable::message_view_with_search(
-                    message,
-                    self.inline_assets(),
-                    Some(inline_image::Context {
-                        thread,
-                        generation: *generation,
-                    }),
-                    (!thread).then(|| self.room_search_query()).flatten(),
-                    self.effective_theme(),
-                )
-            };
-            let body: Element<'_, Message> =
-                if let Some(preview) = self.reply_context(message, thread) {
-                    column![preview, body].spacing(4).into()
-                } else {
-                    body
-                };
-            let mut entry = if activity {
-                column![tooltips::tooltip(
-                    body,
-                    presentation::time_detail(message),
-                    iced::widget::tooltip::Position::Top,
-                )]
-            } else if grouped {
-                column![body]
-            } else {
-                column![
-                    presentation::heading(
-                        message,
-                        self.sender_chat_action(message, thread, *generation),
-                    ),
-                    body
-                ]
-                .spacing(4)
-            };
-            if message.edited {
-                entry = entry.push(text("edited").size(11).style(shell::muted_text));
-            }
-            if message.download.is_some() || message.image.is_some() {
-                entry = entry.push(self.attachment_card(message, thread, *generation, true));
-            }
-            if let Some(badges) = self.reaction_chips(message, thread, *generation) {
-                entry = entry.push(badges);
-            }
-            if !thread && !message.read_by.is_empty() {
-                let count = message.read_by.len();
-                let label = if count == 1 {
-                    "Read by 1 person".to_owned()
-                } else {
-                    format!("Read by {count} people")
-                };
-                entry = entry.push(tooltips::tooltip(
-                    text(label).size(11).style(shell::muted_text),
-                    message.read_by.join("\n"),
-                    iced::widget::tooltip::Position::Top,
-                ));
-            }
-            if !message.send_state.is_empty() && message.send_state != "Sent" {
-                entry = entry.push(text(&message.send_state).size(11).style(move |theme| {
-                    iced::widget::text::Style {
-                        color: Some(if message.retry.is_some() {
-                            shell::palette(theme).danger
-                        } else {
-                            shell::palette(theme).muted
-                        }),
-                    }
-                }));
-            }
-            if let Some(retry) = &message.retry {
-                let mut control = button(if self.retrying.contains(&retry.transaction) {
-                    "Retrying…"
-                } else {
-                    "Retry"
-                });
-                if !self.closing
-                    && !self.stopped
-                    && !self.retrying.contains(&retry.transaction)
-                    && !self.queued_send_pending(&retry.transaction)
-                {
-                    control = control.on_press(Message::Retry(retry.clone()));
-                }
-                entry = entry.push(control);
-                if let Some(error) = self.retry_errors.get(&retry.transaction) {
-                    entry = entry.push(text(error));
-                }
-            }
-            if let Some(control) = self.queued_send_controls(message, thread, *generation) {
-                entry = entry.push(control);
-            }
-            if !thread
-                && message.thread_replies > 0
-                && let Some(id) = &message.event_id
-                && !preview_roots.contains(id.as_str())
-            {
-                let mut label = if message.thread_replies == 1 {
-                    "1 reply  ›".into()
-                } else {
-                    format!("{} replies  ›", message.thread_replies)
-                };
-                let unread = self
-                    .selection
-                    .room
-                    .as_ref()
-                    .map_or(0, |(_, room)| self.thread_activity.unread(room, id));
-                if unread > 0 {
-                    label = format!("• {label} · {unread} new");
-                }
-                let mut replies = button(text(label).size(12))
-                    .style(shell::quiet_button)
-                    .padding([4, 0]);
-                if !self.closing && !self.stopped {
-                    replies = replies.on_press(Message::Thread(id.clone()));
-                }
-                entry = entry.push(container(replies).id(format!("thread-entry:{id}")));
-            }
-            let avatar: Element<'_, Message> = if activity {
-                container(shell::activity_avatar(
-                    &message.display_name,
-                    message
-                        .avatar_url
-                        .as_ref()
-                        .and_then(|uri| self.model.avatars.get(uri)),
-                ))
-                .center_x(32)
-                .into()
-            } else if grouped {
-                iced::widget::space().width(32).into()
-            } else {
-                shell::presence_avatar(
-                    &message.display_name,
-                    message
-                        .avatar_url
-                        .as_ref()
-                        .and_then(|uri| self.model.avatars.get(uri)),
-                    self.model
-                        .presence
-                        .get(&message.sender)
-                        .copied()
-                        .unwrap_or_default(),
-                )
-            };
-            let body: Element<'_, Message> =
-                row![avatar, entry.width(Length::Fill)].spacing(12).into();
-            let body = if grouped {
-                iced::widget::hover(
-                    body,
-                    container(tooltips::tooltip(
-                        text(presentation::time_label(message))
-                            .size(10)
-                            .style(shell::muted_text),
-                        presentation::time_detail(message),
-                        iced::widget::tooltip::Position::Top,
-                    ))
-                    .center_x(32)
-                    .height(18),
-                )
-            } else {
-                body
-            };
-            let body = container(body).padding(iced::Padding {
-                top: if activity {
-                    if previous.is_some_and(|row| row.kind == RowKind::Activity)
-                        && new_date.is_none()
-                    {
-                        4.0
-                    } else {
-                        12.0
-                    }
-                } else if grouped {
-                    5.0
-                } else {
-                    16.0
-                },
-                ..iced::Padding::ZERO
-            });
-            let body: Element<'_, Message> = if !activity && let Some(id) = &message.event_id {
-                let reply = (!thread && !self.closing && !self.stopped)
-                    .then(|| Message::Thread(id.clone()));
-                shell::message_actions(
-                    self.bookmark_feedback(
-                        self.pin_feedback(body.into(), message, thread, *generation),
-                        message,
-                    ),
-                    shell::MessageActions {
-                        reply,
-                        ordinary_reply: self.reply_action(message, thread, *generation),
-                        reaction: self.reaction_action(message, thread, *generation),
-                        edit: self.message_edit_action(message, thread, *generation),
-                        delete: self.delete_action(message, thread, *generation),
-                        pin: self.pin_action(message, thread, *generation),
-                        bookmark: self.bookmark_action(message, thread, *generation),
-                        popup: self
-                            .delete_popup(thread, *generation, id)
-                            .or_else(|| self.reaction_popup(thread, *generation, id)),
-                    },
-                )
-            } else {
-                body.into()
-            };
-            let body = if !activity {
-                self.message_context(body, message, thread, *generation)
-            } else {
-                body
-            };
-            let body =
-                self.destination_message(body, thread, *generation, message.event_id.as_deref());
-            message_row = message_row.push(body);
-            let mut message_row = container(message_row).id(timeline::row_id(index));
-            if search_focus.as_deref() == Some(projected.key().as_str()) {
-                message_row = message_row.style(|theme| container::Style {
-                    background: Some(shell::palette(theme).selected.into()),
-                    ..Default::default()
-                });
-            }
-            messages = messages.push(message_row);
-        }
         let view_generation = *generation;
         let timeline = scrollable(self.room_column(messages))
             .width(Length::Fill)
@@ -4035,11 +4074,14 @@ impl App {
             .height(Length::Fill);
         // New view identity resets the scroll state; async rows retain that
         // state and a zero distance from the bottom follows loaded history.
-        let keys = rows.iter().map(|row| Some(row.key())).collect();
         let focus = event_focus;
-        let observed = timeline::reading_history_view(
+        let target_index = focus
+            .as_ref()
+            .and_then(|event| projection.indices.get(event))
+            .copied();
+        let observed = timeline::virtual_history_view(
             *generation,
-            keys,
+            projection.observed_keys.clone(),
             timeline.into(),
             (
                 thread,
@@ -4051,9 +4093,12 @@ impl App {
                 && !matches!(history, History::Loading),
             focus.clone(),
             self.reading_anchor(thread),
+            viewport,
+            target_index,
+            projection.selection_source.clone(),
         );
         let mut message_area = iced::widget::stack![observed];
-        if rows.is_empty() {
+        if projection.is_empty() {
             let status = if let Some(error) = pane_error {
                 Some(shell::empty_state_with_action(
                     "Could not open this conversation",
