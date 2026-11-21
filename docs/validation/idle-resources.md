@@ -87,3 +87,7 @@ Keep build, renderer/adapter, fonts, geometry, focus, logging, and traffic compa
 exclude startup/compilation. Hiding keeps sync running. Headless/software captures
 do not establish native GPU/battery/macOS behavior; unit tests do not measure
 CPU/wakeups. Keep capture artifacts local, not in this reference.
+
+For loaded-history append, resize, scroll-frame, and RSS scaling, use the
+[long-history fixture](long-history.md). Those UI measurements are separate from
+settled idle CPU and wakeups.

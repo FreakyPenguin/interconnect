@@ -4648,6 +4648,10 @@ fn configure_graphics_environment(
 #[path = "interconnect/render_damage.rs"]
 mod render_damage;
 
+#[cfg(test)]
+#[path = "interconnect/long_history.rs"]
+mod long_history;
+
 /// Widget/layout tests stay headless and deterministic with the same software
 /// renderer variant used by the application's real fallback path.
 #[cfg(test)]
