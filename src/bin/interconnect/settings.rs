@@ -32,6 +32,11 @@ pub struct State {
     presence_seconds_input: String,
     notification_test_busy: bool,
     notification_test_result: Option<Result<(), String>>,
+    demo_link_default: bool,
+    link_request: u64,
+    link_busy: bool,
+    link_result: Option<Result<bool, String>>,
+    link_check: Option<iced::task::Handle>,
     category: Category,
     confirm_discard: Option<Discard>,
     confirm_serial: u64,
@@ -176,6 +181,9 @@ pub enum Event {
     NotificationPreview(bool),
     PresencePolling(bool),
     PresenceSeconds(String),
+    CheckLinkHandler,
+    MakeDefaultLinkHandler,
+    LinkHandlerChecked(u64, Result<bool, String>),
     TestNotification,
     NotificationTested(Result<(), String>),
     Defaults,
@@ -307,6 +315,44 @@ impl App {
     }
     pub(super) fn settings_update(&mut self, event: Event) -> Task<Message> {
         match event {
+            Event::CheckLinkHandler | Event::MakeDefaultLinkHandler
+                if self.settings.draft.is_some()
+                    && self.settings.category == Category::General
+                    && !self.settings.link_busy
+                    && !self.settings.busy
+                    && self.settings.confirm_discard.is_none()
+                    && !self.closing
+                    && !self.stopped =>
+            {
+                let make_default = matches!(event, Event::MakeDefaultLinkHandler);
+                self.settings.link_request = self.settings.link_request.wrapping_add(1);
+                let request = self.settings.link_request;
+                if self.demo.is_some() {
+                    self.settings.demo_link_default |= make_default;
+                    self.settings.link_result = Some(Ok(self.settings.demo_link_default));
+                    return Task::none();
+                }
+                self.settings.link_busy = true;
+                self.settings.link_result = None;
+                let task =
+                    Task::perform(super::default_handler::run(make_default), move |result| {
+                        message(Event::LinkHandlerChecked(request, result))
+                    });
+                // Submitted OS writes finish even if Settings closes. Reads cancel.
+                if make_default {
+                    return task;
+                }
+                let (task, handle) = task.abortable();
+                self.settings.link_check = Some(handle.abort_on_drop());
+                return task;
+            }
+            Event::LinkHandlerChecked(request, result)
+                if request == self.settings.link_request && self.settings.draft.is_some() =>
+            {
+                self.settings.link_busy = false;
+                self.settings.link_check = None;
+                self.settings.link_result = Some(result);
+            }
             Event::SystemTheme(mode) => self.settings.system_theme = mode,
             Event::InterfaceScale(scale) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
@@ -424,6 +470,7 @@ impl App {
                         return self.account_profile_event(super::account_profile::Event::Reload);
                     }
                     DiscardAction::Transition(next) => {
+                        self.settings.link_check = None;
                         self.settings.draft = None;
                         self.settings.profile.dismiss();
                         self.ignored_users.dismiss();
@@ -433,6 +480,9 @@ impl App {
                 }
             }
             Event::Open if self.settings.draft.is_none() && !self.closing => {
+                self.settings.link_check = None;
+                self.settings.link_busy = false;
+                self.settings.link_result = None;
                 self.settings.category = Category::General;
                 self.settings.confirm_discard = None;
                 self.settings.gif_seconds_input =
@@ -445,12 +495,16 @@ impl App {
                     .to_string();
                 self.settings.draft = Some(self.settings.current.clone());
                 // Remove focus from composers/search while preferences cover the workspace.
-                return iced::widget::operation::focus("settings-dialog");
+                return Task::batch([
+                    iced::widget::operation::focus("settings-dialog"),
+                    self.settings_update(Event::CheckLinkHandler),
+                ]);
             }
             Event::Cancel if !self.settings.saving => {
                 self.settings.profile.dismiss();
                 self.ignored_users.dismiss();
                 self.devices.dismiss();
+                self.settings.link_check = None;
                 self.settings.draft = None;
                 self.settings.confirm_discard = None;
                 return iced::widget::operation::focus(if self.selection.thread.is_some() {
@@ -626,6 +680,7 @@ impl App {
                         self.settings.store = Some(store);
                         self.settings.error = None;
                         if close {
+                            self.settings.link_check = None;
                             self.settings.draft = None;
                             return self.update(Message::Close);
                         }
@@ -687,6 +742,7 @@ impl App {
                 .request_discard(DiscardAction::Transition(Box::new(next)));
             true
         } else {
+            self.settings.link_check = None;
             self.settings.draft = None;
             self.settings.profile.dismiss();
             self.ignored_users.dismiss();
@@ -913,8 +969,37 @@ impl App {
             notification_controls =
                 notification_controls.push(caption(error).style(shell::danger_text));
         }
+        let link_status = if self.settings.link_busy {
+            "Checking desktop settings…"
+        } else {
+            match &self.settings.link_result {
+                Some(Ok(true)) => "Interconnect is the default app for Matrix links.",
+                Some(Ok(false)) => "Interconnect is not the default app for Matrix links.",
+                Some(Err(error)) => error,
+                None => "Check which app opens Matrix links.",
+            }
+        };
+        let link_available =
+            available && !self.settings.link_busy && self.settings.confirm_discard.is_none();
+        let link_controls = column![
+            shell::title("Matrix links", 14),
+            caption(link_status),
+            row![
+                button(text("Check again").size(13)).keyboard_navigation(true)
+                    .padding([7, 10]).style(shell::quiet_button)
+                    .on_press_maybe(link_available.then_some(message(Event::CheckLinkHandler))),
+                button(text("Make default").size(13)).keyboard_navigation(true)
+                    .padding([7, 10]).style(shell::quiet_button)
+                    .on_press_maybe((link_available && !matches!(self.settings.link_result, Some(Ok(true))))
+                        .then_some(message(Event::MakeDefaultLinkHandler))),
+            ].spacing(8),
+            caption("Open matrix: links in Interconnect. Browser links to matrix.to keep using your browser."),
+            caption(if self.demo.is_some() { "Demo: changes are simulated for this session." } else { "Make default applies immediately to your desktop, independently of Save." }),
+        ].spacing(12);
         let mut content = match self.settings.category {
             Category::General => column![
+                link_controls,
+                iced::widget::rule::horizontal(1),
                 column![
                     shell::title("Appearance", 14),
                     row![text("Theme").size(13), pick_list(
@@ -1191,6 +1276,44 @@ fn caption<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn demo_link_handler_is_immediate_and_survives_panel_reopening() {
+        let mut app = super::super::tests::demo_app();
+        let original = app.settings.current.clone();
+        let _ = app.update(message(Event::Open));
+        assert!(matches!(app.settings.link_result, Some(Ok(false))));
+        let _ = app.update(message(Event::MakeDefaultLinkHandler));
+        assert!(matches!(app.settings.link_result, Some(Ok(true))));
+        assert!(!app.settings.dirty());
+        let _ = app.update(message(Event::Cancel));
+        let _ = app.update(message(Event::Open));
+        assert!(matches!(app.settings.link_result, Some(Ok(true))));
+        assert_eq!(app.settings.current, original);
+        assert!(!app.settings.link_busy);
+        assert!(app.settings.link_check.is_none());
+    }
+
+    #[test]
+    fn link_handler_rejects_old_completions_and_covered_actions() {
+        let mut app = super::super::tests::demo_app();
+        let _ = app.update(message(Event::Open));
+        let stale = app.settings.link_request;
+        let _ = app.update(message(Event::Cancel));
+        let _ = app.update(message(Event::LinkHandlerChecked(stale, Ok(true))));
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::LinkHandlerChecked(stale, Ok(true))));
+        assert!(matches!(app.settings.link_result, Some(Ok(false))));
+        let _ = app.update(message(Event::Category(Category::Account)));
+        let _ = app.update(message(Event::MakeDefaultLinkHandler));
+        assert!(!app.settings.demo_link_default);
+        let _ = app.update(message(Event::Category(Category::General)));
+        let _ = app.update(message(Event::Theme(ThemeMode::Dark)));
+        let _ = app.update(message(Event::RequestClose));
+        assert!(app.settings.confirm_discard.is_some());
+        let _ = app.update(message(Event::MakeDefaultLinkHandler));
+        assert!(!app.settings.demo_link_default);
+    }
 
     #[test]
     fn privacy_is_applied_only_on_save_and_defaults_restore_sharing() {

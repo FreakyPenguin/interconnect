@@ -78,8 +78,15 @@ setup after registration. Save the key privately before acknowledging it; see
 ## External Matrix links
 
 Installed Linux desktop entries and macOS bundles advertise the `matrix:` scheme.
-Choose Interconnect in your desktop's link-handler settings; the client does not
-change your default handler automatically. The CLI also accepts `matrix:` and
+**Settings → General → Matrix links** checks whether Interconnect is the default
+when the panel opens. **Check again** refreshes the status without polling.
+**Make default** requests the desktop association and checks the result; it applies
+immediately, independently of Save or Cancel. Linux requires the installed desktop
+package and `xdg-mime` (xdg-utils); macOS requires running the installed app bundle.
+Desktop policy or a native confirmation may prevent the change; feedback remains
+in the panel. Demo mode simulates these actions in memory without reading or changing
+desktop associations. You can also choose the handler in your desktop settings.
+The CLI also accepts `matrix:` and
 `https://matrix.to` destinations:
 
 ```sh

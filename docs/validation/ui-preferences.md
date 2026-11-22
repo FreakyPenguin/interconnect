@@ -76,3 +76,23 @@ Automated state/layout tests cover preference staging, theme resolution, native
 appearance event handling, and idle deadlines. Native appearance delivery and
 interface scaling still need the desktop checks above. Native
 prompts, IME, clipboard, browser callbacks, and server writes require desktop checks.
+
+## Default Matrix link handler
+
+Automated UI state tests cover demo simulation, independent preference staging,
+panel reopening, action guards, and stale completions. Native associations require
+these desktop checks; they are not established by the automated tests:
+
+- Demo → General → Matrix links: Check again and Make default update simulated
+  status. Cancel/reopen preserves the simulated default without touching OS settings.
+- Installed Linux package: open Settings and compare status with
+  `xdg-mime query default x-scheme-handler/matrix`. Explicitly choose Make default,
+  check again, and verify the association. Restore the previous handler afterward.
+- Running macOS bundle: compare with the desktop association, choose Make default,
+  handle any native confirmation, and check again. Restore the prior handler.
+- Run without the desktop package/app bundle, without xdg-utils, or with a denied
+  desktop change. Verify actionable feedback and working retry controls.
+- Close/reopen Settings during a check or change. Old results must not overwrite
+  the new panel. A submitted change can finish after closing; Cancel does not undo it.
+- At 640×480, check wrapping, keyboard navigation, and static idle behavior. No
+  periodic checks should appear in resource measurements.

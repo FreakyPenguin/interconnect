@@ -25,8 +25,9 @@ builds are experimental.
   messages, mentions/keywords, and mute; there is no general push-rule editor,
   timed mute, or per-room sound.
 - Matrix links support startup and running-profile activation, with a picker for
-  multiple active profiles. Packages advertise `matrix:`; choosing the default
-  handler remains a desktop action, and `matrix.to` HTTPS links are not claimed.
+  multiple active profiles. Packages advertise `matrix:`; Settings → General can check and request the
+  default handler on Linux/macOS. Desktop policy may require confirmation, and
+  `matrix.to` HTTPS links are not claimed.
   Delivery queues are bounded/in-memory; native focus is compositor-controlled.
   Packaged macOS AppleEvent delivery still needs native acceptance.
 

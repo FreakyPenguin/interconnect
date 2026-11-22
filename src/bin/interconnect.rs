@@ -29,6 +29,8 @@ mod context_menu;
 mod conversation_history;
 #[path = "interconnect/create_room.rs"]
 mod create_room;
+#[path = "interconnect/default_handler.rs"]
+mod default_handler;
 #[path = "interconnect/demo.rs"]
 mod demo;
 #[path = "interconnect/devices.rs"]
