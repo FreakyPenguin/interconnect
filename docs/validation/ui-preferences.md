@@ -73,9 +73,12 @@ see [account validation](connected-ui.md#desktop-login).
   browser approval must not claim to delete an account/device created on the server.
 
 Automated state/layout tests cover preference staging, theme resolution, native
-appearance event handling, and idle deadlines. Native appearance delivery and
-interface scaling still need the desktop checks above. Native
-prompts, IME, clipboard, browser callbacks, and server writes require desktop checks.
+appearance event handling, and idle deadlines. The minimum-size preferences
+layout test loads bundled Inter Regular/SemiBold and selects Inter, matching
+application startup so system sans-serif metrics do not change category wrapping.
+Native appearance delivery and interface scaling still need the desktop checks
+above. Native prompts, IME, clipboard, browser callbacks, and server writes require
+desktop checks.
 
 ## Default Matrix link handler
 

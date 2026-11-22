@@ -2089,11 +2089,24 @@ mod tests {
     #[test]
     fn preferences_panel_fills_window_and_captures_empty_space_at_minimum_size() {
         use iced::advanced::{Shell, layout, mouse, widget};
+        // Match application startup: system sans-serif metrics can wrap the
+        // categories onto an extra row (for example, DejaVu Sans on Linux CI).
+        {
+            let mut fonts = iced::advanced::graphics::text::font_system()
+                .write()
+                .unwrap();
+            for bytes in [
+                include_bytes!("../../../assets/fonts/Inter-Regular.otf").as_slice(),
+                include_bytes!("../../../assets/fonts/Inter-SemiBold.otf").as_slice(),
+            ] {
+                fonts.load_font(bytes.into());
+            }
+        }
         let mut app = super::super::tests::demo_app();
         let _ = app.settings_update(Event::Open);
         let _ = app.settings_update(Event::Category(Category::Notifications));
         let mut view = app.view();
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let renderer = crate::test_renderer(iced::Font::with_name("Inter"), iced::Pixels(16.0));
         let mut tree = widget::Tree::new(&view);
         let size = iced::Size::new(640.0, 480.0);
         let node =
@@ -2159,7 +2172,7 @@ mod tests {
         let body = probe.body.unwrap();
         assert!(
             header.height <= 100.0,
-            "compact heading and category navigation"
+            "compact heading and category navigation: {header:?}"
         );
         assert!(body.height >= 375.0, "the body gets all remaining height");
         assert_eq!(body.y + body.height, size.height, "no permanent footer");
