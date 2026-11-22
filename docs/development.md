@@ -43,53 +43,55 @@ Use `cargo run --locked --bin interconnect -- --help` to list startup options.
 `--profile work` selects a named profile in the regular data directory;
 `--profile-path /path/to/test-profile` selects an explicit directory.
 
-### README screenshots
+### README screenshots and tours
 
-The images in `docs/images/` are captures of the running demo, using a 1440×960
-window and the light theme on Linux/Wayland. Install Noto Color Emoji and a
-CJK font for the multilingual samples. Capture only the app's
-content, excluding desktop chrome, tooltips, and other windows. Keep each image
-focused on a different workflow:
+The media in `docs/images/` was refreshed from the current demo on 2026-11-22,
+using an isolated headless Sway display on Linux/Wayland, a 1440×960 window,
+and the tiny-skia renderer. Install Noto Color Emoji and a CJK font for the
+multilingual samples. Capture only the app content, excluding desktop chrome,
+tooltips, and other windows. Use demo data only; never capture a connected account.
 
-| Image | Demo setup |
-| --- | --- |
-| `demo.png` | Start in Studio → Design studio; Alt+T opens the latest thread beside the room. |
-| `spaces.png` | Keep that room/thread open; use Home's tree to select Studio → Product → Design, then reopen the tree. The filtered sidebar and unchanged conversation should both be visible. |
-| `formatting.png` | Ctrl+P → Message formatting; enter the draft below and click the preview eye. Focus the composer and use Page Up to show the beginning of the timeline with highlighted code. |
-| `search.png` | Ctrl+Shift+F → search for `quiet` and submit to show matches across conversations. |
+| Asset | Theme | Workflow |
+| --- | --- | --- |
+| `demo.png` | Light | Start in Studio → Design studio; Alt+T opens the latest thread beside the room. |
+| `spaces.gif` | Light | Keep that room/thread open. Ctrl+Shift+P → Design → Enter, then Ctrl+Shift+P → Mobile → Enter. Show each picker and the filtered sidebar with the unchanged conversation. |
+| `keyboard-navigation.gif` | Dark | Starting in Design, Ctrl+P → General → Enter; Alt+Left; Ctrl+Shift+F → quiet → Enter; Escape; Alt+Right. Show the picker, conversations, search results, and history restoration. |
+| `formatting.gif` | Dark | Ctrl+P → Message formatting. Enter the unsent draft below, focus the composer, and use Page Up to reach the highlighted code near the start. Capture with the preview eye off and on. |
+| `authentication-verification.gif` | Light | Capture the local sign-in fixture, sample credentials, device selection, SAS comparison, local completion, and return to the room. |
 
-`keyboard-navigation.gif` uses captures from the same demo: Alt+T; then
-Ctrl+Shift+P → Design → Down → Enter; Ctrl+P → Design studio → Enter → Alt+T;
-Ctrl+Shift+F → quiet → Enter → Escape. Allow each state to settle. Resize frames
-to 1200×800 and add key labels below the app. Keep intermediates outside the
-repository and inspect decoded frames before replacing the GIF.
+Choose Light/Dark through Settings → General → Theme and save before capturing.
+Allow each state to settle. For GIFs, resize app captures to 1200×800 and add
+captions below the app; the final frames are 1200×876. Hold each step for roughly
+2–4 seconds, and hold the verification comparison for 5 seconds. Use a shared
+256-color palette per tour, preserve readable text, and inspect decoded frames
+before replacing the GIF. Keep raw frames, fixtures, logs, and contact sheets
+outside the repository. The old spaces, formatting, and search PNGs are replaced
+by these tours; search appears in the keyboard tour.
 
-`authentication-verification.gif` shows the real sign-in view followed by the
-existing local verification demo. Its capture fixture runs with `--demo`, keeps
-SDK subscriptions disabled, and temporarily displays `Authentication::SignIn`
-even with demo data active. A local form sender enables the controls; submitting
-sample credentials clears the password and opens the demo verification dialog
-without sending a login request. The fixture is for capture only and is not
-part of the shipped client.
+The authentication tour uses the real sign-in view and existing local verification
+demo. Build a temporary capture-only copy of the current binary source: keep
+`--demo` and SDK subscriptions disabled, set `Authentication::SignIn` after demo
+setup, and allow the sign-in view to render while demo is active. A local form
+sender enables the controls; intercept `SubmitPassword` to clear the password,
+dismiss sign-in, and open the demo verification dialog without a login request.
+Keep this fixture outside the repository and restore the normal build afterward.
+It is not part of the shipped client.
 
-Capture the empty form, sample homeserver/username/masked password, device
-selection, emoji/number comparison, local completion, and return to the room.
 Use `https://matrix.example.org` and `@jamie:example.org`, never real account
 information. Keep the demo's Unverified trust and “Demo comparison complete”
 labels intact. Add a persistent “LOCAL SIMULATION · NO SERVER CONNECTION” label
-below every frame; the tour demonstrates UI, not live authentication, peer
-confirmation, trust changes, or room-key retrieval. Use the same capture size,
-frame resizing, and decoded-frame inspection as the keyboard tour.
+below every authentication frame. The tour demonstrates UI, not live authentication,
+peer confirmation, trust changes, or room-key retrieval.
 
-The formatting capture uses this unsent draft:
+The formatting tour uses this unsent draft:
 
 ```text
 **A useful identity**
 $$\sum_{n=1}^{\infty} \frac{1}{n^2} = \frac{\pi^2}{6}$$
 ```
 
-Screenshots use demo content only. They do not validate server behavior or
-persistence across restarts.
+These captures establish the displayed demo states only. They do not validate
+server behavior, persistence across restarts, native GPU rendering, or macOS.
 
 ## macOS builds
 

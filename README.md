@@ -9,166 +9,74 @@
 A native desktop [Matrix](https://matrix.org/) client built with Rust,
 [Iced](https://iced.rs/), and the [Matrix Rust SDK](https://github.com/matrix-org/matrix-rust-sdk).
 
-- **A lightweight native client.** No bundled browser engine. Built in Rust, with
-  event-driven updates designed to keep idle CPU use low.
-- **Organization for busy accounts.** Navigate deeply nested spaces, including
-  spaces linked under multiple parents, with breadcrumbs, a tree, and searchable
-  pickers. Arrange rooms into custom sections, bookmark messages, and keep track
-  of unread activity.
-- **Keyboard-first navigation.** Jump between conversations with IDE-style quick
-  pickers, move through unread rooms, and go back and forward through your
-  navigation history, restoring the room, thread, and reading position.
-- **Rich formatting for technical conversations.** Write Markdown with
-  syntax-highlighted code and rendered LaTeX formulas, preview it before sending,
-  and use custom emoji and reactions.
+- **Lightweight and native.** No bundled browser engine; event-driven updates
+  keep idle CPU use low.
+- **Organization for busy accounts.** Deeply nested and linked spaces, custom
+  room sections, bookmarks, and unread activity in one place.
+- **Keyboard-first navigation.** IDE-style quick pickers and conversation
+  back/forward history that remembers your room, thread, and reading position.
+- **Made for technical conversations.** Markdown, syntax-highlighted code,
+  rendered LaTeX formulas, and custom emoji and reactions.
 
-An experimental client, fully AI-coded for personal use. Developed on
-Linux/Wayland; Apple Silicon macOS builds are best-effort.
+Experimental and fully AI-coded for personal use. Developed on Linux/Wayland;
+Apple Silicon macOS builds are best-effort.
 
-![Design studio with custom room sections, reactions, pinned messages, and a separate thread pane](docs/images/demo.png)
+![Light theme: Design studio with custom room sections and a thread open alongside the room](docs/images/demo.png)
 
-Keep a room and its thread open together, with separate composers and drafts.
-All screenshots and GIFs below use local sample data.
+## Make room for your conversations
 
-## In development for 0.4.0
+Keep a room and its thread open side by side, with separate composers and drafts.
+Browse spaces without closing either: breadcrumbs, a tree, and searchable pickers
+make even deeply nested spaces easy to reach.
 
-- Open external Matrix links in a running profile, with an account picker when several are active.
+![Light theme: navigate nested spaces while the room and thread stay open](docs/images/spaces.gif)
 
-- List and rename your devices, and revoke other sessions with homeserver authentication.
+Switch conversations, jump to unread rooms, search across your account, and retrace
+your steps from the keyboard. Text drafts persist encrypted across restarts.
 
-- Link existing joined spaces beneath multiple parents, with cycle checks and route-specific unlinking.
+![Dark theme: use quick pickers, search messages, and return through conversation history](docs/images/keyboard-navigation.gif)
 
-- Choose whether to send typing indicators and share read receipts in Privacy settings.
+Write code and math as naturally as plain text, then preview before sending.
+Select and copy across messages; bookmark the ones you want to find again.
 
-- Long histories render nearby rows while retaining loaded messages and cross-message selection.
+![Dark theme: syntax-highlighted code and a LaTeX draft toggled between Markdown source and rendered preview](docs/images/formatting.gif)
 
-- Narrow account-wide message search by room, sender, and date range.
-- Jump to the next or previous unread room within a space or across the account.
+All images use local demo data. See [keyboard shortcuts](docs/keyboard.md),
+[settings](docs/settings.md), and [current limitations](docs/limitations.md)
+for details.
 
-- Follow reply previews to their originals, then use conversation back/forward
-  history to return to the room, thread, and reading location you left.
-- Restore room/thread reading positions across restarts using encrypted event
-  anchors. Restoration depends on available history and room keys.
-- More dependable composer focus when opening threads and returning from saved
-  messages or message menus.
-- Follow system appearance and enlarge text and controls together with interface
-  sizes from 100% to 150%.
-- Cancel queued messages and uploads, with confirmation explaining the case where
-  a send is already in flight.
-- Manage ignored users in Account settings, or open those controls from People.
-- Click message, invitation, and verification notifications. The toolbar bell
-  brings unread activity together with encrypted recent notification history.
-- Message jumps briefly highlight their destination, including reply previews,
-  notifications, and Matrix links to text or file messages.
+## Get started
 
-See [validation guidance](docs/validation/connected-ui.md) for automated coverage
-and connected desktop checks that still need manual validation.
+Download a package from [GitHub Releases](https://github.com/FreakyPenguin/interconnect/releases):
+an amd64 Debian package, Linux tarball, or Apple Silicon macOS app.
+See [installation details](docs/development.md#tagged-releases);
+macOS builds are ad-hoc signed and not notarized.
 
-## New in 0.3.0
-
-- Account registration, recovery-key setup/import/replacement, and a verification
-  prompt after sign-in. Verified devices can request recent room keys in one
-  bounded background pass.
-- Account display-name/avatar editing, room addresses and directory publishing,
-  and navigation from replaced rooms to their successors.
-- Markdown topics, reorganized settings, keyboard-accessible dialogs, and
-  protection for unsaved changes.
-- Named account profiles and HTTP/HTTPS/SOCKS proxy support.
-
-## A closer look
-
-### Sign in and verify your device
-
-Sign in with a password or continue in your browser, then verify the new device
-with another Matrix client on the same account. Compare every emoji or number
-on both devices before confirming.
-
-![Local UI tour: enter sample sign-in details, choose another device, compare seven emojis or three numbers, and complete the demo comparison](docs/images/authentication-verification.gif)
-
-This tour simulates sign-in and verification locally; it does not connect to a
-homeserver. See [device verification](docs/validation/verification.md) for the
-live workflow and validation steps.
-
-### Spaces without losing your place
-
-Browse nested spaces through breadcrumbs, a tree menu, or a searchable picker.
-Selecting a space filters the room list while keeping the open conversation,
-thread, drafts, and reading positions. Include subspaces when you want a wider
-view; arrange rooms into custom sections and reorder them by dragging.
-
-![Studio → Product → Design selected, with the nested space tree open and the original room and thread still visible](docs/images/spaces.png)
-
-### Navigate from the keyboard
-
-Open a thread with **Alt+T**, pick a space with **Ctrl+Shift+P**, switch rooms
-with **Ctrl+P**, and search messages with **Ctrl+Shift+F**. **Escape** takes you
-back to the conversation. On macOS, use **Command** in place of **Ctrl**.
-
-![Keyboard navigation tour with key presses shown: open a thread, filter by a nested space, switch rooms, search messages, and return to the conversation](docs/images/keyboard-navigation.gif)
-
-See [keyboard shortcuts](docs/keyboard.md) for the full reference.
-
-### More expressive conversations
-
-Write Markdown and check an on-demand preview before sending. Messages support
-syntax-highlighted code, LaTeX math, quotes, lists, spoilers, inline images, and
-selectable text across messages. Complete user mentions, room links, and emoji
-from the composer; manage personal and room custom emoji packs in Settings.
-Text drafts persist encrypted per room and thread across restarts.
-
-![Formatted messages with highlighted code, a rendered math draft preview, and its Markdown source](docs/images/formatting.png)
-
-### Find the conversation again
-
-Search loaded messages in a room or search across the account, combining local
-results with homeserver search where available. Explicitly load older encrypted
-history in batches when you need to look further; results depend on available
-room keys. Open results in their original room/thread, or bookmark messages
-for an account-wide saved view.
-
-![Account-wide search for “quiet”, with highlighted matches from multiple conversations](docs/images/search.png)
-
-## Other features
-
-- Password and browser SSO login, saved sessions, encrypted messaging, device
-  verification, and key backup/recovery.
-- Replies, editing, confirmed deletion, reactions, pinned messages, and read receipts.
-- Images and an image viewer, click-to-play GIFs, and attachments via file picker,
-  paste, or drag and drop, with save/open actions.
-- Direct chats, room and space creation, public-room discovery, invitations,
-  member roles, room/space avatars, published addresses, and notification/access settings.
-- Keyboard navigation and quick switching, light/dark themes, desktop
-  notifications, and optional presence refresh (off by default).
-
-See [current limitations](docs/limitations.md) for unsupported features and
-[settings](docs/settings.md) for configuration and room/space management.
-
-## Try it
-
-Install Rust and the [native dependencies](docs/development.md#build-and-checks), then:
+Or install Rust and the [native dependencies](docs/development.md#build-and-checks),
+then explore without an account:
 
 ```sh
 cargo run --locked --bin interconnect -- --demo
 ```
 
-Demo uses local sample data without saved accounts or network access. Omit `--demo`
-to sign in; the homeserver must support native sliding sync. Account storage
-requires Linux Secret Service or macOS Keychain. One account is supported per
-process. New accounts are offered recovery-key setup;
-existing accounts can manage [key backup and recovery](docs/validation/recovery.md)
-from the account menu.
+Demo mode uses no saved accounts or network access. Omit `--demo` to sign in.
+Your homeserver must support native sliding sync; account storage requires Linux
+Secret Service or macOS Keychain. Use `--profile work` for a separate
+[account profile](docs/settings.md#account-profiles), with one account per process.
 
-Use `--help` to list options, `--profile work` for a named profile in the regular
-data directory, or `--profile-path /path/to/profile` for an explicit directory.
-See [account profiles](docs/settings.md#account-profiles) for storage details.
+### Sign in and verify
 
-Tagged GitHub Releases provide an amd64 Debian package, a Linux tarball, an
-Apple Silicon macOS app, and checksums. See [release downloads and installation](docs/development.md#tagged-releases).
-Experimental [Debian packages](docs/development.md#debian-package-automation) and
-[macOS builds](docs/development.md#download-a-bleeding-edge-macos-build) are also
-available from GitHub Actions. macOS builds are ad-hoc signed and not notarized.
+Sign in with a password or continue in your browser, then verify with another
+Matrix client on the same account. Compare **every emoji or number on both
+devices** before confirming. New accounts are offered recovery-key setup.
 
-See [documentation](docs/README.md) and [keyboard shortcuts](docs/keyboard.md).
+![Local sign-in and verification tour: sample credentials, device selection, comparison, and completion](docs/images/authentication-verification.gif)
+
+This tour simulates sign-in and verification without connecting to a server.
+See [device verification](docs/validation/verification.md) and
+[key backup and recovery](docs/validation/recovery.md) for the live workflows.
+
+More in the [documentation](docs/README.md).
 
 ## License
 
