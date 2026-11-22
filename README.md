@@ -8,10 +8,22 @@
 
 A native desktop [Matrix](https://matrix.org/) client built with Rust,
 [Iced](https://iced.rs/), and the [Matrix Rust SDK](https://github.com/matrix-org/matrix-rust-sdk).
-Minimal UI, organized conversations, and event-driven updates to keep idle CPU low.
+
+- **A lightweight native client.** No bundled browser engine. Built in Rust, with
+  event-driven updates designed to keep idle CPU use low.
+- **Organization for busy accounts.** Navigate deeply nested spaces, including
+  spaces linked under multiple parents, with breadcrumbs, a tree, and searchable
+  pickers. Arrange rooms into custom sections, bookmark messages, and keep track
+  of unread activity.
+- **Keyboard-first navigation.** Jump between conversations with IDE-style quick
+  pickers, move through unread rooms, and go back and forward through your
+  navigation history, restoring the room, thread, and reading position.
+- **Rich formatting for technical conversations.** Write Markdown with
+  syntax-highlighted code and rendered LaTeX formulas, preview it before sending,
+  and use custom emoji and reactions.
 
 An experimental client, fully AI-coded for personal use. Developed on
-Linux/Wayland; Apple Silicon macOS builds are experimental.
+Linux/Wayland; Apple Silicon macOS builds are best-effort.
 
 ![Design studio with custom room sections, reactions, pinned messages, and a separate thread pane](docs/images/demo.png)
 
