@@ -175,3 +175,8 @@ creation is in its sidebar actions (⋯) menu; creation shortcuts still work.
 
 Text drafts and room/thread reading positions survive restart. Reading-position
 restoration needs available history/keys and falls back to newest if unavailable.
+
+To create a disclosed single-choice poll, choose **Poll** beside an empty room
+composer, or type `/poll Question?` followed by 2–20 answers on separate lines.
+Edit the template and use the normal Send shortcut. Poll creation requires no
+reply target or attachments; errors preserve the draft for correction.

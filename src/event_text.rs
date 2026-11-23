@@ -245,6 +245,37 @@ mod tests {
         (server, room)
     }
 
+    #[tokio::test]
+    async fn poll_snapshot_uses_structured_answers_instead_of_fallback_text() {
+        let (_server, room) = fixture().await;
+        let raw = Raw::from_json_string(json!({
+            "type": "org.matrix.msc3381.poll.start", "event_id": "$poll", "sender": "@alice:example.org", "origin_server_ts": 1,
+            "content": {"org.matrix.msc1767.text": "Fallback", "org.matrix.msc3381.poll.start": {
+                "question": {"org.matrix.msc1767.text": "Lunch?"}, "kind": "org.matrix.msc3381.poll.undisclosed",
+                "answers": [{"id": "a", "org.matrix.msc1767.text": "Soup"}, {"id": "b", "org.matrix.msc1767.text": "Salad"}]
+            }}
+        }).to_string()).unwrap();
+        let content = TimelineItemContent::from_event(&room, TimelineEvent::from_plaintext(raw))
+            .await
+            .unwrap();
+        let poll = crate::polls::Poll::from_content(
+            &content,
+            matrix_sdk::ruma::user_id!("@alice:example.org"),
+        )
+        .unwrap();
+        assert_eq!(poll.question, "Lunch?");
+        assert_eq!(
+            poll.answers
+                .iter()
+                .map(|a| a.text.as_str())
+                .collect::<Vec<_>>(),
+            ["Soup", "Salad"]
+        );
+        assert!(!poll.disclosed);
+        assert!(!poll.ended);
+        assert!(poll.answers.iter().all(|a| a.votes == 0 && !a.selected));
+    }
+
     async fn rendered(room: &Room, mut event: Value) -> String {
         event["event_id"] = json!("$fixture");
         event["origin_server_ts"] = json!(1);

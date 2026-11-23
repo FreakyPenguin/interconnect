@@ -633,6 +633,16 @@ impl Composer {
         reply: Option<String>,
     ) -> Result<(), String> {
         self.check_active_room()?;
+        if let Some(poll) = crate::polls::compose(&body)? {
+            if reply.is_some() || self.0.is_threaded() {
+                return Err("Create polls in the room without a reply target.".into());
+            }
+            tokio::time::timeout(std::time::Duration::from_secs(30), self.0.room().send(poll))
+                .await
+                .map_err(|_| "Creating poll timed out".to_owned())?
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
         let reply = parse_reply(reply)?;
         let prepared = crate::composition::prepare_with_bindings(body, format, bindings).await?;
         if prepared.room_mention {

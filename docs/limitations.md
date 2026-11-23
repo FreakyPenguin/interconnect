@@ -12,8 +12,8 @@ builds are experimental.
   changes/reset or account deactivation. Settings → Devices supports device names
   and revoking other sessions; some servers require an unavailable UIAA fallback
   or OAuth-native approval flow and must be managed in another client.
-- No voice/video calls, polls UI, location sending/maps, voice recording, or in-app
-  audio/video playback. Received calls/polls/locations/stickers use text fallbacks;
+- No voice/video calls, location sending/maps, voice recording, or in-app
+  audio/video playback. Received calls/locations/stickers use text fallbacks;
   audio/video attachments can be sent and opened externally.
 - [Verification](validation/verification.md) supports SAS with your own devices;
   no QR or verification of other users. [Recovery](validation/recovery.md) supports
@@ -97,3 +97,6 @@ builds are experimental.
   messages still lay out as a whole. Loaded SDK data remains in memory.
 
 See [ideas](todo.md) and [validation boundaries](validation/connected-ui.md#validation-scope).
+
+Polls support MSC3381 rendering, voting, and creation of disclosed single-choice polls.
+Creating polls in threads, ending polls, and editing polls are not yet exposed.

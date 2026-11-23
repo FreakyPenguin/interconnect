@@ -346,6 +346,7 @@ enum Message {
     Settings(settings::Event),
     Image(images::Event),
     Download(downloads::Event),
+    StartPoll(DraftKey),
     Poll(poll_view::Event),
     Reaction(reaction_picker::Event),
     ComposerEmoji(composer_picker::Event),
@@ -1545,6 +1546,25 @@ impl App {
             Message::Members(event) => action_task = self.members_event(event),
             Message::RefreshPresence { room, members } => self.refresh_presence(room, members),
             Message::Invite(event) => action_task = self.invite_event(event),
+            Message::StartPoll(key) => {
+                if !self.closing
+                    && !self.stopped
+                    && key.root.is_none()
+                    && self.draft_key(false).as_ref() == Some(&key)
+                    && self.room_can_compose(&key.room)
+                    && let Some(draft) = self.drafts.get_mut(&key)
+                    && !draft.pending
+                    && draft.editing.is_none()
+                    && draft.reply.is_none()
+                    && draft.attachments.is_empty()
+                    && draft.content.text().is_empty()
+                {
+                    draft.content =
+                        text_editor::Content::with_text("/poll Question?\nOption one\nOption two");
+                    draft.markdown.clear_preview();
+                    action_task = iced::widget::operation::focus("room-composer");
+                }
+            }
             Message::Poll(event) => action_task = self.poll_event(event),
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::Attachment(event) => action_task = self.attachment_event(event),
@@ -2023,6 +2043,32 @@ impl App {
                     .is_some_and(|draft| draft.editing.is_some())
                 {
                     return self.save_message_edit(key);
+                }
+                if let Some(draft) = self.drafts.get_mut(&key) {
+                    match interconnect::polls::compose(&draft.content.text()) {
+                        Err(error) => {
+                            draft.error = Some(error);
+                            return Task::none();
+                        }
+                        Ok(Some(poll)) => {
+                            if key.root.is_some()
+                                || draft.reply.is_some()
+                                || !draft.attachments.is_empty()
+                            {
+                                draft.error = Some("Create polls in the room without attachments or a reply target.".into());
+                                return Task::none();
+                            }
+                            if let Some(demo) = &mut self.demo {
+                                let body = draft.content.text();
+                                demo.send_poll(&key, body, poll);
+                                draft.content = text_editor::Content::new();
+                                draft.error = None;
+                                self.refresh_demo();
+                                return jump_to_newest(false);
+                            }
+                        }
+                        Ok(None) => {}
+                    }
                 }
                 if self.demo.is_some() {
                     if let Some(draft) = self.drafts.get_mut(&key) {
@@ -4385,6 +4431,19 @@ impl App {
             );
             let actions = row![
                 row![
+                    button(text("Poll").size(12))
+                        .on_press_maybe(
+                            (!thread
+                                && !draft.pending
+                                && !self.closing
+                                && !self.stopped
+                                && draft.content.text().is_empty()
+                                && draft.editing.is_none()
+                                && draft.reply.is_none()
+                                && draft.attachments.is_empty())
+                            .then(|| Message::StartPoll(key.clone()))
+                        )
+                        .style(shell::quiet_button),
                     self.attachment_button(&key, *generation),
                     self.composer_emoji_button(&key, *generation),
                 ]

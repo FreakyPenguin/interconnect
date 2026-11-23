@@ -107,3 +107,76 @@ mod tests {
         assert!(poll.validate_vote(&["soup".into()]).is_err());
     }
 }
+
+/// Composer syntax: `/poll Question` followed by one answer per line.
+pub fn compose(
+    body: &str,
+) -> Result<
+    Option<matrix_sdk::ruma::events::poll::unstable_start::NewUnstablePollStartEventContent>,
+    String,
+> {
+    use matrix_sdk::ruma::events::poll::{
+        start::PollKind,
+        unstable_start::{
+            NewUnstablePollStartEventContent, UnstablePollAnswer, UnstablePollAnswers,
+            UnstablePollStartContentBlock,
+        },
+    };
+    let Some(input) = body
+        .strip_prefix("/poll ")
+        .or_else(|| body.strip_prefix("/poll\n"))
+    else {
+        return Ok(None);
+    };
+    let mut lines = input.lines();
+    let question = lines.next().unwrap_or_default().trim();
+    let answers: Vec<_> = lines.map(str::trim).collect();
+    if question.is_empty()
+        || !(2..=20).contains(&answers.len())
+        || answers.iter().any(|a| a.is_empty())
+    {
+        return Err("Enter a question after /poll and 2–20 nonempty answers, one per line.".into());
+    }
+    let unique: std::collections::HashSet<_> = answers.iter().map(|a| a.to_lowercase()).collect();
+    if unique.len() != answers.len() {
+        return Err("Poll answers must be distinct.".into());
+    }
+    let options = UnstablePollAnswers::try_from(
+        answers
+            .iter()
+            .enumerate()
+            .map(|(i, a)| UnstablePollAnswer::new(i.to_string(), *a))
+            .collect::<Vec<_>>(),
+    )
+    .map_err(|e| e.to_string())?;
+    let mut poll = UnstablePollStartContentBlock::new(question, options);
+    poll.kind = PollKind::Disclosed;
+    Ok(Some(NewUnstablePollStartEventContent::plain_text(
+        input, poll,
+    )))
+}
+
+#[cfg(test)]
+mod creation_tests {
+    use super::*;
+    #[test]
+    fn creation_validates_question_answer_count_blanks_and_duplicates() {
+        assert!(compose("ordinary message").unwrap().is_none());
+        for input in [
+            "/poll \nA\nB",
+            "/poll Lunch?\nSoup",
+            "/poll Lunch?\nSoup\n\nSalad",
+            "/poll Lunch?\nSoup\nsoup",
+        ] {
+            assert!(compose(input).is_err(), "{input}");
+        }
+        let content = compose("/poll Lunch?\nSoup\nSalad").unwrap().unwrap();
+        assert_eq!(content.poll_start.question.text, "Lunch?");
+        assert_eq!(content.poll_start.answers.len(), 2);
+        assert_eq!(content.poll_start.kind, PollKind::Disclosed);
+        assert_ne!(
+            content.poll_start.answers[0].id,
+            content.poll_start.answers[1].id
+        );
+    }
+}

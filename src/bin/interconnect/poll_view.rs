@@ -31,8 +31,7 @@ impl App {
             && self.pending_ops < MAX_PENDING_OPERATIONS
             && target
                 .as_ref()
-                .is_some_and(|t| !self.poll_sends.contains(t))
-            && self.demo.is_none();
+                .is_some_and(|t| !self.poll_sends.contains(t));
         let mut content = column![text(&poll.question).size(16)].spacing(8);
         for answer in &poll.answers {
             let label = format!(
@@ -89,12 +88,21 @@ impl App {
                 if self.closing
                     || self.stopped
                     || self.pending_ops >= MAX_PENDING_OPERATIONS
+                    || self.settings.draft.is_some()
+                    || self.image_view.is_some()
+                    || self.composer_picker.is_some()
+                    || self.reaction_picker.is_some()
                     || self.poll_sends.contains(&target)
                     || !self
                         .message_row(&target)
                         .and_then(|r| r.poll.as_ref())
                         .is_some_and(|p| p.validate_vote(&answers).is_ok())
                 {
+                    return Task::none();
+                }
+                if let Some(demo) = &mut self.demo {
+                    demo.vote_poll(&target.room, &target.event, &answers);
+                    self.refresh_demo();
                     return Task::none();
                 }
                 let Some(composer) = self.reaction_composer(&target) else {
@@ -120,5 +128,58 @@ impl App {
                 Task::none()
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::text_editor;
+    #[tokio::test]
+    async fn demo_creation_preserves_existing_drafts_validates_and_votes_locally() {
+        let mut app = crate::tests::demo_app();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            text_editor::Content::with_text("Keep this draft");
+        let _ = app.update(Message::StartPoll(key.clone()));
+        assert_eq!(app.drafts[&key].content.text(), "Keep this draft");
+        app.drafts.get_mut(&key).unwrap().content = text_editor::Content::new();
+        let _ = app.update(Message::StartPoll(key.clone()));
+        assert!(app.drafts[&key].content.text().starts_with("/poll "));
+        app.drafts.get_mut(&key).unwrap().content =
+            text_editor::Content::with_text("/poll Lunch?\nSoup");
+        let _ = app.update(Message::Send(key.clone()));
+        assert!(app.drafts[&key].error.is_some());
+        assert_eq!(app.drafts[&key].content.text(), "/poll Lunch?\nSoup");
+        app.drafts.get_mut(&key).unwrap().content =
+            text_editor::Content::with_text("/poll Lunch?\nSoup\nSalad");
+        let _ = app.update(Message::Send(key.clone()));
+        assert!(app.drafts[&key].content.text().is_empty());
+        let row = app.model.room.as_ref().unwrap().rows.last().unwrap();
+        let poll = row.poll.as_ref().unwrap();
+        assert_eq!(poll.question, "Lunch?");
+        assert!(row.edit_source.is_none());
+        let target = Target {
+            room: key.room,
+            thread: false,
+            generation: app.selection.room.as_ref().unwrap().0,
+            event: row.event_id.clone().unwrap(),
+        };
+        let answer = poll.answers[0].id.clone();
+        let _ = app.update(Message::Poll(Event::Vote(target, vec![answer])));
+        let poll = app
+            .model
+            .room
+            .as_ref()
+            .unwrap()
+            .rows
+            .last()
+            .unwrap()
+            .poll
+            .as_ref()
+            .unwrap();
+        assert_eq!(poll.answers[0].votes, 1);
+        assert!(poll.answers[0].selected);
+        assert_eq!(app.pending_ops, 0);
     }
 }

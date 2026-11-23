@@ -760,3 +760,20 @@ Single-choice votes replace the previous selection; multi-choice buttons toggle
 selections up to the poll limit (at least one selection is required). Pending
 votes disable controls and failures allow retry. Confirm updates from another
 client, hidden counts, permission failures, and navigation during a vote manually.
+
+Create a poll with the composer’s **Poll** button (available for an empty room
+draft), edit `/poll Question?` and put each answer on its own following line,
+then use Send. Creation requires 2–20 distinct, nonempty answers and currently
+creates disclosed single-choice polls in the room. Reply targets and attachments
+are rejected with the draft retained. Ordinary draft persistence also retains
+this template. Demo creation and voting stay in memory and use no network.
+Verify cross-client rendering and voting, permission errors, offline failure,
+and successful creation after retry with a dedicated account.
+
+Local validation for this implementation: locked workspace tests, Clippy with
+warnings denied, formatting check, and the desktop binary build passed. Poll
+fixtures cover structured answers versus fallback text, undisclosed presentation
+state, invalid votes, creation validation, draft preservation, and local demo
+creation/voting. An earlier workspace run failed the encrypted-attachment fixture;
+the final full run passed. No connected account or native desktop acceptance was
+exercised for this change.

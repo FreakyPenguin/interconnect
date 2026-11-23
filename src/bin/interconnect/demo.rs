@@ -880,6 +880,58 @@ impl Demo {
             }
         }
     }
+    pub fn vote_poll(&mut self, room: &str, event: &str, answers: &[String]) {
+        for (key, rows) in &mut self.conversations {
+            if key.room != room {
+                continue;
+            }
+            for row in rows
+                .iter_mut()
+                .filter(|row| row.event_id.as_deref() == Some(event))
+            {
+                if let Some(poll) = &mut row.poll {
+                    for answer in &mut poll.answers {
+                        answer.votes = answer.votes.saturating_sub(usize::from(answer.selected));
+                        answer.selected = answers.contains(&answer.id);
+                        answer.votes += usize::from(answer.selected);
+                    }
+                }
+            }
+        }
+    }
+    pub fn send_poll(
+        &mut self,
+        key: &DraftKey,
+        body: String,
+        content: matrix_sdk::ruma::events::poll::unstable_start::NewUnstablePollStartEventContent,
+    ) {
+        self.send(key, body);
+        if let Some(row) = self
+            .conversations
+            .get_mut(key)
+            .and_then(|rows| rows.last_mut())
+        {
+            row.edit_source = None;
+            row.formatted = None;
+            row.poll = Some(interconnect::polls::Poll {
+                question: content.poll_start.question.text,
+                answers: content
+                    .poll_start
+                    .answers
+                    .iter()
+                    .map(|a| interconnect::polls::Answer {
+                        id: a.id.clone(),
+                        text: a.text.clone(),
+                        votes: 0,
+                        selected: false,
+                    })
+                    .collect(),
+                ended: false,
+                disclosed: true,
+                max_selections: 1,
+            });
+        }
+    }
     pub fn send(&mut self, key: &DraftKey, body: String) {
         if let Some(root) = &key.root
             && let Some(row) = self
