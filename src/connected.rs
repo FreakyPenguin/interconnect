@@ -233,6 +233,23 @@ impl std::fmt::Debug for Composer {
     }
 }
 impl Composer {
+    pub async fn vote_poll(self, event: String, answers: Vec<String>) -> Result<(), String> {
+        self.check_active_room()?;
+        let event_id = matrix_sdk::ruma::EventId::parse(event).map_err(|e| e.to_string())?;
+        let items = self.0.items().await;
+        let item = items
+            .iter()
+            .filter_map(|item| item.as_event())
+            .find(|item| item.event_id() == Some(&event_id))
+            .ok_or("Poll is no longer available")?;
+        let poll = crate::polls::Poll::from_content(item.content(), self.0.room().own_user_id())
+            .ok_or("Poll is no longer available")?;
+        poll.validate_vote(&answers)?;
+        drop(items);
+        tokio::time::timeout(std::time::Duration::from_secs(30), self.0.room().send(matrix_sdk::ruma::events::poll::unstable_response::UnstablePollResponseEventContent::new(answers, event_id))).await.map_err(|_| "Voting timed out".to_owned())?.map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
     fn check_active_room(&self) -> Result<(), String> {
         if self.0.room().is_tombstoned() {
             return Err("This room has been replaced. Continue in the replacement room.".into());

@@ -754,3 +754,9 @@ an end event. Redacted polls return to the normal removed-message presentation.
 Check live responses, edited questions, end events, and redactions in both room
 and thread views with a dedicated account. Connected interoperability and native
 layout acceptance remain manual checks; local build/tests do not establish them.
+
+Voting submits selected answer IDs asynchronously against the captured poll.
+Single-choice votes replace the previous selection; multi-choice buttons toggle
+selections up to the poll limit (at least one selection is required). Pending
+votes disable controls and failures allow retry. Confirm updates from another
+client, hidden counts, permission failures, and navigation during a vote manually.

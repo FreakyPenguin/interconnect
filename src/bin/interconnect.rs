@@ -266,6 +266,8 @@ struct App {
     image_view: Option<images::Viewing>,
     inline_gif: Option<images::Viewing>,
     downloads: downloads::State,
+    poll_sends: HashSet<reaction_picker::Target>,
+    poll_error: Option<(reaction_picker::Target, String)>,
     reaction_picker: Option<reaction_picker::State>,
     reaction_sends: HashSet<reaction_picker::Sending>,
     reaction_error: Option<(reaction_picker::Target, String)>,
@@ -344,6 +346,7 @@ enum Message {
     Settings(settings::Event),
     Image(images::Event),
     Download(downloads::Event),
+    Poll(poll_view::Event),
     Reaction(reaction_picker::Event),
     ComposerEmoji(composer_picker::Event),
     EmojiManagement(emoji_management::Event),
@@ -506,6 +509,8 @@ impl App {
             image_view: None,
             inline_gif: None,
             downloads: downloads::State::default(),
+            poll_sends: HashSet::new(),
+            poll_error: None,
             reaction_picker: None,
             reaction_sends: HashSet::new(),
             reaction_error: None,
@@ -1540,6 +1545,7 @@ impl App {
             Message::Members(event) => action_task = self.members_event(event),
             Message::RefreshPresence { room, members } => self.refresh_presence(room, members),
             Message::Invite(event) => action_task = self.invite_event(event),
+            Message::Poll(event) => action_task = self.poll_event(event),
             Message::Reaction(event) => action_task = self.reaction_event(event),
             Message::Attachment(event) => action_task = self.attachment_event(event),
             Message::ComposerEmoji(event) => action_task = self.composer_picker_event(event),
@@ -3449,17 +3455,26 @@ impl App {
                             self.sender_chat_action(message, true, *generation)
                         }),
                     ),
-                    selectable::message_view_with_assets(
-                        message,
-                        self.inline_assets(),
-                        self.selection.thread.as_ref().map(|(generation, _)| {
-                            inline_image::Context {
-                                thread: true,
-                                generation: *generation,
-                            }
-                        }),
-                        self.effective_theme()
-                    ),
+                    if let Some(poll) = &message.poll {
+                        self.poll_view(
+                            message,
+                            poll,
+                            true,
+                            self.selection.thread.as_ref().map_or(0, |s| s.0),
+                        )
+                    } else {
+                        selectable::message_view_with_assets(
+                            message,
+                            self.inline_assets(),
+                            self.selection.thread.as_ref().map(|(generation, _)| {
+                                inline_image::Context {
+                                    thread: true,
+                                    generation: *generation,
+                                }
+                            }),
+                            self.effective_theme(),
+                        )
+                    },
                 ]
                 .spacing(4)
                 .into()
@@ -3653,7 +3668,7 @@ impl App {
         let body = if attachment_only {
             Element::from(iced::widget::Space::new().height(0))
         } else if let Some(poll) = &message.poll {
-            poll_view::view(poll)
+            self.poll_view(message, poll, thread, generation)
         } else if activity {
             selectable::activity_view(
                 message.event_id.as_deref().unwrap_or(&message.body),

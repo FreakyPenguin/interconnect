@@ -18,6 +18,21 @@ pub struct Answer {
     pub selected: bool,
 }
 impl Poll {
+    pub fn validate_vote(&self, answers: &[String]) -> Result<(), String> {
+        let unique: std::collections::HashSet<_> = answers.iter().collect();
+        if self.ended
+            || answers.is_empty()
+            || answers.len() as u64 > self.max_selections
+            || unique.len() != answers.len()
+            || answers
+                .iter()
+                .any(|id| !self.answers.iter().any(|a| &a.id == id))
+        {
+            return Err("Choose valid answers in an open poll".into());
+        }
+        Ok(())
+    }
+
     pub fn from_content(content: &TimelineItemContent, own_user: &UserId) -> Option<Self> {
         let TimelineItemContent::MsgLike(content) = content else {
             return None;
@@ -51,5 +66,44 @@ impl Poll {
             disclosed,
             max_selections: results.max_selections,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn poll() -> Poll {
+        Poll {
+            question: "Lunch?".into(),
+            answers: ["soup", "salad"]
+                .into_iter()
+                .map(|id| Answer {
+                    id: id.into(),
+                    text: id.into(),
+                    votes: 0,
+                    selected: false,
+                })
+                .collect(),
+            ended: false,
+            disclosed: true,
+            max_selections: 1,
+        }
+    }
+    #[test]
+    fn votes_require_open_poll_known_distinct_answers_and_selection_limit() {
+        let mut poll = poll();
+        assert!(poll.validate_vote(&["soup".into()]).is_ok());
+        for answers in [
+            vec![],
+            vec!["unknown".into()],
+            vec!["soup".into(), "salad".into()],
+            vec!["soup".into(), "soup".into()],
+        ] {
+            assert!(poll.validate_vote(&answers).is_err());
+        }
+        poll.max_selections = 2;
+        assert!(poll.validate_vote(&["soup".into(), "salad".into()]).is_ok());
+        poll.ended = true;
+        assert!(poll.validate_vote(&["soup".into()]).is_err());
     }
 }
