@@ -423,6 +423,13 @@ remote sign-out retains them. See [storage boundaries](../architecture/drafts.md
 - Inspect code, lists, links, spoilers, math, images/placeholders, mentions, and
   selection in room/thread messages and previews. Test Unicode/bidi and copy
   across runs/blocks; hidden spoilers copy placeholders.
+- Preview Markdown lists using `*`, `-`, `+`, and numbered markers, both with
+  consecutive items and blank lines between them. Each marker should share a
+  line with its first paragraph; continuation paragraphs and nested lists keep
+  their block boundaries. Automated composition/document tests cover these
+  structures and received HTML; desktop rendering still needs manual inspection.
+  Include date-like items such as `* 12. April`: CommonMark treats the number as
+  a nested list marker, which should remain on the same line as the bullet.
 - Highlight Rust/TypeScript/TOML/Dockerfile blocks in both themes. Unknown/unset
   languages, blocks over 16 KiB, or lines over 2048 bytes stay plain monospace.
   Colors survive resize/theme changes; inline code stays plain. Stale preview

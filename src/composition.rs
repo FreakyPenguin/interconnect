@@ -870,6 +870,44 @@ mod tests {
         assert!(text.contains(r"\unsupported{x}"));
     }
     #[tokio::test]
+    async fn list_markers_stay_with_the_first_paragraph() {
+        for marker in ["*", "-", "+", "3."] {
+            for separator in ["\n", "\n\n"] {
+                let source =
+                    format!("{marker} **first**\n  continuation{separator}{marker} second");
+                let prepared = prepare(source.clone(), Format::Markdown).await.unwrap();
+                assert_eq!(prepared.source, source);
+                let prefix = if marker == "3." { "3. " } else { "• " };
+                let next = if marker == "3." { "4. " } else { "• " };
+                let document = prepared.document.unwrap();
+                assert_eq!(document.blocks.len(), 2, "{source:?}");
+                assert_eq!(
+                    document.text(&Default::default()),
+                    format!("{prefix}first\ncontinuation\n\n{next}second"),
+                    "{source:?}"
+                );
+                assert!(document.blocks[0].runs.iter().any(|run| run.style.bold));
+                let received = Document::parse(prepared.html.as_deref().unwrap()).unwrap();
+                assert_eq!(received.blocks, document.blocks);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bullet_dates_keep_the_nested_number_on_the_same_line() {
+        let source = "Dates:\n* 12. April\n* 3. May\n* 17. May";
+        let prepared = prepare(source.into(), Format::Markdown).await.unwrap();
+        let document = prepared.document.unwrap();
+        assert_eq!(
+            document.text(&Default::default()),
+            "Dates:\n\n• 12. April\n\n• 3. May\n\n• 17. May"
+        );
+        assert_eq!(document.blocks.len(), 4);
+        let received = Document::parse(prepared.html.as_deref().unwrap()).unwrap();
+        assert_eq!(received.blocks, document.blocks);
+    }
+
+    #[tokio::test]
     async fn commonmark_payload_and_preview_share_source_and_formatting() {
         let source = "# Title\n\n**bold _italic_** and ~~old~~ with `code`\nnext\n\n> quote\n\n3. third\n4. fourth\n\n```rust\nlet x = 1;\n  x\n```";
         let prepared = prepare(source.into(), Format::Markdown).await.unwrap();

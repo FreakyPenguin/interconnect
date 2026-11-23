@@ -468,6 +468,7 @@ struct Builder {
     bytes: usize,
     quotes: usize,
     lists: Vec<Option<u64>>,
+    list_marker_only: bool,
     spoiler: usize,
     pre: usize,
     anchors: usize,
@@ -477,6 +478,7 @@ struct Builder {
 }
 impl Builder {
     fn flush(&mut self) {
+        self.list_marker_only = false;
         if !self.current.runs.is_empty() {
             self.blocks.push(std::mem::take(&mut self.current));
         }
@@ -489,6 +491,7 @@ impl Builder {
             return None;
         }
         if !content.text().is_empty() {
+            self.list_marker_only = false;
             self.current.runs.push(Run { content, style });
         }
         Some(())
@@ -568,7 +571,10 @@ impl Builder {
                 | "summary"
                 | "hr"
         );
-        if block {
+        // A list item may begin with a paragraph or another list (e.g. Markdown
+        // `* 12. April`). Keep leading markers with the first text; later
+        // paragraphs and nested items still start separate blocks.
+        if block && !(self.list_marker_only && matches!(tag, "p" | "div" | "ul" | "ol" | "li")) {
             self.flush();
         }
         match tag {
@@ -616,6 +622,7 @@ impl Builder {
                     _ => "• ".into(),
                 };
                 self.push(Inline::Text(marker), style.clone())?;
+                self.list_marker_only = true;
             }
             "pre" => {
                 self.pre += 1;
@@ -1048,6 +1055,42 @@ mod tests {
         );
         assert_eq!(doc.blocks.last().unwrap().quote_depth, 1);
     }
+    #[test]
+    fn list_paragraphs_keep_markers_nesting_and_continuations() {
+        let doc = Document::parse(
+            "<ul><li>\n<p><b>first</b></p>\n<p>continuation</p>\n\
+             <ol start='3'><li><p>nested</p></li></ol></li>\
+             <li><p>second</p></li></ul><p>after</p>",
+        )
+        .unwrap();
+        assert_eq!(
+            doc.text(&Default::default()),
+            "• first\n\ncontinuation\n\n3. nested\n\n• second\n\nafter"
+        );
+        assert_eq!(
+            doc.blocks.iter().map(|b| b.list_depth).collect::<Vec<_>>(),
+            [1, 1, 2, 1, 0]
+        );
+        assert!(doc.blocks[0].runs[1].style.bold);
+    }
+
+    #[test]
+    fn leading_nested_list_markers_only_join_the_first_item() {
+        let doc = Document::parse(
+            "<ul><li><ol start='12'><li><p>first</p></li>\
+             <li><p>next</p></li></ol></li><li>last</li></ul>",
+        )
+        .unwrap();
+        assert_eq!(
+            doc.text(&Default::default()),
+            "• 12. first\n\n13. next\n\n• last"
+        );
+        assert_eq!(
+            doc.blocks.iter().map(|b| b.list_depth).collect::<Vec<_>>(),
+            [2, 2, 1]
+        );
+    }
+
     #[test]
     fn inline_image_sources_and_dimensions_are_untrusted_metadata() {
         for source in [
