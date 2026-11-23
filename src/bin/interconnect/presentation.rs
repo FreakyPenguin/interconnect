@@ -175,6 +175,7 @@ mod tests {
             avatar_url: None,
             image: None,
             download: None,
+            poll: None,
             reactions: Vec::new(),
             can_react: true,
             redactable: true,

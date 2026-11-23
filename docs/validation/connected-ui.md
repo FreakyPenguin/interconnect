@@ -745,3 +745,12 @@ AppleEvents, fresh default-profile credential prompts, and OS handler selection
 remain native/manual acceptance. Run artifacts are outside version control:
 `/tmp/interconnect-activation-native-results.json` and the corresponding
 `interconnect-activation-wgpu-*` / `interconnect-activation-tiny-skia-*` captures.
+
+### Polls
+
+MSC3381 polls render their question and ordered answers from SDK timeline
+snapshots. Disclosed polls show counts; undisclosed counts remain hidden until
+an end event. Redacted polls return to the normal removed-message presentation.
+Check live responses, edited questions, end events, and redactions in both room
+and thread views with a dedicated account. Connected interoperability and native
+layout acceptance remain manual checks; local build/tests do not establish them.

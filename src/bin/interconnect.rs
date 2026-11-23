@@ -105,6 +105,8 @@ mod people_picker;
 mod pin_action;
 #[path = "interconnect/pinned.rs"]
 mod pinned;
+#[path = "interconnect/poll_view.rs"]
+mod poll_view;
 #[path = "interconnect/popover.rs"]
 mod popover;
 #[path = "interconnect/presence.rs"]
@@ -3650,6 +3652,8 @@ impl App {
             .is_some_and(|file| message.body == file.filename);
         let body = if attachment_only {
             Element::from(iced::widget::Space::new().height(0))
+        } else if let Some(poll) = &message.poll {
+            poll_view::view(poll)
         } else if activity {
             selectable::activity_view(
                 message.event_id.as_deref().unwrap_or(&message.body),
