@@ -3738,17 +3738,22 @@ impl App {
         } else {
             original
         };
+        let scroll = scrollable(original)
+            .id("thread-original")
+            .direction(shell::scrollbar())
+            .style(shell::scroll_style);
+        let (generation, root) = self.selection.thread.as_ref().expect("thread original");
+        let retained = timeline::retained_original(
+            *generation,
+            scroll.into(),
+            self.text_conversations.original(DraftKey {
+                room: self.selection.room.as_ref().expect("thread room").1.clone(),
+                root: Some(root.clone()),
+            }),
+            self.thread_original().is_some(),
+        );
         column![
-            container(
-                container(
-                    scrollable(original)
-                        .id("thread-original")
-                        .direction(shell::scrollbar())
-                        .style(shell::scroll_style)
-                )
-                .max_height(144)
-            )
-            .padding([12, 24]),
+            container(container(retained).max_height(144)).padding([12, 24]),
             iced::widget::rule::horizontal(1),
         ]
         .into()
@@ -4156,7 +4161,8 @@ impl App {
             content = content.push(self.room_column(self.room_search_view()));
         }
         if thread {
-            // Reset the original's own scroll/selection state on thread changes.
+            // Recreate the lightweight view on thread changes; its logical state
+            // and scroll offset are retained in the bounded conversation cache.
             content = content.push(self.room_column(iced::widget::keyed_column([(
                 *generation,
                 self.thread_original_view(),

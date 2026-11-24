@@ -100,6 +100,7 @@ pub fn reading_history_view(
         virtual_keys: None,
         selection_source: None,
         saved_selection: None,
+        retain_original: None,
     })
 }
 
@@ -127,6 +128,7 @@ fn make_view(
         virtual_keys: None,
         selection_source: None,
         saved_selection: None,
+        retain_original: None,
     })
 }
 #[allow(clippy::too_many_arguments)]
@@ -155,6 +157,30 @@ pub(super) fn virtual_history_view<'a>(
         virtual_keys: Some(keys),
         selection_source: Some(selection_source),
         saved_selection: Some(saved_selection),
+        retain_original: None,
+    })
+}
+/// The pinned thread original has a top-anchored scrollable of its own. Retain
+/// its logical state separately from reply selection and timeline positioning.
+pub(super) fn retained_original<'a>(
+    generation: u64,
+    content: Element<'a, Message>,
+    selection: super::selection::Shared,
+    ready: bool,
+) -> Element<'a, Message> {
+    Element::new(Timeline {
+        generation,
+        history: None,
+        observe_visible: false,
+        target: None,
+        reading_anchor: None,
+        keys: HashMap::new(),
+        content,
+        virtualization: None,
+        virtual_keys: None,
+        selection_source: None,
+        saved_selection: Some(selection),
+        retain_original: Some(ready),
     })
 }
 struct Timeline<'a> {
@@ -169,6 +195,7 @@ struct Timeline<'a> {
     virtual_keys: Option<Arc<HashMap<widget::Id, String>>>,
     selection_source: Option<Arc<dyn super::selection::Source>>,
     saved_selection: Option<super::selection::Shared>,
+    retain_original: Option<bool>,
 }
 pub fn row_id(index: usize) -> widget::Id {
     widget::Id::from(format!("timeline-row-{index}"))
@@ -210,6 +237,8 @@ struct Snapshot {
 struct Identity {
     selection: super::selection::Shared,
     reflow_anchor: Option<(String, f32)>,
+    observing: bool,
+    scroll_report: Option<f32>,
     generation: u64,
     focused: bool,
     target: Option<String>,
@@ -322,6 +351,13 @@ impl Timeline<'_> {
         self.content
             .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, &mut measure);
+        if self.retain_original == Some(true) {
+            tree.state
+                .downcast_mut::<Identity>()
+                .selection
+                .borrow_mut()
+                .original_offset = Some(measure.snapshot.metrics.translation);
+        }
         if let Some(snapshot) = &mut tree.state.downcast_mut::<Identity>().snapshot {
             snapshot.metrics = measure.snapshot.metrics;
             if let Some((viewport, _)) = &self.virtualization {
@@ -408,6 +444,8 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             reading_report: None,
             selection,
             reflow_anchor: None,
+            observing: self.observe_visible,
+            scroll_report: None,
         })
     }
     fn children(&self) -> Vec<Tree> {
@@ -415,6 +453,12 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
     }
     fn diff(&self, tree: &mut Tree) {
         let identity = tree.state.downcast_mut::<Identity>();
+        if self.observe_visible && !identity.observing {
+            // Returning from Settings/search restores the retained range after
+            // those controls temporarily owned keyboard Copy.
+            identity.selection.borrow_mut().suspend_drag();
+        }
+        identity.observing = self.observe_visible;
         if identity.target != self.target {
             identity.target = self.target.clone();
             identity.focused = false;
@@ -427,6 +471,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             identity.visible = None;
             identity.media_visible = None;
             identity.reading_report = None;
+            identity.scroll_report = None;
             identity.selection = self.saved_selection.clone().unwrap_or_default();
             identity.selection.borrow_mut().suspend_drag();
             identity.reflow_anchor = None;
@@ -487,6 +532,27 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
                 .content
                 .as_widget_mut()
                 .layout(&mut tree.children[0], renderer, limits);
+        }
+        if let Some(ready) = self.retain_original {
+            let identity = tree.state.downcast_mut::<Identity>();
+            if ready {
+                if let Some(offset) = identity.selection.borrow().original_offset {
+                    self.content.as_widget_mut().operate(
+                        &mut tree.children[0],
+                        Layout::new(&node),
+                        renderer,
+                        &mut Restore(offset),
+                    );
+                }
+                identity.selection.borrow_mut().restore(
+                    self.content.as_widget_mut(),
+                    &mut tree.children[0],
+                    Layout::new(&node),
+                    renderer,
+                );
+            }
+            identity.reflow_anchor = None;
+            return node;
         }
         let mut measure = Measure::new(Some(self.virtual_keys.as_deref().unwrap_or(&self.keys)));
         self.content.as_widget_mut().operate(
@@ -706,6 +772,23 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
                 // Report a stable event anchor only after loading/restoration. This
                 // follows actual layout changes and scrolling, with no timer.
                 if self.history.is_some_and(|(_, _, ready)| ready) {
+                    let offset = metrics.distance_from_bottom().max(0.0);
+                    if matches!(
+                        event,
+                        Event::Window(iced::window::Event::RedrawRequested(_))
+                    ) && identity
+                        .scroll_report
+                        .is_none_or(|previous| (previous - offset).abs() > 0.5)
+                    {
+                        // Reflow/native operations also change the saved distance.
+                        // Publish once per settled geometry, without a timer.
+                        shell.publish(Message::Scrolled {
+                            thread: self.history.is_some_and(|(thread, _, _)| thread),
+                            generation: self.generation,
+                            offset,
+                        });
+                        identity.scroll_report = Some(offset);
+                    }
                     let anchor = if metrics.distance_from_bottom() <= 1.0 {
                         Some((None, 0))
                     } else {

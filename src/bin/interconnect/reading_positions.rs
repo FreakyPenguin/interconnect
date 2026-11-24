@@ -81,7 +81,8 @@ impl App {
         self.reading_positions.active[index] = None;
         if let Some(key) = self.draft_key(thread)
             && (!self.scroll_positions.contains_key(&key)
-                || (self.reading_positions.virtualized.contains(&key)
+                || ((self.reading_positions.virtualized.contains(&key)
+                    || self.text_conversations.prefers_event_anchor(&key))
                     && self
                         .scroll_positions
                         .get(&key)

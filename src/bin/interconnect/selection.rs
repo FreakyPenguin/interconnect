@@ -134,27 +134,53 @@ pub struct Selection {
     range: Option<(Endpoint, Endpoint)>,
     dragging: bool,
     suspended: bool,
+    pub(super) original_offset: Option<f32>,
     pointer: Option<Point>,
     source: Option<Arc<dyn Source>>,
     semantic: HashMap<String, Semantic>,
 }
 pub(super) type Shared = Rc<RefCell<Selection>>;
+#[derive(Clone, Default)]
+struct Conversation {
+    timeline: Shared,
+    original: Shared,
+}
 /// Bounded session-only semantics, no widget trees or SDK handles.
 #[derive(Default)]
-pub(super) struct Conversations(RefCell<VecDeque<(super::DraftKey, Shared)>>);
+pub(super) struct Conversations(RefCell<VecDeque<(super::DraftKey, Conversation)>>);
 impl Conversations {
-    pub fn get(&self, key: super::DraftKey) -> Shared {
+    fn state(&self, key: super::DraftKey) -> Conversation {
         let mut entries = self.0.borrow_mut();
         let state = entries
             .iter()
             .position(|(saved, _)| saved == &key)
             .and_then(|index| entries.remove(index))
-            .map_or_else(Shared::default, |(_, state)| state);
+            .map_or_else(Conversation::default, |(_, state)| state);
         entries.push_back((key, state.clone()));
         while entries.len() > 64 {
             entries.pop_front();
         }
         state
+    }
+    pub fn get(&self, key: super::DraftKey) -> Shared {
+        self.state(key).timeline
+    }
+    pub fn original(&self, key: super::DraftKey) -> Shared {
+        self.state(key).original
+    }
+    pub fn prefers_event_anchor(&self, key: &super::DraftKey) -> bool {
+        self.0
+            .borrow()
+            .iter()
+            .find(|(saved, _)| saved == key)
+            .is_some_and(|(_, state)| {
+                state
+                    .timeline
+                    .borrow()
+                    .semantic
+                    .values()
+                    .any(|semantic| !semantic.code_views.is_empty())
+            })
     }
     pub fn clear(&self) {
         self.0.borrow_mut().clear();
@@ -176,6 +202,7 @@ struct Read {
     translation: Vector,
     maximum: f32,
     thread: bool,
+    original: bool,
 }
 impl widget::Operation for Read {
     fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
@@ -193,6 +220,7 @@ impl widget::Operation for Read {
         self.translation = translation;
         self.maximum = (content.height - bounds.height).max(0.0);
         self.thread = id == Some(&widget::Id::new("thread-timeline"));
+        self.original = id == Some(&widget::Id::new("thread-original"));
     }
     fn custom(&mut self, _: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Any) {
         if let Some(state) = state.downcast_mut::<selectable::State>() {
@@ -512,18 +540,6 @@ impl Selection {
             },
         );
     }
-    fn clear(
-        &mut self,
-        content: &mut Content<'_>,
-        tree: &mut Tree,
-        layout: Layout<'_>,
-        renderer: &Renderer,
-    ) {
-        if self.range.take().is_some() {
-            content.operate(tree, layout, renderer, &mut Apply { ranges: vec![] });
-        }
-        self.dragging = false;
-    }
     fn extend(
         &mut self,
         content: &mut Content<'_>,
@@ -728,14 +744,20 @@ impl Selection {
                                 });
                             }
                         }
-                        let offset = data.maximum - next;
+                        let offset = if data.original {
+                            next
+                        } else {
+                            data.maximum - next
+                        };
                         content.operate(tree, layout, renderer, &mut Scroll(offset));
                         scrolled = true;
-                        shell.publish(Message::Scrolled {
-                            thread: data.thread,
-                            generation,
-                            offset,
-                        });
+                        if !data.original {
+                            shell.publish(Message::Scrolled {
+                                thread: data.thread,
+                                generation,
+                                offset,
+                            });
+                        }
                     }
                     shell.request_redraw_at(iced::time::Instant::now() + Duration::from_millis(16));
                 }
@@ -839,7 +861,12 @@ impl Selection {
         if pressed {
             self.suspended = false;
             if hit.is_none() {
-                self.clear(content, tree, layout, renderer);
+                // A sidebar or thread-close press transfers focus before its
+                // navigation message arrives. Keep the range for the saved
+                // conversation, while yielding Copy to the newly focused view.
+                self.suspended = true;
+                self.dragging = false;
+                content.operate(tree, layout, renderer, &mut Apply { ranges: vec![] });
             } else {
                 // Keep the clicked editor's caret until it interprets double /
                 // triple clicks, then replace the range and clear other bodies.
@@ -1062,7 +1089,7 @@ mod tests {
             .height(iced::Length::Fill)
             .into(),
             (false, 1, true),
-            false,
+            true,
             None,
             None,
             Default::default(),
@@ -1070,6 +1097,100 @@ mod tests {
             source,
             shared,
         )
+    }
+    #[test]
+    fn pinned_thread_original_restores_selection_code_state_and_its_own_scroll_after_loading() {
+        let mut row = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        row.key = "original".into();
+        row.formatted = Some(Arc::new(
+            Document::parse(&format!(
+                "<pre><code>{}</code></pre>",
+                "let café = 42; // 👩🏽‍💻\n".repeat(50)
+            ))
+            .unwrap(),
+        ));
+        let body = row.formatted.as_ref().unwrap().text(&BTreeSet::new());
+        let cache = Conversations::default();
+        let key = crate::DraftKey {
+            room: "studio".into(),
+            root: Some("$original".into()),
+        };
+        let shared = cache.original(key.clone());
+        let build = |generation| {
+            super::super::timeline::retained_original(
+                generation,
+                scrollable(selectable::message_view(&row))
+                    .id("thread-original")
+                    .height(iced::Length::Fill)
+                    .into(),
+                cache.original(key.clone()),
+                true,
+            )
+        };
+        let mut h = Harness::new();
+        let mut original = build(1);
+        let node = h.layout(&mut original);
+        h.event(&mut original, &node, down(), Point::new(20.0, 10.0));
+        h.layout(&mut original);
+        shared.borrow_mut().range = Some((
+            logical_endpoint("original", &body, start()),
+            logical_endpoint("original", &body, end(&body)),
+        ));
+        let node = h.layout(&mut original);
+        original.as_widget_mut().operate(
+            &mut h.tree,
+            Layout::new(&node),
+            &h.renderer,
+            &mut widget::operation::scrollable::scroll_to::<()>(
+                "thread-original".into(),
+                iced::widget::operation::AbsoluteOffset {
+                    x: None,
+                    y: Some(75.0),
+                },
+            ),
+        );
+        assert_eq!(shared.borrow().original_offset, Some(75.0));
+        assert_eq!(h.copy(&mut original, &node), body);
+        h.event(&mut original, &node, down(), Point::new(350.0, 250.0));
+        assert!(
+            shared.borrow().range.is_some(),
+            "a thread-close press must retain its logical selection"
+        );
+        assert!(shared.borrow().suspended);
+        drop(original);
+        let mut loading = super::super::timeline::retained_original(
+            2,
+            scrollable(text("Loading original…"))
+                .id("thread-original")
+                .height(iced::Length::Fill)
+                .into(),
+            shared.clone(),
+            false,
+        );
+        h.layout(&mut loading);
+        assert!(shared.borrow().range.is_some());
+        assert_eq!(shared.borrow().original_offset, Some(75.0));
+        drop(loading);
+        let mut reopened = build(3);
+        let node = h.layout_size(&mut reopened, Size::new(260.0, 200.0));
+        let read = h.read(&mut reopened, &node);
+        assert_eq!(read.translation.y, 75.0);
+        assert!(read.maximum > 500.0);
+        assert_eq!(h.copy(&mut reopened, &node), body);
+        assert!(shared.borrow().semantic["original"].code_views[&0].expanded);
+        assert!(
+            cache.get(key).borrow().range.is_none(),
+            "original and reply selections are independent"
+        );
     }
     #[test]
     fn code_controls_keep_selection_and_expansion_anchor_and_restore_across_conversations() {
@@ -1115,6 +1236,25 @@ mod tests {
         assert!((h.read(&mut element, &node).rows[0].bounds.y - before).abs() <= 1.0);
         assert_eq!(h.copy(&mut element, &node), body);
         assert!(shared.borrow().semantic["code"].code_views[&0].expanded);
+        assert!(conversations.prefers_event_anchor(&room));
+        let (request, reports) = h.event(&mut element, &node, redraw(), Point::ORIGIN);
+        assert!(!matches!(request, iced::window::RedrawRequest::At(_)));
+        assert!(
+            reports.iter().any(
+                |message| matches!(message, Message::Scrolled { offset, .. } if *offset > 100.0)
+            )
+        );
+        let (_, settled) = h.event(&mut element, &node, redraw(), Point::ORIGIN);
+        assert!(
+            !settled
+                .iter()
+                .any(|message| matches!(message, Message::Scrolled { .. }))
+        );
+        h.event(&mut element, &node, down(), Point::new(350.0, 250.0));
+        assert!(
+            shared.borrow().range.is_some(),
+            "sidebar navigation preserves the saved range"
+        );
         drop(element);
         // A different conversation and a reopened thread get independent state.
         let other = conversations.get(crate::DraftKey {

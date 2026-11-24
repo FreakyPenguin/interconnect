@@ -31,7 +31,10 @@ offset. After measurement corrections, prepend, or reflow, it restores that
 logical anchor. Previously virtualized conversations also reopen by their saved
 event-relative anchor when away from newest; old bottom pixel offsets refer to
 estimates that are rebuilt with a new pane. Short histories keep exact in-session
-pixel restoration, and an explicit newest position overrides a stale saved anchor.
+pixel restoration unless code controls changed their layout; those conversations
+also restore their saved event anchor. Settled geometry updates the saved scroll
+distance after reflow, so an old newest offset cannot override a code expansion.
+An explicit newest position overrides a stale saved anchor.
 Bottom-following remains separate. An explicit event target
 mounts its indexed neighborhood immediately, then centers the measured target
 or restores its saved event-relative offset. Native scroll operations request
@@ -66,3 +69,12 @@ height estimates mean scrollbar proportions can adjust while exploring history.
 See [long-history validation](../validation/long-history.md) for the opt-in
 synthetic workload and the distinction between software frame costs, RSS,
 native GPU/input behavior, and idle-resource measurements.
+
+The pinned thread original retains its own selection, code semantics, and
+(top-anchored) scroll offset in that same bounded conversation entry. It does
+not share reply selection or bottom-following state. A transient loading view
+cannot erase its retained range or scroll position.
+
+Sidebar/thread-header presses suspend keyboard Copy while retaining logical
+ranges for navigation. Clicking message text replaces the range; returning to
+the conversation restores it without stealing Copy from another focused field.

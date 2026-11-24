@@ -961,3 +961,8 @@ nested tables fall back to plain message text. Row/column spans are flattened
 into individual cells. Demo → Message formatting includes a wrapping table.
 Automated parsing, outgoing Markdown, grid geometry, Unicode hit testing, and
 canonical-copy checks are covered; native GPU/input acceptance remains manual.
+
+Thread originals use a separate retained selection and scroll offset within the
+same conversation cache. A widget regression reopens an expanded original through
+an intermediate loading view, resizes it, and verifies full-code copy and its
+original scroll offset. Reply selection stays independent.
