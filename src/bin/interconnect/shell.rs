@@ -205,6 +205,7 @@ pub(super) fn composer_editor_style(
 }
 #[derive(Default)]
 pub struct MessageActions<'a> {
+    pub corner_space: f32,
     pub reply: Option<Message>,
     pub ordinary_reply: Option<Message>,
     pub reaction: Option<Message>,
@@ -219,6 +220,7 @@ pub fn message_actions<'a>(
     actions: MessageActions<'a>,
 ) -> Element<'a, Message> {
     let MessageActions {
+        corner_space,
         reply,
         ordinary_reply,
         reaction,
@@ -369,6 +371,11 @@ pub fn message_actions<'a>(
             widget::tooltip::Position::Top,
         ));
     }
+    let controls: Element<'a, Message> = if corner_space > 0.0 {
+        controls.wrap().into()
+    } else {
+        controls.into()
+    };
     let actions = container(controls)
         .padding(1)
         .style(|theme| container::Style {
@@ -383,6 +390,10 @@ pub fn message_actions<'a>(
     let message = widget::hover(
         body,
         container(actions)
+            .padding(iced::Padding {
+                right: corner_space,
+                ..iced::Padding::ZERO
+            })
             .align_right(Length::Fill)
             .align_top(Length::Fill),
     );

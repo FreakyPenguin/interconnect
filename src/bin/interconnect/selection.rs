@@ -1098,6 +1098,48 @@ mod tests {
             shared,
         )
     }
+    fn code_toggle_point(
+        h: &mut Harness,
+        element: &mut Element<'_, Message>,
+        node: &layout::Node,
+    ) -> Point {
+        #[derive(Default)]
+        struct Find {
+            point: Option<Point>,
+            translation: Vector,
+        }
+        impl widget::Operation for Find {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn scrollable(
+                &mut self,
+                _: Option<&widget::Id>,
+                _: Rectangle,
+                _: Rectangle,
+                translation: Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                self.translation = translation;
+            }
+            fn custom(&mut self, _: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn Any) {
+                if let Some(state) = state.downcast_ref::<selectable::State>()
+                    && let Some(button) = state.rich.as_ref().and_then(|rich| {
+                        rich.code_button(0, super::super::formatted::CodeAction::Toggle)
+                    })
+                {
+                    self.point = Some(
+                        bounds.position() + (button.center() - Point::ORIGIN) - self.translation,
+                    );
+                }
+            }
+        }
+        let mut find = Find::default();
+        element
+            .as_widget_mut()
+            .operate(&mut h.tree, Layout::new(node), &h.renderer, &mut find);
+        find.point.expect("code toggle icon")
+    }
     #[test]
     fn code_scrollbar_drag_and_bottom_expand_preserve_selection_and_settle_without_timers() {
         let mut row = crate::demo::Demo::default()
@@ -1231,7 +1273,8 @@ mod tests {
         let mut h = Harness::new();
         let mut original = build(1);
         let node = h.layout(&mut original);
-        h.event(&mut original, &node, down(), Point::new(20.0, 10.0));
+        let toggle = code_toggle_point(&mut h, &mut original, &node);
+        h.event(&mut original, &node, down(), toggle);
         h.layout(&mut original);
         shared.borrow_mut().range = Some((
             logical_endpoint("original", &body, start()),
@@ -1323,7 +1366,8 @@ mod tests {
         ));
         let node = h.layout_size(&mut element, size);
         let before = h.read(&mut element, &node).rows[0].bounds.y;
-        h.event(&mut element, &node, down(), Point::new(20.0, before + 10.0));
+        let toggle = code_toggle_point(&mut h, &mut element, &node);
+        h.event(&mut element, &node, down(), toggle);
         let node = h.layout_size(&mut element, size);
         assert!((h.read(&mut element, &node).rows[0].bounds.y - before).abs() <= 1.0);
         assert_eq!(h.copy(&mut element, &node), body);
@@ -1378,7 +1422,8 @@ mod tests {
             ),
         );
         let node = h.layout_size(&mut restored, Size::new(260.0, 400.0));
-        h.event(&mut restored, &node, down(), Point::new(20.0, 10.0));
+        let toggle = code_toggle_point(&mut h, &mut restored, &node);
+        h.event(&mut restored, &node, down(), toggle);
         let node = h.layout_size(&mut restored, size);
         assert!(!shared.borrow().semantic["code"].code_views[&0].expanded);
         assert!(

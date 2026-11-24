@@ -3710,6 +3710,7 @@ impl App {
                         message,
                     ),
                     shell::MessageActions {
+                        corner_space: formatted::code_corner_space(message.formatted.as_deref()),
                         reply: None,
                         ordinary_reply: self.reply_action(message, true, generation),
                         reaction: self.reaction_action(message, true, generation),
@@ -4036,6 +4037,7 @@ impl App {
                     message,
                 ),
                 shell::MessageActions {
+                    corner_space: formatted::code_corner_space(message.formatted.as_deref()),
                     reply,
                     ordinary_reply: self.reply_action(message, thread, generation),
                     reaction: self.reaction_action(message, thread, generation),

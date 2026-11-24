@@ -929,11 +929,12 @@ and disclosure changes; live cross-client updates remain a manual check.
 Demo → Message formatting includes a 100-line code sample. Code starts with a
 12-line / 2 KiB preview; Expand and Collapse control shaping, rather than merely
 clipping a fully laid-out block. Wide lines do not wrap. Use horizontal trackpad
-scrolling, the ‹ / › controls, or the visible horizontal scrollbar when the
-rendered code overflows. Drag the thumb or click the track; the bar disappears
-when the code fits. Vertical scrolling remains with the timeline. Collapsed
+scrolling or the visible horizontal scrollbar when the rendered code overflows.
+Drag the thumb or click the track; the bar disappears when the code fits. Vertical scrolling remains with the timeline. Collapsed
 truncated code has a translucent bottom fade with a clickable **Expand code**
 overlay; expanded and complete blocks omit this cue.
+A compact corner overlay provides Copy, Save, and (for truncated code)
+Expand/Collapse icons, with hover tooltips. Horizontal arrow controls are removed.
 Copy and Save export the full visible-spoiler code source, preserving whitespace
 and Unicode. Save uses an asynchronous native picker and file write.
 
@@ -1015,3 +1016,14 @@ and Dark at 1440×960 and Dark at 640×480. Real virtual-pointer button/motion e
 verified thumb dragging beyond the block with selection retained; clicking the
 bottom overlay expanded the code with its header anchored. Screenshots stay
 outside Git. Native GPU rendering and macOS remain manual checks.
+
+The corner-icon refinement passed 709 UI tests (one opt-in measurement ignored),
+format checking, workspace/all-target Clippy with warnings denied, and the desktop
+build. Tests cover icon hit areas/tooltips, unchanged canonical text, retained
+selection/anchors, and separation from all message hover actions at narrow widths.
+Message hover actions wrap beside the reserved code corner without reducing body
+text width. The isolated tiny-skia/Wayland demo checked Light at 1440×960 and Dark
+at 640×480, the Copy tooltip, and icon expansion/collapse with selection retained.
+The scrollbar and bottom Expand overlay remain; the top text row and horizontal
+arrow controls are removed. Screenshots remain outside Git; native GPU/macOS
+acceptance remains manual.

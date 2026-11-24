@@ -1,6 +1,6 @@
 //! Native formatted text. A single paragraph layout supplies drawing, hit-testing,
 //! decorations and selection geometry; the editor stores only logical positions.
-use super::{Message, emoji, inline_image, link_preview, shell};
+use super::{Message, emoji, icons, inline_image, link_preview, shell};
 use iced::advanced::{
     Renderer as _, layout, renderer,
     text::{self, Paragraph as _, Renderer as _},
@@ -36,9 +36,22 @@ struct LaidBlock {
 }
 const CODE_LINES: usize = 12;
 const CODE_BYTES: usize = 2048;
-const CODE_HEADER: f32 = 28.0;
+const CODE_TOP: f32 = 24.0;
+const CODE_BUTTON: f32 = 28.0;
+const CODE_GUTTER: f32 = 20.0;
 const CODE_SCROLLBAR: f32 = 16.0;
 const CODE_OVERLAY: f32 = 48.0;
+/// Keep the message hover toolbar beside the code toolbar without changing text width.
+pub(super) fn code_corner_space(document: Option<&Document>) -> f32 {
+    if document
+        .and_then(|document| document.blocks.first())
+        .is_some_and(|block| matches!(block.kind, BlockKind::Code { .. }))
+    {
+        CODE_BUTTON * 3.0 + 16.0
+    } else {
+        0.0
+    }
+}
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct CodeView {
     pub expanded: bool,
@@ -48,9 +61,17 @@ pub(super) struct CodeView {
 struct CodeLayout {
     index: usize,
     truncated: bool,
-    controls: Vec<(Rectangle, CodeAction, Paragraph)>,
+    controls: Vec<CodeControl>,
     max_x: f32,
     expand_label: Option<Paragraph>,
+}
+#[derive(Debug)]
+struct CodeControl {
+    bounds: Rectangle,
+    action: CodeAction,
+    icon: icons::Kind,
+    tooltip: &'static str,
+    drawing: icons::Drawing,
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) struct CodeScrollbar {
@@ -87,7 +108,7 @@ impl LaidBlock {
             let top = code
                 .controls
                 .first()
-                .map_or(self.bounds.y, |(bounds, _, _)| bounds.y);
+                .map_or(self.bounds.y, |control| control.bounds.y - 2.0);
             Rectangle::new(
                 Point::new(self.bounds.x - 8.0, top),
                 Size::new(
@@ -100,13 +121,11 @@ impl LaidBlock {
         }
     }
 }
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CodeAction {
     Toggle,
     Copy,
     Save,
-    Left,
-    Right,
     Scroll,
 }
 fn preview_end(text: &str) -> usize {
@@ -654,41 +673,44 @@ impl State {
                     if let Some(view) = self.code_views.get_mut(&block_index) {
                         view.x = view.x.clamp(0.0, max_x);
                     }
-                    let mut controls = Vec::new();
-                    let mut control_x = 0.0;
-                    for (name, action, control_width) in [
-                        (
-                            if truncated {
-                                if expanded { "Collapse" } else { "Expand" }
-                            } else {
-                                "Code"
-                            },
+                    let actions = [
+                        truncated.then_some((
                             CodeAction::Toggle,
-                            74.0,
-                        ),
-                        ("Copy", CodeAction::Copy, 52.0),
-                        ("Save", CodeAction::Save, 52.0),
-                        ("‹", CodeAction::Left, 30.0),
-                        ("›", CodeAction::Right, 30.0),
-                    ] {
-                        let bounds = Rectangle::new(
-                            Point::new(x + control_x, y),
-                            Size::new(control_width, CODE_HEADER),
-                        );
-                        let label = Paragraph::with_text(text::Text {
-                            content: name,
-                            bounds: bounds.size(),
-                            size: iced::Pixels(12.0),
-                            line_height: text::LineHeight::default(),
-                            font: Font::with_name("Inter"),
-                            align_x: text::Alignment::Default,
-                            align_y: iced::alignment::Vertical::Top,
-                            shaping: text::Shaping::Advanced,
-                            wrapping: text::Wrapping::None,
-                        });
-                        controls.push((bounds, action, label));
-                        control_x += control_width;
-                    }
+                            if expanded {
+                                icons::Kind::ChevronUp
+                            } else {
+                                icons::Kind::ChevronDown
+                            },
+                            if expanded {
+                                "Collapse code"
+                            } else {
+                                "Expand code"
+                            },
+                        )),
+                        Some((CodeAction::Copy, icons::Kind::Copy, "Copy code")),
+                        Some((CodeAction::Save, icons::Kind::Download, "Save code")),
+                    ];
+                    let count = actions.iter().flatten().count();
+                    let button_width = CODE_BUTTON.min(paragraph_width / count as f32);
+                    let mut control_x = x + paragraph_width - button_width * count as f32;
+                    let controls = actions
+                        .into_iter()
+                        .flatten()
+                        .map(|(action, icon, tooltip)| {
+                            let bounds = Rectangle::new(
+                                Point::new(control_x, y + 2.0),
+                                Size::new(button_width, CODE_BUTTON),
+                            );
+                            control_x += button_width;
+                            CodeControl {
+                                bounds,
+                                action,
+                                icon,
+                                tooltip,
+                                drawing: icons::Drawing::default(),
+                            }
+                        })
+                        .collect();
                     let expand_label = (truncated && !expanded).then(|| {
                         Paragraph::with_text(text::Text {
                             content: "Expand code",
@@ -721,7 +743,7 @@ impl State {
                     images,
                     links,
                     bounds: Rectangle::new(
-                        Point::new(x, y + padding + if code { CODE_HEADER } else { 0.0 }),
+                        Point::new(x, y + padding + if code { CODE_TOP } else { 0.0 }),
                         Size::new(paragraph_width, height),
                     ),
                     range,
@@ -732,7 +754,7 @@ impl State {
                     code: code_layout,
                     table_bounds: None,
                 });
-                y += height + padding * 2.0 + 8.0 + if code { CODE_HEADER } else { 0.0 };
+                y += height + padding * 2.0 + 8.0 + if code { CODE_TOP } else { 0.0 };
             }
             let mut top = 0.0;
             let mut index = 0;
@@ -759,16 +781,11 @@ impl State {
                 } else {
                     let block = &mut self.blocks[index];
                     let padding = if block.code.is_some() { 8.0 } else { 0.0 };
-                    block.bounds.y = top
-                        + padding
-                        + if block.code.is_some() {
-                            CODE_HEADER
-                        } else {
-                            0.0
-                        };
+                    block.bounds.y =
+                        top + padding + if block.code.is_some() { CODE_TOP } else { 0.0 };
                     if let Some(code) = &mut block.code {
-                        for (bounds, _, _) in &mut code.controls {
-                            bounds.y = top;
+                        for control in &mut code.controls {
+                            control.bounds.y = top + 2.0;
                         }
                     }
                     top =
@@ -984,8 +1001,26 @@ impl State {
             }
             code.controls
                 .iter()
-                .find(|(bounds, _, _)| bounds.contains(point))
-                .map(|(_, action, _)| (code.index, *action))
+                .find(|control| control.bounds.contains(point))
+                .map(|control| (code.index, control.action))
+        })
+    }
+    fn code_tooltip(&self, point: Point) -> Option<&'static str> {
+        self.blocks
+            .iter()
+            .filter_map(|block| block.code.as_ref())
+            .flat_map(|code| &code.controls)
+            .find(|control| control.bounds.contains(point))
+            .map(|control| control.tooltip)
+    }
+    #[cfg(test)]
+    pub(super) fn code_button(&self, index: usize, action: CodeAction) -> Option<Rectangle> {
+        self.blocks.iter().find_map(|block| {
+            let code = block.code.as_ref().filter(|code| code.index == index)?;
+            code.controls
+                .iter()
+                .find(|control| control.action == action)
+                .map(|control| control.bounds)
         })
     }
     pub(super) fn code_scrollbar(&self, index: usize) -> Option<CodeScrollbar> {
@@ -1108,8 +1143,6 @@ impl State {
                 self.width = None;
                 self.reflow_requested = true;
             }
-            CodeAction::Left => view.x = (view.x - 160.0).max(0.0),
-            CodeAction::Right => view.x = (view.x + 160.0).min(code.max_x),
             _ => {}
         }
     }
@@ -1190,15 +1223,17 @@ impl State {
         if !viewport.contains(position) {
             return None;
         }
-        let link = self.run_at(point)?.style.link.as_ref()?;
+        let label = self
+            .code_tooltip(point)
+            .or_else(|| self.run_at(point)?.style.link.as_deref())?;
         let width = (viewport.width - 16.0).clamp(1.0, 500.0);
         let mut preview = self.preview.borrow_mut();
         if preview
             .as_ref()
-            .is_none_or(|(cached, cached_width, _)| cached != link || *cached_width != width)
+            .is_none_or(|(cached, cached_width, _)| cached != label || *cached_width != width)
         {
             let paragraph = Paragraph::with_text(text::Text {
-                content: link,
+                content: label,
                 bounds: Size::new(width, f32::INFINITY),
                 size: iced::Pixels(12.0),
                 line_height: text::LineHeight::default(),
@@ -1208,7 +1243,7 @@ impl State {
                 shaping: text::Shaping::Advanced,
                 wrapping: text::Wrapping::WordOrGlyph,
             });
-            *preview = Some((link.clone(), width, paragraph));
+            *preview = Some((label.to_owned(), width, paragraph));
         }
         // Iced recreates overlay values between layout and drawing. Keep shaped
         // text in the widget state, so both instances use the same paragraph.
@@ -1244,25 +1279,75 @@ impl State {
                 quad(
                     renderer,
                     Rectangle::new(
-                        Point::new(origin.x, bounds.y - 8.0),
+                        Point::new(origin.x, bounds.y - CODE_GUTTER),
                         Size::new(
                             self.width.unwrap_or(bounds.width),
-                            bounds.height + 16.0 + block.code_footer(),
+                            bounds.height + CODE_GUTTER + 8.0 + block.code_footer(),
                         ),
                     ),
                     shell::palette(theme).code,
                 );
             }
-            if let Some(code) = &block.code {
-                for (bounds, _, label) in &code.controls {
-                    let position =
-                        origin + (bounds.position() - Point::ORIGIN) + Vector::new(0.0, 6.0);
-                    renderer.fill_paragraph(
-                        label,
-                        position,
-                        shell::palette(theme).accent,
-                        viewport,
-                    );
+            if let Some(code) = &block.code
+                && let (Some(first), Some(last)) = (code.controls.first(), code.controls.last())
+            {
+                let palette = shell::palette(theme);
+                let panel = Rectangle::new(
+                    Point::new(first.bounds.x - 2.0, first.bounds.y - 2.0),
+                    Size::new(
+                        last.bounds.x + last.bounds.width - first.bounds.x + 4.0,
+                        CODE_BUTTON + 4.0,
+                    ),
+                ) + translation;
+                if let Some(clip) = panel.intersection(&viewport) {
+                    renderer.with_layer(clip, |renderer| {
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: panel,
+                                border: iced::Border {
+                                    color: palette.muted.scale_alpha(0.18),
+                                    width: 1.0,
+                                    radius: 6.0.into(),
+                                },
+                                ..Default::default()
+                            },
+                            palette.rail.scale_alpha(0.96),
+                        );
+                        for control in &code.controls {
+                            let bounds = control.bounds + translation;
+                            let hovered = self
+                                .hover
+                                .is_some_and(|point| control.bounds.contains(point));
+                            if hovered {
+                                renderer.fill_quad(
+                                    renderer::Quad {
+                                        bounds,
+                                        border: iced::Border::default().rounded(4.0),
+                                        ..Default::default()
+                                    },
+                                    palette.accent.scale_alpha(0.10),
+                                );
+                            }
+                            let size = 16.0_f32.min((bounds.width - 6.0).max(1.0));
+                            let icon = Rectangle::new(
+                                Point::new(
+                                    bounds.center_x() - size / 2.0,
+                                    bounds.center_y() - size / 2.0,
+                                ),
+                                Size::new(size, size),
+                            );
+                            control.drawing.draw(
+                                renderer,
+                                control.icon,
+                                icon,
+                                if hovered {
+                                    palette.accent
+                                } else {
+                                    palette.muted
+                                },
+                            );
+                        }
+                    });
                 }
             }
             if let Some(cell_bounds) = block.table_bounds {
@@ -1652,6 +1737,62 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 mod tests {
     use super::*;
 
+    #[test]
+    fn code_corner_icons_have_tooltips_and_do_not_cover_text_or_change_copy() {
+        let document = Arc::new(
+            Document::parse(&format!(
+                "<pre><code>short</code></pre><pre><code>{}</code></pre>",
+                "let café = 42;\n".repeat(30)
+            ))
+            .unwrap(),
+        );
+        let mut state = State::new(document);
+        let text = state.text();
+        for width in [110.0, 260.0, 600.0] {
+            state.layout(width);
+            assert_eq!(state.blocks[0].code.as_ref().unwrap().controls.len(), 2);
+            assert_eq!(state.blocks[1].code.as_ref().unwrap().controls.len(), 3);
+            assert!(state.code_button(0, CodeAction::Toggle).is_none());
+            for block in &state.blocks {
+                let code = block.code.as_ref().unwrap();
+                let last = code.controls.last().unwrap();
+                assert!(
+                    (last.bounds.x + last.bounds.width - block.bounds.x - block.bounds.width).abs()
+                        < 0.1
+                );
+                for control in &code.controls {
+                    assert!(control.bounds.x >= block.bounds.x);
+                    assert!(control.bounds.y + control.bounds.height <= block.bounds.y);
+                    assert_eq!(
+                        state.code_control(control.bounds.center()),
+                        Some((code.index, control.action))
+                    );
+                    assert_eq!(
+                        state.code_tooltip(control.bounds.center()),
+                        Some(control.tooltip)
+                    );
+                }
+            }
+            let point = state.code_button(1, CodeAction::Copy).unwrap().center();
+            state.hover = Some(point);
+            assert!(
+                state
+                    .overlay(
+                        Point::ORIGIN,
+                        Rectangle::with_size(Size::new(width, 1000.0))
+                    )
+                    .is_some()
+            );
+            assert_eq!(state.text(), text);
+        }
+        let point = state.code_button(1, CodeAction::Toggle).unwrap().center();
+        assert_eq!(state.code_tooltip(point), Some("Expand code"));
+        state.code_action(1, CodeAction::Toggle);
+        state.layout(600.0);
+        let point = state.code_button(1, CodeAction::Toggle).unwrap().center();
+        assert_eq!(state.code_tooltip(point), Some("Collapse code"));
+        assert_eq!(state.text(), text);
+    }
     #[test]
     fn code_scrollbars_track_overflow_resize_and_expansion_without_changing_source() {
         let source = format!("{}{}", "short\n".repeat(12), "wide_column ".repeat(300));

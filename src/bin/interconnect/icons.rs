@@ -34,6 +34,7 @@ pub(super) enum Kind {
     Close,
     Check,
     Save,
+    Copy,
     ZoomIn,
     ZoomOut,
     Fit,
@@ -72,8 +73,8 @@ struct Icon {
     size: f32,
 }
 
-#[derive(Default)]
-struct State {
+#[derive(Debug, Default)]
+pub(super) struct Drawing {
     cache: canvas::Cache,
     appearance: Cell<Option<(Kind, Color)>>,
 }
@@ -84,11 +85,11 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
     }
 
     fn state(&self) -> widget::tree::State {
-        widget::tree::State::new(State::default())
+        widget::tree::State::new(Drawing::default())
     }
 
     fn tag(&self) -> widget::tree::Tag {
-        widget::tree::Tag::of::<State>()
+        widget::tree::Tag::of::<Drawing>()
     }
 
     fn layout(
@@ -110,19 +111,36 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
         _cursor: mouse::Cursor,
         viewport: &iced::Rectangle,
     ) {
-        use advanced::Renderer as _;
         if !layout.bounds().intersects(viewport) {
             return;
         }
-        let state = tree.state.downcast_ref::<State>();
-        let appearance = (self.kind, style.text_color);
-        if state.appearance.replace(Some(appearance)) != Some(appearance) {
-            state.cache.clear();
+        tree.state.downcast_ref::<Drawing>().draw(
+            renderer,
+            self.kind,
+            layout.bounds(),
+            style.text_color,
+        );
+    }
+}
+
+impl Drawing {
+    /// Share the cached outline geometry with lightweight in-message controls.
+    pub(super) fn draw(
+        &self,
+        renderer: &mut iced::Renderer,
+        kind: Kind,
+        bounds: iced::Rectangle,
+        color: Color,
+    ) {
+        use advanced::Renderer as _;
+        let appearance = (kind, color);
+        if self.appearance.replace(Some(appearance)) != Some(appearance) {
+            self.cache.clear();
         }
-        let geometry = state.cache.draw(renderer, layout.bounds().size(), |frame| {
-            frame.scale(self.size / 24.0);
+        let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
+            frame.scale(bounds.width / 24.0);
             let stroke = Stroke::default()
-                .with_color(style.text_color)
+                .with_color(color)
                 .with_width(1.8)
                 .with_line_cap(LineCap::Round)
                 .with_line_join(LineJoin::Round);
@@ -136,7 +154,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                 frame.stroke(&path, stroke);
             };
             use Kind::*;
-            match self.kind {
+            match kind {
                 Bell => {
                     line(&[(5.0, 17.0), (6.0, 14.0), (6.0, 9.0)]);
                     line(&[(18.0, 9.0), (18.0, 14.0), (19.0, 17.0), (5.0, 17.0)]);
@@ -225,6 +243,23 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                     line(&[(12.0, 5.0), (12.0, 19.0)]);
                 }
                 Check => line(&[(5.0, 12.0), (10.0, 17.0), (20.0, 7.0)]),
+                Copy => {
+                    line(&[
+                        (15.0, 5.0),
+                        (15.0, 3.0),
+                        (3.0, 3.0),
+                        (3.0, 16.0),
+                        (5.0, 16.0),
+                    ]);
+                    frame.stroke(
+                        &Path::rounded_rectangle(
+                            Point::new(8.0, 8.0),
+                            Size::new(12.0, 13.0),
+                            1.5.into(),
+                        ),
+                        stroke,
+                    );
+                }
                 Save => {
                     line(&[
                         (4.0, 3.0),
@@ -241,7 +276,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                 ZoomIn | ZoomOut => {
                     line(&[(15.0, 15.0), (21.0, 21.0)]);
                     line(&[(7.0, 10.0), (13.0, 10.0)]);
-                    if self.kind == ZoomIn {
+                    if kind == ZoomIn {
                         line(&[(10.0, 7.0), (10.0, 13.0)]);
                     }
                     frame.stroke(&Path::circle(Point::new(10.0, 10.0), 6.5), stroke);
@@ -314,12 +349,12 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                 ChevronUp => line(&[(6.0, 15.0), (12.0, 9.0), (18.0, 15.0)]),
                 ChevronRight => line(&[(9.0, 6.0), (15.0, 12.0), (9.0, 18.0)]),
                 ArrowUp | ArrowDown => {
-                    let (a, b) = if self.kind == ArrowUp {
+                    let (a, b) = if kind == ArrowUp {
                         (5.0, 19.0)
                     } else {
                         (19.0, 5.0)
                     };
-                    let mid = if self.kind == ArrowUp { 11.0 } else { 13.0 };
+                    let mid = if kind == ArrowUp { 11.0 } else { 13.0 };
                     line(&[(6.0, mid), (12.0, a), (18.0, mid)]);
                     line(&[(12.0, a), (12.0, b)]);
                 }
@@ -370,7 +405,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                         (9.0, 3.0),
                     ]);
                     line(&[(12.0, 14.0), (12.0, 21.0)]);
-                    if self.kind == Unpin {
+                    if kind == Unpin {
                         line(&[(3.0, 3.0), (21.0, 21.0)]);
                     }
                 }
@@ -382,8 +417,8 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                         }
                         p.close();
                     });
-                    if self.kind == BookmarkFilled {
-                        frame.fill(&path, style.text_color);
+                    if kind == BookmarkFilled {
+                        frame.fill(&path, color);
                     } else {
                         frame.stroke(&path, stroke);
                     }
@@ -414,11 +449,11 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                     );
                 }
                 Space | SpaceAdd => {
-                    if self.kind == SpaceAdd {
+                    if kind == SpaceAdd {
                         line(&[(18.0, 14.0), (18.0, 22.0)]);
                         line(&[(14.0, 18.0), (22.0, 18.0)]);
                     }
-                    let (center, radius) = if self.kind == SpaceAdd {
+                    let (center, radius) = if kind == SpaceAdd {
                         (10.0, 7.0)
                     } else {
                         (12.0, 9.0)
@@ -439,7 +474,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                 }
                 PersonAdd | PersonRemove => {
                     line(&[(15.0, 17.0), (23.0, 17.0)]);
-                    if self.kind == PersonAdd {
+                    if kind == PersonAdd {
                         line(&[(19.0, 13.0), (19.0, 21.0)]);
                     }
                     frame.stroke(&Path::circle(Point::new(9.0, 7.0), 3.0), stroke);
@@ -460,7 +495,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                     line(&[(8.0, 3.0), (5.0, 21.0)]);
                     line(&[
                         (16.0, 3.0),
-                        if self.kind == RoomAdd {
+                        if kind == RoomAdd {
                             (14.5, 12.0)
                         } else {
                             (13.0, 21.0)
@@ -469,20 +504,20 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                     line(&[(3.0, 9.0), (20.0, 9.0)]);
                     line(&[
                         (2.0, 15.0),
-                        if self.kind == RoomAdd {
+                        if kind == RoomAdd {
                             (10.0, 15.0)
                         } else {
                             (20.0, 15.0)
                         },
                     ]);
-                    if self.kind == RoomAdd {
+                    if kind == RoomAdd {
                         line(&[(17.0, 14.0), (17.0, 22.0)]);
                         line(&[(13.0, 18.0), (21.0, 18.0)]);
                     }
                 }
                 More => {
                     for x in [5.0, 12.0, 19.0] {
-                        frame.fill(&Path::circle(Point::new(x, 12.0), 1.3), style.text_color);
+                        frame.fill(&Path::circle(Point::new(x, 12.0), 1.3), color);
                     }
                 }
                 People => {
@@ -512,13 +547,13 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                 }
                 Smile | AddReaction => {
                     frame.with_save(|frame| {
-                        if self.kind == AddReaction {
+                        if kind == AddReaction {
                             frame.translate(Vector::new(0.0, 4.0));
                             frame.scale(0.75_f32);
                         }
                         frame.stroke(&Path::circle(Point::new(12.0, 12.0), 9.0), stroke);
                         for x in [9.0, 15.0] {
-                            frame.fill(&Path::circle(Point::new(x, 9.0), 0.9), style.text_color);
+                            frame.fill(&Path::circle(Point::new(x, 9.0), 0.9), color);
                         }
                         frame.stroke(
                             &Path::new(|p| {
@@ -531,7 +566,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                             stroke,
                         );
                     });
-                    if self.kind == AddReaction {
+                    if kind == AddReaction {
                         frame.stroke(
                             &Path::line(Point::new(17.0, 4.0), Point::new(23.0, 4.0)),
                             stroke,
@@ -545,7 +580,7 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                 Grip => {
                     for x in [9.0, 15.0] {
                         for y in [6.0, 12.0, 18.0] {
-                            frame.fill(&Path::circle(Point::new(x, y), 1.3), style.text_color);
+                            frame.fill(&Path::circle(Point::new(x, y), 1.3), color);
                         }
                     }
                 }
@@ -585,11 +620,8 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                 }
             }
         });
-        renderer.with_translation(
-            Vector::new(layout.position().x, layout.position().y),
-            |renderer| {
-                renderer.draw_geometry(geometry);
-            },
-        );
+        renderer.with_translation(Vector::new(bounds.x, bounds.y), |renderer| {
+            renderer.draw_geometry(geometry);
+        });
     }
 }

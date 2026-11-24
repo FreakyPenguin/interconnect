@@ -823,6 +823,111 @@ mod tests {
         }
     }
     #[test]
+    fn code_corner_icons_and_message_hover_actions_do_not_overlap_or_reduce_text_width() {
+        let mut message = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        message.formatted = Some(Arc::new(
+            Document::parse(&format!(
+                "<pre><code>{}</code></pre>",
+                "let café = 42;\n".repeat(30)
+            ))
+            .unwrap(),
+        ));
+        let mut element = shell::message_actions(
+            message_view(&message),
+            shell::MessageActions {
+                corner_space: formatted::code_corner_space(message.formatted.as_deref()),
+                reply: Some(Message::Thread("$code".into())),
+                ordinary_reply: Some(Message::Thread("$code".into())),
+                reaction: Some(Message::Thread("$code".into())),
+                edit: Some(Message::Thread("$code".into())),
+                delete: Some(Message::Thread("$code".into())),
+                pin: Some(Message::Thread("$code".into())),
+                bookmark: Some(Message::Thread("$code".into())),
+                ..Default::default()
+            },
+        );
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&element);
+        #[derive(Default)]
+        struct Bounds {
+            reply: Option<Rectangle>,
+            code: Option<Rectangle>,
+            body: Option<Rectangle>,
+            actions: Vec<Rectangle>,
+        }
+        impl widget::Operation for Bounds {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn container(&mut self, id: Option<&widget::Id>, bounds: Rectangle) {
+                if [
+                    "reply-in-thread",
+                    "reply-message",
+                    "add-reaction",
+                    "edit-message",
+                    "delete-message",
+                    "pin-message",
+                    "bookmark-message",
+                ]
+                .iter()
+                .any(|name| id == Some(&widget::Id::new(name)))
+                {
+                    self.actions.push(bounds);
+                }
+                if id == Some(&widget::Id::new("reply-in-thread")) {
+                    self.reply = Some(bounds);
+                }
+            }
+            fn custom(
+                &mut self,
+                _: Option<&widget::Id>,
+                bounds: Rectangle,
+                state: &mut dyn std::any::Any,
+            ) {
+                if let Some(state) = state.downcast_ref::<State>()
+                    && let Some(rich) = &state.rich
+                {
+                    self.body = Some(bounds);
+                    self.code = rich
+                        .code_button(0, formatted::CodeAction::Toggle)
+                        .map(|button| button + (bounds.position() - iced::Point::ORIGIN));
+                }
+            }
+        }
+        for width in [252.0, 360.0, 600.0] {
+            let node = element.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(width, 1000.0)),
+            );
+            let mut bounds = Bounds::default();
+            element
+                .as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+            assert_eq!(bounds.body.unwrap().width, width);
+            assert_eq!(bounds.actions.len(), 7);
+            assert!(
+                bounds
+                    .actions
+                    .iter()
+                    .all(|action| action.x + action.width <= bounds.code.unwrap().x - 2.0)
+            );
+            assert!(
+                bounds.reply.unwrap().x + bounds.reply.unwrap().width
+                    <= bounds.code.unwrap().x - 2.0
+            );
+        }
+    }
+    #[test]
     fn message_text_size_reflows_plain_and_rich_text_without_resetting_selection() {
         use interconnect::settings::MessageTextSize;
         let body = "A longer café 👩🏽‍💻 technical explanation with wrapping text. ".repeat(12);
