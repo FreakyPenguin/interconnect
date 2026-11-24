@@ -122,7 +122,7 @@ impl Paragraph {
         wrapping: text::Wrapping,
         alignment: text::Alignment,
     ) -> Self {
-        if objects.is_empty() {
+        if objects.is_empty() && alignment == text::Alignment::Default {
             return Self::Text(graphics::Paragraph::with_spans(text::Text {
                 content: spans,
                 bounds: Size::new(width, f32::INFINITY),
@@ -161,6 +161,7 @@ impl Paragraph {
             match alignment {
                 text::Alignment::Center => Some(cosmic::Align::Center),
                 text::Alignment::Right => Some(cosmic::Align::Right),
+                text::Alignment::Left => Some(cosmic::Align::Left),
                 _ => None,
             },
         );

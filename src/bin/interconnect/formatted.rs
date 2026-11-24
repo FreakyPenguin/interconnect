@@ -502,6 +502,7 @@ impl State {
                     match cell.map(|cell| cell.alignment) {
                         Some(document::TableAlignment::Center) => text::Alignment::Center,
                         Some(document::TableAlignment::Right) => text::Alignment::Right,
+                        Some(document::TableAlignment::Left) => text::Alignment::Left,
                         _ => text::Alignment::Default,
                     },
                 );
@@ -1394,6 +1395,14 @@ mod tests {
             }
             for cell in &cells {
                 for line in cell.paragraph.buffer().layout_runs() {
+                    if matches!(cell.block.kind, BlockKind::TableCell(metadata) if metadata.alignment == document::TableAlignment::Right)
+                        && let Some(glyph) = line.glyphs.last()
+                    {
+                        assert!(
+                            (glyph.x + glyph.w - cell.bounds.width).abs() < 1.0,
+                            "right alignment must use the full cell width"
+                        );
+                    }
                     for glyph in line.glyphs {
                         let point = cell.bounds.position()
                             + Vector::new(
