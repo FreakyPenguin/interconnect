@@ -12,6 +12,8 @@ import sys
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--events", type=int, nargs="+", default=[500, 2000, 10000])
+    parser.add_argument("--workload", choices=["mixed", "long-text", "many-line-code", "wide-code"], default="mixed",
+                        help="events for mixed; repetitions/lines/columns for individual messages")
     parser.add_argument("--samples", type=int, default=20)
     parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--debug", action="store_true", help="use the unoptimized test profile")
@@ -43,7 +45,8 @@ def main():
         for run in range(args.runs):
             print(f"Measuring {count} events, run {run + 1}/{args.runs}", file=sys.stderr, flush=True)
             env = dict(os.environ, INTERCONNECT_HISTORY_EVENTS=str(count),
-                       INTERCONNECT_HISTORY_SAMPLES=str(args.samples))
+                       INTERCONNECT_HISTORY_SAMPLES=str(args.samples),
+                       INTERCONNECT_HISTORY_WORKLOAD=args.workload)
             result = subprocess.run(command, cwd=root, env=env, text=True,
                                     stdout=subprocess.PIPE, check=False)
             if result.returncode:

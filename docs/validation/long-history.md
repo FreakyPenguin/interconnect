@@ -66,3 +66,20 @@ with history despite a fixed viewport. If growth is material, prototype bounded
 rendering or virtualization and rerun this fixture before adopting it. Preserve
 event-relative anchors, pagination, text selection, replies, thread summaries,
 and read-receipt visibility; add connected/native checks before release.
+
+## Individual enormous messages
+
+Run each workload separately, using `--events` as paragraph repetitions, code
+lines, or repeated wide-line columns respectively:
+
+```sh
+python3 scripts/measure-long-history.py --workload long-text --events 1000 10000
+python3 scripts/measure-long-history.py --workload many-line-code --events 1000 10000
+python3 scripts/measure-long-history.py --workload wide-code --events 1000 10000
+```
+
+These start with exactly one message, report its source byte count and workload
+units, then run the same append, resize, and scroll operations. They expose costs
+that row virtualization cannot bound. Source generation/parsing precedes timing;
+initial layout is timed. Very wide lines and many-line code are separate cases.
+Results describe headless software frames, not native input or GPU acceptance.

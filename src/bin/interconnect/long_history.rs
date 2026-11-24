@@ -57,6 +57,53 @@ fn rows(count: usize) -> Vec<MessageRow> {
     }).collect()
 }
 
+/// Keep single-message workloads separate from mixed-history scaling.
+fn workload(name: &str, count: usize) -> Vec<MessageRow> {
+    if name == "mixed" {
+        return rows(count);
+    }
+    let mut row = rows(1).remove(0);
+    row.body = match name {
+        "long-text" => {
+            "Technical notes: café, 日本語, שלום. Preserve selection and the reading position. "
+                .repeat(count)
+        }
+        "many-line-code" => (0..count)
+            .map(|i| format!("let value_{i} = calculate({i}); // café 👩🏽‍💻\n"))
+            .collect(),
+        "wide-code" => format!("// {}\n", "column_0123456789 ".repeat(count)),
+        _ => panic!("unknown workload: {name}"),
+    };
+    row.formatted = if name == "long-text" {
+        None
+    } else {
+        let mut document = interconnect::message_document::Document::parse(
+            "<pre><code class=\"language-rust\">fixture</code></pre>",
+        )
+        .unwrap();
+        // Synthetic renderer stress deliberately bypasses the incoming HTML byte
+        // limit, so oversized code cannot silently become a plain-text fallback.
+        document.blocks[0].runs[0].content =
+            interconnect::message_document::Inline::Text(row.body.clone());
+        Some(Arc::new(document))
+    };
+    vec![row]
+}
+
+#[test]
+fn individual_message_workloads_are_distinct_and_local() {
+    for name in ["long-text", "many-line-code", "wide-code"] {
+        let rows = workload(name, 1000);
+        assert_eq!(rows.len(), 1);
+        assert!(rows[0].body.len() > 10_000);
+        assert_eq!(rows[0].formatted.is_some(), name != "long-text");
+        assert_eq!(
+            rows[0].body.lines().count(),
+            if name == "many-line-code" { 1000 } else { 1 }
+        );
+    }
+}
+
 struct Frame {
     tree: widget::Tree,
     renderer: iced::Renderer,
@@ -176,6 +223,8 @@ fn measure() {
         .unwrap_or_else(|_| "500".into())
         .parse()
         .unwrap();
+    let workload_name =
+        std::env::var("INTERCONNECT_HISTORY_WORKLOAD").unwrap_or_else(|_| "mixed".into());
     let samples: usize = std::env::var("INTERCONNECT_HISTORY_SAMPLES")
         .unwrap_or_else(|_| "20".into())
         .parse()
@@ -203,7 +252,17 @@ fn measure() {
     let narrow = Size::new(960.0, 800.0);
     frame.render(&app, wide, None);
     let baseline = rss_kib();
-    app.model.room.as_mut().unwrap().rows = Arc::new(rows(count));
+    app.model.room.as_mut().unwrap().rows = Arc::new(workload(&workload_name, count));
+    let initial_rows = app.model.room.as_ref().unwrap().rows.len();
+    let message_bytes: usize = app
+        .model
+        .room
+        .as_ref()
+        .unwrap()
+        .rows
+        .iter()
+        .map(|row| row.body.len())
+        .sum();
     let fixture = rss_kib();
     let started = Instant::now();
     frame.render(&app, wide, None);
@@ -238,7 +297,7 @@ fn measure() {
     let loaded_rows = frame.loaded;
     assert_eq!(
         loaded_rows,
-        count + samples,
+        initial_rows + samples,
         "rendering must retain all loaded events"
     );
     assert!(
@@ -250,7 +309,7 @@ fn measure() {
     println!(
         "LONG_HISTORY {}",
         serde_json::json!({
-            "events": count, "peak_mounted_rows": mounted, "loaded_rows": loaded_rows, "samples": samples, "optimized": !cfg!(debug_assertions),
+            "workload": workload_name, "units": count, "message_bytes": message_bytes, "events": initial_rows, "peak_mounted_rows": mounted, "loaded_rows": loaded_rows, "samples": samples, "optimized": !cfg!(debug_assertions),
             "initial_ms": initial_ms, "append": summarize(append), "resize": summarize(resize), "scroll": summarize(scroll),
             "rss_kib": { "baseline": baseline, "fixture": fixture, "loaded": loaded, "settled": settled, "after_drop": rss_kib() },
         })
