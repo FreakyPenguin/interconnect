@@ -6,12 +6,49 @@ use iced::{
     widget::{button, column, container, progress_bar, row, scrollable, text},
 };
 use interconnect::{connected::MessageRow, polls::Poll};
+use std::collections::{HashMap, HashSet};
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct Sending {
+    account: Option<String>,
+    room: String,
+    event: String,
+}
+#[derive(Default)]
+pub(super) struct State {
+    sends: HashMap<Sending, (u64, bool)>,
+    end: Option<End>,
+    transactions: HashMap<Sending, matrix_sdk::ruma::OwnedTransactionId>,
+    ended: HashSet<Sending>,
+    error: Option<(Option<String>, Target, String)>,
+}
+struct End {
+    target: Target,
+    account: Option<String>,
+    serial: u64,
+}
+impl State {
+    pub(super) fn confirming(&self) -> bool {
+        self.end.is_some()
+    }
+    pub(super) fn dismiss(&mut self) {
+        self.end = None;
+    }
+}
 #[derive(Clone, Debug)]
 pub enum Event {
     ShowVotes(Target),
     CloseVotes,
     Vote(Target, Vec<String>),
-    Sent(Target, Result<(), String>),
+    End(Target),
+    ConfirmEnd(u64),
+    CancelEnd(u64),
+    Sent {
+        target: Target,
+        account: Option<String>,
+        request: u64,
+        result: Result<(), String>,
+    },
 }
 fn voter_label(poll: &Poll, answer: &interconnect::polls::Answer) -> Option<String> {
     poll.disclosed.then(|| {
@@ -79,7 +116,7 @@ fn votes_popup(poll: &Poll) -> Element<'_, Message> {
 
 impl App {
     pub(super) fn poll_view<'a>(
-        &self,
+        &'a self,
         row: &MessageRow,
         poll: &'a Poll,
         thread: bool,
@@ -94,18 +131,22 @@ impl App {
             })
         });
         let enabled = !poll.ended
-            && !self.closing
-            && !self.stopped
-            && self.pending_ops < MAX_PENDING_OPERATIONS
             && target
                 .as_ref()
-                .is_some_and(|t| !self.poll_sends.contains(t));
+                .is_some_and(|target| self.poll_action_ready(target));
         let total: usize = poll.answers.iter().map(|a| a.votes).sum();
         let mut content = column![text(&poll.question).size(14).font(iced::Font {
             weight: iced::font::Weight::Bold,
             ..iced::Font::DEFAULT
         })]
         .spacing(10);
+        if poll.max_selections > 1 && !poll.ended {
+            content = content.push(
+                text(format!("Choose up to {} answers", poll.max_selections))
+                    .size(12)
+                    .style(shell::muted_text),
+            );
+        }
         for answer in &poll.answers {
             let mut answers: Vec<_> = if poll.max_selections > 1 {
                 poll.answers
@@ -244,12 +285,55 @@ impl App {
                 .id("poll-show-votes"),
             );
         }
-        if let Some((_, error)) = self
-            .poll_error
-            .as_ref()
-            .filter(|(t, _)| Some(t) == target.as_ref())
+        if let Some(target) = &target
+            && row.is_own
+            && !poll.ended
         {
-            content = content.push(text(error.clone()).size(12));
+            if let Some(end) = self
+                .poll_actions
+                .end
+                .as_ref()
+                .filter(|end| &end.target == target && end.account == self.account_id)
+            {
+                let serial = end.serial;
+                content = content.push(
+                    column![
+                        text("End this poll? Voting will close and results will be visible.")
+                            .size(12),
+                        row![
+                            button(text("Keep open").size(12))
+                                .style(shell::quiet_button)
+                                .keyboard_navigation(true)
+                                .on_press(Message::Poll(Event::CancelEnd(serial))),
+                            button(text("End poll").size(12))
+                                .style(shell::quiet_button)
+                                .keyboard_navigation(true)
+                                .on_press_maybe(
+                                    enabled.then_some(Message::Poll(Event::ConfirmEnd(serial)))
+                                ),
+                        ]
+                        .spacing(8),
+                    ]
+                    .spacing(8),
+                );
+            } else {
+                let waiting = self.poll_actions.ended.contains(&self.poll_sending(target));
+                content = content.push(
+                    button(text(if waiting { "Ending…" } else { "End poll" }).size(12))
+                        .padding(0)
+                        .style(button::text)
+                        .keyboard_navigation(true)
+                        .on_press_maybe(enabled.then(|| Message::Poll(Event::End(target.clone())))),
+                );
+            }
+        }
+        if let Some((_, _, error)) = self
+            .poll_actions
+            .error
+            .as_ref()
+            .filter(|(account, t, _)| account == &self.account_id && Some(t) == target.as_ref())
+        {
+            content = content.push(text(error).size(12));
         }
         let card = container(content)
             .width(Length::Fill)
@@ -288,6 +372,86 @@ impl App {
         }
     }
 
+    fn poll_sending(&self, target: &Target) -> Sending {
+        Sending {
+            account: self.account_id.clone(),
+            room: target.room.clone(),
+            event: target.event.clone(),
+        }
+    }
+    fn poll_action_ready(&self, target: &Target) -> bool {
+        self.context_menu_allowed()
+            && !self.composing
+            && !self.bookmarks.open
+            && !self.global_search.open
+            && !self.space_settings.is_open()
+            && self.pending_ops < MAX_PENDING_OPERATIONS
+            && self.room_can_compose(&target.room)
+            && self
+                .message_row(target)
+                .and_then(|row| row.poll.as_ref())
+                .is_some_and(|poll| !poll.ended)
+            && !self
+                .poll_actions
+                .sends
+                .contains_key(&self.poll_sending(target))
+            && !self.poll_actions.ended.contains(&self.poll_sending(target))
+    }
+    pub(super) fn validate_poll_actions(&mut self) {
+        if self.poll_actions.end.as_ref().is_some_and(|end| {
+            end.account != self.account_id
+                || !self.context_menu_allowed()
+                || self.bookmarks.open
+                || self.global_search.open
+                || self.space_settings.is_open()
+                || !self.message_row(&end.target).is_some_and(|row| {
+                    row.is_own && row.poll.as_ref().is_some_and(|poll| !poll.ended)
+                })
+        }) {
+            self.poll_actions.end = None;
+        }
+        if self
+            .poll_actions
+            .error
+            .as_ref()
+            .is_some_and(|(account, target, _)| {
+                account != &self.account_id || self.message_row(target).is_none()
+            })
+        {
+            self.poll_actions.error = None;
+        }
+        self.poll_actions
+            .transactions
+            .retain(|sending, _| sending.account == self.account_id);
+        self.poll_actions
+            .ended
+            .retain(|sending| sending.account == self.account_id);
+        // A synchronized end supersedes the temporary success guard and retry ID.
+        if let Some((generation, room)) = &self.selection.room {
+            let room_pane = super::current_pane(&self.model.room, *generation);
+            let thread_pane =
+                self.selection.thread.as_ref().and_then(|(generation, _)| {
+                    super::current_pane(&self.model.thread, *generation)
+                });
+            for row in room_pane
+                .into_iter()
+                .chain(thread_pane)
+                .flat_map(|pane| pane.rows.iter())
+            {
+                if row.poll.as_ref().is_some_and(|poll| poll.ended)
+                    && let Some(event) = &row.event_id
+                {
+                    let sending = Sending {
+                        account: self.account_id.clone(),
+                        room: room.clone(),
+                        event: event.clone(),
+                    };
+                    self.poll_actions.ended.remove(&sending);
+                    self.poll_actions.transactions.remove(&sending);
+                }
+            }
+        }
+    }
     pub(super) fn poll_event(&mut self, event: Event) -> Task<Message> {
         match event {
             Event::CloseVotes => {
@@ -295,12 +459,9 @@ impl App {
                 Task::none()
             }
             Event::ShowVotes(target) => {
-                if !self.closing
-                    && !self.stopped
-                    && self.settings.draft.is_none()
-                    && self.image_view.is_none()
-                    && self.composer_picker.is_none()
-                    && self.reaction_picker.is_none()
+                if self.context_menu_allowed()
+                    && !self.bookmarks.open
+                    && !self.global_search.open
                     && self
                         .message_row(&target)
                         .and_then(|row| row.poll.as_ref())
@@ -310,20 +471,83 @@ impl App {
                 }
                 Task::none()
             }
-
+            Event::End(target) => {
+                if self.poll_action_ready(&target)
+                    && self.message_row(&target).is_some_and(|row| row.is_own)
+                {
+                    self.generation += 1;
+                    self.poll_actions.end = Some(End {
+                        target,
+                        account: self.account_id.clone(),
+                        serial: self.generation,
+                    });
+                    self.poll_votes = None;
+                }
+                Task::none()
+            }
+            Event::CancelEnd(serial) => {
+                if self
+                    .poll_actions
+                    .end
+                    .as_ref()
+                    .is_some_and(|end| end.serial == serial)
+                {
+                    self.poll_actions.end = None;
+                }
+                Task::none()
+            }
+            Event::ConfirmEnd(serial) => {
+                let Some(end) = self
+                    .poll_actions
+                    .end
+                    .as_ref()
+                    .filter(|end| end.serial == serial && end.account == self.account_id)
+                else {
+                    return Task::none();
+                };
+                let target = end.target.clone();
+                if !self.poll_action_ready(&target)
+                    || !self.message_row(&target).is_some_and(|row| row.is_own)
+                {
+                    return Task::none();
+                }
+                if let Some(demo) = &mut self.demo {
+                    demo.end_poll(&target.room, &target.event);
+                    self.poll_actions.end = None;
+                    self.poll_actions.error = None;
+                    self.refresh_demo();
+                    return Task::none();
+                }
+                let Some(composer) = self.reaction_composer(&target) else {
+                    return Task::none();
+                };
+                let sending = self.poll_sending(&target);
+                let transaction = self
+                    .poll_actions
+                    .transactions
+                    .entry(sending)
+                    .or_insert_with(matrix_sdk::ruma::TransactionId::new)
+                    .clone();
+                let request = self.start_poll_send(&target, true);
+                let account = self.account_id.clone();
+                Task::perform(
+                    composer.end_poll(target.event.clone(), transaction),
+                    move |result| {
+                        Message::Poll(Event::Sent {
+                            target: target.clone(),
+                            account: account.clone(),
+                            request,
+                            result,
+                        })
+                    },
+                )
+            }
             Event::Vote(target, answers) => {
-                if self.closing
-                    || self.stopped
-                    || self.pending_ops >= MAX_PENDING_OPERATIONS
-                    || self.settings.draft.is_some()
-                    || self.image_view.is_some()
-                    || self.composer_picker.is_some()
-                    || self.reaction_picker.is_some()
-                    || self.poll_sends.contains(&target)
+                if !self.poll_action_ready(&target)
                     || !self
                         .message_row(&target)
-                        .and_then(|r| r.poll.as_ref())
-                        .is_some_and(|p| p.validate_vote(&answers).is_ok())
+                        .and_then(|row| row.poll.as_ref())
+                        .is_some_and(|poll| poll.validate_vote(&answers).is_ok())
                 {
                     return Task::none();
                 }
@@ -335,26 +559,68 @@ impl App {
                 let Some(composer) = self.reaction_composer(&target) else {
                     return Task::none();
                 };
-                self.poll_sends.insert(target.clone());
-                self.poll_error = None;
-                self.pending_ops += 1;
+                let request = self.start_poll_send(&target, false);
+                let account = self.account_id.clone();
                 Task::perform(
                     composer.vote_poll(target.event.clone(), answers),
-                    move |result| Message::Poll(Event::Sent(target.clone(), result)),
+                    move |result| {
+                        Message::Poll(Event::Sent {
+                            target: target.clone(),
+                            account: account.clone(),
+                            request,
+                            result,
+                        })
+                    },
                 )
             }
-            Event::Sent(target, result) => {
-                if self.poll_sends.remove(&target) {
-                    self.pending_ops -= 1;
-                    if self.message_row(&target).is_some()
-                        && let Err(error) = result
-                    {
-                        self.poll_error = Some((target, error));
+            Event::Sent {
+                target,
+                account,
+                request,
+                result,
+            } => {
+                let sending = Sending {
+                    account: account.clone(),
+                    room: target.room.clone(),
+                    event: target.event.clone(),
+                };
+                let Some((current, end)) = self.poll_actions.sends.get(&sending).copied() else {
+                    return Task::none();
+                };
+                if current != request {
+                    return Task::none();
+                }
+                self.poll_actions.sends.remove(&sending);
+                self.pending_ops -= 1;
+                if account == self.account_id {
+                    match result {
+                        Ok(()) if end => {
+                            self.poll_actions.ended.insert(sending);
+                            if self.poll_actions.end.as_ref().is_some_and(|end| {
+                                end.target.room == target.room && end.target.event == target.event
+                            }) {
+                                self.poll_actions.end = None;
+                            }
+                        }
+                        Err(error) if self.message_row(&target).is_some() => {
+                            self.poll_actions.error = Some((account, target, error))
+                        }
+                        _ => {}
                     }
                 }
                 Task::none()
             }
         }
+    }
+    fn start_poll_send(&mut self, target: &Target, end: bool) -> u64 {
+        self.generation += 1;
+        let request = self.generation;
+        self.poll_actions
+            .sends
+            .insert(self.poll_sending(target), (request, end));
+        self.poll_actions.error = None;
+        self.pending_ops += 1;
+        request
     }
 }
 
@@ -528,5 +794,248 @@ mod layout_tests {
             }
         }
         assert!(heights[0] < heights[1] && heights[1] < heights[2]);
+    }
+}
+
+#[cfg(test)]
+mod ending_tests {
+    use super::*;
+    use crate::tests::demo_app;
+
+    fn poll() -> (App, Target) {
+        let mut app = demo_app();
+        let key = app.draft_key(false).unwrap();
+        let creation = interconnect::polls::Creation {
+            question: "Lunch?".into(),
+            answers: vec!["Soup".into(), "Salad".into()],
+            max_selections: 2,
+            hidden_results: true,
+        };
+        app.demo
+            .as_mut()
+            .unwrap()
+            .send_poll(&key, "Lunch?".into(), creation.to_content().unwrap());
+        app.refresh_demo();
+        let target = Target {
+            room: key.room,
+            thread: false,
+            generation: app.selection.room.as_ref().unwrap().0,
+            event: app
+                .model
+                .room
+                .as_ref()
+                .unwrap()
+                .rows
+                .last()
+                .unwrap()
+                .event_id
+                .clone()
+                .unwrap(),
+        };
+        (app, target)
+    }
+    fn serial(app: &App) -> u64 {
+        app.poll_actions.end.as_ref().unwrap().serial
+    }
+    #[test]
+    fn own_hidden_poll_ends_only_after_confirmation_and_reveals_votes_in_both_views() {
+        let (mut app, target) = poll();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Keep this draft");
+        app.scroll_positions.insert(key.clone(), 80.0);
+        let _ = app.update(Message::Poll(Event::Vote(
+            target.clone(),
+            vec!["0".into(), "1".into()],
+        )));
+        let poll = app.message_row(&target).unwrap().poll.as_ref().unwrap();
+        assert!(
+            poll.answers
+                .iter()
+                .all(|answer| answer.selected && answer.votes == 0 && answer.voters.is_empty())
+        );
+        let _ = app.update(Message::Poll(Event::End(target.clone())));
+        assert!(
+            !app.message_row(&target)
+                .unwrap()
+                .poll
+                .as_ref()
+                .unwrap()
+                .ended
+        );
+        let cancelled = serial(&app);
+        let _ = app.update(Message::Escape);
+        let _ = app.update(Message::Poll(Event::ConfirmEnd(cancelled)));
+        assert!(
+            !app.message_row(&target)
+                .unwrap()
+                .poll
+                .as_ref()
+                .unwrap()
+                .ended
+        );
+        let _ = app.update(Message::Thread(target.event.clone()));
+        let thread_target = Target {
+            thread: true,
+            generation: app.selection.thread.as_ref().unwrap().0,
+            ..target.clone()
+        };
+        let _ = app.update(Message::Poll(Event::End(thread_target.clone())));
+        let confirm = serial(&app);
+        let _ = app.update(Message::Poll(Event::ConfirmEnd(confirm)));
+        for target in [&target, &thread_target] {
+            let poll = app.message_row(target).unwrap().poll.as_ref().unwrap();
+            assert!(poll.ended && poll.disclosed);
+            assert!(
+                poll.answers
+                    .iter()
+                    .all(|answer| answer.votes == 1 && answer.voters.len() == 1)
+            );
+            assert!(
+                voter_label(poll, &poll.answers[0])
+                    .unwrap()
+                    .contains("Jamie")
+            );
+            assert!(!app.poll_action_ready(target));
+        }
+        assert!(!app.poll_actions.confirming());
+        let _ = app.update(Message::Poll(Event::Vote(target.clone(), vec!["0".into()])));
+        assert_eq!(
+            app.message_row(&target)
+                .unwrap()
+                .poll
+                .as_ref()
+                .unwrap()
+                .answers[1]
+                .votes,
+            1
+        );
+        assert_eq!(app.drafts[&key].content.text(), "Keep this draft");
+        assert_eq!(app.scroll_positions[&key], 80.0);
+        assert_eq!(app.pending_ops, 0);
+    }
+    #[test]
+    fn ending_rejects_non_owners_stale_confirmations_and_unavailable_polls() {
+        let (mut app, target) = poll();
+        std::sync::Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows)
+            .last_mut()
+            .unwrap()
+            .is_own = false;
+        let _ = app.update(Message::Poll(Event::End(target.clone())));
+        assert!(!app.poll_actions.confirming());
+        app.refresh_demo();
+        let _ = app.update(Message::Poll(Event::End(target.clone())));
+        let old = serial(&app);
+        let _ = app.update(Message::Poll(Event::CancelEnd(old)));
+        let _ = app.update(Message::Poll(Event::End(target.clone())));
+        let _ = app.update(Message::Poll(Event::ConfirmEnd(old)));
+        assert!(
+            !app.message_row(&target)
+                .unwrap()
+                .poll
+                .as_ref()
+                .unwrap()
+                .ended
+        );
+        std::sync::Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows)
+            .last_mut()
+            .unwrap()
+            .poll = None;
+        app.validate_poll_actions();
+        assert!(!app.poll_actions.confirming());
+        let _ = app.update(Message::Poll(Event::ConfirmEnd(old)));
+    }
+    #[test]
+    fn pending_actions_are_shared_between_panes_and_completions_drain_once() {
+        let (mut app, target) = poll();
+        let _ = app.update(Message::Thread(target.event.clone()));
+        let thread = Target {
+            thread: true,
+            generation: app.selection.thread.as_ref().unwrap().0,
+            ..target.clone()
+        };
+        let request = app.start_poll_send(&target, true);
+        assert!(!app.poll_action_ready(&thread));
+        let _ = app.update(Message::Poll(Event::Vote(thread.clone(), vec!["0".into()])));
+        assert!(
+            app.message_row(&target)
+                .unwrap()
+                .poll
+                .as_ref()
+                .unwrap()
+                .answers
+                .iter()
+                .all(|answer| !answer.selected)
+        );
+        let account = app.account_id.clone();
+        let _ = app.update(Message::Poll(Event::Sent {
+            target: target.clone(),
+            account: account.clone(),
+            request: request + 1,
+            result: Ok(()),
+        }));
+        assert_eq!(app.pending_ops, 1);
+        let _ = app.update(Message::Poll(Event::Sent {
+            target: target.clone(),
+            account: account.clone(),
+            request,
+            result: Err("Offline".into()),
+        }));
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.poll_actions.error.is_some());
+        assert!(app.poll_action_ready(&thread));
+        let request = app.start_poll_send(&target, true);
+        let _ = app.update(Message::Poll(Event::Sent {
+            target: target.clone(),
+            account: account.clone(),
+            request,
+            result: Ok(()),
+        }));
+        let _ = app.update(Message::Poll(Event::Sent {
+            target: target.clone(),
+            account,
+            request,
+            result: Ok(()),
+        }));
+        assert_eq!(app.pending_ops, 0);
+        assert!(!app.poll_action_ready(&thread));
+        assert!(
+            !app.message_row(&target)
+                .unwrap()
+                .poll
+                .as_ref()
+                .unwrap()
+                .ended,
+            "sync remains authoritative"
+        );
+    }
+    #[test]
+    fn navigated_or_other_account_completions_never_publish_errors_into_current_polls() {
+        let (mut app, target) = poll();
+        let _ = app.update(Message::Poll(Event::End(target.clone())));
+        let confirm = serial(&app);
+        let request = app.start_poll_send(&target, false);
+        let account = app.account_id.clone();
+        let _ = app.update(Message::Room("general".into()));
+        assert!(!app.poll_actions.confirming());
+        let _ = app.update(Message::Poll(Event::ConfirmEnd(confirm)));
+        let _ = app.update(Message::Poll(Event::Sent {
+            target: target.clone(),
+            account: account.clone(),
+            request,
+            result: Err("stale".into()),
+        }));
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.poll_actions.error.is_none());
+        let request = app.start_poll_send(&target, true);
+        app.account_id = Some("other account".into());
+        let _ = app.update(Message::Poll(Event::Sent {
+            target,
+            account,
+            request,
+            result: Err("stale account".into()),
+        }));
+        assert_eq!(app.pending_ops, 0);
+        assert!(app.poll_actions.error.is_none());
     }
 }

@@ -24,6 +24,8 @@ mod editing;
 mod editing_tests;
 mod key_prefetch;
 #[cfg(test)]
+mod polls_tests;
+#[cfg(test)]
 mod replies_tests;
 pub mod room_settings;
 pub use editing::EditSource;
@@ -264,6 +266,61 @@ impl Composer {
         drop(items);
         tokio::time::timeout(std::time::Duration::from_secs(30), self.0.room().send(matrix_sdk::ruma::events::poll::unstable_response::UnstablePollResponseEventContent::new(answers, event_id))).await.map_err(|_| "Voting timed out".to_owned())?.map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    /// Ending is author-only and uses a captured transaction for explicit retries.
+    pub async fn end_poll(
+        self,
+        event: String,
+        transaction: matrix_sdk::ruma::OwnedTransactionId,
+    ) -> Result<(), String> {
+        let end = async {
+            self.check_active_room()?;
+            let event =
+                matrix_sdk::ruma::EventId::parse(event).map_err(|error| error.to_string())?;
+            let room = self.0.room();
+            let levels = room
+                .power_levels()
+                .await
+                .map_err(|error| error.to_string())?;
+            if room.state() != matrix_sdk::RoomState::Joined
+                || !levels.user_can_send_message(
+                    room.own_user_id(),
+                    matrix_sdk::ruma::events::MessageLikeEventType::UnstablePollEnd,
+                )
+            {
+                return Err("You no longer have permission to end polls in this room.".into());
+            }
+            let item = self
+                .0
+                .item_by_event_id(&event)
+                .await
+                .ok_or("Poll is no longer available")?;
+            if !item.is_own() {
+                return Err("You can only end your own polls.".into());
+            }
+            let poll = crate::polls::Poll::from_content(item.content(), room.own_user_id())
+                .ok_or("Poll is no longer available")?;
+            if poll.ended {
+                return Ok(());
+            }
+            room.send(
+                matrix_sdk::ruma::events::poll::unstable_end::UnstablePollEndEventContent::new(
+                    "Poll ended",
+                    event,
+                ),
+            )
+            .with_transaction_id(transaction)
+            .await
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+        };
+        tokio::time::timeout(Duration::from_secs(30), end)
+            .await
+            .map_err(|_| {
+                "Ending the poll timed out and may have succeeded. Check the poll before retrying."
+                    .to_owned()
+            })?
     }
 
     fn check_active_room(&self) -> Result<(), String> {

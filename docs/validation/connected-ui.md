@@ -798,6 +798,26 @@ four creation modes, form close/reopen/restart, ordinary draft and scroll
 preservation, keyboard/Escape behavior, denied/offline sends, and cross-client
 rendering/voting with a dedicated account.
 
+Own open polls offer **End poll** in the room and thread-root cards. Opening the
+inline confirmation sends nothing; **Keep open** or Escape cancels it. Confirming
+sends an author-only end event against the captured account/room/event, rechecking
+membership, event permission, and current poll content. Voting and ending share a
+pending guard across both panes. Failures preserve retry, including the same end
+transaction ID after an uncertain response. Successful requests disable further
+actions until the SDK timeline supplies the end; undisclosed counts, bars, and
+voter names appear only after that snapshot. Navigation, account changes,
+redaction, remote ending, and covering dialogs invalidate old confirmations.
+Already-submitted writes may finish after navigation; stale completions must not
+publish into the current conversation. Demo ending is local and reveals its
+in-memory votes.
+
+Focused mock-server tests cover creation payloads for all four modes, invalid
+creation, author/content/permission checks, a denied end followed by explicit
+retry with the same transaction, and hidden multi-choice votes becoming visible
+on the synchronized end event. Demo UI tests cover cancellation, stale controls,
+room/thread pending guards, draft/scroll preservation, and stale/duplicate
+completions. These fixtures do not establish live-server interoperability.
+
 Local validation for this implementation: locked workspace tests, Clippy with
 warnings denied, formatting check, and the desktop binary build passed. Poll
 fixtures cover structured answers versus fallback text, undisclosed presentation

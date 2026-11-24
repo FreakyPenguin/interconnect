@@ -925,6 +925,26 @@ impl Demo {
             }
         }
     }
+    pub fn end_poll(&mut self, room: &str, event: &str) {
+        let votes = self.hidden_poll_votes.remove(&(room.into(), event.into()));
+        for (key, rows) in &mut self.conversations {
+            if key.room != room {
+                continue;
+            }
+            for row in rows
+                .iter_mut()
+                .filter(|row| row.is_own && row.event_id.as_deref() == Some(event))
+            {
+                if let Some(poll) = &mut row.poll {
+                    if let Some(votes) = &votes {
+                        poll.answers = votes.clone();
+                    }
+                    poll.ended = true;
+                    poll.disclosed = true;
+                }
+            }
+        }
+    }
     pub fn send_poll(
         &mut self,
         key: &DraftKey,

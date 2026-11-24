@@ -272,8 +272,7 @@ struct App {
     downloads: downloads::State,
     poll_creation: poll_create::State,
     poll_votes: Option<reaction_picker::Target>,
-    poll_sends: HashSet<reaction_picker::Target>,
-    poll_error: Option<(reaction_picker::Target, String)>,
+    poll_actions: poll_view::State,
     reaction_picker: Option<reaction_picker::State>,
     reaction_sends: HashSet<reaction_picker::Sending>,
     reaction_error: Option<(reaction_picker::Target, String)>,
@@ -519,8 +518,7 @@ impl App {
             downloads: downloads::State::default(),
             poll_creation: poll_create::State::default(),
             poll_votes: None,
-            poll_sends: HashSet::new(),
-            poll_error: None,
+            poll_actions: poll_view::State::default(),
             reaction_picker: None,
             reaction_sends: HashSet::new(),
             reaction_error: None,
@@ -661,6 +659,7 @@ impl App {
         if outermost {
             // Early dialog handlers also invalidate covered inline confirmations.
             self.validate_poll_creation();
+            self.validate_poll_actions();
             self.validate_queued_send();
             self.validate_devices();
             task = Task::batch([task, self.refresh_message_highlights()]);
@@ -803,6 +802,13 @@ impl App {
         ])
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
+        if let Message::Poll(event) = message {
+            let task = self.poll_event(event);
+            if self.closing && self.pending_ops == 0 {
+                return task.chain(self.update(Message::Close));
+            }
+            return task;
+        }
         if let Message::PollCreate(event) = message {
             let task = self.poll_create_event(event);
             if self.closing && self.pending_ops == 0 {
@@ -1293,6 +1299,10 @@ impl App {
         ) {
             self.emoji_completion.clear();
             self.user_completion.clear();
+        }
+        if matches!(message, Message::Escape) && self.poll_actions.confirming() {
+            self.poll_actions.dismiss();
+            return Task::none();
         }
         if matches!(message, Message::Escape) && self.poll_votes.is_some() {
             self.poll_votes = None;
