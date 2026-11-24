@@ -62,6 +62,9 @@ impl Fixture {
         let client = Client::builder()
             .homeserver_url(server.uri())
             .request_config(matrix_sdk::config::RequestConfig::default().disable_retry())
+            .with_threading_support(matrix_sdk::ThreadingSupport::Enabled {
+                with_subscriptions: false,
+            })
             .build()
             .await
             .unwrap();
@@ -158,6 +161,7 @@ async fn creation_sends_all_modes_and_rejects_invalid_content_before_network_wri
     let mut invalid = creation(false, 1);
     invalid.answers[1] = "soup".into();
     assert!(fixture.composer().create_poll(invalid).await.is_err());
+    wait_sends(&fixture.server, 4).await;
     let requests = fixture.server.received_requests().await.unwrap();
     let bodies: Vec<Value> = requests
         .iter()
@@ -335,5 +339,109 @@ async fn ending_rechecks_permissions_and_redactions_without_sending() {
             .unwrap()
             .iter()
             .all(|request| request.method != "PUT")
+    );
+}
+
+async fn wait_sends(server: &MockServer, count: usize) -> Vec<wiremock::Request> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let sends: Vec<_> = server
+                .received_requests()
+                .await
+                .unwrap()
+                .into_iter()
+                .filter(|request| {
+                    request
+                        .url
+                        .path()
+                        .contains("/send/org.matrix.msc3381.poll.start/")
+                })
+                .collect();
+            if sends.len() >= count {
+                return sends;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn thread_creation_form_and_template_use_the_captured_sdk_thread_relation() {
+    let fixture = Fixture::new().await;
+    let mut root = event(
+        "m.room.message",
+        "$text",
+        "@test:example.org",
+        10,
+        json!({"msgtype":"m.text","body":"ordinary message"}),
+    );
+    root["room_id"] = json!("!room:example.org");
+    Mock::given(method("GET"))
+        .and(path_regex(".*/event/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(root))
+        .mount(&fixture.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(".*/relations/.*"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"chunk":[]})))
+        .mount(&fixture.server)
+        .await;
+    let count = std::sync::atomic::AtomicUsize::new(0);
+    Mock::given(method("PUT")).and(path_regex(".*/send/org.matrix.msc3381.poll.start/.*"))
+        .respond_with(move |_: &wiremock::Request| ResponseTemplate::new(200).set_body_json(json!({"event_id":format!("$thread-poll-{}",count.fetch_add(1,std::sync::atomic::Ordering::SeqCst))})))
+        .expect(5).mount(&fixture.server).await;
+    let timeline = Arc::new(
+        TimelineBuilder::new(fixture.timeline.room())
+            .with_focus(TimelineFocus::Thread {
+                root_event_id: "$text".parse().unwrap(),
+            })
+            .build()
+            .await
+            .unwrap(),
+    );
+    for hidden in [false, true] {
+        for limit in [1, 2] {
+            Composer(RuntimeOwned::new(timeline.clone()))
+                .create_poll(creation(hidden, limit))
+                .await
+                .unwrap();
+        }
+    }
+    Composer(RuntimeOwned::new(timeline.clone()))
+        .send("/poll Dessert?\nCake\nFruit".into())
+        .await
+        .unwrap();
+    let requests = wait_sends(&fixture.server, 5).await;
+    for (request, (hidden, limit)) in
+        requests
+            .iter()
+            .zip([(false, 1), (false, 2), (true, 1), (true, 2), (false, 1)])
+    {
+        let content: Value = request.body_json().unwrap();
+        let relation = &content["m.relates_to"];
+        assert_eq!(relation["rel_type"], "m.thread");
+        assert_eq!(relation["event_id"], "$text");
+        assert_eq!(relation["is_falling_back"], true);
+        assert_eq!(
+            content["org.matrix.msc3381.poll.start"]["max_selections"],
+            limit
+        );
+        assert_eq!(
+            content["org.matrix.msc3381.poll.start"]["kind"],
+            if hidden {
+                "org.matrix.msc3381.poll.undisclosed"
+            } else {
+                "org.matrix.msc3381.poll.disclosed"
+            }
+        );
+    }
+    let rows = timeline_rows(&timeline).await;
+    assert_eq!(
+        rows.iter()
+            .filter(|row| row.poll.is_some() && row.thread_root.as_deref() == Some("$text"))
+            .count(),
+        5
     );
 }

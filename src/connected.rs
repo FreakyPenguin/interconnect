@@ -236,17 +236,24 @@ impl std::fmt::Debug for Composer {
 }
 impl Composer {
     pub async fn create_poll(self, creation: crate::polls::Creation) -> Result<(), String> {
+        self.queue_poll(creation.to_content()?).await
+    }
+
+    async fn queue_poll(
+        self,
+        content: matrix_sdk::ruma::events::poll::unstable_start::NewUnstablePollStartEventContent,
+    ) -> Result<(), String> {
         self.check_active_room()?;
-        if self.0.is_threaded() {
-            return Err("Create polls in the room.".into());
-        }
-        let content = creation.to_content()?;
+        let content =
+            matrix_sdk::ruma::events::poll::unstable_start::UnstablePollStartEventContent::New(
+                content,
+            );
         tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            self.0.room().send(content),
+            Duration::from_secs(30),
+            Box::pin(self.0.send(content.into())),
         )
         .await
-        .map_err(|_| "Creating poll timed out; check the room before retrying.".to_owned())?
+        .map_err(|_| "Queueing poll timed out; check the conversation before retrying.".to_owned())?
         .map_err(|error| error.to_string())?;
         Ok(())
     }
@@ -707,14 +714,10 @@ impl Composer {
     ) -> Result<(), String> {
         self.check_active_room()?;
         if let Some(poll) = crate::polls::compose(&body)? {
-            if reply.is_some() || self.0.is_threaded() {
-                return Err("Create polls in the room without a reply target.".into());
+            if reply.is_some() {
+                return Err("Create polls without an explicit reply target.".into());
             }
-            tokio::time::timeout(std::time::Duration::from_secs(30), self.0.room().send(poll))
-                .await
-                .map_err(|_| "Creating poll timed out".to_owned())?
-                .map_err(|e| e.to_string())?;
-            return Ok(());
+            return self.queue_poll(poll).await;
         }
         let reply = parse_reply(reply)?;
         let prepared = crate::composition::prepare_with_bindings(body, format, bindings).await?;

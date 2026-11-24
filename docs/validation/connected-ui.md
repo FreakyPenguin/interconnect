@@ -780,16 +780,19 @@ votes disable controls and failures allow retry. Confirm updates from another
 client, hidden counts, permission failures, and navigation during a vote manually.
 
 The composer’s poll chart icon, immediately after the emoji button, has a
-**Create poll** tooltip and opens a room poll form with question/answer fields,
+**Create poll** tooltip and opens a poll form for that room or thread, with
+question/answer fields,
 icon controls with **Add answer**, **Remove answer**, **Close**, and **Create poll**
 tooltips, **Allow multiple answers** and an explicit selection
 limit, and **Hide results until the poll ends**. Defaults are disclosed and
 single-choice. Creation requires 2–20 distinct, nonempty answers. Closing retains
-the unfinished form per room; its values and settings survive restart in the
-existing encrypted draft store, independently of ordinary message text, replies,
-and attachments. Successful form creation clears only the poll draft. Failures
-retain its values; a timed-out request may have succeeded, so check the room
-before retrying.
+the unfinished form per conversation; its values and settings survive restart
+in the existing encrypted draft store, independently of ordinary message text,
+replies, and attachments. Successful queue admission clears only the poll draft.
+Admission failures retain
+its values. SDK timeline local echoes show queued/offline sends and their
+Retry/Cancel controls, as with regular messages; check the conversation before
+retrying an uncertain admission timeout.
 
 Each answer has a drag grip. Drag it to the insertion marker and release to move
 the answer; clicking alone or dropping outside the visible answer list leaves
@@ -800,10 +803,10 @@ focused, **Alt+↑/↓** moves that answer one position. Editor focus/selection 
 the answer, and the reordered list is retained in the encrypted draft and used
 in the sent poll. Reordering preserves the selection limit and disclosure mode.
 
-**Insert text template** remains available from the form for an empty room draft.
+**Insert text template** remains available for an empty room or thread draft.
 Edit `/poll Question?`, put each answer on a following line, then use Send. This
-quick path creates disclosed single-choice polls. Reply targets, attachments, and
-thread creation are rejected with the text draft retained. Both entry paths and
+quick path creates disclosed single-choice polls. Explicit reply targets and
+attachments are rejected with the text draft retained. Both entry paths and
 voting stay in memory in demo, without saved-account or network access. Check all
 four creation modes, form close/reopen/restart, ordinary draft and scroll
 preservation, keyboard/Escape behavior, denied/offline sends, and cross-client
@@ -823,14 +826,15 @@ publish into the current conversation. Demo ending is local and reveals its
 in-memory votes.
 
 Focused mock-server tests cover creation payloads for all four modes, invalid
-creation, author/content/permission checks, a denied end followed by explicit
+creation, room/thread form and template routing (including exact thread relation
+payloads), independent persistent thread drafts, author/content/permission checks, a denied end followed by explicit
 retry with the same transaction, and hidden multi-choice votes becoming visible
 on the synchronized end event. Demo UI tests cover cancellation, stale controls,
 room/thread pending guards, draft/scroll preservation, and stale/duplicate
 completions. These fixtures do not establish live-server interoperability.
 
 Local validation for the completed workflow: locked workspace tests passed,
-followed by the final UI suite (686 passed, one opt-in test ignored), Clippy with
+followed by the final UI suite (687 passed, one opt-in test ignored), Clippy with
 warnings denied, formatting check, and desktop binary build. The poll form fixture
 checks Tab confinement, inclusion of both checkboxes and the selection-limit
 control, and no caret redraw deadline in Light/Dark at 640×480.

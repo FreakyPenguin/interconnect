@@ -57,6 +57,13 @@ pub enum Event {
 fn message(event: Event) -> Message {
     Message::PollCreate(event)
 }
+fn focus(key: &DraftKey) -> Task<Message> {
+    iced::widget::operation::focus(if key.root.is_some() {
+        "thread-composer"
+    } else {
+        "room-composer"
+    })
+}
 impl App {
     pub(super) fn poll_creation_open(&self) -> bool {
         self.poll_creation.form.is_some()
@@ -71,7 +78,14 @@ impl App {
         let form = self.poll_creation.form.as_ref()?;
         (form.serial == serial
             && form.account == self.account_id
-            && self.selection.room.as_ref() == Some(&(form.generation, form.key.room.clone()))
+            && self.draft_key(form.key.root.is_some()).as_ref() == Some(&form.key)
+            && (if form.key.root.is_some() {
+                &self.selection.thread
+            } else {
+                &self.selection.room
+            })
+            .as_ref()
+            .is_some_and(|(generation, _)| *generation == form.generation)
             && self.room_can_compose(&form.key.room)
             && !self.closing
             && !self.stopped
@@ -132,8 +146,7 @@ impl App {
             if !self.context_menu_allowed()
                 || self.bookmarks.open
                 || self.global_search.open
-                || key.root.is_some()
-                || self.draft_key(false).as_ref() != Some(&key)
+                || self.draft_key(key.root.is_some()).as_ref() != Some(&key)
                 || !self.room_can_compose(&key.room)
                 || self
                     .drafts
@@ -152,7 +165,11 @@ impl App {
             self.poll_creation.form = Some(Form {
                 serial: self.generation,
                 account: self.account_id.clone(),
-                generation: self.selection.room.as_ref().unwrap().0,
+                generation: if key.root.is_some() {
+                    self.selection.thread.as_ref().unwrap().0
+                } else {
+                    self.selection.room.as_ref().unwrap().0
+                },
                 key,
                 revision: 0,
                 answer_ids: (0..answer_count).collect(),
@@ -186,8 +203,8 @@ impl App {
                 .as_ref()
                 .is_some_and(|form| form.serial == serial)
             {
-                self.poll_creation.form = None;
-                return iced::widget::operation::focus("room-composer");
+                let key = self.poll_creation.form.take().unwrap().key;
+                return focus(&key);
             }
             return Task::none();
         }
@@ -215,11 +232,22 @@ impl App {
                 self.drafts.get_mut(&key).unwrap().poll_error = None;
                 self.poll_creation.form = None;
                 self.refresh_demo();
-                return iced::widget::operation::focus("room-composer");
+                return focus(&key);
             }
-            let Some(composer) =
-                current_pane(&self.model.room, self.selection.room.as_ref().unwrap().0)
-                    .and_then(|pane| pane.composer.clone())
+            let selected = if key.root.is_some() {
+                &self.selection.thread
+            } else {
+                &self.selection.room
+            };
+            let pane = if key.root.is_some() {
+                &self.model.thread
+            } else {
+                &self.model.room
+            };
+            let Some(composer) = selected
+                .as_ref()
+                .and_then(|(generation, _)| current_pane(pane, *generation))
+                .and_then(|pane| pane.composer.clone())
             else {
                 return Task::none();
             };
@@ -517,6 +545,77 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn thread_poll_forms_and_templates_preserve_separate_room_and_thread_drafts() {
+        for hidden in [false, true] {
+            for multiple in [false, true] {
+                let mut app = demo_app();
+                let room = app.draft_key(false).unwrap();
+                app.drafts.get_mut(&room).unwrap().content =
+                    iced::widget::text_editor::Content::with_text("Room draft");
+                let _ = app.update(Message::Thread("review".into()));
+                let key = app.draft_key(true).unwrap();
+                app.drafts.get_mut(&key).unwrap().content =
+                    iced::widget::text_editor::Content::with_text("Thread draft");
+                let selected = app.selection.thread.clone();
+                let _ = app.update(message(Event::Open(key.clone())));
+                let serial = app.poll_creation.form.as_ref().unwrap().serial;
+                fill(&mut app, serial);
+                let _ = app.update(message(Event::Hidden(serial, hidden)));
+                let _ = app.update(message(Event::Multiple(serial, multiple)));
+                let _ = app.update(message(Event::Submit(serial)));
+                assert!(!app.poll_creation_open());
+                let row = app.model.thread.as_ref().unwrap().rows.last().unwrap();
+                assert_eq!(row.thread_root, key.root);
+                assert_eq!(row.poll.as_ref().unwrap().disclosed, !hidden);
+                assert_eq!(
+                    row.poll.as_ref().unwrap().max_selections,
+                    if multiple { 2 } else { 1 }
+                );
+                let room_row = app
+                    .model
+                    .room
+                    .as_ref()
+                    .unwrap()
+                    .rows
+                    .iter()
+                    .find(|candidate| candidate.event_id == row.event_id)
+                    .unwrap();
+                assert!(room_row.poll.is_some());
+                assert!(room_row.edit_source.is_none());
+                assert_eq!(app.selection.thread, selected);
+                assert_eq!(app.drafts[&room].content.text(), "Room draft");
+                assert_eq!(app.drafts[&key].content.text(), "Thread draft");
+                app.drafts.get_mut(&key).unwrap().content =
+                    iced::widget::text_editor::Content::new();
+                let _ = app.update(message(Event::Open(key.clone())));
+                let serial = app.poll_creation.form.as_ref().unwrap().serial;
+                let _ = app.update(message(Event::Template(serial)));
+                assert!(app.drafts[&key].content.text().starts_with("/poll "));
+                let _ = app.update(Message::Send(key.clone()));
+                assert!(app.drafts[&key].content.text().is_empty());
+                assert!(
+                    app.model
+                        .thread
+                        .as_ref()
+                        .unwrap()
+                        .rows
+                        .last()
+                        .unwrap()
+                        .poll
+                        .is_some()
+                );
+                let _ = app.update(message(Event::Open(key.clone())));
+                let serial = app.poll_creation.form.as_ref().unwrap().serial;
+                app.selection.thread = None;
+                app.validate_poll_creation();
+                let _ = app.update(message(Event::Submit(serial)));
+                assert!(!app.poll_creation_open());
+                assert_eq!(app.drafts[&room].content.text(), "Room draft");
+            }
+        }
+    }
+
     #[test]
     fn invalid_forms_retain_values_limits_clamp_and_old_events_are_ignored() {
         let mut app = demo_app();

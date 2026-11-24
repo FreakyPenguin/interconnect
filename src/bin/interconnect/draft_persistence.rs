@@ -743,6 +743,12 @@ mod tests {
             root: Some("$root".into()),
         };
         let mut reply = Draft {
+            poll: Some(interconnect::polls::Creation {
+                question: "Thread poll?".into(),
+                answers: vec!["A".into(), "B".into()],
+                max_selections: 2,
+                hidden_results: true,
+            }),
             content: iced::widget::text_editor::Content::with_text(
                 "reply :leaf: @maya:example.org and Maya Chen",
             ),
@@ -824,6 +830,7 @@ mod tests {
         );
         assert_eq!(restored.drafts[&key].markdown.format, Format::Plain);
         assert_eq!(restored.drafts[&thread].markdown.emoji[0].emoji, emoji);
+        assert_eq!(restored.drafts[&thread].poll, first.drafts[&thread].poll);
         assert_eq!(
             restored.drafts[&thread].markdown.mentions[0].as_str(),
             "@maya:example.org"

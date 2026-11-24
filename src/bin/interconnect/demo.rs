@@ -952,32 +952,39 @@ impl Demo {
         content: matrix_sdk::ruma::events::poll::unstable_start::NewUnstablePollStartEventContent,
     ) {
         self.send(key, body);
-        if let Some(row) = self
+        let event = self
             .conversations
-            .get_mut(key)
-            .and_then(|rows| rows.last_mut())
-        {
-            row.edit_source = None;
-            row.formatted = None;
-            row.poll = Some(interconnect::polls::Poll {
-                question: content.poll_start.question.text,
-                answers: content
-                    .poll_start
-                    .answers
-                    .iter()
-                    .map(|a| interconnect::polls::Answer {
-                        id: a.id.clone(),
-                        text: a.text.clone(),
-                        votes: 0,
-                        voters: Vec::new(),
-                        selected: false,
-                    })
-                    .collect(),
-                ended: false,
-                disclosed: content.poll_start.kind
-                    == matrix_sdk::ruma::events::poll::start::PollKind::Disclosed,
-                max_selections: content.poll_start.max_selections.into(),
-            });
+            .get(key)
+            .and_then(|rows| rows.last())
+            .and_then(|row| row.event_id.clone());
+        let poll = interconnect::polls::Poll {
+            question: content.poll_start.question.text,
+            answers: content
+                .poll_start
+                .answers
+                .iter()
+                .map(|a| interconnect::polls::Answer {
+                    id: a.id.clone(),
+                    text: a.text.clone(),
+                    votes: 0,
+                    voters: Vec::new(),
+                    selected: false,
+                })
+                .collect(),
+            ended: false,
+            disclosed: content.poll_start.kind
+                == matrix_sdk::ruma::events::poll::start::PollKind::Disclosed,
+            max_selections: content.poll_start.max_selections.into(),
+        };
+        for (conversation, rows) in &mut self.conversations {
+            if conversation.room != key.room {
+                continue;
+            }
+            for row in rows.iter_mut().filter(|row| row.event_id == event) {
+                row.edit_source = None;
+                row.formatted = None;
+                row.poll = Some(poll.clone());
+            }
         }
     }
     pub fn send(&mut self, key: &DraftKey, body: String) {

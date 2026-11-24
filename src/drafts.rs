@@ -115,7 +115,6 @@ impl Snapshot {
                 "Invalid named draft mentions"
             );
             if let Some(poll) = &entry.poll {
-                ensure!(entry.root.is_none(), "Poll drafts belong to rooms");
                 ensure!(
                     (2..=20).contains(&poll.answers.len())
                         && (1..=poll.answers.len() as u64).contains(&poll.max_selections),
