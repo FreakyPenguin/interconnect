@@ -1,5 +1,7 @@
 //! Per-room poll forms, with captured writes that drain independently of the dialog.
-use super::{App, DraftKey, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
+use super::{
+    App, DraftKey, MAX_PENDING_OPERATIONS, Message, current_pane, icons::Kind, shell, tooltips,
+};
 use iced::{
     Element, Length, Task,
     widget::{button, checkbox, column, pick_list, row, text, text_input},
@@ -303,26 +305,22 @@ impl App {
                             .on_input_maybe(editable.then_some(move |value| message(
                                 Event::Answer(serial, index, value)
                             ))),
-                        button(text("Remove").size(12))
-                            .style(shell::quiet_button)
-                            .keyboard_navigation(true)
-                            .on_press_maybe(
-                                (editable && poll.answers.len() > 2)
-                                    .then(|| message(Event::RemoveAnswer(serial, index)))
-                            )
+                        tooltips::icon_button(
+                            Kind::Delete,
+                            "Remove answer",
+                            (editable && poll.answers.len() > 2)
+                                .then(|| message(Event::RemoveAnswer(serial, index))),
+                        ),
                     ]
-                    .spacing(8),
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
                 );
         }
-        body = body.push(
-            button(text("Add answer").size(12))
-                .style(shell::quiet_button)
-                .keyboard_navigation(true)
-                .on_press_maybe(
-                    (editable && poll.answers.len() < 20)
-                        .then(|| message(Event::AddAnswer(serial))),
-                ),
-        );
+        body = body.push(tooltips::icon_button(
+            Kind::Plus,
+            "Add answer",
+            (editable && poll.answers.len() < 20).then(|| message(Event::AddAnswer(serial))),
+        ));
         body = body.push(
             checkbox(poll.max_selections > 1)
                 .label("Allow multiple answers")
@@ -372,18 +370,15 @@ impl App {
                 .keyboard_navigation(true)
                 .on_press_maybe(template.then(|| message(Event::Template(serial)))),
             row![
-                button("Close")
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press(message(Event::Close(serial))),
+                tooltips::icon_button(Kind::Close, "Close", Some(message(Event::Close(serial)))),
                 iced::widget::space().width(Length::Fill),
-                button(if busy { "Creating…" } else { "Create poll" })
-                    .style(shell::primary_button)
-                    .keyboard_navigation(true)
-                    .on_press_maybe(
-                        (editable && self.pending_ops < MAX_PENDING_OPERATIONS)
-                            .then(|| message(Event::Submit(serial)))
-                    ),
+                tooltips::icon_action(
+                    Kind::Check,
+                    if busy { "Creating…" } else { "Create poll" },
+                    (editable && self.pending_ops < MAX_PENDING_OPERATIONS)
+                        .then(|| message(Event::Submit(serial))),
+                    shell::primary_button,
+                ),
             ]
             .spacing(8),
         ]

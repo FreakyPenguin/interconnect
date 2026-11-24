@@ -781,7 +781,8 @@ client, hidden counts, permission failures, and navigation during a vote manuall
 
 The composer’s poll chart icon, immediately after the emoji button, has a
 **Create poll** tooltip and opens a room poll form with question/answer fields,
-add/remove controls, **Allow multiple answers** and an explicit selection
+icon controls with **Add answer**, **Remove answer**, **Close**, and **Create poll**
+tooltips, **Allow multiple answers** and an explicit selection
 limit, and **Hide results until the poll ends**. Defaults are disclosed and
 single-choice. Creation requires 2–20 distinct, nonempty answers. Closing retains
 the unfinished form per room; its values and settings survive restart in the
