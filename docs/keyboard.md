@@ -177,10 +177,35 @@ creation is in its sidebar actions (⋯) menu; creation shortcuts still work.
 | Verification | Escape closes and cancels active exchange. |
 | Saved messages / image viewer | Escape returns to conversation. |
 
-Text drafts and room/thread reading positions survive restart. Reading-position
-restoration needs available history/keys and falls back to newest if unavailable.
+Message and new-poll drafts, plus room/thread reading positions, survive restart.
+Reading-position restoration needs available history/keys and falls back to
+newest if unavailable.
 
-To create a disclosed single-choice poll, choose **Poll** beside an empty room
-composer, or type `/poll Question?` followed by 2–20 answers on separate lines.
-Edit the template and use the normal Send shortcut. Poll creation requires no
-reply target or attachments; errors preserve the draft for correction.
+## Polls
+
+Use the chart icon immediately to the right of emoji in a room or thread
+composer to open **Create poll**. Enter a question and 2–20 distinct, nonempty
+answers. Enable **Allow multiple answers** to set a selection limit and **Hide
+results until the poll ends** to delay results; these options can be combined.
+Defaults are single-choice with visible results.
+
+Tab/Shift+Tab traverses the form. The plus icon adds an answer, the trash icon
+removes one, the checkmark creates/saves the poll, and X closes the form; hover
+for their action names. Enter/Space activates focused buttons and checkboxes.
+Drag an answer's grip, or use **Alt+Up/Down** (macOS: **Option+Up/Down**) in its
+field, to reorder it. Escape closes an open dropdown or cancels an active drag
+before dismissing the form. Closing retains unfinished new-poll values separately
+from the conversation's message draft.
+
+For quick text entry, type `/poll Question?` followed by 2–20 answers on separate
+lines, or choose **Insert text template** from the form when the composer is
+empty. Edit the template and use the normal Send shortcut. This path creates a
+disclosed single-choice poll in that room or thread and requires no explicit
+reply target or attachments; validation errors retain the draft.
+
+Your open polls offer **End poll**, followed by an inline confirmation. **Keep
+open** or Escape cancels it. Ending closes voting and reveals hidden results.
+Use the pencil action or **Edit poll** context-menu entry to edit your own sent
+poll before anyone responds or it ends. The checkmark saves changes to the
+original poll; X/Escape cancels the edit and preserves other drafts. Responses
+also block editing when the poll's results are hidden.

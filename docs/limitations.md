@@ -55,11 +55,16 @@ builds are experimental.
 
 - Deletion needs a synced event ID; no state/activity redaction. Queue cancellation
   stops pending uploads/unsent echoes; an in-flight send can finish before the SDK
-  removes it, so others may see it first. Editing covers owned text/emotes, not
-  captions/notices or arbitrary HTML round-tripping. Reply previews need loaded
-  or embedded context; opening an original explicitly loads history, subject to
-  available keys and server access.
+  removes it, so others may see it first. Editing covers owned text/emotes and
+  eligible polls, not captions/notices or arbitrary HTML round-tripping. Reply
+  previews need loaded or embedded context; opening an original explicitly loads
+  history, subject to available keys and server access.
 - Reader labels are room-scoped; thread unread badges are process-local.
+- MSC3381 polls support voting and single- or multiple-choice creation in rooms
+  and threads, with visible or hidden results. Only your own polls can be ended
+  or edited; editing requires no responses and no end event. Hidden results
+  become visible when the poll ends. See [poll controls](keyboard.md#polls) and
+  [poll validation](validation/connected-ui.md#polls) for interoperability limits.
 - In-room search checks loaded room messages. Account-wide search shows at most
   200 results; older encrypted history requires explicit scans of up to 1,000
   events per batch. Results depend on server search support, available history,
@@ -87,9 +92,9 @@ builds are experimental.
   implemented; complete native keyboard/IME and focus behavior still needs desktop
   validation. See [shortcuts](keyboard.md) and
   [focus validation](validation/connected-ui.md#deferred-composer-focus).
-- Text drafts and event-anchored reading positions persist encrypted in the local
-  profile and do not sync across devices. At most 4,096 reading positions persist;
-  see [local storage limits](architecture/drafts.md). Attachments and unfinished
+- Text and poll creation drafts persist encrypted in the local profile, along
+  with event-anchored reading positions. They do not sync across devices. At most
+  4,096 reading positions persist; see [local storage limits](architecture/drafts.md). Attachments and unfinished
   edits do not survive restart. Restoring an old position requires available
   history/keys; unavailable anchors fall back to the newest timeline. No complete
   offline history or configurable storage retention. Long timelines virtualize row widgets;
@@ -97,6 +102,3 @@ builds are experimental.
   messages still lay out as a whole. Loaded SDK data remains in memory.
 
 See [ideas](todo.md) and [validation boundaries](validation/connected-ui.md#validation-scope).
-
-Polls support MSC3381 rendering, voting, and creation of disclosed single-choice polls.
-Creating polls in threads, ending polls, and editing polls are not yet exposed.
