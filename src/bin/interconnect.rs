@@ -266,6 +266,7 @@ struct App {
     image_view: Option<images::Viewing>,
     inline_gif: Option<images::Viewing>,
     downloads: downloads::State,
+    poll_votes: Option<reaction_picker::Target>,
     poll_sends: HashSet<reaction_picker::Target>,
     poll_error: Option<(reaction_picker::Target, String)>,
     reaction_picker: Option<reaction_picker::State>,
@@ -510,6 +511,7 @@ impl App {
             image_view: None,
             inline_gif: None,
             downloads: downloads::State::default(),
+            poll_votes: None,
             poll_sends: HashSet::new(),
             poll_error: None,
             reaction_picker: None,
@@ -1270,6 +1272,13 @@ impl App {
         ) {
             self.emoji_completion.clear();
             self.user_completion.clear();
+        }
+        if matches!(message, Message::Escape) && self.poll_votes.is_some() {
+            self.poll_votes = None;
+            return Task::none();
+        }
+        if matches!(message, Message::WindowFocused(false)) {
+            self.poll_votes = None;
         }
         if matches!(message, Message::Escape)
             && let Some(state) = &self.composer_picker
@@ -2539,6 +2548,7 @@ impl App {
         self.validate_pin_error();
         self.validate_space_settings();
         self.validate_room_settings();
+        self.validate_poll_votes();
         self.validate_reaction_picker();
         self.validate_composer_picker();
         self.validate_emoji_completion();

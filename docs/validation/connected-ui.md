@@ -797,3 +797,11 @@ remain hidden for undisclosed polls until they end. Tooltips use the existing
 hover overlay using cached room membership without network requests or background timers. Demo tests cover
 voter labels, empty options, and undisclosed tooltip suppression; verify live
 vote changes and ended polls with a dedicated account.
+
+Disclosed polls also offer a compact **Show votes** link beneath the total. It
+opens an anchored, viewport-clamped popover grouping every voter's display name
+by answer (with handle fallback), including empty answers. Long lists scroll.
+Close it with Close, Escape, or an outside click. The popover uses current poll
+snapshots and closes when its conversation becomes stale or the poll becomes
+unavailable/undisclosed. Local demo tests cover opening, dismissal, stale targets,
+and disclosure changes; live cross-client updates remain a manual check.
