@@ -640,6 +640,7 @@ impl Demo {
                     }
                     row
                 },
+                formatted("format-long-code", &format!("<pre><code class='language-rust'>{}</code></pre>", "let café = calculate(42); // A deliberately wide technical example with exact whitespace and 👩🏽‍💻 Unicode.\n".repeat(100))),
                 formatted("format-mentions", "<p>Thanks <a href='https://matrix.to/#/@maya:example.org'>Maya Chen</a>! Could <a href='matrix:u/jules:example.org'>Jules 👋</a> take a look?</p><p>A longer mention wraps naturally: <a href='https://matrix.to/#/%40alex%3Aexample.org'>Alex with a deliberately long display name</a>. Plain @maya and @room stay literal.</p><p>قبل <a href='https://matrix.to/#/@maya:example.org'>مايا</a> אחרי. <span data-mx-spoiler><a href='https://matrix.to/#/@jules:example.org'>Hidden mention</a></span></p>"),
                 {
                     let mut row = formatted("format-room-wide", "<p>Attention @room! This is a room-wide notification.</p><p>قبل @room אחרי. <code>@room</code> stays code. <span data-mx-spoiler>Hidden @room</span></p>");

@@ -923,3 +923,17 @@ Close it with Close, Escape, or an outside click. The popover uses current poll
 snapshots and closes when its conversation becomes stale or the poll becomes
 unavailable/undisclosed. Local demo tests cover opening, dismissal, stale targets,
 and disclosure changes; live cross-client updates remain a manual check.
+
+## Long technical code messages
+
+Demo → Message formatting includes a 100-line code sample. Code starts with a
+12-line / 2 KiB preview; Expand and Collapse control shaping, rather than merely
+clipping a fully laid-out block. Wide lines do not wrap. Use horizontal trackpad
+scrolling or the ‹ / › controls. Vertical scrolling remains with the timeline.
+Copy and Save export the full visible-spoiler code source, preserving whitespace
+and Unicode. Save uses an asynchronous native picker and file write.
+
+Automated layout checks cover preview budgets, full canonical text, horizontal
+hit testing, and releasing expanded paragraphs on collapse. Native clipboard,
+file-picker cancellation/errors, macOS gestures, and GPU clipping require desktop
+acceptance; headless tests do not establish those integrations.

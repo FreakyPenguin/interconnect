@@ -219,6 +219,8 @@ const MAX_PENDING_OPERATIONS: usize = 8;
 struct App {
     activation: activation::State,
     timeline_projection: [timeline_projection::Cache; 2],
+    code_save: Option<iced::task::Handle>,
+    code_save_request: u64,
     context_menu: Option<context_menu::State>,
     message_delete: Option<message_delete::State>,
     message_highlight: message_highlight::State,
@@ -322,6 +324,8 @@ enum Message {
     Reorder(section_reorder::Event),
     SectionsReordered(Option<String>, u64, Result<(), String>),
     OpenMessageLink(String),
+    SaveCode(String),
+    CodeSaved(u64, Option<String>, Result<(), String>),
     HighlightExpired(message_highlight::Expired),
     FollowReplacement(tombstone::Target),
     LinkOpened,
@@ -490,6 +494,8 @@ impl App {
             shell: shell::State::default(),
             expanded_pins: None,
             timeline_projection: Default::default(),
+            code_save: None,
+            code_save_request: 0,
             context_menu: None,
             message_delete: None,
             message_highlight: Default::default(),
@@ -1568,6 +1574,46 @@ impl App {
             );
         let mut action_task = Task::none();
         match message {
+            Message::SaveCode(code) if !self.closing && !self.stopped => {
+                if let Some(handle) = self.code_save.take() {
+                    handle.abort();
+                }
+                self.code_save_request += 1;
+                let request = self.code_save_request;
+                let account = self.account_id.clone();
+                let (task, handle) = Task::perform(
+                    async move {
+                        if let Some(file) = rfd::AsyncFileDialog::new()
+                            .set_title("Save code")
+                            .set_file_name("code.txt")
+                            .save_file()
+                            .await
+                        {
+                            tokio::fs::write(file.path(), code)
+                                .await
+                                .map_err(|_| "Could not save code.".to_owned())?;
+                        }
+                        Ok(())
+                    },
+                    move |result| Message::CodeSaved(request, account.clone(), result),
+                )
+                .abortable();
+                self.code_save = Some(handle);
+                action_task = task;
+            }
+            Message::SaveCode(_) => {}
+            Message::CodeSaved(request, account, result)
+                if request == self.code_save_request
+                    && account == self.account_id
+                    && !self.closing
+                    && !self.stopped =>
+            {
+                self.code_save = None;
+                if let Err(error) = result {
+                    self.model.status = error;
+                }
+            }
+            Message::CodeSaved(..) => {}
             Message::OpenMessageLink(link) => action_task = self.open_message_link(link),
             Message::FollowReplacement(target) => action_task = self.follow_replacement(target),
             Message::LinkOpened => {}
@@ -2351,6 +2397,10 @@ impl App {
                     self.global_search.reset();
                 }
                 if state.authentication.is_some() || state.account_id != self.account_id {
+                    if let Some(handle) = self.code_save.take() {
+                        handle.abort();
+                    }
+                    self.code_save_request += 1;
                     self.timeline_projection
                         .iter()
                         .for_each(timeline_projection::Cache::clear);
@@ -2477,6 +2527,9 @@ impl App {
             Message::Stopped(result) => {
                 self.global_search.close();
                 self.stopped = true;
+                if let Some(handle) = self.code_save.take() {
+                    handle.abort();
+                }
                 match result {
                     Ok(()) if self.closing => return iced::exit(),
                     Ok(()) => self.model.status = "Disconnected. Session retained.".into(),
@@ -2498,6 +2551,9 @@ impl App {
                     cancel.cancel();
                 }
                 self.closing = true;
+                if let Some(handle) = self.code_save.take() {
+                    handle.abort();
+                }
                 self.selection.shutdown = self.pending_ops == 0;
                 self.model.status = "Stopping synchronization…".into();
             }
@@ -5012,6 +5068,32 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    #[test]
+    fn code_save_completions_reject_stale_requests_accounts_and_shutdown() {
+        let mut app = demo_app();
+        app.code_save_request = 2;
+        for (request, account, closing) in [
+            (1, None, false),
+            (2, Some("other".into()), false),
+            (2, None, true),
+        ] {
+            app.closing = closing;
+            let status = app.model.status.clone();
+            let _ = app.update(Message::CodeSaved(
+                request,
+                account,
+                Err("stale save".into()),
+            ));
+            assert_eq!(app.model.status, status);
+        }
+        app.closing = false;
+        let _ = app.update(Message::CodeSaved(
+            2,
+            None,
+            Err("Could not save code.".into()),
+        ));
+        assert_eq!(app.model.status, "Could not save code.");
+    }
     #[test]
     fn graphics_environment_child() {
         if std::env::var_os("INTERCONNECT_TEST_GRAPHICS_CHILD").is_none() {

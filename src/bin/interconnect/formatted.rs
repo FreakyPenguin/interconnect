@@ -31,6 +31,48 @@ struct LaidBlock {
     runs: Vec<usize>,
     lines: Vec<usize>,
     size: f32,
+    code: Option<CodeLayout>,
+}
+const CODE_LINES: usize = 12;
+const CODE_BYTES: usize = 2048;
+const CODE_HEADER: f32 = 28.0;
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct CodeView {
+    pub expanded: bool,
+    pub x: f32,
+}
+#[derive(Debug)]
+struct CodeLayout {
+    index: usize,
+    truncated: bool,
+    controls: Vec<(Rectangle, CodeAction, Paragraph)>,
+    max_x: f32,
+}
+#[derive(Clone, Copy, Debug)]
+pub(super) enum CodeAction {
+    Toggle,
+    Copy,
+    Save,
+    Left,
+    Right,
+}
+fn preview_end(text: &str) -> usize {
+    let mut end = text.len().min(CODE_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end]
+        .match_indices('\n')
+        .nth(CODE_LINES - 1)
+        .map_or(end, |(i, _)| i)
+}
+fn truncate_code(block: &mut Block, mut remaining: usize) {
+    for run in &mut block.runs {
+        let length = run.content.text().len().min(remaining);
+        let text = run.content.text()[..length].to_owned();
+        remaining -= length;
+        run.content = Inline::Text(text);
+    }
 }
 #[derive(Debug)]
 struct Offset {
@@ -74,6 +116,7 @@ impl LaidBlock {
 pub struct State {
     pub document: Arc<Document>,
     revealed: BTreeSet<usize>,
+    pub(super) code_views: HashMap<usize, CodeView>,
     blocks: Vec<LaidBlock>,
     width: Option<f32>,
     mode: interconnect::settings::ThemeMode,
@@ -92,6 +135,7 @@ impl State {
         Self {
             document,
             revealed: BTreeSet::new(),
+            code_views: HashMap::new(),
             blocks: Vec::new(),
             width: None,
             mode: interconnect::settings::ThemeMode::Light,
@@ -220,7 +264,28 @@ impl State {
                 block.runs = merged;
             }
             let mut y = 0.0;
-            for (block, range) in visible.iter().zip(document::block_ranges(&visible)) {
+            for (block_index, (original, range)) in visible
+                .iter()
+                .zip(document::block_ranges(&visible))
+                .enumerate()
+            {
+                let mut preview_block = original.clone();
+                let is_code = matches!(original.kind, BlockKind::Code { .. });
+                let source: String = if is_code {
+                    original.runs.iter().map(|run| run.content.text()).collect()
+                } else {
+                    String::new()
+                };
+                let end = preview_end(&source);
+                let truncated = end < source.len();
+                let expanded = self
+                    .code_views
+                    .get(&block_index)
+                    .is_some_and(|view| view.expanded);
+                if is_code && truncated && !expanded {
+                    truncate_code(&mut preview_block, end);
+                }
+                let block = &preview_block;
                 let inset =
                     ((block.quote_depth + block.list_depth.saturating_sub(1)).min(8) as f32 * 14.0)
                         .min(width / 3.0);
@@ -384,8 +449,17 @@ impl State {
                     spans.push(text::Span::new(""));
                     runs.push(0);
                 }
-                let paragraph =
-                    inline_image::Paragraph::with_spans(&spans, paragraph_width, size, &objects);
+                let paragraph = inline_image::Paragraph::with_wrapping(
+                    &spans,
+                    paragraph_width,
+                    size,
+                    &objects,
+                    if code {
+                        text::Wrapping::None
+                    } else {
+                        text::Wrapping::WordOrGlyph
+                    },
+                );
                 let mut images = Vec::new();
                 let mut links = Vec::new();
                 for (object, run_index) in objects.iter().zip(object_runs) {
@@ -454,13 +528,68 @@ impl State {
                         start
                     })
                     .collect();
+                let code_layout = if code {
+                    let max_x = (paragraph
+                        .buffer()
+                        .layout_runs()
+                        .map(|line| line.line_w)
+                        .fold(0.0_f32, f32::max)
+                        - paragraph_width)
+                        .max(0.0);
+                    if let Some(view) = self.code_views.get_mut(&block_index) {
+                        view.x = view.x.clamp(0.0, max_x);
+                    }
+                    let mut controls = Vec::new();
+                    let mut control_x = 0.0;
+                    for (name, action, control_width) in [
+                        (
+                            if truncated {
+                                if expanded { "Collapse" } else { "Expand" }
+                            } else {
+                                "Code"
+                            },
+                            CodeAction::Toggle,
+                            74.0,
+                        ),
+                        ("Copy", CodeAction::Copy, 52.0),
+                        ("Save", CodeAction::Save, 52.0),
+                        ("‹", CodeAction::Left, 30.0),
+                        ("›", CodeAction::Right, 30.0),
+                    ] {
+                        let bounds = Rectangle::new(
+                            Point::new(x + control_x, y),
+                            Size::new(control_width, CODE_HEADER),
+                        );
+                        let label = Paragraph::with_text(text::Text {
+                            content: name,
+                            bounds: bounds.size(),
+                            size: iced::Pixels(12.0),
+                            line_height: text::LineHeight::default(),
+                            font: Font::with_name("Inter"),
+                            align_x: text::Alignment::Default,
+                            align_y: iced::alignment::Vertical::Top,
+                            shaping: text::Shaping::Advanced,
+                            wrapping: text::Wrapping::None,
+                        });
+                        controls.push((bounds, action, label));
+                        control_x += control_width;
+                    }
+                    Some(CodeLayout {
+                        index: block_index,
+                        truncated,
+                        controls,
+                        max_x,
+                    })
+                } else {
+                    None
+                };
                 self.blocks.push(LaidBlock {
                     paragraph,
                     offsets,
                     images,
                     links,
                     bounds: Rectangle::new(
-                        Point::new(x, y + padding),
+                        Point::new(x, y + padding + if code { CODE_HEADER } else { 0.0 }),
                         Size::new((width - x - padding).max(1.0), height),
                     ),
                     range,
@@ -468,8 +597,9 @@ impl State {
                     runs,
                     lines,
                     size,
+                    code: code_layout,
                 });
-                y += height + padding * 2.0 + 8.0;
+                y += height + padding * 2.0 + 8.0 + if code { CODE_HEADER } else { 0.0 };
             }
             self.width = Some(width);
         }
@@ -524,7 +654,10 @@ impl State {
                     canonical.start
                 };
         }
-        let local = point - block.bounds.position();
+        let mut local = point - block.bounds.position();
+        if let Some(code) = &block.code {
+            local.x += self.code_views.get(&code.index).map_or(0.0, |view| view.x);
+        }
         block
             .paragraph
             .buffer()
@@ -650,7 +783,64 @@ impl State {
             .then_some(run.style.link.as_deref())
             .flatten()
     }
+    pub(super) fn code_control(&self, point: Point) -> Option<(usize, CodeAction)> {
+        self.blocks
+            .iter()
+            .filter_map(|block| block.code.as_ref())
+            .find_map(|code| {
+                code.controls
+                    .iter()
+                    .find(|(bounds, _, _)| bounds.contains(point))
+                    .map(|(_, action, _)| (code.index, *action))
+            })
+    }
+    pub(super) fn code_text(&self, index: usize) -> String {
+        self.document
+            .visible_blocks(&self.revealed)
+            .get(index)
+            .map(|block| block.runs.iter().map(|run| run.content.text()).collect())
+            .unwrap_or_default()
+    }
+    pub(super) fn code_action(&mut self, index: usize, action: CodeAction) {
+        let Some(code) = self
+            .blocks
+            .iter()
+            .filter_map(|block| block.code.as_ref())
+            .find(|code| code.index == index)
+        else {
+            return;
+        };
+        let view = self.code_views.entry(index).or_default();
+        match action {
+            CodeAction::Toggle if code.truncated => {
+                view.expanded = !view.expanded;
+                self.width = None;
+            }
+            CodeAction::Left => view.x = (view.x - 160.0).max(0.0),
+            CodeAction::Right => view.x = (view.x + 160.0).min(code.max_x),
+            _ => {}
+        }
+    }
+    pub(super) fn scroll_code(&mut self, point: Point, delta: f32) -> bool {
+        let Some(code) = self
+            .blocks
+            .iter()
+            .find(|block| block.bounds.contains(point))
+            .and_then(|block| block.code.as_ref())
+        else {
+            return false;
+        };
+        if code.max_x <= 0.0 || delta == 0.0 {
+            return false;
+        }
+        let view = self.code_views.entry(code.index).or_default();
+        view.x = (view.x - delta).clamp(0.0, code.max_x);
+        true
+    }
     pub fn interactive(&self, point: Point) -> bool {
+        if self.code_control(point).is_some() {
+            return true;
+        }
         self.run_at(point).is_some_and(|run| {
             run.style.link.is_some()
                 || run
@@ -763,200 +953,229 @@ impl State {
                     shell::palette(theme).code,
                 );
             }
-            if block.block.quote_depth > 0 {
-                quad(
-                    renderer,
-                    Rectangle::new(
-                        Point::new(bounds.x - 9.0, bounds.y),
-                        Size::new(2.0, bounds.height),
-                    ),
-                    shell::palette(theme).muted,
-                );
-            }
-            for (index, run_index) in block.runs.iter().enumerate() {
-                let Some(run) = block.block.runs.get(*run_index) else {
-                    continue;
-                };
-                if matches!(run.content, Inline::Image { .. })
-                    || block.links.iter().any(|link| link.run == *run_index)
-                {
-                    continue;
-                }
-                let style = &run.style;
-                for region in block.paragraph.span_bounds(index) {
-                    let region = region + (bounds.position() - Point::ORIGIN);
-                    if style.code && !code {
-                        quad(renderer, region, shell::palette(theme).inline_code);
-                    }
-                    // Keep the background inside the shaped span so wrapping, bidi,
-                    // selection and hit testing all use exactly the same geometry.
-                    let mention = (style.mention.is_some()
-                        || style.room_mention.is_some()
-                        || style.room_wide)
-                        && !style.code;
-                    if mention {
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: region,
-                                border: iced::Border::default().rounded(4.0),
-                                ..renderer::Quad::default()
-                            },
-                            if style.room_wide {
-                                shell::palette(theme).room_wide_accent.scale_alpha(0.12)
-                            } else if style.room_mention.is_some() {
-                                shell::palette(theme).room_accent.scale_alpha(0.12)
-                            } else {
-                                shell::palette(theme).mention
-                            },
-                        );
-                    }
-                    if style.underline || (style.link.is_some() && !mention) {
-                        quad(
-                            renderer,
-                            Rectangle::new(
-                                Point::new(region.x, region.y + block.size * 1.2),
-                                Size::new(region.width, 1.0),
-                            ),
-                            if style.link.is_some() {
-                                shell::palette(theme).accent
-                            } else {
-                                shell::palette(theme).ink
-                            },
-                        );
-                    }
-                    if style.strike {
-                        quad(
-                            renderer,
-                            Rectangle::new(
-                                Point::new(region.x, region.y + block.size * 0.75),
-                                Size::new(region.width, 1.0),
-                            ),
-                            shell::palette(theme).ink,
-                        );
-                    }
+            if let Some(code) = &block.code {
+                for (bounds, _, label) in &code.controls {
+                    let position =
+                        origin + (bounds.position() - Point::ORIGIN) + Vector::new(0.0, 6.0);
+                    renderer.fill_paragraph(
+                        label,
+                        position,
+                        shell::palette(theme).accent,
+                        viewport,
+                    );
                 }
             }
-            // Glyph clusters supply byte ranges and visual rectangles, including bidi runs.
-            for line in block.paragraph.buffer().layout_runs() {
-                let line_start = block.lines[line.line_i];
-                for glyph in line.glyphs {
-                    if block.runs.get(glyph.metadata).is_some_and(|run| {
-                        matches!(block.block.runs[*run].content, Inline::Image { .. })
-                            || block.links.iter().any(|link| link.run == *run)
-                    }) {
-                        continue;
-                    }
-                    let glyph_start = block.range.start + block.canonical(line_start + glyph.start);
-                    let glyph_end = block.range.start + block.canonical(line_start + glyph.end);
-                    // Logical order can differ from visual order in bidi text.
-                    let first = highlights.partition_point(|range| range.end <= glyph_start);
-                    for (selected, color) in highlights[first..]
-                        .iter()
-                        .take_while(|range| range.start < glyph_end)
-                        .map(|range| (range, shell::palette(theme).search))
-                        .chain(
-                            selection
-                                .iter()
-                                .filter(|range| range.start < glyph_end && range.end > glyph_start)
-                                .map(|range| (range, shell::palette(theme).selection)),
-                        )
-                    {
-                        let cluster = &line.text[glyph.start..glyph.end];
-                        let (left, width) = highlight_fraction(
-                            cluster,
-                            glyph_start,
-                            selected,
-                            glyph.level.is_rtl(),
-                        );
-                        quad(
-                            renderer,
-                            Rectangle::new(
-                                Point::new(
-                                    bounds.x + glyph.x + left * glyph.w,
-                                    bounds.y + line.line_top,
-                                ),
-                                Size::new(width * glyph.w, line.line_height),
-                            ),
-                            color,
-                        );
-                    }
-                }
-            }
-            block.paragraph.draw(
-                renderer,
-                bounds.position(),
-                viewport,
-                shell::palette(theme).ink,
-            );
-            for link in &block.links {
-                let selected = selection.iter().chain(&highlights).any(|range| {
-                    block.range.start + link.canonical.start < range.end
-                        && block.range.start + link.canonical.end > range.start
-                });
-                link.chip.draw(
-                    renderer,
-                    link.bounds + (bounds.position() - Point::ORIGIN),
-                    viewport,
-                    theme,
-                    selected,
-                );
-            }
-            for image in &block.images {
-                let image_bounds = image.bounds + (bounds.position() - Point::ORIGIN);
-                if !image_bounds.intersects(&viewport) {
-                    continue;
-                }
-                let handle = image
-                    .source
-                    .as_ref()
-                    .and_then(|source| self.assets.handle(source));
-                if let Some(handle) = handle {
-                    // Formula bitmaps have their own ink and may contain authored colors.
-                    // Keep a light backing instead of modifying image pixels on the UI thread.
-                    if matches!(image.source, Some(ImageSource::Formula(_))) {
-                        renderer.fill_quad(
-                            renderer::Quad {
-                                bounds: image_bounds,
-                                border: iced::Border::default().rounded(3),
-                                ..Default::default()
-                            },
-                            shell::palette(theme).formula_surface,
-                        );
-                    }
-                    use iced::advanced::image::Renderer as _;
-                    let mut drawing = iced::advanced::image::Image::new(handle.clone());
-                    drawing.snap = false;
-                    renderer.draw_image(drawing, image_bounds, viewport);
-                } else {
-                    let failed = image
-                        .source
-                        .as_ref()
-                        .is_none_or(|source| self.assets.failed(source));
+            let clip = bounds
+                .intersection(&viewport)
+                .unwrap_or(Rectangle::with_size(Size::ZERO));
+            let bounds = if let Some(code) = &block.code {
+                bounds
+                    - Vector::new(
+                        self.code_views.get(&code.index).map_or(0.0, |view| view.x),
+                        0.0,
+                    )
+            } else {
+                bounds
+            };
+            renderer.with_layer(clip, |renderer| {
+                if block.block.quote_depth > 0 {
                     quad(
                         renderer,
-                        image_bounds,
-                        if failed {
-                            shell::palette(theme).error_surface
-                        } else {
-                            shell::palette(theme).rail
-                        },
+                        Rectangle::new(
+                            Point::new(bounds.x - 9.0, bounds.y),
+                            Size::new(2.0, bounds.height),
+                        ),
+                        shell::palette(theme).muted,
                     );
-                    if let Some(clip) = image_bounds.intersection(&viewport) {
-                        renderer.fill_paragraph(
-                            &image.placeholder,
-                            image_bounds.position(),
-                            shell::palette(theme).muted,
-                            clip,
-                        );
+                }
+                for (index, run_index) in block.runs.iter().enumerate() {
+                    let Some(run) = block.block.runs.get(*run_index) else {
+                        continue;
+                    };
+                    if matches!(run.content, Inline::Image { .. })
+                        || block.links.iter().any(|link| link.run == *run_index)
+                    {
+                        continue;
+                    }
+                    let style = &run.style;
+                    for region in block.paragraph.span_bounds(index) {
+                        let region = region + (bounds.position() - Point::ORIGIN);
+                        if style.code && !code {
+                            quad(renderer, region, shell::palette(theme).inline_code);
+                        }
+                        // Keep the background inside the shaped span so wrapping, bidi,
+                        // selection and hit testing all use exactly the same geometry.
+                        let mention = (style.mention.is_some()
+                            || style.room_mention.is_some()
+                            || style.room_wide)
+                            && !style.code;
+                        if mention {
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: region,
+                                    border: iced::Border::default().rounded(4.0),
+                                    ..renderer::Quad::default()
+                                },
+                                if style.room_wide {
+                                    shell::palette(theme).room_wide_accent.scale_alpha(0.12)
+                                } else if style.room_mention.is_some() {
+                                    shell::palette(theme).room_accent.scale_alpha(0.12)
+                                } else {
+                                    shell::palette(theme).mention
+                                },
+                            );
+                        }
+                        if style.underline || (style.link.is_some() && !mention) {
+                            quad(
+                                renderer,
+                                Rectangle::new(
+                                    Point::new(region.x, region.y + block.size * 1.2),
+                                    Size::new(region.width, 1.0),
+                                ),
+                                if style.link.is_some() {
+                                    shell::palette(theme).accent
+                                } else {
+                                    shell::palette(theme).ink
+                                },
+                            );
+                        }
+                        if style.strike {
+                            quad(
+                                renderer,
+                                Rectangle::new(
+                                    Point::new(region.x, region.y + block.size * 0.75),
+                                    Size::new(region.width, 1.0),
+                                ),
+                                shell::palette(theme).ink,
+                            );
+                        }
                     }
                 }
-                if selection.as_ref().is_some_and(|range| {
-                    block.range.start + image.canonical.start < range.end
-                        && block.range.start + image.canonical.end > range.start
-                }) {
-                    quad(renderer, image_bounds, shell::palette(theme).selection);
+                // Glyph clusters supply byte ranges and visual rectangles, including bidi runs.
+                for line in block.paragraph.buffer().layout_runs() {
+                    let line_start = block.lines[line.line_i];
+                    for glyph in line.glyphs {
+                        if block.runs.get(glyph.metadata).is_some_and(|run| {
+                            matches!(block.block.runs[*run].content, Inline::Image { .. })
+                                || block.links.iter().any(|link| link.run == *run)
+                        }) {
+                            continue;
+                        }
+                        let glyph_start =
+                            block.range.start + block.canonical(line_start + glyph.start);
+                        let glyph_end = block.range.start + block.canonical(line_start + glyph.end);
+                        // Logical order can differ from visual order in bidi text.
+                        let first = highlights.partition_point(|range| range.end <= glyph_start);
+                        for (selected, color) in highlights[first..]
+                            .iter()
+                            .take_while(|range| range.start < glyph_end)
+                            .map(|range| (range, shell::palette(theme).search))
+                            .chain(
+                                selection
+                                    .iter()
+                                    .filter(|range| {
+                                        range.start < glyph_end && range.end > glyph_start
+                                    })
+                                    .map(|range| (range, shell::palette(theme).selection)),
+                            )
+                        {
+                            let cluster = &line.text[glyph.start..glyph.end];
+                            let (left, width) = highlight_fraction(
+                                cluster,
+                                glyph_start,
+                                selected,
+                                glyph.level.is_rtl(),
+                            );
+                            quad(
+                                renderer,
+                                Rectangle::new(
+                                    Point::new(
+                                        bounds.x + glyph.x + left * glyph.w,
+                                        bounds.y + line.line_top,
+                                    ),
+                                    Size::new(width * glyph.w, line.line_height),
+                                ),
+                                color,
+                            );
+                        }
+                    }
                 }
-            }
+                block.paragraph.draw(
+                    renderer,
+                    bounds.position(),
+                    viewport,
+                    shell::palette(theme).ink,
+                );
+                for link in &block.links {
+                    let selected = selection.iter().chain(&highlights).any(|range| {
+                        block.range.start + link.canonical.start < range.end
+                            && block.range.start + link.canonical.end > range.start
+                    });
+                    link.chip.draw(
+                        renderer,
+                        link.bounds + (bounds.position() - Point::ORIGIN),
+                        viewport,
+                        theme,
+                        selected,
+                    );
+                }
+                for image in &block.images {
+                    let image_bounds = image.bounds + (bounds.position() - Point::ORIGIN);
+                    if !image_bounds.intersects(&viewport) {
+                        continue;
+                    }
+                    let handle = image
+                        .source
+                        .as_ref()
+                        .and_then(|source| self.assets.handle(source));
+                    if let Some(handle) = handle {
+                        // Formula bitmaps have their own ink and may contain authored colors.
+                        // Keep a light backing instead of modifying image pixels on the UI thread.
+                        if matches!(image.source, Some(ImageSource::Formula(_))) {
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: image_bounds,
+                                    border: iced::Border::default().rounded(3),
+                                    ..Default::default()
+                                },
+                                shell::palette(theme).formula_surface,
+                            );
+                        }
+                        use iced::advanced::image::Renderer as _;
+                        let mut drawing = iced::advanced::image::Image::new(handle.clone());
+                        drawing.snap = false;
+                        renderer.draw_image(drawing, image_bounds, viewport);
+                    } else {
+                        let failed = image
+                            .source
+                            .as_ref()
+                            .is_none_or(|source| self.assets.failed(source));
+                        quad(
+                            renderer,
+                            image_bounds,
+                            if failed {
+                                shell::palette(theme).error_surface
+                            } else {
+                                shell::palette(theme).rail
+                            },
+                        );
+                        if let Some(clip) = image_bounds.intersection(&viewport) {
+                            renderer.fill_paragraph(
+                                &image.placeholder,
+                                image_bounds.position(),
+                                shell::palette(theme).muted,
+                                clip,
+                            );
+                        }
+                    }
+                    if selection.as_ref().is_some_and(|range| {
+                        block.range.start + image.canonical.start < range.end
+                            && block.range.start + image.canonical.end > range.start
+                    }) {
+                        quad(renderer, image_bounds, shell::palette(theme).selection);
+                    }
+                }
+            });
         }
     }
 }
@@ -1033,6 +1252,67 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 mod tests {
     use super::*;
 
+    #[test]
+    fn code_preview_bounds_shaping_preserves_full_copy_and_releases_expanded_layout() {
+        for source in [
+            "let café = 1; // 👩🏽‍💻\n".repeat(1000),
+            "wide_café ".repeat(3000),
+        ] {
+            let document = Arc::new(
+                Document::parse(&format!("<pre><code>{source}</code></pre><p>After</p>")).unwrap(),
+            );
+            let mut state = State::new(document);
+            let collapsed = state.layout(280.0).bounds();
+            let block = &state.blocks[0];
+            assert!(
+                block
+                    .paragraph
+                    .buffer()
+                    .lines
+                    .iter()
+                    .map(|line| line.text().len())
+                    .sum::<usize>()
+                    <= CODE_BYTES
+            );
+            assert!(block.paragraph.buffer().layout_runs().count() <= CODE_LINES);
+            assert_eq!(state.code_text(0), source);
+            let canonical = state.text();
+            assert_eq!(state.blocks[1].range.start, source.len() + 2);
+            state.code_action(0, CodeAction::Toggle);
+            state.layout(280.0);
+            assert_eq!(state.code_text(0), source);
+            assert_eq!(state.text(), canonical);
+            assert_eq!(state.blocks[1].range.start, source.len() + 2);
+            state.code_action(0, CodeAction::Toggle);
+            assert_eq!(state.layout(280.0).bounds(), collapsed);
+            assert!(
+                state.blocks[0]
+                    .paragraph
+                    .buffer()
+                    .lines
+                    .iter()
+                    .map(|line| line.text().len())
+                    .sum::<usize>()
+                    <= CODE_BYTES
+            );
+        }
+    }
+    #[test]
+    fn wide_code_scrolls_without_wrapping_and_hit_testing_uses_the_scroll_offset() {
+        let mut state = State::new(Arc::new(
+            Document::parse("<pre><code>0123456789abcdefghijklmnopqrstuvwxyz</code></pre>")
+                .unwrap(),
+        ));
+        state.layout(120.0);
+        let block = &state.blocks[0];
+        assert_eq!(block.paragraph.buffer().layout_runs().count(), 1);
+        let point = block.bounds.position() + Vector::new(20.0, 8.0);
+        let before = state.hit(point);
+        assert!(state.scroll_code(point, -80.0));
+        assert!(state.hit(point) > before);
+        assert!(!state.scroll_code(point, 0.0));
+        assert_eq!(state.code_text(0), "0123456789abcdefghijklmnopqrstuvwxyz");
+    }
     #[test]
     fn matrix_link_chips_preserve_source_copy_hit_targets_spoilers_and_metadata_updates() {
         let event = "https://matrix.to/#/!design:example.org/$message?via=example.org";
@@ -1166,7 +1446,7 @@ mod tests {
     }
 
     #[test]
-    fn syntax_colors_preserve_unicode_copy_offsets_wrapping_and_theme_cache() {
+    fn syntax_colors_preserve_unicode_copy_offsets_and_theme_cache() {
         use interconnect::settings::ThemeMode;
         let html = "<pre><code class='language-rust'>/* comment\ncontinuation */\nlet <b>café</b> = \"👩🏽‍💻\";\n</code></pre>";
         let document = Arc::new(Document::parse_with_formulas(html).unwrap());
@@ -1194,7 +1474,9 @@ mod tests {
                 for region in block.paragraph.span_bounds(index) {
                     let point = block.bounds.position() + (region.center() - Point::ORIGIN);
                     assert!(expected.is_char_boundary(state.hit(point)));
-                    assert_eq!(state.run_at(point).unwrap(), &block.block.runs[*run]);
+                    if block.bounds.contains(point) {
+                        assert_eq!(state.run_at(point).unwrap(), &block.block.runs[*run]);
+                    }
                 }
             }
             state.set_theme(ThemeMode::Dark);

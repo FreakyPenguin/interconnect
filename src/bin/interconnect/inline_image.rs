@@ -114,11 +114,12 @@ pub enum Paragraph {
     },
 }
 impl Paragraph {
-    pub fn with_spans(
+    pub fn with_wrapping(
         spans: &[text::Span<'_, (), Font>],
         width: f32,
         size: f32,
         objects: &[Object],
+        wrapping: text::Wrapping,
     ) -> Self {
         if objects.is_empty() {
             return Self::Text(graphics::Paragraph::with_spans(text::Text {
@@ -130,7 +131,7 @@ impl Paragraph {
                 align_x: text::Alignment::Default,
                 align_y: iced::alignment::Vertical::Top,
                 shaping: text::Shaping::Advanced,
-                wrapping: text::Wrapping::WordOrGlyph,
+                wrapping,
             }));
         }
         let mut system = graphics::font_system().write().expect("Write font system");

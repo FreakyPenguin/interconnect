@@ -349,7 +349,23 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        // Wheel input belongs to the conversation; IME can never edit a message.
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
+            && let Some(point) = cursor
+                .position_in(layout.bounds())
+                .filter(|_| cursor.position().is_some_and(|p| viewport.contains(p)))
+            && let Some(rich) = &mut tree.state.downcast_mut::<State>().rich
+        {
+            let dx = match delta {
+                mouse::ScrollDelta::Lines { x, .. } => x * 40.0,
+                mouse::ScrollDelta::Pixels { x, .. } => *x,
+            };
+            if rich.scroll_code(point, dx) {
+                shell.capture_event();
+                shell.request_redraw();
+                return;
+            }
+        }
+        // Vertical wheel input belongs to the conversation; IME cannot edit text.
         if matches!(event, Event::Mouse(mouse::Event::WheelScrolled { .. }))
             && let Some(rich) = &mut tree.state.downcast_mut::<State>().rich
             && rich.hover.take().is_some()
@@ -400,6 +416,23 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                     if point.is_some() =>
                 {
                     let point = point.unwrap();
+                    let rich = state.rich.as_mut().unwrap();
+                    if let Some((index, action)) = rich.code_control(point) {
+                        match action {
+                            formatted::CodeAction::Copy => clipboard.write(
+                                iced::advanced::clipboard::Kind::Standard,
+                                rich.code_text(index),
+                            ),
+                            formatted::CodeAction::Save => {
+                                shell.publish(Message::SaveCode(rich.code_text(index)))
+                            }
+                            _ => rich.code_action(index, action),
+                        }
+                        shell.invalidate_layout();
+                        shell.capture_event();
+                        shell.request_redraw();
+                        return;
+                    }
                     state.hit(point);
                     state.clicks = state.clicks.wrapping_add(1);
                     let rich = state.rich.as_mut().unwrap();
@@ -436,8 +469,11 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                             .unwrap()
                             .activate(end, &mut |message| shell.publish(message));
                         if changed {
-                            state.body = state.rich.as_ref().unwrap().text();
-                            state.content = text_editor::Content::with_text(&state.body);
+                            let body = state.rich.as_ref().unwrap().text();
+                            if state.body != body {
+                                state.body = body;
+                                state.content = text_editor::Content::with_text(&state.body);
+                            }
                             shell.invalidate_layout();
                         }
                         shell.request_redraw();
