@@ -15,8 +15,25 @@ pub struct Answer {
     pub id: String,
     pub text: String,
     pub votes: usize,
+    /// Matrix user IDs, exposed only when results are disclosed.
+    pub voters: Vec<Voter>,
     pub selected: bool,
 }
+/// Keep identity separate from the room-specific presentation name.
+#[derive(Clone, Debug)]
+pub struct Voter {
+    pub user_id: String,
+    pub name: String,
+}
+impl Voter {
+    pub fn new(user_id: String) -> Self {
+        Self {
+            name: user_id.clone(),
+            user_id,
+        }
+    }
+}
+
 impl Poll {
     pub fn validate_vote(&self, answers: &[String]) -> Result<(), String> {
         let unique: std::collections::HashSet<_> = answers.iter().collect();
@@ -50,6 +67,12 @@ impl Poll {
                 .into_iter()
                 .map(|answer| {
                     let voters = results.votes.get(&answer.id);
+                    let mut visible_voters = if disclosed {
+                        voters.cloned().unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    };
+                    visible_voters.sort_unstable();
                     Answer {
                         id: answer.id,
                         text: answer.text,
@@ -58,6 +81,7 @@ impl Poll {
                         } else {
                             0
                         },
+                        voters: visible_voters.into_iter().map(Voter::new).collect(),
                         selected: voters.is_some_and(|v| v.iter().any(|u| u == own_user.as_str())),
                     }
                 })
@@ -81,6 +105,7 @@ mod tests {
                     id: id.into(),
                     text: id.into(),
                     votes: 0,
+                    voters: Vec::new(),
                     selected: false,
                 })
                 .collect(),

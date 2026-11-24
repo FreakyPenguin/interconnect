@@ -894,6 +894,16 @@ impl Demo {
                         answer.votes = answer.votes.saturating_sub(usize::from(answer.selected));
                         answer.selected = answers.contains(&answer.id);
                         answer.votes += usize::from(answer.selected);
+                        answer.voters.retain(|v| v.user_id != "@jamie:example.org");
+                        if answer.selected {
+                            answer.voters.push(interconnect::polls::Voter {
+                                user_id: "@jamie:example.org".into(),
+                                name: "Jamie Davis".into(),
+                            });
+                        }
+                        answer
+                            .voters
+                            .sort_unstable_by(|a, b| a.user_id.cmp(&b.user_id));
                     }
                 }
             }
@@ -923,6 +933,7 @@ impl Demo {
                         id: a.id.clone(),
                         text: a.text.clone(),
                         votes: 0,
+                        voters: Vec::new(),
                         selected: false,
                     })
                     .collect(),

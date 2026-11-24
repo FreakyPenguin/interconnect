@@ -1,4 +1,4 @@
-use super::{App, MAX_PENDING_OPERATIONS, Message, reaction_picker::Target, shell};
+use super::{App, MAX_PENDING_OPERATIONS, Message, reaction_picker::Target, shell, tooltips};
 use iced::{
     Border, Element, Length, Task,
     widget::{button, column, container, progress_bar, row, text},
@@ -9,6 +9,21 @@ pub enum Event {
     Vote(Target, Vec<String>),
     Sent(Target, Result<(), String>),
 }
+fn voter_label(poll: &Poll, answer: &interconnect::polls::Answer) -> Option<String> {
+    poll.disclosed.then(|| {
+        if answer.voters.is_empty() {
+            "No votes yet".to_owned()
+        } else {
+            answer
+                .voters
+                .iter()
+                .map(|voter| voter.name.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    })
+}
+
 impl App {
     pub(super) fn poll_view<'a>(
         &self,
@@ -111,29 +126,36 @@ impl App {
                     }),
                 );
             }
-            content = content.push(
-                button(option)
-                    .width(Length::Fill)
-                    .padding(12)
-                    .on_press_maybe(action)
-                    .style(|theme, status| {
-                        let p = shell::palette(theme);
-                        button::Style {
-                            background: matches!(
-                                status,
-                                button::Status::Hovered | button::Status::Pressed
-                            )
-                            .then_some(p.rail.into()),
-                            text_color: p.ink,
-                            border: Border {
-                                color: p.line,
-                                width: 1.0,
-                                radius: 8.0.into(),
-                            },
-                            ..Default::default()
-                        }
-                    }),
-            );
+            let option = button(option)
+                .width(Length::Fill)
+                .padding(12)
+                .on_press_maybe(action)
+                .style(|theme, status| {
+                    let p = shell::palette(theme);
+                    button::Style {
+                        background: matches!(
+                            status,
+                            button::Status::Hovered | button::Status::Pressed
+                        )
+                        .then_some(p.rail.into()),
+                        text_color: p.ink,
+                        border: Border {
+                            color: p.line,
+                            width: 1.0,
+                            radius: 8.0.into(),
+                        },
+                        ..Default::default()
+                    }
+                });
+            if let Some(label) = voter_label(poll, answer) {
+                content = content.push(tooltips::tooltip(
+                    option,
+                    label,
+                    iced::widget::tooltip::Position::Top,
+                ));
+            } else {
+                content = content.push(option);
+            }
         }
         let footer = if poll.disclosed {
             let unit = if poll.max_selections > 1 {
@@ -268,6 +290,17 @@ mod tests {
             .unwrap();
         assert_eq!(poll.answers[0].votes, 1);
         assert!(poll.answers[0].selected);
+        assert_eq!(
+            voter_label(poll, &poll.answers[0]).as_deref(),
+            Some("Jamie Davis")
+        );
+        assert_eq!(
+            voter_label(poll, &poll.answers[1]).as_deref(),
+            Some("No votes yet")
+        );
+        let mut hidden = poll.clone();
+        hidden.disclosed = false;
+        assert!(voter_label(&hidden, &hidden.answers[0]).is_none());
         assert_eq!(app.pending_ops, 0);
     }
 }
@@ -287,8 +320,8 @@ mod layout_tests {
         let poll = Poll {
             question: "On Dec 14 Christina is organizing a gift exchange. Indicate here if you will be around and want to participate.".into(),
             answers: vec![
-                interconnect::polls::Answer { id: "a".into(), text: "I am around and will participate. 🎁🎄".into(), votes: 5, selected: true },
-                interconnect::polls::Answer { id: "b".into(), text: "I am the Grinch out to ruin Christmas. 🧌".into(), votes: 3, selected: false },
+                interconnect::polls::Answer { id: "a".into(), text: "I am around and will participate. 🎁🎄".into(), votes: 5, voters: vec![interconnect::polls::Voter { user_id: "@jamie:example.org".into(), name: "Jamie Davis".into() }], selected: true },
+                interconnect::polls::Answer { id: "b".into(), text: "I am the Grinch out to ruin Christmas. 🧌".into(), votes: 3, voters: Vec::new(), selected: false },
             ], ended: false, disclosed: true, max_selections: 1,
         };
         let mut heights = Vec::new();

@@ -790,3 +790,10 @@ INTERCONNECT_POLL_PREVIEW_DIR=/tmp/interconnect-poll-preview cargo test --locked
 ```
 
 These isolated widget previews do not establish native desktop acceptance.
+
+Hover any poll answer card to see the room display names of its voters (falling back to Matrix user IDs), one per
+line in stable order. Empty answers show “No votes yet”. Both names and counts
+remain hidden for undisclosed polls until they end. Tooltips use the existing
+hover overlay using cached room membership without network requests or background timers. Demo tests cover
+voter labels, empty options, and undisclosed tooltip suppression; verify live
+vote changes and ended polls with a dedicated account.

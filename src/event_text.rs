@@ -273,7 +273,11 @@ mod tests {
         );
         assert!(!poll.disclosed);
         assert!(!poll.ended);
-        assert!(poll.answers.iter().all(|a| a.votes == 0 && !a.selected));
+        assert!(
+            poll.answers
+                .iter()
+                .all(|a| a.votes == 0 && a.voters.is_empty() && !a.selected)
+        );
     }
 
     async fn rendered(room: &Room, mut event: Value) -> String {

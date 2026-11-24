@@ -1946,13 +1946,48 @@ async fn timeline_rows_cached(
             })
             .collect()
     };
-    if has_text {
+    let mut rows: Vec<MessageRow> = if has_text {
         tokio::task::spawn_blocking(project)
             .await
             .expect("message projection worker panicked")
     } else {
         project()
+    };
+    // Resolve each distinct voter once per snapshot from local room state only.
+    // This runs in the cancellable timeline worker, never on the UI thread.
+    let mut names = std::collections::HashMap::<String, String>::new();
+    for poll in rows.iter_mut().filter_map(|row| row.poll.as_mut()) {
+        for voter in poll
+            .answers
+            .iter_mut()
+            .flat_map(|answer| &mut answer.voters)
+        {
+            if let Some(name) = names.get(&voter.user_id) {
+                voter.name.clone_from(name);
+                continue;
+            }
+            let name = if let Ok(user) = matrix_sdk::ruma::UserId::parse(&voter.user_id) {
+                timeline
+                    .room()
+                    .get_member_no_sync(&user)
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|member| {
+                        member
+                            .display_name()
+                            .filter(|name| !name.trim().is_empty())
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| voter.user_id.clone())
+            } else {
+                voter.user_id.clone()
+            };
+            voter.name.clone_from(&name);
+            names.insert(voter.user_id.clone(), name);
+        }
     }
+    rows
 }
 
 #[cfg(test)]
