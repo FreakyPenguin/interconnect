@@ -6,9 +6,16 @@ use iced::{
 };
 
 pub(super) fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
-    let scoped = Modifiers::ALT | Modifiers::SHIFT;
-    let all = scoped | Modifiers::COMMAND;
-    if modifiers != scoped && modifiers != all {
+    let base = modifiers - Modifiers::SHIFT;
+    if matches!(key.as_ref(), Key::Character("j" | "J"))
+        && (base == Modifiers::COMMAND || base == Modifiers::CTRL)
+    {
+        return Some(Message::UnreadRoom {
+            previous: modifiers.shift(),
+            account_wide: true,
+        });
+    }
+    if modifiers != (Modifiers::ALT | Modifiers::SHIFT) {
         return None;
     }
     let previous = match key {
@@ -18,7 +25,7 @@ pub(super) fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
     };
     Some(Message::UnreadRoom {
         previous,
-        account_wide: modifiers == all,
+        account_wide: false,
     })
 }
 
@@ -134,10 +141,9 @@ mod tests {
         });
         assert_eq!(app.selection, selected);
         let scope = app.shell.space.clone();
-        let _ = app.update(Message::UnreadRoom {
-            previous: false,
-            account_wide: true,
-        });
+        let _ = app.update(
+            crate::shell_shortcut(&Key::Character("j".into()), Modifiers::COMMAND).unwrap(),
+        );
         assert_eq!(app.selection.room.as_ref().unwrap().1, "release");
         assert_eq!(app.shell.space, scope);
         assert_eq!(app.shell.query, "no matching room");
@@ -182,16 +188,27 @@ mod tests {
                 account_wide: false
             })
         ));
-        assert!(matches!(
-            crate::shell_shortcut(
+        for base in [Modifiers::CTRL, Modifiers::COMMAND] {
+            for (letter, modifiers, previous) in
+                [("j", base, false), ("J", base | Modifiers::SHIFT, true)]
+            {
+                assert!(matches!(
+                    crate::shell_shortcut(&Key::Character(letter.into()), modifiers),
+                    Some(Message::UnreadRoom { previous: actual, account_wide: true })
+                        if actual == previous
+                ));
+                assert!(
+                    shortcut(&Key::Character(letter.into()), modifiers | Modifiers::ALT).is_none()
+                );
+            }
+        }
+        assert!(
+            shortcut(
                 &down,
                 Modifiers::ALT | Modifiers::SHIFT | Modifiers::COMMAND
-            ),
-            Some(Message::UnreadRoom {
-                previous: false,
-                account_wide: true
-            })
-        ));
+            )
+            .is_none()
+        );
         assert!(shortcut(&down, Modifiers::SHIFT).is_none());
         assert!(
             shortcut(

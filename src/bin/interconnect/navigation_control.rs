@@ -29,7 +29,8 @@ pub fn plain<'a>(
     activate: Message,
 ) -> Element<'a, Message> {
     view(base, id, activate, |key, modifiers| {
-        matches!(key, Key::Named(Named::Tab)).then_some(Message::Focus(modifiers.shift()))
+        (matches!(key, Key::Named(Named::Tab)) && (modifiers - Modifiers::SHIFT).is_empty())
+            .then_some(Message::Focus(modifiers.shift()))
     })
 }
 

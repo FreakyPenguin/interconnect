@@ -1018,7 +1018,11 @@ impl App {
                 column![
                     shell::title("Messages", 14),
                     row![text("Send with").size(13), shortcut].spacing(16).align_y(iced::Alignment::Center),
-                    caption("With Enter to send, use Shift+Enter for a new line. Ctrl+Enter always sends."),
+                    caption(if cfg!(target_os = "macos") {
+                        "With Enter to send, use Shift+Enter for a new line. Cmd+Enter or Ctrl+Enter always sends."
+                    } else {
+                        "With Enter to send, use Shift+Enter for a new line. Ctrl+Enter always sends."
+                    }),
                 ].spacing(12),
                 iced::widget::rule::horizontal(1),
                 column![

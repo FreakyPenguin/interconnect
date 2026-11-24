@@ -3166,8 +3166,9 @@ impl App {
                                     key: iced::keyboard::Key::Named(
                                         iced::keyboard::key::Named::Tab
                                     ),
+                                    modifiers,
                                     ..
-                                })
+                                }) if (*modifiers - iced::keyboard::Modifiers::SHIFT).is_empty()
                             )
                         {
                             return None;
@@ -4425,14 +4426,22 @@ impl App {
                 } else if thread {
                     match shortcut {
                         interconnect::settings::SendShortcut::CtrlEnter => {
-                            "Send reply (Ctrl+Enter)"
+                            if cfg!(target_os = "macos") {
+                                "Send reply (Cmd+Enter)"
+                            } else {
+                                "Send reply (Ctrl+Enter)"
+                            }
                         }
                         interconnect::settings::SendShortcut::Enter => "Send reply (Enter)",
                     }
                 } else {
                     match shortcut {
                         interconnect::settings::SendShortcut::CtrlEnter => {
-                            "Send message (Ctrl+Enter)"
+                            if cfg!(target_os = "macos") {
+                                "Send message (Cmd+Enter)"
+                            } else {
+                                "Send message (Ctrl+Enter)"
+                            }
                         }
                         interconnect::settings::SendShortcut::Enter => "Send message (Enter)",
                     }
@@ -4460,14 +4469,17 @@ impl App {
                 .spacing(2),
                 self.markdown_controls(&key, *generation),
                 iced::widget::space().width(Length::Fill),
-                text(if draft.editing.is_some() {
-                    "Ctrl+Enter"
-                } else {
-                    match shortcut {
-                        interconnect::settings::SendShortcut::CtrlEnter => "Ctrl+Enter",
-                        interconnect::settings::SendShortcut::Enter => "Enter",
+                text(
+                    if draft.editing.is_none()
+                        && shortcut == interconnect::settings::SendShortcut::Enter
+                    {
+                        "Enter"
+                    } else if cfg!(target_os = "macos") {
+                        "Cmd+Enter"
+                    } else {
+                        "Ctrl+Enter"
                     }
-                })
+                )
                 .size(10)
                 .style(shell::muted_text)
                 .wrapping(iced::widget::text::Wrapping::None),
@@ -4591,7 +4603,9 @@ fn shell_shortcut(
     key: &iced::keyboard::Key,
     modifiers: iced::keyboard::Modifiers,
 ) -> Option<Message> {
-    use iced::keyboard::{Key, key::Named};
+    use iced::keyboard::{Key, Modifiers, key::Named};
+    let base = modifiers - Modifiers::SHIFT;
+    let command = base == Modifiers::COMMAND || base == Modifiers::CTRL;
     if let Some(backwards) = conversation_history::shortcut(key, modifiers) {
         return Some(Message::ConversationHistory(backwards));
     }
@@ -4616,20 +4630,20 @@ fn shell_shortcut(
         ));
     }
     match key.as_ref() {
-        Key::Character("l" | "L")
-            if modifiers.command() && !modifiers.shift() && !modifiers.alt() =>
-        {
-            Some(Message::SpaceNavigation(
-                space_navigation::Event::FocusLocation,
-            ))
-        }
-        Key::Named(Named::F6) => Some(Message::SpaceNavigation(
+        Key::Character("l" | "L") if command && !modifiers.shift() => Some(
+            Message::SpaceNavigation(space_navigation::Event::FocusLocation),
+        ),
+        Key::Named(Named::F6) if base.is_empty() => Some(Message::SpaceNavigation(
             space_navigation::Event::CycleRegion(modifiers.shift()),
         )),
-        Key::Character(",") if modifiers.command() => {
+        Key::Character(",") if command && !modifiers.shift() => {
             Some(Message::Settings(settings::Event::Open))
         }
-        Key::Named(Named::Tab) => Some(Message::Focus(modifiers.shift())),
+        // Control stays Control on macOS, matching native tab navigation.
+        Key::Named(Named::Tab) if base == Modifiers::CTRL => {
+            Some(Message::AdjacentRoom(modifiers.shift()))
+        }
+        Key::Named(Named::Tab) if base.is_empty() => Some(Message::Focus(modifiers.shift())),
         Key::Named(Named::Escape) => Some(Message::Escape),
         Key::Named(Named::ArrowUp) if modifiers == iced::keyboard::Modifiers::ALT => {
             Some(Message::AdjacentRoom(true))
@@ -4637,16 +4651,15 @@ fn shell_shortcut(
         Key::Named(Named::ArrowDown) if modifiers == iced::keyboard::Modifiers::ALT => {
             Some(Message::AdjacentRoom(false))
         }
-        Key::Character("t") if modifiers.alt() => Some(Message::OpenLastThread),
-        Key::Character("f" | "F")
-            if (modifiers.command() || modifiers.control()) && modifiers.shift() =>
-        {
+        Key::Character("t" | "T") if command && !modifiers.shift() => Some(Message::OpenLastThread),
+        Key::Character("t" | "T") if !cfg!(target_os = "macos") && modifiers == Modifiers::ALT => {
+            Some(Message::OpenLastThread)
+        }
+        Key::Character("f" | "F") if command && modifiers.shift() => {
             Some(Message::GlobalSearch(global_search::Event::Open))
         }
-        Key::Character("f" | "F") if modifiers.command() || modifiers.control() => {
-            Some(Message::RoomSearch(room_search::Event::Open))
-        }
-        Key::Character("k") if modifiers.command() => Some(Message::SearchFocus),
+        Key::Character("f" | "F") if command => Some(Message::RoomSearch(room_search::Event::Open)),
+        Key::Character("k" | "K") if command && modifiers.shift() => Some(Message::SearchFocus),
         _ => None,
     }
 }
@@ -4663,6 +4676,7 @@ fn composer_binding(
     if matches!(press.status, text_editor::Status::Focused { .. })
         && press.key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter)
         && (press.modifiers == iced::keyboard::Modifiers::CTRL
+            || press.modifiers == iced::keyboard::Modifiers::COMMAND
             || (shortcut == interconnect::settings::SendShortcut::Enter
                 && press.modifiers.is_empty()))
     {
@@ -6586,6 +6600,135 @@ mod tests {
     }
 
     #[test]
+    fn room_cycle_shortcut_reaches_the_shell_from_each_focus_region() {
+        use iced::advanced::{
+            Layout, Shell, layout, mouse, subscription,
+            widget::{self, Tree},
+        };
+        use iced::futures::{FutureExt, StreamExt};
+        use iced::keyboard::{
+            Key, Modifiers,
+            key::{Named, NativeCode, Physical},
+        };
+
+        for focus in [
+            "room-composer",
+            "room-search",
+            "nav-new-chat",
+            space_navigation::HOME,
+        ] {
+            for backwards in [false, true] {
+                for completing in [false, true] {
+                    let mut app = demo_app();
+                    app.shell.space = Scope::All;
+                    let key = app.draft_key(false).unwrap();
+                    let _ = app.update(Message::WindowFocused(true));
+                    let _ = app.update(Message::Edit(
+                        key.clone(),
+                        text_editor::Action::Edit(text_editor::Edit::Paste(std::sync::Arc::new(
+                            if completing { ":sm" } else { "unsent draft" }.into(),
+                        ))),
+                    ));
+                    assert_eq!(app.emoji_completion.is_active(), completing);
+                    app.scroll_positions.insert(key.clone(), 125.0);
+                    let rooms = app.visible_rooms();
+                    let start = rooms.iter().position(|room| room == &key.room).unwrap();
+                    let target = &rooms[if backwards {
+                        (start + rooms.len() - 1) % rooms.len()
+                    } else {
+                        (start + 1) % rooms.len()
+                    }];
+                    let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: Key::Named(Named::Tab),
+                        modified_key: Key::Named(Named::Tab),
+                        physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                        location: iced::keyboard::Location::Standard,
+                        modifiers: Modifiers::CTRL
+                            | if backwards {
+                                Modifiers::SHIFT
+                            } else {
+                                Modifiers::empty()
+                            },
+                        text: Some("\t".into()),
+                        repeat: false,
+                    });
+                    let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+                    let size = iced::Size::new(1000.0, 700.0);
+                    let mut view = app.view();
+                    let mut tree = Tree::new(&view);
+                    let node = view.as_widget_mut().layout(
+                        &mut tree,
+                        &renderer,
+                        &layout::Limits::new(size, size),
+                    );
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &mut widget::operation::focusable::focus::<()>(focus.into()),
+                    );
+                    let mut messages = Vec::new();
+                    let mut shell = Shell::new(&mut messages);
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &event,
+                        Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut shell,
+                        &iced::Rectangle::with_size(size),
+                    );
+                    let status = if shell.is_event_captured() {
+                        iced::event::Status::Captured
+                    } else {
+                        iced::event::Status::Ignored
+                    };
+                    drop(view);
+                    let global = subscription::into_recipes(app.subscription())
+                        .into_iter()
+                        .find_map(|recipe| {
+                            let input = subscription::Event::Interaction {
+                                window: iced::window::Id::unique(),
+                                status,
+                                event: event.clone(),
+                            };
+                            recipe
+                                .stream(Box::pin(iced::futures::stream::iter([input])))
+                                .next()
+                                .now_or_never()
+                                .flatten()
+                        });
+                    messages.extend(global);
+                    // Initial layout reports are unrelated to keyboard dispatch.
+                    messages.retain(|message| {
+                        !matches!(
+                            message,
+                            Message::RowsVisible { .. }
+                                | Message::ReadingPosition { .. }
+                                | Message::TimelineVisible { .. }
+                                | Message::TimelineMeasured { .. }
+                        )
+                    });
+                    assert!(
+                        matches!(messages.as_slice(), [Message::AdjacentRoom(actual)] if *actual == backwards),
+                        "{focus}, backwards={backwards}, completing={completing}: {messages:?}"
+                    );
+                    for message in messages {
+                        let _ = app.update(message);
+                    }
+                    assert_eq!(&app.selection.room.as_ref().unwrap().1, target);
+                    assert_eq!(
+                        app.drafts[&key].content.text(),
+                        if completing { ":sm" } else { "unsent draft" }
+                    );
+                    assert_eq!(app.scroll_positions[&key], 125.0);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn composer_shortcuts_respect_focus_newlines_and_ime() {
         let key = DraftKey {
             room: "!one:example.org".into(),
@@ -6603,6 +6746,56 @@ mod tests {
             composer_binding(press.clone(), false, &key, Default::default()),
             Some(text_editor::Binding::Custom(Message::Send(_)))
         ));
+        let mut command = press.clone();
+        command.modifiers = iced::keyboard::Modifiers::COMMAND;
+        assert!(matches!(
+            composer_binding(command.clone(), false, &key, Default::default()),
+            Some(text_editor::Binding::Custom(Message::Send(_)))
+        ));
+        assert!(composer_binding(command.clone(), true, &key, Default::default()).is_none());
+        command.status = text_editor::Status::Active;
+        assert!(composer_binding(command, false, &key, Default::default()).is_none());
+        for base in [
+            iced::keyboard::Modifiers::CTRL,
+            iced::keyboard::Modifiers::COMMAND,
+        ] {
+            assert!(matches!(
+                shell_shortcut(
+                    &iced::keyboard::Key::Character("K".into()),
+                    base | iced::keyboard::Modifiers::SHIFT
+                ),
+                Some(Message::SearchFocus)
+            ));
+            for letter in ["t", "T"] {
+                assert!(matches!(
+                    shell_shortcut(&iced::keyboard::Key::Character(letter.into()), base),
+                    Some(Message::OpenLastThread)
+                ));
+            }
+            for (letter, modifiers) in [
+                ("k", base),
+                ("K", base | iced::keyboard::Modifiers::SHIFT),
+                ("t", base),
+                ("j", base),
+                ("J", base | iced::keyboard::Modifiers::SHIFT),
+            ] {
+                let mut navigation = press.clone();
+                navigation.key = iced::keyboard::Key::Character(letter.into());
+                navigation.modifiers = modifiers;
+                navigation.text = Some(letter.into());
+                assert!(
+                    composer_binding(navigation, false, &key, Default::default()).is_none(),
+                    "{letter} must reach the shell without changing the draft"
+                );
+                assert!(
+                    shell_shortcut(
+                        &iced::keyboard::Key::Character(letter.into()),
+                        modifiers | iced::keyboard::Modifiers::ALT
+                    )
+                    .is_none()
+                );
+            }
+        }
         assert!(composer_binding(press.clone(), true, &key, Default::default()).is_none());
         let mut unfocused = press.clone();
         unfocused.status = text_editor::Status::Active;

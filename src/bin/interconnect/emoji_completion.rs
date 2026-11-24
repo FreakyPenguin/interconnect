@@ -106,6 +106,7 @@ pub fn shortcut(
 ) -> Option<Message> {
     if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
         if status == iced::event::Status::Captured
+            && (modifiers - iced::keyboard::Modifiers::SHIFT).is_empty()
             && matches!(key, Key::Named(Named::Escape | Named::Tab))
         {
             return None;

@@ -104,7 +104,7 @@ fn bar_control<'a>(
     )
 }
 fn keys(id: String, key: &Key, modifiers: Modifiers) -> Option<Message> {
-    if matches!(key, Key::Named(Named::Tab)) {
+    if matches!(key, Key::Named(Named::Tab)) && (modifiers - Modifiers::SHIFT).is_empty() {
         return Some(Message::Focus(modifiers.shift()));
     }
     if modifiers.is_empty()
@@ -828,7 +828,8 @@ impl App {
             TOGGLE,
             action,
             |key, modifiers| {
-                matches!(key, Key::Named(Named::Tab)).then_some(Message::Focus(modifiers.shift()))
+                (matches!(key, Key::Named(Named::Tab)) && (modifiers - Modifiers::SHIFT).is_empty())
+                    .then_some(Message::Focus(modifiers.shift()))
             },
         );
         super::tooltips::tooltip(

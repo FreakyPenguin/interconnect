@@ -193,6 +193,8 @@ python3 scripts/generate-icons.py
 
 The generator needs Python 3 and ImageMagick; normal builds do not. The Linux
 application ID/desktop entry is `interconnect`; macOS uses the bundled icon.
+Keep the SVG background and message-route cutouts transparent. After regeneration,
+check transparency in all eight PNG sizes and the PNGs embedded in the macOS ICNS.
 
 ## Renderer selection
 

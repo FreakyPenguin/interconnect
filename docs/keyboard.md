@@ -1,7 +1,8 @@
 # Keyboard shortcuts
 
-On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
-**Ctrl+Enter** sends on every platform. Dialogs, completion, and IME take precedence.
+On macOS, **Command** replaces **Ctrl** unless stated otherwise; **Alt** is **Option**.
+**Ctrl+Enter** sends on every platform; **Command+Enter** also sends on macOS.
+Dialogs, completion, and IME take precedence.
 
 ## Navigation
 
@@ -9,18 +10,20 @@ On macOS, **Command** replaces **Ctrl** for navigation; **Alt** is **Option**.
 | --- | --- |
 | Ctrl+N | Start a direct chat or open/join a room by address. |
 | Ctrl+Shift+N | Create a room. |
-| Ctrl+P / Ctrl+Shift+P | Room switcher / space picker. |
-| Ctrl+K | Focus room filter; Enter opens first match. |
+| Ctrl+K (also Ctrl+P) | Room switcher. |
+| Ctrl+Shift+P | Space picker. |
+| Ctrl+Shift+K | Focus room filter; Enter opens first match. |
 | Ctrl+L | Focus current breadcrumb (Home at root). |
 | Ctrl+Shift+L | Toggle Include subspaces, preserving focus/filter. |
 | F6 / Shift+F6 | Cycle breadcrumb, sidebar, composer; show sidebar if needed. |
 | Ctrl+F / Ctrl+Shift+F | Search loaded room messages / account-wide messages. |
 | Ctrl+, | Settings. |
-| Alt+Up / Alt+Down | Previous/next visible room, wrapping. |
+| Ctrl+Tab / Ctrl+Shift+Tab (also on macOS) | Next/previous visible room, wrapping. |
+| Alt+Up / Alt+Down | Previous/next visible room, wrapping (alternative). |
+| Ctrl+J / Ctrl+Shift+J | Next/previous unread room across the account. |
 | Alt+Shift+Up / Alt+Shift+Down | Previous/next unread room within the selected space and room filter. |
-| Ctrl+Alt+Shift+Up / Ctrl+Alt+Shift+Down (macOS: Command+Option+Shift+Up/Down) | Previous/next unread room across the account. |
 | Alt+Left / Alt+Right (macOS: Command+[ / Command+]) | Back/forward through conversation history. |
-| Alt+T | Thread on latest non-thread room message; focus thread composer. |
+| Ctrl+T | Thread on latest non-thread room message; focus thread composer (also Alt+T on Linux/Windows). |
 | Tab / Shift+Tab | Traverse focusable controls; dialogs cycle within their active form. |
 | Escape | Dismiss overlay/search/filter, cancel reply, then close People/thread and focus room composer. |
 
@@ -66,7 +69,8 @@ joining an unfamiliar room requires submitting that dialog.
 
 Space picker searches names/paths; Enter selects without switching conversation,
 Escape returns to composer, Tab refocuses search, and Ctrl+P/Ctrl+Shift+P switches
-room/space search. Space changes preserve drafts and reading positions.
+room/space search. Ctrl+K also switches to room search.
+Space changes preserve drafts and reading positions.
 
 Breadcrumb bar: Left/Right moves controls, Home/End reaches ends, Down opens a
 menu, Enter/Space activates. Home's arrow exposes the whole tree; long paths put
@@ -112,7 +116,7 @@ they do not send conversation read receipts.
 
 | Shortcut | Action |
 | --- | --- |
-| Ctrl+Enter | Send or save edit. |
+| Ctrl+Enter (macOS: also Command+Enter) | Send or save edit. |
 | Enter | Newline by default; optional Enter-to-send in Settings. |
 | Shift+Enter | Newline. |
 | Up in empty composer | Edit latest editable message. |

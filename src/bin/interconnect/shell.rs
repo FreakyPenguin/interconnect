@@ -790,6 +790,15 @@ impl App {
                 .on_input(Message::Search)
                 .on_submit(Message::SearchOpen);
         }
+        let search = super::tooltips::tooltip(
+            search.width(Length::Fill),
+            if cfg!(target_os = "macos") {
+                "Filter rooms (Cmd+Shift+K) · Switch rooms (Cmd+K)"
+            } else {
+                "Filter rooms (Ctrl+Shift+K) · Switch rooms (Ctrl+K)"
+            },
+            widget::tooltip::Position::Bottom,
+        );
         let mut saved_messages = row![
             icon(Kind::Bookmark),
             text("Saved messages").size(13).width(Length::Fill),
@@ -1153,7 +1162,7 @@ impl App {
                     ),
                 ]
                 .align_y(Alignment::Center),
-                row![search.width(Length::Fill), self.subspaces_toggle()]
+                row![search, self.subspaces_toggle()]
                     .spacing(6)
                     .align_y(Alignment::Center),
                 scrollable(rooms.padding(iced::Padding {

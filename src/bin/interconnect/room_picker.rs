@@ -246,7 +246,7 @@ pub fn shortcut(
         Key::Named(Named::ArrowDown) => Some(message(Event::Move(false))),
         // Enter is submitted by the text input, avoiding a duplicate action.
         Key::Named(Named::Tab) => Some(message(Event::Refocus)),
-        Key::Character("p" | "P") if is_shortcut(&key, modifiers) => Some(message(Event::Open)),
+        _ if is_shortcut(&key, modifiers) => Some(message(Event::Open)),
         Key::Character("p" | "P") if is_space_shortcut(&key, modifiers) => {
             Some(message(Event::OpenSpaces))
         }
@@ -254,16 +254,13 @@ pub fn shortcut(
     }
 }
 pub fn is_shortcut(key: &Key, modifiers: Modifiers) -> bool {
-    matches!(key.as_ref(), Key::Character("p" | "P"))
-        && (modifiers.control() || modifiers.command())
-        && !modifiers.alt()
-        && !modifiers.shift()
+    matches!(key.as_ref(), Key::Character("k" | "K" | "p" | "P"))
+        && (modifiers == Modifiers::CTRL || modifiers == Modifiers::COMMAND)
 }
 pub fn is_space_shortcut(key: &Key, modifiers: Modifiers) -> bool {
     matches!(key.as_ref(), Key::Character("p" | "P"))
-        && (modifiers.control() || modifiers.command())
-        && !modifiers.alt()
-        && modifiers.shift()
+        && (modifiers == (Modifiers::CTRL | Modifiers::SHIFT)
+            || modifiers == (Modifiers::COMMAND | Modifiers::SHIFT))
 }
 impl App {
     pub(super) fn space_add_picker_matches(&self, room: &str) -> bool {
@@ -1087,7 +1084,7 @@ mod tests {
             );
             let _ = app.update(
                 shortcut(
-                    picker_key(Key::Character("p".into()), modifiers),
+                    picker_key(Key::Character("k".into()), modifiers),
                     iced::event::Status::Captured,
                     iced::window::Id::unique(),
                 )
@@ -1702,10 +1699,12 @@ mod tests {
     #[test]
     fn shortcut_works_with_control_and_platform_command() {
         for modifiers in [Modifiers::CTRL, Modifiers::COMMAND] {
-            assert!(matches!(
-                super::super::shell_shortcut(&Key::Character("p".into()), modifiers),
-                Some(Message::QuickRoom(Event::Open))
-            ));
+            for letter in ["k", "K", "p", "P"] {
+                assert!(matches!(
+                    super::super::shell_shortcut(&Key::Character(letter.into()), modifiers),
+                    Some(Message::QuickRoom(Event::Open))
+                ));
+            }
         }
         assert!(!is_shortcut(
             &Key::Character("p".into()),

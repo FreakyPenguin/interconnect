@@ -252,14 +252,32 @@ acceptance check.
 Native GPU latency, IME/focus, very long individual messages, and live homeserver
 interoperability remain manual checks. Loaded SDK history has no new retention cap.
 
-- Use Alt+Shift+Up/Down for unread rooms within the current space/text filter;
-  add Ctrl (Command on macOS) to search the account. Check both directions,
+- Use Ctrl+J / Ctrl+Shift+J (macOS: Command+J / Command+Shift+J) for next/previous
+  unread room across the account; Alt+Shift+Up/Down stays within the current
+  space/text filter. Check both directions,
   wrapping, collapsed sections, a current room outside the filter, and no other
   unread room. Preserve space/filter, room/thread drafts, saved positions, and
   back/forward history. Modals, IME, pending native pickers, and shutdown must
   prevent navigation. Automated demo tests cover ordering, wrapping, guards,
   history, and scope; live SDK unread changes and OS shortcut conflicts remain
   desktop checks. Notification-inbox read flags do not determine this action.
+
+- Check Ctrl+Tab / Ctrl+Shift+Tab for next/previous visible room, including on
+  macOS where this uses Control. Try from the composer, breadcrumb, room filter,
+  sidebar controls, and while emoji/mention completion is open. Plain Tab and
+  Shift+Tab must still move focus, and completion Tab must still insert a choice.
+  Ctrl+K / Command+K opens the room switcher (Ctrl+P / Command+P remains an alias);
+  Ctrl+Shift+K / Command+Shift+K focuses the sidebar filter. Ctrl+T / Command+T
+  opens the latest thread. Command+Enter sends/saves on macOS alongside Ctrl+Enter;
+  check IME and unfocused composers still suppress sending. Native macOS layout,
+  Option text entry, and OS shortcut conflicts require desktop validation.
+
+  Local shortcut validation: the locked UI suite passed (669 tests; one ignored),
+  along with formatting and workspace/all-target Clippy with warnings denied.
+  The widget/subscription regression covers Ctrl+Tab in both directions from
+  the composer, filter, sidebar button, and breadcrumb, with and without emoji
+  completion, preserving draft text and saved scroll position. No connected
+  account or native desktop acceptance was exercised for this shortcut pass.
 
 - In account-wide search, combine a joined room, full Matrix sender ID, and
   From/Through dates (inclusive UTC days). Check duplicate sender display names,
@@ -351,7 +369,7 @@ Desktop acceptance and connected unavailable-key/history cases remain manual.
   cover-return, interruption, and dropdown tests exercise the automated path;
   actual desktop/IME timing and macOS behavior remain manual.
 
-Open a thread with Alt+T while its messages are still loading, then type after
+Open a thread with Ctrl+T / Command+T while its messages are still loading, then type after
 arrival: input must reach the thread composer and leave the room draft intact.
 Before arrival, switch rooms, close the thread, press F6/Tab, focus the room filter,
 open Settings, or unfocus the window: the late pane must not take focus back.
