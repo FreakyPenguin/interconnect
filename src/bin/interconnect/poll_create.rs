@@ -2,10 +2,14 @@
 #[path = "poll_create/answer_reorder.rs"]
 mod answer_reorder;
 #[cfg(test)]
+#[path = "poll_create/editing_tests.rs"]
+mod editing_tests;
+#[cfg(test)]
 #[path = "poll_create/reorder_tests.rs"]
 mod reorder_tests;
 use super::{
-    App, DraftKey, MAX_PENDING_OPERATIONS, Message, current_pane, icons::Kind, shell, tooltips,
+    App, DraftKey, MAX_PENDING_OPERATIONS, Message, current_pane, icons::Kind,
+    reaction_picker::Target, shell, tooltips,
 };
 use iced::{
     Element, Length, Task,
@@ -18,6 +22,22 @@ use std::collections::HashMap;
 pub(super) struct State {
     form: Option<Form>,
     writes: HashMap<u64, Write>,
+    acknowledged: HashMap<EditKey, Creation>,
+}
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct EditKey {
+    account: Option<String>,
+    room: String,
+    event: String,
+}
+impl EditKey {
+    fn new(account: Option<String>, target: &Target) -> Self {
+        Self {
+            account,
+            room: target.room.clone(),
+            event: target.event.clone(),
+        }
+    }
 }
 struct Form {
     serial: u64,
@@ -27,14 +47,26 @@ struct Form {
     revision: u64,
     answer_ids: Vec<usize>,
     next_answer_id: usize,
+    edit: Option<Editing>,
 }
 struct Write {
     account: Option<String>,
     key: DraftKey,
+    form: u64,
+    edit: Option<Target>,
+    original: Option<Creation>,
+}
+struct Editing {
+    target: Target,
+    original: Creation,
+    values: Creation,
+    error: Option<String>,
+    transaction: matrix_sdk::ruma::OwnedTransactionId,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
     Open(DraftKey),
+    Edit(Target),
     Close(u64),
     Question(u64, String),
     Answer(u64, usize, String),
@@ -68,6 +100,100 @@ impl App {
     pub(super) fn poll_creation_open(&self) -> bool {
         self.poll_creation.form.is_some()
     }
+    pub(super) fn poll_edit_pending(&self, target: &Target) -> bool {
+        self.poll_edit_waiting(target)
+            || self.poll_creation.writes.values().any(|write| {
+                write.account == self.account_id
+                    && write
+                        .edit
+                        .as_ref()
+                        .is_some_and(|edit| edit.room == target.room && edit.event == target.event)
+            })
+    }
+    pub(super) fn poll_edit_waiting(&self, target: &Target) -> bool {
+        self.poll_creation
+            .acknowledged
+            .contains_key(&EditKey::new(self.account_id.clone(), target))
+    }
+    pub(super) fn can_edit_poll(&self, target: &Target) -> bool {
+        self.poll_action_ready(target)
+            && (self.demo.is_some() || self.reaction_composer(target).is_some())
+            && self.message_row(target).is_some_and(|row| {
+                row.is_own && row.poll.as_ref().is_some_and(|poll| poll.editable)
+            })
+            && self.draft_key(target.thread).as_ref().is_some_and(|key| {
+                !self.poll_creation_pending(key)
+                    && self
+                        .drafts
+                        .get(key)
+                        .is_some_and(|draft| !draft.pending && draft.editing.is_none())
+            })
+    }
+    pub(super) fn poll_edit_action(
+        &self,
+        row: &interconnect::connected::MessageRow,
+        thread: bool,
+        generation: u64,
+    ) -> Option<Message> {
+        let target = Target {
+            room: self.selection.room.as_ref()?.1.clone(),
+            thread,
+            generation,
+            event: row.event_id.clone()?,
+        };
+        self.can_edit_poll(&target)
+            .then(|| message(Event::Edit(target)))
+    }
+    fn poll_edit_current(&self, edit: &Editing) -> bool {
+        self.message_row(&edit.target).is_some_and(|row| {
+            row.is_own
+                && row.poll.as_ref().is_some_and(|poll| {
+                    poll.editable && !poll.ended && Creation::from(poll) == edit.original
+                })
+        })
+    }
+    fn poll_values(&self, key: &DraftKey) -> &Creation {
+        self.poll_creation
+            .form
+            .as_ref()
+            .and_then(|form| form.edit.as_ref())
+            .map(|edit| &edit.values)
+            .unwrap_or_else(|| self.drafts[key].poll.as_ref().unwrap())
+    }
+    fn set_poll_form_error(&mut self, key: &DraftKey, error: String) {
+        if let Some(edit) = self
+            .poll_creation
+            .form
+            .as_mut()
+            .and_then(|form| form.edit.as_mut())
+        {
+            edit.error = Some(error);
+        } else {
+            self.drafts.get_mut(key).unwrap().poll_error = Some(error);
+        }
+    }
+    fn open_poll_form(&mut self, key: DraftKey, generation: u64, edit: Option<Editing>) {
+        let answer_count = edit
+            .as_ref()
+            .map(|edit| edit.values.answers.len())
+            .unwrap_or_else(|| self.drafts[&key].poll.as_ref().unwrap().answers.len());
+        self.generation += 1;
+        self.poll_creation.form = Some(Form {
+            serial: self.generation,
+            account: self.account_id.clone(),
+            generation,
+            key,
+            revision: 0,
+            answer_ids: (0..answer_count).collect(),
+            next_answer_id: answer_count,
+            edit,
+        });
+        self.poll_votes = None;
+        self.context_menu = None;
+        self.emoji_completion.clear();
+        self.user_completion.clear();
+        self.stop_typing();
+    }
     fn poll_creation_pending(&self, key: &DraftKey) -> bool {
         self.poll_creation
             .writes
@@ -99,6 +225,34 @@ impl App {
         .then(|| form.key.clone())
     }
     pub(super) fn validate_poll_creation(&mut self) {
+        // Keep old answer IDs disabled until an event-driven snapshot replaces them.
+        let room = self.selection.room.as_ref();
+        let room_pane =
+            room.and_then(|(generation, _)| current_pane(&self.model.room, *generation));
+        let thread_pane = self
+            .selection
+            .thread
+            .as_ref()
+            .and_then(|(generation, _)| current_pane(&self.model.thread, *generation));
+        self.poll_creation.acknowledged.retain(|key, original| {
+            if key.account != self.account_id {
+                return false;
+            }
+            if room.is_none_or(|(_, room)| room != &key.room) {
+                return true;
+            }
+            !room_pane
+                .into_iter()
+                .chain(thread_pane)
+                .flat_map(|pane| pane.rows.iter())
+                .any(|row| {
+                    row.event_id.as_deref() == Some(key.event.as_str())
+                        && row
+                            .poll
+                            .as_ref()
+                            .is_none_or(|poll| poll.ended || Creation::from(poll) != *original)
+                })
+        });
         if self.poll_creation.form.as_ref().is_some_and(|form| {
             self.poll_form_key(form.serial).is_none()
                 || self.topic_editor.is_some()
@@ -112,6 +266,13 @@ impl App {
         }) {
             self.poll_creation.form = None;
         }
+        if let Some(form) = &self.poll_creation.form
+            && let Some(edit) = &form.edit
+            && !self.poll_edit_current(edit)
+        {
+            self.poll_creation.form.as_mut().unwrap().edit.as_mut().unwrap().error
+                .get_or_insert_with(|| "This poll changed or received a response. Close and reopen the editor to review it.".into());
+        }
     }
     pub(super) fn poll_create_event(&mut self, event: Event) -> Task<Message> {
         if let Event::Finished(request, result) = event {
@@ -119,25 +280,46 @@ impl App {
                 return Task::none();
             };
             self.pending_ops -= 1;
-            if write.account == self.account_id
-                && let Some(draft) = self.drafts.get_mut(&write.key)
-            {
-                let draft = if let Some(editing) = &mut draft.editing {
-                    editing.saved.as_mut()
-                } else {
-                    draft
-                };
-                match result {
-                    Ok(()) => {
-                        draft.poll = None;
-                        draft.poll_error = None;
-                        if self.poll_creation.form.as_ref().is_some_and(|form| {
-                            form.key == write.key && form.account == write.account
-                        }) {
-                            self.poll_creation.form = None;
-                        }
+            if write.account == self.account_id {
+                if let Some(target) = write.edit {
+                    if result.is_ok()
+                        && let Some(original) = write.original
+                    {
+                        self.poll_creation
+                            .acknowledged
+                            .insert(EditKey::new(write.account.clone(), &target), original);
                     }
-                    Err(error) => draft.poll_error = Some(error),
+                    let matching = self
+                        .poll_creation
+                        .form
+                        .as_ref()
+                        .is_some_and(|form| form.serial == write.form && form.edit.is_some());
+                    match result {
+                        Ok(()) if matching => self.poll_creation.form = None,
+                        Err(error) if matching => self.set_poll_form_error(&write.key, error),
+                        Err(error) => self.poll_edit_failed(target, error),
+                        _ => {}
+                    }
+                } else if let Some(draft) = self.drafts.get_mut(&write.key) {
+                    let draft = if let Some(editing) = &mut draft.editing {
+                        editing.saved.as_mut()
+                    } else {
+                        draft
+                    };
+                    match result {
+                        Ok(()) => {
+                            draft.poll = None;
+                            draft.poll_error = None;
+                            if self.poll_creation.form.as_ref().is_some_and(|form| {
+                                form.key == write.key
+                                    && form.account == write.account
+                                    && form.edit.is_none()
+                            }) {
+                                self.poll_creation.form = None;
+                            }
+                        }
+                        Err(error) => draft.poll_error = Some(error),
+                    }
                 }
             }
             return Task::none();
@@ -160,26 +342,33 @@ impl App {
                 .unwrap()
                 .poll
                 .get_or_insert_with(Creation::default);
-            let answer_count = self.drafts[&key].poll.as_ref().unwrap().answers.len();
-            self.generation += 1;
-            self.poll_creation.form = Some(Form {
-                serial: self.generation,
-                account: self.account_id.clone(),
-                generation: if key.root.is_some() {
-                    self.selection.thread.as_ref().unwrap().0
-                } else {
-                    self.selection.room.as_ref().unwrap().0
-                },
+            let generation = if key.root.is_some() {
+                self.selection.thread.as_ref().unwrap().0
+            } else {
+                self.selection.room.as_ref().unwrap().0
+            };
+            self.open_poll_form(key, generation, None);
+            return Task::none();
+        }
+        if let Event::Edit(target) = event {
+            if !self.can_edit_poll(&target) {
+                return Task::none();
+            }
+            let key = self.draft_key(target.thread).unwrap();
+            let original =
+                Creation::from(self.message_row(&target).unwrap().poll.as_ref().unwrap());
+            let generation = target.generation;
+            self.open_poll_form(
                 key,
-                revision: 0,
-                answer_ids: (0..answer_count).collect(),
-                next_answer_id: answer_count,
-            });
-            self.poll_votes = None;
-            self.context_menu = None;
-            self.emoji_completion.clear();
-            self.user_completion.clear();
-            self.stop_typing();
+                generation,
+                Some(Editing {
+                    target,
+                    values: original.clone(),
+                    original,
+                    error: None,
+                    transaction: matrix_sdk::ruma::TransactionId::new(),
+                }),
+            );
             return Task::none();
         }
         let serial = match &event {
@@ -218,37 +407,81 @@ impl App {
             if self.pending_ops >= MAX_PENDING_OPERATIONS || self.composing {
                 return Task::none();
             }
-            let content = match self.drafts[&key].poll.as_ref().unwrap().to_content() {
+            let edit = self.poll_creation.form.as_ref().unwrap().edit.as_ref();
+            if edit.is_some_and(|edit| !self.poll_edit_current(edit)) {
+                self.set_poll_form_error(
+                    &key,
+                    "This poll can no longer be edited. Close and reopen the editor to review it."
+                        .into(),
+                );
+                return Task::none();
+            }
+            let replacement = self.poll_values(&key).clone();
+            let content = match replacement.to_content() {
                 Ok(content) => content,
                 Err(error) => {
-                    self.drafts.get_mut(&key).unwrap().poll_error = Some(error);
+                    self.set_poll_form_error(&key, error);
                     return Task::none();
                 }
             };
+            let replacement = Creation {
+                question: content.poll_start.question.text.clone(),
+                answers: content
+                    .poll_start
+                    .answers
+                    .iter()
+                    .map(|answer| answer.text.clone())
+                    .collect(),
+                max_selections: replacement.max_selections,
+                hidden_results: replacement.hidden_results,
+            };
+            if edit.is_some_and(|edit| edit.original == replacement) {
+                self.poll_creation.form = None;
+                return focus(&key);
+            }
+            let editing = edit.map(|edit| {
+                (
+                    edit.target.clone(),
+                    edit.original.clone(),
+                    edit.transaction.clone(),
+                )
+            });
             if let Some(demo) = &mut self.demo {
-                let fallback = content.text.clone().unwrap_or_default();
-                demo.send_poll(&key, fallback, content);
-                self.drafts.get_mut(&key).unwrap().poll = None;
-                self.drafts.get_mut(&key).unwrap().poll_error = None;
+                if let Some((target, original, _)) = editing {
+                    if let Err(error) =
+                        demo.edit_poll(&target.room, &target.event, &original, &replacement)
+                    {
+                        self.set_poll_form_error(&key, error);
+                        return Task::none();
+                    }
+                } else {
+                    demo.send_poll(&key, content.text.clone().unwrap_or_default(), content);
+                    self.drafts.get_mut(&key).unwrap().poll = None;
+                    self.drafts.get_mut(&key).unwrap().poll_error = None;
+                }
                 self.poll_creation.form = None;
                 self.refresh_demo();
                 return focus(&key);
             }
-            let selected = if key.root.is_some() {
-                &self.selection.thread
+            let composer = if let Some((target, _, _)) = &editing {
+                self.reaction_composer(target)
             } else {
-                &self.selection.room
+                let selected = if key.root.is_some() {
+                    &self.selection.thread
+                } else {
+                    &self.selection.room
+                };
+                let pane = if key.root.is_some() {
+                    &self.model.thread
+                } else {
+                    &self.model.room
+                };
+                selected
+                    .as_ref()
+                    .and_then(|(generation, _)| current_pane(pane, *generation))
+                    .and_then(|pane| pane.composer.clone())
             };
-            let pane = if key.root.is_some() {
-                &self.model.thread
-            } else {
-                &self.model.room
-            };
-            let Some(composer) = selected
-                .as_ref()
-                .and_then(|(generation, _)| current_pane(pane, *generation))
-                .and_then(|pane| pane.composer.clone())
-            else {
+            let Some(composer) = composer else {
                 return Task::none();
             };
             self.generation += 1;
@@ -258,16 +491,34 @@ impl App {
                 Write {
                     account: self.account_id.clone(),
                     key: key.clone(),
+                    form: serial,
+                    edit: editing.as_ref().map(|(target, _, _)| target.clone()),
+                    original: editing.as_ref().map(|(_, original, _)| original.clone()),
                 },
             );
-            self.drafts.get_mut(&key).unwrap().poll_error = None;
             self.pending_ops += 1;
-            return Task::perform(
-                composer.create_poll(self.drafts[&key].poll.clone().unwrap()),
-                move |result| message(Event::Finished(request, result)),
-            );
+            let operation = async move {
+                if let Some((target, original, transaction)) = editing {
+                    composer
+                        .edit_poll_with_transaction(
+                            target.event,
+                            original,
+                            replacement,
+                            transaction,
+                        )
+                        .await
+                } else {
+                    composer.create_poll(replacement).await
+                }
+            };
+            return Task::perform(operation, move |result| {
+                message(Event::Finished(request, result))
+            });
         }
         if matches!(event, Event::Template(_)) {
+            if self.poll_creation.form.as_ref().unwrap().edit.is_some() {
+                return Task::none();
+            }
             // The quick path never replaces an ordinary message, reply, or attachment.
             let draft = &self.drafts[&key];
             if draft.content.text().is_empty()
@@ -279,9 +530,24 @@ impl App {
             }
             return Task::none();
         }
+        if self
+            .poll_creation
+            .form
+            .as_ref()
+            .unwrap()
+            .edit
+            .as_ref()
+            .is_some_and(|edit| !self.poll_edit_current(edit))
+        {
+            return Task::none();
+        }
         let form = self.poll_creation.form.as_mut().unwrap();
         let draft = self.drafts.get_mut(&key).unwrap();
-        let poll = draft.poll.as_mut().unwrap();
+        let poll = if let Some(edit) = &mut form.edit {
+            &mut edit.values
+        } else {
+            draft.poll.as_mut().unwrap()
+        };
         if let Event::Reorder {
             revision, from, to, ..
         } = &event
@@ -331,7 +597,11 @@ impl App {
             _ => {}
         }
         form.revision += 1;
-        draft.poll_error = None;
+        if let Some(edit) = &mut form.edit {
+            edit.error = None;
+        } else {
+            draft.poll_error = None;
+        }
         Task::none()
     }
     pub(super) fn dismiss_poll_creation(&self) -> Option<Message> {
@@ -347,9 +617,14 @@ impl App {
         let form = self.poll_creation.form.as_ref().unwrap();
         let serial = form.serial;
         let draft = &self.drafts[&form.key];
-        let poll = draft.poll.as_ref().unwrap();
+        let poll = self.poll_values(&form.key);
         let busy = self.poll_creation_pending(&form.key);
-        let editable = !busy && self.poll_form_key(serial).is_some();
+        let editable = !busy
+            && self.poll_form_key(serial).is_some()
+            && form
+                .edit
+                .as_ref()
+                .is_none_or(|edit| self.poll_edit_current(edit));
         let mut body = column![
             text("Question").size(12),
             text_input("What would you like to ask?", &poll.question)
@@ -443,38 +718,65 @@ impl App {
                     editable.then_some(move |value| message(Event::Hidden(serial, value))),
                 ),
         );
-        if let Some(error) = &draft.poll_error {
+        if let Some(error) = form
+            .edit
+            .as_ref()
+            .and_then(|edit| edit.error.as_ref())
+            .or_else(|| {
+                form.edit
+                    .is_none()
+                    .then_some(draft.poll_error.as_ref())
+                    .flatten()
+            })
+        {
             body = body.push(text(error).size(12));
         }
         let template = editable
             && draft.content.text().is_empty()
             && draft.reply.is_none()
             && draft.attachments.is_empty();
-        let footer = column![
-            button(text("Insert text template").size(12))
-                .style(button::text)
-                .keyboard_navigation(true)
-                .on_press_maybe(template.then(|| message(Event::Template(serial)))),
+        let mut footer = column![].spacing(8);
+        if form.edit.is_none() {
+            footer = footer.push(
+                button(text("Insert text template").size(12))
+                    .style(button::text)
+                    .keyboard_navigation(true)
+                    .on_press_maybe(template.then(|| message(Event::Template(serial)))),
+            );
+        }
+        let footer = footer.push(
             row![
                 tooltips::icon_button(Kind::Close, "Close", Some(message(Event::Close(serial)))),
                 iced::widget::space().width(Length::Fill),
                 tooltips::icon_action(
                     Kind::Check,
-                    if busy { "Creating…" } else { "Create poll" },
+                    if form.edit.is_some() {
+                        if busy { "Saving…" } else { "Save poll" }
+                    } else if busy {
+                        "Creating…"
+                    } else {
+                        "Create poll"
+                    },
                     (editable && self.pending_ops < MAX_PENDING_OPERATIONS)
                         .then(|| message(Event::Submit(serial))),
                     shell::primary_button,
                 ),
             ]
             .spacing(8),
-        ]
-        .spacing(8);
+        );
         let card = super::dialog::frame(
             size,
             500.0,
             650.0,
             "poll-create",
-            shell::title("Create poll", 18),
+            shell::title(
+                if form.edit.is_some() {
+                    "Edit poll"
+                } else {
+                    "Create poll"
+                },
+                18,
+            ),
             body,
             footer,
         );
@@ -683,6 +985,9 @@ mod tests {
             Write {
                 account: app.account_id.clone(),
                 key: key.clone(),
+                form: 0,
+                edit: None,
+                original: None,
             },
         );
         app.pending_ops += 1;
@@ -698,6 +1003,9 @@ mod tests {
             Write {
                 account: app.account_id.clone(),
                 key: key.clone(),
+                form: 0,
+                edit: None,
+                original: None,
             },
         );
         app.pending_ops += 1;

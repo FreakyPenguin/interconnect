@@ -894,6 +894,7 @@ impl Demo {
                     if poll.validate_vote(answers).is_err() {
                         continue;
                     }
+                    poll.editable = false;
                     let selections = if poll.disclosed {
                         &mut poll.answers
                     } else {
@@ -940,6 +941,7 @@ impl Demo {
                         poll.answers = votes.clone();
                     }
                     poll.ended = true;
+                    poll.editable = false;
                     poll.disclosed = true;
                 }
             }
@@ -972,6 +974,7 @@ impl Demo {
                 })
                 .collect(),
             ended: false,
+            editable: true,
             disclosed: content.poll_start.kind
                 == matrix_sdk::ruma::events::poll::start::PollKind::Disclosed,
             max_selections: content.poll_start.max_selections.into(),
@@ -986,6 +989,65 @@ impl Demo {
                 row.poll = Some(poll.clone());
             }
         }
+    }
+    pub fn edit_poll(
+        &mut self,
+        room: &str,
+        event: &str,
+        original: &interconnect::polls::Creation,
+        replacement: &interconnect::polls::Creation,
+    ) -> Result<(), String> {
+        let current = self
+            .conversations
+            .iter()
+            .filter(|(key, _)| key.room == room)
+            .flat_map(|(_, rows)| rows)
+            .find(|row| row.event_id.as_deref() == Some(event))
+            .ok_or("Poll is no longer available")?;
+        let poll = current.poll.as_ref().ok_or("Poll is no longer available")?;
+        if !current.is_own
+            || !poll.editable
+            || poll.ended
+            || interconnect::polls::Creation::from(poll) != *original
+        {
+            return Err(
+                "This poll can no longer be edited. Close and reopen the editor to review it."
+                    .into(),
+            );
+        }
+        let content = replacement.to_content()?;
+        for (key, rows) in &mut self.conversations {
+            if key.room != room {
+                continue;
+            }
+            for row in rows
+                .iter_mut()
+                .filter(|row| row.event_id.as_deref() == Some(event))
+            {
+                row.body = content.text.clone().unwrap_or_default();
+                row.edited = true;
+                row.poll = Some(interconnect::polls::Poll {
+                    question: content.poll_start.question.text.clone(),
+                    answers: content
+                        .poll_start
+                        .answers
+                        .iter()
+                        .map(|answer| interconnect::polls::Answer {
+                            id: answer.id.clone(),
+                            text: answer.text.clone(),
+                            votes: 0,
+                            voters: Vec::new(),
+                            selected: false,
+                        })
+                        .collect(),
+                    ended: false,
+                    editable: true,
+                    disclosed: !replacement.hidden_results,
+                    max_selections: replacement.max_selections,
+                });
+            }
+        }
+        Ok(())
     }
     pub fn send(&mut self, key: &DraftKey, body: String) {
         if let Some(root) = &key.root

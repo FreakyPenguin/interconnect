@@ -271,6 +271,12 @@ impl App {
             "Results hidden until the poll ends".into()
         };
         content = content.push(text(footer).size(12).style(shell::muted_text));
+        if target
+            .as_ref()
+            .is_some_and(|target| self.poll_edit_waiting(target))
+        {
+            content = content.push(text("Updating poll…").size(12).style(shell::muted_text));
+        }
         if poll.disclosed
             && let Some(target) = &target
         {
@@ -382,7 +388,7 @@ impl App {
             event: target.event.clone(),
         }
     }
-    fn poll_action_ready(&self, target: &Target) -> bool {
+    pub(super) fn poll_action_ready(&self, target: &Target) -> bool {
         self.context_menu_allowed()
             && !self.composing
             && !self.bookmarks.open
@@ -399,6 +405,7 @@ impl App {
                 .sends
                 .contains_key(&self.poll_sending(target))
             && !self.poll_actions.ended.contains(&self.poll_sending(target))
+            && !self.poll_edit_pending(target)
     }
     pub(super) fn validate_poll_actions(&mut self) {
         if self.poll_actions.end.as_ref().is_some_and(|end| {
@@ -615,6 +622,11 @@ impl App {
             }
         }
     }
+    pub(super) fn poll_edit_failed(&mut self, target: Target, error: String) {
+        if self.message_row(&target).is_some() {
+            self.poll_actions.error = Some((self.account_id.clone(), target, error));
+        }
+    }
     fn start_poll_send(&mut self, target: &Target, end: bool) -> u64 {
         self.generation += 1;
         let request = self.generation;
@@ -731,7 +743,7 @@ mod layout_tests {
             answers: vec![
                 interconnect::polls::Answer { id: "a".into(), text: "I am around and will participate. 🎁🎄".into(), votes: 5, voters: vec![interconnect::polls::Voter { user_id: "@jamie:example.org".into(), name: "Jamie Davis".into() }], selected: true },
                 interconnect::polls::Answer { id: "b".into(), text: "I am the Grinch out to ruin Christmas. 🧌".into(), votes: 3, voters: Vec::new(), selected: false },
-            ], ended: false, disclosed: true, max_selections: 1,
+            ], ended: false, editable: true, disclosed: true, max_selections: 1,
         };
         let mut heights = Vec::new();
         for (name, mode) in [

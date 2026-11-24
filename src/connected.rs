@@ -330,6 +330,101 @@ impl Composer {
             })?
     }
 
+    pub async fn edit_poll(
+        self,
+        event: String,
+        original: crate::polls::Creation,
+        replacement: crate::polls::Creation,
+    ) -> Result<(), String> {
+        self.edit_poll_with_transaction(
+            event,
+            original,
+            replacement,
+            matrix_sdk::ruma::TransactionId::new(),
+        )
+        .await
+    }
+
+    pub async fn edit_poll_with_transaction(
+        self,
+        event: String,
+        original: crate::polls::Creation,
+        replacement: crate::polls::Creation,
+        transaction: matrix_sdk::ruma::OwnedTransactionId,
+    ) -> Result<(), String> {
+        let update = async {
+            let prepared = replacement.to_content()?;
+            let event =
+                matrix_sdk::ruma::EventId::parse(event).map_err(|error| error.to_string())?;
+            self.validate_poll_edit(&event, &original).await?;
+            let content = self
+                .0
+                .room()
+                .make_edit_event(
+                    &event,
+                    matrix_sdk::room::edit::EditedContent::PollStart {
+                        fallback_text: prepared.text.unwrap_or_default(),
+                        new_content: prepared.poll_start,
+                    },
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            // Fetching the original event can yield to incoming votes, ends, or edits.
+            self.validate_poll_edit(&event, &original).await?;
+            self.0
+                .room()
+                .send(content)
+                .with_transaction_id(transaction)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        };
+        tokio::time::timeout(Duration::from_secs(30), update)
+            .await
+            .map_err(|_| {
+                "Editing poll timed out; check the conversation before retrying.".to_owned()
+            })?
+    }
+
+    async fn validate_poll_edit(
+        &self,
+        event: &matrix_sdk::ruma::EventId,
+        original: &crate::polls::Creation,
+    ) -> Result<(), String> {
+        self.check_active_room()?;
+        let room = self.0.room();
+        let levels = room
+            .power_levels()
+            .await
+            .map_err(|error| error.to_string())?;
+        if room.state() != matrix_sdk::RoomState::Joined
+            || !levels.user_can_send_message(
+                room.own_user_id(),
+                matrix_sdk::ruma::events::MessageLikeEventType::UnstablePollStart,
+            )
+        {
+            return Err("You no longer have permission to edit polls in this room.".into());
+        }
+        let item = self
+            .0
+            .item_by_event_id(event)
+            .await
+            .ok_or("Poll is no longer available")?;
+        let poll = crate::polls::Poll::from_event(&item, room.own_user_id())
+            .ok_or("Poll is no longer available")?;
+        if !item.is_own() || !poll.editable || poll.ended {
+            return Err(
+                "Only your own polls without responses can be edited before they end.".into(),
+            );
+        }
+        if crate::polls::Creation::from(&poll) != *original {
+            return Err(
+                "This poll changed elsewhere. Close and reopen the editor to review it.".into(),
+            );
+        }
+        Ok(())
+    }
+
     fn check_active_room(&self) -> Result<(), String> {
         if self.0.room().is_tombstoned() {
             return Err("This room has been replaced. Continue in the replacement room.".into());
@@ -1929,7 +2024,7 @@ async fn timeline_rows_cached(
                     },
                     image: crate::image_media::Attachment::from_content(content),
                     download: crate::download::Attachment::from_content(content),
-                    poll: crate::polls::Poll::from_content(content, &own_user),
+                    poll: crate::polls::Poll::from_event(event, &own_user),
                     reactions: reactions(content, &own_user),
                     can_react: event.event_id().is_some() && can_react(content),
                     redactable: event.event_id().is_some() && deleting::redactable(content),
@@ -1944,7 +2039,11 @@ async fn timeline_rows_cached(
                         }
                     } else { None },
                     reply: reply_preview(content),
-                    edited: matches!(content, TimelineItemContent::MsgLike(content) if matches!(&content.kind, matrix_sdk_ui::timeline::MsgLikeKind::Message(message) if message.is_edited())),
+                    edited: matches!(content, TimelineItemContent::MsgLike(content) if match &content.kind {
+                        matrix_sdk_ui::timeline::MsgLikeKind::Message(message) => message.is_edited(),
+                        matrix_sdk_ui::timeline::MsgLikeKind::Poll(poll) => poll.is_edit(),
+                        _ => false,
+                    }),
                     read_by: {
                         let mut users: Vec<_> = event
                             .read_receipts()

@@ -822,6 +822,20 @@ impl App {
         {
             return self.update(dismiss);
         }
+        if self.poll_creation_open()
+            && matches!(
+                message,
+                Message::Settings(settings::Event::Open)
+                    | Message::Verification(
+                        verification::Event::Open | verification::Event::OpenRecovery
+                    )
+                    | Message::NewChat(new_chat::Event::Open)
+                    | Message::CreateRoom(create_room::Event::Open | create_room::Event::OpenSpace)
+                    | Message::QuickRoom(room_picker::Event::Open | room_picker::Event::OpenSpaces)
+            )
+        {
+            return Task::none();
+        }
         if let Message::NotificationCenter(event) = message {
             let task = self.notification_center_event(event);
             self.refresh_media_demand();

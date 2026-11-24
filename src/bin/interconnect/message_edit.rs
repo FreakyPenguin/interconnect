@@ -104,6 +104,9 @@ impl App {
         thread: bool,
         generation: u64,
     ) -> Option<Message> {
+        if row.poll.is_some() {
+            return self.poll_edit_action(row, thread, generation);
+        }
         let target = reaction_picker::Target {
             room: self.selection.room.as_ref()?.1.clone(),
             thread,

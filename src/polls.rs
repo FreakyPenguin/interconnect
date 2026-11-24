@@ -7,6 +7,8 @@ pub struct Poll {
     pub question: String,
     pub answers: Vec<Answer>,
     pub ended: bool,
+    /// SDK edit eligibility for the current user; false without event context.
+    pub editable: bool,
     pub disclosed: bool,
     pub max_selections: u64,
 }
@@ -50,6 +52,15 @@ impl Poll {
         Ok(())
     }
 
+    pub fn from_event(
+        event: &matrix_sdk_ui::timeline::EventTimelineItem,
+        own_user: &UserId,
+    ) -> Option<Self> {
+        let mut poll = Self::from_content(event.content(), own_user)?;
+        poll.editable = event.is_editable();
+        Some(poll)
+    }
+
     pub fn from_content(content: &TimelineItemContent, own_user: &UserId) -> Option<Self> {
         let TimelineItemContent::MsgLike(content) = content else {
             return None;
@@ -87,6 +98,7 @@ impl Poll {
                 })
                 .collect(),
             ended,
+            editable: false,
             disclosed,
             max_selections: results.max_selections,
         })
@@ -110,6 +122,7 @@ mod tests {
                 })
                 .collect(),
             ended: false,
+            editable: true,
             disclosed: true,
             max_selections: 1,
         }
@@ -141,6 +154,20 @@ pub struct Creation {
     pub answers: Vec<String>,
     pub max_selections: u64,
     pub hidden_results: bool,
+}
+impl From<&Poll> for Creation {
+    fn from(poll: &Poll) -> Self {
+        Self {
+            question: poll.question.clone(),
+            answers: poll
+                .answers
+                .iter()
+                .map(|answer| answer.text.clone())
+                .collect(),
+            max_selections: poll.max_selections,
+            hidden_results: !poll.disclosed,
+        }
+    }
 }
 impl Default for Creation {
     fn default() -> Self {

@@ -812,7 +812,7 @@ four creation modes, form close/reopen/restart, ordinary draft and scroll
 preservation, keyboard/Escape behavior, denied/offline sends, and cross-client
 rendering/voting with a dedicated account.
 
-Own open polls offer **End poll** in the room and thread-root cards. Opening the
+Own open polls offer **End poll** in room and thread cards, including thread roots. Opening the
 inline confirmation sends nothing; **Keep open** or Escape cancels it. Confirming
 sends an author-only end event against the captured account/room/event, rechecking
 membership, event permission, and current poll content. Voting and ending share a
@@ -825,16 +825,39 @@ Already-submitted writes may finish after navigation; stale completions must not
 publish into the current conversation. Demo ending is local and reveals its
 in-memory votes.
 
+Own sent polls expose the pencil action and **Edit poll** context-menu entry
+before any response or end event, including polls inside threads and thread-root
+previews. The SDK eligibility flag applies even when undisclosed/invalid responses
+leave visible counts at zero. The editor starts with the current question,
+ordered answers, disclosure mode, and selection limit. It keeps ordinary message
+and unfinished new-poll drafts separate. Close/Escape cancels the edit without
+creating another poll. An unchanged Save sends nothing.
+
+Saving validates the original snapshot again, then sends a Matrix replacement
+for the original event. It rechecks ownership, membership, poll-start event
+permission, SDK edit eligibility, and intervening content changes around original
+event preparation. Responses, remote edits, endings, and redactions disable stale
+forms; close and reopen to review current content. Failed sends retain the form
+and its values, and retry uses the same transaction within that editor. Successful
+sends keep old answer controls disabled with **Updating poll…** until an updated
+SDK snapshot arrives. Editing, voting, and ending the same poll cannot overlap
+across panes. The original event/thread identity and other drafts remain intact. Navigation/account changes cannot publish stale completions into another
+editor. Global races with responses on other clients are not an atomic server-side
+edit lock; connected cross-client acceptance remains necessary.
+
 Focused mock-server tests cover creation payloads for all four modes, invalid
 creation, room/thread form and template routing (including exact thread relation
 payloads), independent persistent thread drafts, author/content/permission checks, a denied end followed by explicit
 retry with the same transaction, and hidden multi-choice votes becoming visible
-on the synchronized end event. Demo UI tests cover cancellation, stale controls,
-room/thread pending guards, draft/scroll preservation, and stale/duplicate
-completions. These fixtures do not establish live-server interoperability.
+on the synchronized end event. Poll editing tests cover complete replacement
+payloads and original thread identity, hidden/invalid responses, permission loss,
+stale originals, redaction/end rejection, server errors and transaction reuse,
+no-op saves, cross-pane snapshot guards, and separate message/creation drafts.
+Demo UI tests cover cancellation, stale controls, room/thread pending guards,
+draft/scroll preservation, covered-dialog shortcuts, and stale/duplicate completions. These fixtures do not establish live-server interoperability.
 
 Local validation for the completed workflow: locked workspace tests passed,
-followed by the final UI suite (687 passed, one opt-in test ignored), Clippy with
+followed by the final UI suite (695 passed, one opt-in test ignored), Clippy with
 warnings denied, formatting check, and desktop binary build. The poll form fixture
 checks Tab confinement, inclusion of both checkboxes and the selection-limit
 control, and no caret redraw deadline in Light/Dark at 640×480.
@@ -861,6 +884,17 @@ sets. Scheduler wakeups were unmeasured. Captures/logs remain outside Git under
 No saved account or live-server message was used. Live-server interoperability,
 GPU rendering, macOS behavior, and scheduler wakeups remain separate acceptance
 checks; software demo captures and unit tests do not establish them.
+
+Thread creation and sent-poll edit acceptance also used the locked demo build on
+isolated Sway/tiny-skia: Light at 1200×900 and the Dark editor at 640×480. A hidden
+multi-choice poll was created in a thread, opened through **Edit poll** and the
+pencil, cancelled without changing the poll, then saved with a new question,
+answers, single-choice limit, and visible results. Both room/thread composers
+retained their unsent text. The edited poll stayed in its thread and updated the
+room's preview; editing disappeared after voting. The small editor retained its
+values while covered-dialog shortcuts were rejected. Artifacts remain outside
+Git under `/tmp/interconnect-thread-poll-edit-*`; no connected client or saved
+account was used. Live encrypted cross-client behavior and macOS remain manual.
 
 Poll presentation uses a column capped at 380 px, outlined answer cards, a
 selection indicator, and static result bars. Questions use the regular message

@@ -98,6 +98,9 @@ fn poll_answer_reordering_rejects_stale_invalid_pending_and_closed_forms() {
         Write {
             account: app.account_id.clone(),
             key: key.clone(),
+            form: 0,
+            edit: None,
+            original: None,
         },
     );
     app.pending_ops += 1;

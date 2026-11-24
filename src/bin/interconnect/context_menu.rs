@@ -396,6 +396,14 @@ impl App {
                         ))),
                     ));
                 }
+                if self.can_edit_poll(target) {
+                    actions.push((
+                        "Edit poll",
+                        dispatch(Message::PollCreate(super::poll_create::Event::Edit(
+                            target.clone(),
+                        ))),
+                    ));
+                }
                 if self.can_edit_message(target) {
                     actions.push((
                         "Edit message",
