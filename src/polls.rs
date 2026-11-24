@@ -133,20 +133,86 @@ mod tests {
     }
 }
 
+/// Editable creation state, shared by the form and the text-template path.
+/// Incomplete values are allowed here so drafts can be saved before validation.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Creation {
+    pub question: String,
+    pub answers: Vec<String>,
+    pub max_selections: u64,
+    pub hidden_results: bool,
+}
+impl Default for Creation {
+    fn default() -> Self {
+        Self {
+            question: String::new(),
+            answers: vec![String::new(), String::new()],
+            max_selections: 1,
+            hidden_results: false,
+        }
+    }
+}
+impl Creation {
+    pub fn to_content(
+        &self,
+    ) -> Result<
+        matrix_sdk::ruma::events::poll::unstable_start::NewUnstablePollStartEventContent,
+        String,
+    > {
+        use matrix_sdk::ruma::events::poll::unstable_start::{
+            NewUnstablePollStartEventContent, UnstablePollAnswer, UnstablePollAnswers,
+            UnstablePollStartContentBlock,
+        };
+        let question = self.question.trim();
+        let answers: Vec<_> = self.answers.iter().map(|answer| answer.trim()).collect();
+        if question.is_empty()
+            || !(2..=20).contains(&answers.len())
+            || answers.iter().any(|answer| answer.is_empty())
+        {
+            return Err("Enter a question and 2–20 nonempty answers.".into());
+        }
+        let unique: std::collections::HashSet<_> =
+            answers.iter().map(|answer| answer.to_lowercase()).collect();
+        if unique.len() != answers.len() {
+            return Err("Poll answers must be distinct.".into());
+        }
+        if self.max_selections == 0 || self.max_selections > answers.len() as u64 {
+            return Err("Choose a selection limit between 1 and the number of answers.".into());
+        }
+        let options = UnstablePollAnswers::try_from(
+            answers
+                .iter()
+                .enumerate()
+                .map(|(i, answer)| UnstablePollAnswer::new(i.to_string(), *answer))
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| error.to_string())?;
+        let mut poll = UnstablePollStartContentBlock::new(question, options);
+        poll.kind = if self.hidden_results {
+            PollKind::Undisclosed
+        } else {
+            PollKind::Disclosed
+        };
+        poll.max_selections = self
+            .max_selections
+            .try_into()
+            .map_err(|error| format!("{error}"))?;
+        let fallback = std::iter::once(question)
+            .chain(answers)
+            .collect::<Vec<_>>()
+            .join("\n");
+        Ok(NewUnstablePollStartEventContent::plain_text(fallback, poll))
+    }
+}
+
 /// Composer syntax: `/poll Question` followed by one answer per line.
+/// This quick entry path retains disclosed, single-choice defaults.
 pub fn compose(
     body: &str,
 ) -> Result<
     Option<matrix_sdk::ruma::events::poll::unstable_start::NewUnstablePollStartEventContent>,
     String,
 > {
-    use matrix_sdk::ruma::events::poll::{
-        start::PollKind,
-        unstable_start::{
-            NewUnstablePollStartEventContent, UnstablePollAnswer, UnstablePollAnswers,
-            UnstablePollStartContentBlock,
-        },
-    };
     let Some(input) = body
         .strip_prefix("/poll ")
         .or_else(|| body.strip_prefix("/poll\n"))
@@ -154,31 +220,13 @@ pub fn compose(
         return Ok(None);
     };
     let mut lines = input.lines();
-    let question = lines.next().unwrap_or_default().trim();
-    let answers: Vec<_> = lines.map(str::trim).collect();
-    if question.is_empty()
-        || !(2..=20).contains(&answers.len())
-        || answers.iter().any(|a| a.is_empty())
-    {
-        return Err("Enter a question after /poll and 2–20 nonempty answers, one per line.".into());
+    Creation {
+        question: lines.next().unwrap_or_default().to_owned(),
+        answers: lines.map(str::to_owned).collect(),
+        ..Default::default()
     }
-    let unique: std::collections::HashSet<_> = answers.iter().map(|a| a.to_lowercase()).collect();
-    if unique.len() != answers.len() {
-        return Err("Poll answers must be distinct.".into());
-    }
-    let options = UnstablePollAnswers::try_from(
-        answers
-            .iter()
-            .enumerate()
-            .map(|(i, a)| UnstablePollAnswer::new(i.to_string(), *a))
-            .collect::<Vec<_>>(),
-    )
-    .map_err(|e| e.to_string())?;
-    let mut poll = UnstablePollStartContentBlock::new(question, options);
-    poll.kind = PollKind::Disclosed;
-    Ok(Some(NewUnstablePollStartEventContent::plain_text(
-        input, poll,
-    )))
+    .to_content()
+    .map(Some)
 }
 
 #[cfg(test)]
@@ -199,9 +247,56 @@ mod creation_tests {
         assert_eq!(content.poll_start.question.text, "Lunch?");
         assert_eq!(content.poll_start.answers.len(), 2);
         assert_eq!(content.poll_start.kind, PollKind::Disclosed);
+        assert_eq!(u64::from(content.poll_start.max_selections), 1);
         assert_ne!(
             content.poll_start.answers[0].id,
             content.poll_start.answers[1].id
         );
+    }
+    #[test]
+    fn creation_encodes_all_selection_and_disclosure_modes() {
+        for hidden_results in [false, true] {
+            for max_selections in [1, 2] {
+                let draft = Creation {
+                    question: " Lunch? ".into(),
+                    answers: vec![" Soup ".into(), "Salad".into()],
+                    max_selections,
+                    hidden_results,
+                };
+                let content = draft.to_content().unwrap();
+                assert_eq!(content.poll_start.question.text, "Lunch?");
+                assert_eq!(content.poll_start.answers[0].text, "Soup");
+                assert_eq!(u64::from(content.poll_start.max_selections), max_selections);
+                assert_eq!(
+                    content.poll_start.kind == PollKind::Undisclosed,
+                    hidden_results
+                );
+                let json = serde_json::to_value(&content).unwrap();
+                assert_eq!(
+                    json["org.matrix.msc3381.poll.start"]["max_selections"],
+                    max_selections
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn creation_rejects_limits_and_answer_counts_outside_bounds() {
+        let mut draft = Creation {
+            question: "Lunch?".into(),
+            answers: vec!["Soup".into(), "Salad".into()],
+            ..Default::default()
+        };
+        for limit in [0, 3, u64::MAX] {
+            draft.max_selections = limit;
+            assert!(draft.to_content().is_err());
+        }
+        draft.max_selections = 1;
+        draft.answers = (0..20).map(|i| format!("Answer {i}")).collect();
+        assert!(draft.to_content().is_ok());
+        draft.answers.push("One too many".into());
+        assert!(draft.to_content().is_err());
+        draft.answers = vec![" Soup ".into(), "soup".into()];
+        assert!(draft.to_content().is_err());
     }
 }
