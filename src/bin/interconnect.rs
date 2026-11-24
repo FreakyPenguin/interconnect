@@ -4487,8 +4487,16 @@ impl App {
             );
             let actions = row![
                 row![
-                    button(text("Poll").size(12))
+                    self.attachment_button(&key, *generation),
+                    self.composer_emoji_button(&key, *generation),
+                    tooltips::tooltip(
+                        button(
+                            container(icons::icon(icons::Kind::Poll))
+                                .center_x(28)
+                                .center_y(28),
+                        )
                         .keyboard_navigation(true)
+                        .padding(0)
                         .on_press_maybe(
                             (!thread
                                 && !draft.pending
@@ -4497,9 +4505,10 @@ impl App {
                                 && draft.editing.is_none())
                             .then(|| Message::PollCreate(poll_create::Event::Open(key.clone())))
                         )
-                        .style(shell::quiet_button),
-                    self.attachment_button(&key, *generation),
-                    self.composer_emoji_button(&key, *generation),
+                        .style(shell::icon_button),
+                        "Create poll",
+                        iced::widget::tooltip::Position::Top,
+                    ),
                 ]
                 .spacing(2),
                 self.markdown_controls(&key, *generation),

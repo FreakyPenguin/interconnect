@@ -50,6 +50,7 @@ pub(super) enum Kind {
     ArrowUp,
     ArrowDown,
     Smile,
+    Poll,
     AddReaction,
     Attach,
     Image,
@@ -539,6 +540,19 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                             stroke,
                         );
                     }
+                }
+                Poll => {
+                    for (x, top) in [(8.0, 12.0), (12.0, 7.0), (16.0, 10.0)] {
+                        line(&[(x, top), (x, 17.0)]);
+                    }
+                    frame.stroke(
+                        &Path::rounded_rectangle(
+                            Point::new(3.0, 3.0),
+                            Size::new(18.0, 18.0),
+                            3.0.into(),
+                        ),
+                        stroke,
+                    );
                 }
                 Attach => {
                     frame.stroke(
