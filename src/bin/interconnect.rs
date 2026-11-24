@@ -219,6 +219,7 @@ const MAX_PENDING_OPERATIONS: usize = 8;
 struct App {
     activation: activation::State,
     timeline_projection: [timeline_projection::Cache; 2],
+    text_conversations: selection::Conversations,
     code_save: Option<iced::task::Handle>,
     code_save_request: u64,
     context_menu: Option<context_menu::State>,
@@ -494,6 +495,7 @@ impl App {
             shell: shell::State::default(),
             expanded_pins: None,
             timeline_projection: Default::default(),
+            text_conversations: Default::default(),
             code_save: None,
             code_save_request: 0,
             context_menu: None,
@@ -2401,6 +2403,7 @@ impl App {
                         handle.abort();
                     }
                     self.code_save_request += 1;
+                    self.text_conversations.clear();
                     self.timeline_projection
                         .iter()
                         .for_each(timeline_projection::Cache::clear);
@@ -4319,6 +4322,10 @@ impl App {
             viewport,
             target_index,
             projection.selection_source.clone(),
+            self.text_conversations.get(DraftKey {
+                room: self.selection.room.as_ref().unwrap().1.clone(),
+                root: thread.then(|| selected_id.clone()),
+            }),
         );
         let mut message_area = iced::widget::stack![observed];
         if projection.is_empty() {

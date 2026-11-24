@@ -99,6 +99,7 @@ pub fn reading_history_view(
         virtualization: None,
         virtual_keys: None,
         selection_source: None,
+        saved_selection: None,
     })
 }
 
@@ -125,6 +126,7 @@ fn make_view(
         virtualization: None,
         virtual_keys: None,
         selection_source: None,
+        saved_selection: None,
     })
 }
 #[allow(clippy::too_many_arguments)]
@@ -139,6 +141,7 @@ pub(super) fn virtual_history_view<'a>(
     viewport: super::virtual_rows::SharedViewport,
     target_index: Option<usize>,
     selection_source: Arc<dyn super::selection::Source>,
+    saved_selection: super::selection::Shared,
 ) -> Element<'a, Message> {
     Element::new(Timeline {
         generation,
@@ -151,6 +154,7 @@ pub(super) fn virtual_history_view<'a>(
         virtualization: Some((viewport, target_index)),
         virtual_keys: Some(keys),
         selection_source: Some(selection_source),
+        saved_selection: Some(saved_selection),
     })
 }
 struct Timeline<'a> {
@@ -164,6 +168,7 @@ struct Timeline<'a> {
     virtualization: Option<(super::virtual_rows::SharedViewport, Option<usize>)>,
     virtual_keys: Option<Arc<HashMap<widget::Id, String>>>,
     selection_source: Option<Arc<dyn super::selection::Source>>,
+    saved_selection: Option<super::selection::Shared>,
 }
 pub fn row_id(index: usize) -> widget::Id {
     widget::Id::from(format!("timeline-row-{index}"))
@@ -203,7 +208,8 @@ struct Snapshot {
     rows: Vec<Row>,
 }
 struct Identity {
-    selection: super::selection::Selection,
+    selection: super::selection::Shared,
+    reflow_anchor: Option<(String, f32)>,
     generation: u64,
     focused: bool,
     target: Option<String>,
@@ -214,6 +220,44 @@ struct Identity {
     reading_report: Option<(Option<String>, i32)>,
 }
 
+#[derive(Default)]
+struct Reflow {
+    target: Option<String>,
+    origin: f32,
+    translation: f32,
+    found: Option<(String, f32)>,
+}
+impl widget::Operation for Reflow {
+    fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+        f(self);
+    }
+    fn scrollable(
+        &mut self,
+        _: Option<&widget::Id>,
+        bounds: Rectangle,
+        _: Rectangle,
+        translation: Vector,
+        _: &mut dyn widget::operation::Scrollable,
+    ) {
+        self.origin = bounds.y;
+        self.translation = translation.y;
+    }
+    fn custom(&mut self, _: Option<&widget::Id>, bounds: Rectangle, state: &mut dyn std::any::Any) {
+        if let Some(state) = state.downcast_mut::<super::selectable::State>() {
+            let matches = if let Some(target) = &self.target {
+                &state.id == target
+            } else {
+                state
+                    .rich
+                    .as_mut()
+                    .is_some_and(|rich| std::mem::take(&mut rich.reflow_requested))
+            };
+            if matches {
+                self.found = Some((state.id.clone(), bounds.y - self.origin));
+            }
+        }
+    }
+}
 struct Measure<'a> {
     keys: Option<&'a HashMap<widget::Id, String>>,
     origin: f32,
@@ -351,6 +395,8 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         widget::tree::Tag::of::<Identity>()
     }
     fn state(&self) -> widget::tree::State {
+        let selection = self.saved_selection.clone().unwrap_or_default();
+        selection.borrow_mut().suspend_drag();
         widget::tree::State::new(Identity {
             generation: self.generation,
             focused: false,
@@ -360,7 +406,8 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             visible: None,
             media_visible: None,
             reading_report: None,
-            selection: Default::default(),
+            selection,
+            reflow_anchor: None,
         })
     }
     fn children(&self) -> Vec<Tree> {
@@ -380,7 +427,9 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             identity.visible = None;
             identity.media_visible = None;
             identity.reading_report = None;
-            identity.selection = Default::default();
+            identity.selection = self.saved_selection.clone().unwrap_or_default();
+            identity.selection.borrow_mut().suspend_drag();
+            identity.reflow_anchor = None;
             tree.children = self.children();
         } else {
             if !self.observe_visible {
@@ -408,10 +457,13 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
                 view.anchor = visible_anchor(snapshot);
             }
         }
-        tree.state
-            .downcast_mut::<Identity>()
-            .selection
-            .set_source(self.selection_source.clone());
+        if self.history.is_none_or(|(_, _, ready)| ready) {
+            tree.state
+                .downcast_mut::<Identity>()
+                .selection
+                .borrow_mut()
+                .set_source(self.selection_source.clone());
+        }
         let mut node = self
             .content
             .as_widget_mut()
@@ -421,6 +473,7 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
                 .state
                 .downcast_ref::<Identity>()
                 .selection
+                .borrow()
                 .restore_semantics(
                     self.content.as_widget_mut(),
                     &mut tree.children[0],
@@ -478,6 +531,29 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             current.metrics.translation = translation.round();
             tree.state.downcast_mut::<Identity>().focused = true;
         }
+        if let Some((target, screen_y)) = tree.state.downcast_mut::<Identity>().reflow_anchor.take()
+        {
+            let mut probe = Reflow {
+                target: Some(target),
+                ..Default::default()
+            };
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                Layout::new(&node),
+                renderer,
+                &mut probe,
+            );
+            if let Some((_, y)) = probe.found {
+                let translation = (y - screen_y).clamp(0.0, current.metrics.maximum());
+                self.content.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    Layout::new(&node),
+                    renderer,
+                    &mut Restore(current.metrics.maximum() - translation),
+                );
+                current.metrics.translation = translation;
+            }
+        }
         let identity = tree.state.downcast_mut::<Identity>();
         if identity
             .snapshot
@@ -496,12 +572,14 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
             }
         }
         identity.snapshot = Some(current);
-        identity.selection.restore(
-            self.content.as_widget_mut(),
-            &mut tree.children[0],
-            Layout::new(&node),
-            renderer,
-        );
+        if self.history.is_none_or(|(_, _, ready)| ready) {
+            identity.selection.borrow_mut().restore(
+                self.content.as_widget_mut(),
+                &mut tree.children[0],
+                Layout::new(&node),
+                renderer,
+            );
+        }
         node
     }
     fn operate(
@@ -527,27 +605,48 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        tree.state.downcast_mut::<Identity>().selection.update(
-            self.content.as_widget_mut(),
-            &mut tree.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-            self.generation,
-        );
         tree.state
             .downcast_mut::<Identity>()
             .selection
+            .borrow_mut()
+            .update(
+                self.content.as_widget_mut(),
+                &mut tree.children[0],
+                event,
+                layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+                self.generation,
+            );
+        tree.state
+            .downcast_mut::<Identity>()
+            .selection
+            .borrow_mut()
             .capture_semantics(
                 self.content.as_widget_mut(),
                 &mut tree.children[0],
                 layout,
                 renderer,
             );
+        if matches!(
+            event,
+            Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
+        ) {
+            let mut probe = Reflow::default();
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                &mut probe,
+            );
+            if let Some((id, y)) = probe.found {
+                tree.state.downcast_mut::<Identity>().reflow_anchor =
+                    Some((id, y - probe.translation));
+            }
+        }
         self.remember_scroll(tree, layout, renderer);
         if self
             .virtualization

@@ -937,3 +937,12 @@ Automated layout checks cover preview budgets, full canonical text, horizontal
 hit testing, and releasing expanded paragraphs on collapse. Native clipboard,
 file-picker cancellation/errors, macOS gestures, and GPU clipping require desktop
 acceptance; headless tests do not establish those integrations.
+
+Code actions preserve canonical selection, including text hidden by the preview.
+A bounded session cache restores selections, expansion, spoiler reveals, and
+horizontal offsets on return to a room/thread. Edited or removed endpoints are
+rejected by the current source. Code expansion anchors the message body even at
+the bottom; ordinary resize/prepend keeps the existing event anchor. Collapse
+returns to the bounded layout. Automated widget checks exercise control presses,
+copy, resize, generation changes, and cache bounds. Check native room/thread
+navigation with an active selection and horizontal offset before release.

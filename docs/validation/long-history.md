@@ -83,3 +83,8 @@ units, then run the same append, resize, and scroll operations. They expose cost
 that row virtualization cannot bound. Source generation/parsing precedes timing;
 initial layout is timed. Very wide lines and many-line code are separate cases.
 Results describe headless software frames, not native input or GPU acceptance.
+
+Code workloads additionally measure full expand and collapse frames, including
+corrective layout. Expanded layout is an explicit user choice; collapsed shaping
+must stay bounded independently of source size. These measurements include widget
+operations and rasterization, and do not time native clipboard/file pickers.

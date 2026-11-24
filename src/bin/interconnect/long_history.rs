@@ -111,6 +111,7 @@ struct Frame {
     mask: tiny_skia::Mask,
     peak_mounted: usize,
     loaded: usize,
+    code_expanded: Option<bool>,
 }
 impl Frame {
     fn new() -> Self {
@@ -121,6 +122,7 @@ impl Frame {
             mask: tiny_skia::Mask::new(1280, 800).unwrap(),
             peak_mounted: 0,
             loaded: 0,
+            code_expanded: None,
         }
     }
     /// Measure view construction, diff/layout, optional scroll operation, drawing,
@@ -135,6 +137,49 @@ impl Frame {
             &self.renderer,
             &layout::Limits::new(size, size),
         );
+        if let Some(expanded) = self.code_expanded.take() {
+            struct Expand(bool);
+            impl widget::Operation for Expand {
+                fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                    f(self);
+                }
+                fn custom(
+                    &mut self,
+                    _: Option<&widget::Id>,
+                    _: Rectangle,
+                    state: &mut dyn std::any::Any,
+                ) {
+                    if let Some(state) = state.downcast_mut::<super::selectable::State>()
+                        && let Some(rich) = &mut state.rich
+                    {
+                        for index in 0..rich.document.blocks.len() {
+                            if matches!(
+                                rich.document.blocks[index].kind,
+                                interconnect::message_document::BlockKind::Code { .. }
+                            ) && rich
+                                .code_views
+                                .get(&index)
+                                .is_some_and(|view| view.expanded)
+                                != self.0
+                            {
+                                rich.code_action(index, super::formatted::CodeAction::Toggle);
+                            }
+                        }
+                    }
+                }
+            }
+            view.as_widget_mut().operate(
+                &mut self.tree,
+                Layout::new(&node),
+                &self.renderer,
+                &mut Expand(expanded),
+            );
+            node = view.as_widget_mut().layout(
+                &mut self.tree,
+                &self.renderer,
+                &layout::Limits::new(size, size),
+            );
+        }
         if let Some(offset) = scroll {
             view.as_widget_mut().operate(
                 &mut self.tree,
@@ -292,6 +337,22 @@ fn measure() {
         frame.render(&app, wide, Some((index + 1) as f32 * 400.0));
         scroll.push(started.elapsed().as_secs_f64() * 1000.0);
     }
+    let mut expand = Vec::new();
+    let mut collapse = Vec::new();
+    if matches!(workload_name.as_str(), "many-line-code" | "wide-code") {
+        // Return to the original message; appended rows must not hide the target.
+        frame.render(&app, wide, Some(f32::MAX));
+        for _ in 0..samples {
+            frame.code_expanded = Some(true);
+            let started = Instant::now();
+            frame.render(&app, wide, None);
+            expand.push(started.elapsed().as_secs_f64() * 1000.0);
+            frame.code_expanded = Some(false);
+            let started = Instant::now();
+            frame.render(&app, wide, None);
+            collapse.push(started.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
     let settled = rss_kib();
     let mounted = frame.peak_mounted;
     let loaded_rows = frame.loaded;
@@ -310,6 +371,7 @@ fn measure() {
         "LONG_HISTORY {}",
         serde_json::json!({
             "workload": workload_name, "units": count, "message_bytes": message_bytes, "events": initial_rows, "peak_mounted_rows": mounted, "loaded_rows": loaded_rows, "samples": samples, "optimized": !cfg!(debug_assertions),
+            "expand": (!expand.is_empty()).then(|| summarize(expand)), "collapse": (!collapse.is_empty()).then(|| summarize(collapse)),
             "initial_ms": initial_ms, "append": summarize(append), "resize": summarize(resize), "scroll": summarize(scroll),
             "rss_kib": { "baseline": baseline, "fixture": fixture, "loaded": loaded, "settled": settled, "after_drop": rss_kib() },
         })

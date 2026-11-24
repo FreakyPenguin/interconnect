@@ -47,15 +47,20 @@ scroll metrics and existing generation/revision checks.
 Selection retains logical message endpoints and gets canonical text from an
 ordered model adapter. Mounted widgets provide hit-testing and painting; copy
 can include unmounted intermediate messages. Canonical rich text preserves
-hidden-spoiler placeholders, object alternatives, and formula source. Only
-nonempty spoiler-reveal state survives as sparse document-scoped semantics;
+hidden-spoiler placeholders, object alternatives, and formula source. Spoiler reveals, code expansion, and horizontal offsets survive as sparse
+document-scoped semantics;
 restoration can trigger one bounded reflow before measuring anchors. A removed
 or edited endpoint invalidates a selection rather than copying obsolete text.
 
 Projection caches clear on pane navigation/close and account transitions. They
 must not extend SDK snapshot/handle lifetimes. Widget virtualization bounds
 heavy rendering state, not the loaded event data, height metadata, or explicit
-copy output. A single very long message is still laid out as a whole. Offscreen
+copy output. Collapsed code shapes at most 12 lines / 2 KiB. Expansion explicitly opts into
+full code layout; collapse drops those paragraphs. Plain prose still lays out
+as a whole. A 64-conversation session cache retains logical selections and sparse
+formatting semantics across room changes and thread reopenings, without retaining
+widget trees or SDK handles. Account transitions clear it. Code controls preserve
+selection and anchor their message body even when expansion begins at newest. Offscreen
 height estimates mean scrollbar proportions can adjust while exploring history.
 
 See [long-history validation](../validation/long-history.md) for the opt-in

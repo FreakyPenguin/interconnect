@@ -531,6 +531,7 @@ mod tests {
                 viewport,
                 target,
                 super::super::selection::message_source(Arc::new(Vec::new()), Vec::new()),
+                Default::default(),
             );
             (widget, mapping)
         }

@@ -12,7 +12,9 @@ use interconnect::message_document::Document;
 use std::{
     any::Any,
     borrow::Cow,
-    collections::{BTreeSet, HashMap},
+    cell::RefCell,
+    collections::{BTreeSet, HashMap, VecDeque},
+    rc::Rc,
     sync::{Arc, Weak},
     time::Duration,
 };
@@ -113,6 +115,7 @@ pub(super) fn message_source(
 struct Semantic {
     document: Arc<Document>,
     revealed: BTreeSet<usize>,
+    code_views: HashMap<usize, super::formatted::CodeView>,
 }
 struct Logical {
     name: String,
@@ -130,9 +133,32 @@ struct Endpoint {
 pub struct Selection {
     range: Option<(Endpoint, Endpoint)>,
     dragging: bool,
+    suspended: bool,
     pointer: Option<Point>,
     source: Option<Arc<dyn Source>>,
     semantic: HashMap<String, Semantic>,
+}
+pub(super) type Shared = Rc<RefCell<Selection>>;
+/// Bounded session-only semantics, no widget trees or SDK handles.
+#[derive(Default)]
+pub(super) struct Conversations(RefCell<VecDeque<(super::DraftKey, Shared)>>);
+impl Conversations {
+    pub fn get(&self, key: super::DraftKey) -> Shared {
+        let mut entries = self.0.borrow_mut();
+        let state = entries
+            .iter()
+            .position(|(saved, _)| saved == &key)
+            .and_then(|index| entries.remove(index))
+            .map_or_else(Shared::default, |(_, state)| state);
+        entries.push_back((key, state.clone()));
+        while entries.len() > 64 {
+            entries.pop_front();
+        }
+        state
+    }
+    pub fn clear(&self) {
+        self.0.borrow_mut().clear();
+    }
 }
 #[derive(Clone)]
 struct Row {
@@ -262,6 +288,11 @@ fn same_document(a: &Arc<Document>, b: &Arc<Document>) -> bool {
     Arc::ptr_eq(a, b) || a.as_ref() == b.as_ref()
 }
 impl Selection {
+    pub(super) fn suspend_drag(&mut self) {
+        self.dragging = false;
+        self.pointer = None;
+        self.suspended = false;
+    }
     pub(super) fn set_source(&mut self, source: Option<Arc<dyn Source>>) {
         if match (&self.source, &source) {
             (Some(previous), Some(current)) => Arc::ptr_eq(previous, current),
@@ -343,12 +374,13 @@ impl Selection {
                 }
                 // Reveals are monotonic. A newly mounted, not-yet-restored widget
                 // must not erase the saved nonempty state with its default state.
-                if !rich.revealed().is_empty() {
+                if !rich.revealed().is_empty() || !rich.code_views.is_empty() {
                     self.0.insert(
                         state.id.clone(),
                         Semantic {
                             document: rich.document.clone(),
                             revealed: rich.revealed().clone(),
+                            code_views: rich.code_views.clone(),
                         },
                     );
                 }
@@ -376,18 +408,24 @@ impl Selection {
                 let Some(state) = state.downcast_mut::<selectable::State>() else {
                     return;
                 };
-                let Some(saved) = self.semantic.get(&state.id) else {
-                    return;
-                };
                 let Some(rich) = &mut state.rich else {
                     return;
                 };
-                if same_document(&saved.document, &rich.document)
-                    && rich.restore_revealed(&saved.revealed)
-                {
-                    state.body = rich.text();
-                    state.content = iced::widget::text_editor::Content::with_text(&state.body);
-                    self.changed = true;
+                if rich.semantics_restored {
+                    return;
+                }
+                rich.semantics_restored = true;
+                let Some(saved) = self.semantic.get(&state.id) else {
+                    return;
+                };
+                if same_document(&saved.document, &rich.document) {
+                    let revealed = rich.restore_revealed(&saved.revealed);
+                    let code = rich.restore_code_views(&saved.code_views);
+                    if revealed {
+                        state.body = rich.text();
+                        state.content = iced::widget::text_editor::Content::with_text(&state.body);
+                    }
+                    self.changed |= revealed || code;
                 }
             }
         }
@@ -453,6 +491,10 @@ impl Selection {
     ) {
         self.capture_semantics(content, tree, layout, renderer);
         if self.range.is_none() {
+            return;
+        }
+        if self.suspended {
+            content.operate(tree, layout, renderer, &mut Apply { ranges: vec![] });
             return;
         }
         let rows = read(content, tree, layout, renderer).rows;
@@ -616,6 +658,7 @@ impl Selection {
             if modifiers.command()
                 && key.to_latin(*physical_key) == Some('c')
                 && self.range.is_some()
+                && !self.suspended
             {
                 if let Some(text) = self.copy(content, tree, layout, renderer) {
                     clipboard.write(iced::advanced::clipboard::Kind::Standard, text);
@@ -626,7 +669,9 @@ impl Selection {
             // Shell shortcuts transfer focus or navigate. Do not let a retained
             // transcript selection steal Copy from the search field/composer.
             if super::shell_shortcut(key, *modifiers).is_some() {
-                self.clear(content, tree, layout, renderer);
+                self.suspended = true;
+                self.dragging = false;
+                content.operate(tree, layout, renderer, &mut Apply { ranges: vec![] });
                 shell.request_redraw();
             }
         }
@@ -727,6 +772,61 @@ impl Selection {
             event,
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
         );
+        if pressed {
+            struct Controls {
+                point: Option<Point>,
+                translation: Vector,
+                hit: bool,
+            }
+            impl widget::Operation for Controls {
+                fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                    f(self);
+                }
+                fn scrollable(
+                    &mut self,
+                    _: Option<&widget::Id>,
+                    _: Rectangle,
+                    _: Rectangle,
+                    translation: Vector,
+                    _: &mut dyn widget::operation::Scrollable,
+                ) {
+                    self.translation = translation;
+                }
+                fn custom(
+                    &mut self,
+                    _: Option<&widget::Id>,
+                    bounds: Rectangle,
+                    state: &mut dyn Any,
+                ) {
+                    if let Some(state) = state.downcast_ref::<selectable::State>()
+                        && let Some(rich) = &state.rich
+                        && let Some(point) = self.point
+                        && (bounds - self.translation).contains(point)
+                    {
+                        self.hit |= rich
+                            .code_control(
+                                Point::ORIGIN + (point - (bounds - self.translation).position()),
+                            )
+                            .is_some();
+                    }
+                }
+            }
+            let data = read(content, tree, layout, renderer);
+            let mut controls = Controls {
+                point: cursor
+                    .position()
+                    .filter(|point| data.viewport.contains(*point)),
+                translation: Vector::ZERO,
+                hit: false,
+            };
+            content.operate(tree, layout, renderer, &mut controls);
+            if controls.hit {
+                content.update(
+                    tree, event, layout, cursor, renderer, clipboard, shell, viewport,
+                );
+                return;
+            }
+        }
         let hit = if pressed {
             let data = read(content, tree, layout, renderer);
             cursor
@@ -737,6 +837,7 @@ impl Selection {
             None
         };
         if pressed {
+            self.suspended = false;
             if hit.is_none() {
                 self.clear(content, tree, layout, renderer);
             } else {
@@ -750,6 +851,7 @@ impl Selection {
         // Cross-message keyboard events must not be delivered independently to
         // every highlighted editor. Copy/Escape above are timeline operations.
         if matches!(event, Event::Keyboard(_))
+            && !self.suspended
             && self.range.as_ref().is_some_and(|(a, b)| a.id != b.id)
         {
             return;
@@ -837,11 +939,14 @@ mod tests {
             }
         }
         fn layout(&mut self, element: &mut Element<'_, Message>) -> layout::Node {
+            self.layout_size(element, Size::new(300.0, 200.0))
+        }
+        fn layout_size(&mut self, element: &mut Element<'_, Message>, size: Size) -> layout::Node {
             self.tree.diff(element.as_widget());
             element.as_widget_mut().layout(
                 &mut self.tree,
                 &self.renderer,
-                &layout::Limits::new(Size::ZERO, Size::new(300.0, 200.0)),
+                &layout::Limits::new(Size::ZERO, size),
             )
         }
         fn read(&mut self, element: &mut Element<'_, Message>, node: &layout::Node) -> Read {
@@ -936,6 +1041,133 @@ mod tests {
         }
     }
 
+    fn code_view<'a>(
+        rows: &'a Arc<Vec<interconnect::connected::MessageRow>>,
+        shared: Shared,
+        generation: u64,
+    ) -> Element<'a, Message> {
+        let source = message_source(rows.clone(), vec![0]);
+        super::super::timeline::virtual_history_view(
+            generation,
+            Arc::new(
+                [(super::super::timeline::row_id(0), "$code".into())]
+                    .into_iter()
+                    .collect(),
+            ),
+            scrollable(
+                container(selectable::message_view(&rows[0])).id(super::super::timeline::row_id(0)),
+            )
+            .id("room-timeline")
+            .anchor_bottom()
+            .height(iced::Length::Fill)
+            .into(),
+            (false, 1, true),
+            false,
+            None,
+            None,
+            Default::default(),
+            None,
+            source,
+            shared,
+        )
+    }
+    #[test]
+    fn code_controls_keep_selection_and_expansion_anchor_and_restore_across_conversations() {
+        let mut row = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        row.key = "code".into();
+        row.event_id = Some("$code".into());
+        row.formatted = Some(Arc::new(
+            Document::parse(&format!(
+                "<pre><code>{}</code></pre>",
+                "let café = 42; // 👩🏽‍💻\n".repeat(50)
+            ))
+            .unwrap(),
+        ));
+        let body = row.formatted.as_ref().unwrap().text(&BTreeSet::new());
+        let rows = Arc::new(vec![row]);
+        let conversations = Conversations::default();
+        let room = crate::DraftKey {
+            room: "technical".into(),
+            root: None,
+        };
+        let shared = conversations.get(room.clone());
+        let mut h = Harness::new();
+        let mut element = code_view(&rows, shared.clone(), 1);
+        let size = Size::new(320.0, 400.0);
+        h.layout_size(&mut element, size);
+        shared.borrow_mut().range = Some((
+            logical_endpoint("code", &body, start()),
+            logical_endpoint("code", &body, end(&body)),
+        ));
+        let node = h.layout_size(&mut element, size);
+        let before = h.read(&mut element, &node).rows[0].bounds.y;
+        h.event(&mut element, &node, down(), Point::new(20.0, before + 10.0));
+        let node = h.layout_size(&mut element, size);
+        assert!((h.read(&mut element, &node).rows[0].bounds.y - before).abs() <= 1.0);
+        assert_eq!(h.copy(&mut element, &node), body);
+        assert!(shared.borrow().semantic["code"].code_views[&0].expanded);
+        drop(element);
+        // A different conversation and a reopened thread get independent state.
+        let other = conversations.get(crate::DraftKey {
+            room: "technical".into(),
+            root: Some("$thread".into()),
+        });
+        assert!(other.borrow().range.is_none());
+        let mut other_view = code_view(&rows, other, 2);
+        h.layout_size(&mut other_view, size);
+        drop(other_view);
+        let mut restored = code_view(&rows, conversations.get(room), 3);
+        let node = h.layout_size(&mut restored, Size::new(260.0, 400.0));
+        assert_eq!(h.copy(&mut restored, &node), body);
+        assert!(
+            h.read(&mut restored, &node).maximum > 500.0,
+            "expanded layout must survive room navigation and resizing"
+        );
+        let maximum = h.read(&mut restored, &node).maximum;
+        restored.as_widget_mut().operate(
+            &mut h.tree,
+            Layout::new(&node),
+            &h.renderer,
+            &mut widget::operation::scrollable::scroll_to::<()>(
+                "room-timeline".into(),
+                iced::widget::operation::AbsoluteOffset {
+                    x: None,
+                    y: Some(maximum),
+                },
+            ),
+        );
+        let node = h.layout_size(&mut restored, Size::new(260.0, 400.0));
+        h.event(&mut restored, &node, down(), Point::new(20.0, 10.0));
+        let node = h.layout_size(&mut restored, size);
+        assert!(!shared.borrow().semantic["code"].code_views[&0].expanded);
+        assert!(
+            h.read(&mut restored, &node).maximum < 10.0,
+            "collapse removes expanded layout work"
+        );
+        assert_eq!(h.copy(&mut restored, &node), body);
+    }
+    #[test]
+    fn conversation_text_state_is_bounded_and_cleared_explicitly() {
+        let cache = Conversations::default();
+        for i in 0..100 {
+            cache.get(crate::DraftKey {
+                room: i.to_string(),
+                root: None,
+            });
+        }
+        assert_eq!(cache.0.borrow().len(), 64);
+        cache.clear();
+        assert!(cache.0.borrow().is_empty());
+    }
     #[test]
     fn logical_selection_survives_both_endpoints_unmounted_and_copies_intermediate_canonical_text()
     {

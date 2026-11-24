@@ -117,6 +117,8 @@ pub struct State {
     pub document: Arc<Document>,
     revealed: BTreeSet<usize>,
     pub(super) code_views: HashMap<usize, CodeView>,
+    pub(super) reflow_requested: bool,
+    pub(super) semantics_restored: bool,
     blocks: Vec<LaidBlock>,
     width: Option<f32>,
     mode: interconnect::settings::ThemeMode,
@@ -136,6 +138,8 @@ impl State {
             document,
             revealed: BTreeSet::new(),
             code_views: HashMap::new(),
+            reflow_requested: false,
+            semantics_restored: false,
             blocks: Vec::new(),
             width: None,
             mode: interconnect::settings::ThemeMode::Light,
@@ -162,6 +166,14 @@ impl State {
             return false;
         }
         self.revealed.clone_from(revealed);
+        self.width = None;
+        true
+    }
+    pub(super) fn restore_code_views(&mut self, views: &HashMap<usize, CodeView>) -> bool {
+        if &self.code_views == views {
+            return false;
+        }
+        self.code_views.clone_from(views);
         self.width = None;
         true
     }
@@ -815,6 +827,7 @@ impl State {
             CodeAction::Toggle if code.truncated => {
                 view.expanded = !view.expanded;
                 self.width = None;
+                self.reflow_requested = true;
             }
             CodeAction::Left => view.x = (view.x - 160.0).max(0.0),
             CodeAction::Right => view.x = (view.x + 160.0).min(code.max_x),
