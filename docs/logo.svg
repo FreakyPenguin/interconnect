@@ -4,9 +4,7 @@
   <title id="title">Interconnect</title>
   <desc id="description">A yellow-green processor shaped like a speech bubble,
     with cyan input pins, an orange indicator, and two connected message routes
-    cut into its center, on a charcoal background.</desc>
-
-  <rect width="1254" height="1254" fill="#50514f"/>
+    cut into its center, on a transparent background.</desc>
 
   <!-- Input pins. -->
   <g fill="#55badd">
