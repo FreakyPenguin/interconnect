@@ -962,7 +962,37 @@ into individual cells. Demo → Message formatting includes a wrapping table.
 Automated parsing, outgoing Markdown, grid geometry, Unicode hit testing, and
 canonical-copy checks are covered; native GPU/input acceptance remains manual.
 
+## Independent message text sizing
+
+Settings → General → Message text offers 12/14/16/18 logical pixels separately
+from Interface size. Save applies it to plain and formatted bodies, code, tables,
+and message previews. Navigation, controls, composer editing, and authored media
+sizes are unchanged. Existing configurations default to 14 px. Automated checks
+cover config round trips, invalid settings, save-only application, retained
+navigation/scroll state, and plain/rich selection through size changes. Validate
+native clipping, selected-text copy, and event anchors in both room and thread
+panes at each size before release.
+
 Thread originals use a separate retained selection and scroll offset within the
 same conversation cache. A widget regression reopens an expanded original through
 an intermediate loading view, resizes it, and verifies full-code copy and its
 original scroll offset. Reply selection stays independent.
+
+### Local validation, 2026-11-24
+
+The locked workspace suite passed; after the final UI fixes, the UI suite passed
+705 tests with one opt-in measurement ignored. Formatting, workspace/all-target
+Clippy with warnings denied, and the desktop binary build passed. All three
+individual-message workloads ran in the debug fixture at 1,000 units (one or two
+samples); these are functional measurements, not release performance acceptance.
+
+An isolated headless Sway desktop with tiny-skia exercised the network-free demo
+at 1440×960 and 640×480: table grid/right alignment, code expand/collapse with a
+stable header, horizontal position and expansion through room navigation,
+Ctrl+A selection retained on collapse, pinned-original expansion/scroll through
+thread close/reopen, and applying 18 px text through Settings while shell and
+composer sizing stayed unchanged. Screenshots/logs remain outside the repository.
+Native clipboard round trips, Save code portal/native file dialogs, hardware GPU
+rendering, and macOS remain manual checks. Extremely long plain prose still uses
+full layout; explicitly expanded code can also be expensive. Incoming HTML keeps
+its existing byte/node/depth limits and plain fallback behavior.

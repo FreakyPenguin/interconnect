@@ -27,6 +27,9 @@ theme = "light"
 # Enlarge all text and controls: "normal", "comfortable", "large", "extra_large".
 # Corresponds to 100%, 115%, 130%, and 150%, in addition to desktop scaling.
 interface_scale = "normal"
+# Conversation body text only: "small" (12), "normal" (14), "large" (16), "extra_large" (18).
+# Logical pixels, additionally affected by interface and desktop scaling.
+message_text_size = "normal"
 # Center room content in an 840 px column. Disable to use the full pane width.
 limit_room_width = true
 

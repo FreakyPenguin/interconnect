@@ -8,7 +8,8 @@ use iced::{
     },
 };
 use interconnect::settings::{
-    self, GifPlayback, Graphics, InterfaceScale, SendShortcut, Settings, Store, ThemeMode,
+    self, GifPlayback, Graphics, InterfaceScale, MessageTextSize, SendShortcut, Settings, Store,
+    ThemeMode,
 };
 use std::path::PathBuf;
 
@@ -170,6 +171,7 @@ pub enum Event {
     Theme(ThemeMode),
     SystemTheme(iced::theme::Mode),
     InterfaceScale(InterfaceScale),
+    MessageTextSize(MessageTextSize),
     SendShortcut(SendShortcut),
     GifPlayback(GifPlayback),
     GifSeconds(String),
@@ -357,6 +359,11 @@ impl App {
             Event::InterfaceScale(scale) if !self.settings.busy => {
                 if let Some(draft) = &mut self.settings.draft {
                     draft.appearance.interface_scale = scale;
+                }
+            }
+            Event::MessageTextSize(size) if !self.settings.busy => {
+                if let Some(draft) = &mut self.settings.draft {
+                    draft.appearance.message_text_size = size;
                 }
             }
             Event::SendTyping(enabled) if !self.settings.busy => {
@@ -1011,6 +1018,11 @@ impl App {
                         move |scale| message(if available { Event::InterfaceScale(scale) } else { Event::Ignore }),
                     ).keyboard_navigation(true).text_size(13).padding([7, 10]).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
                     caption("Enlarge text and controls together. Applies when you save."),
+                    row![text("Message text").size(13), pick_list(
+                        MessageTextSize::ALL, Some(draft.appearance.message_text_size),
+                        move |size| message(if available { Event::MessageTextSize(size) } else { Event::Ignore }),
+                    ).keyboard_navigation(true).text_size(13).padding([7, 10]).style(shell::select_style)].spacing(16).align_y(iced::Alignment::Center),
+                    caption("Size conversation text independently. Applies when you save."),
                     room_width,
                     caption("Center messages and the composer in a readable column."),
                 ].spacing(12),
@@ -1281,6 +1293,36 @@ fn caption<'a>(label: impl text::IntoFragment<'a>) -> iced::widget::Text<'a> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn saved_message_size_changes_only_conversation_typography_and_preserves_navigation() {
+        let mut app = super::super::tests::demo_app();
+        app.window_width = Some(1000.0);
+        let navigation = (app.selection.room.clone(), app.selection.thread.clone());
+        let scroll = app.scroll_positions.clone();
+        let scale = app.settings.current.appearance.interface_scale;
+        let _ = app.update(message(Event::Open));
+        let _ = app.update(message(Event::MessageTextSize(MessageTextSize::ExtraLarge)));
+        assert_eq!(
+            app.settings.current.appearance.message_text_size,
+            MessageTextSize::Normal
+        );
+        let _ = app.update(message(Event::Save));
+        assert_eq!(
+            app.settings.current.appearance.message_text_size,
+            MessageTextSize::ExtraLarge
+        );
+        assert_eq!(
+            app.inline_assets().message_text_size,
+            MessageTextSize::ExtraLarge
+        );
+        assert_eq!(app.window_width, Some(1000.0));
+        assert_eq!(app.settings.current.appearance.interface_scale, scale);
+        assert_eq!(
+            (app.selection.room.clone(), app.selection.thread.clone()),
+            navigation
+        );
+        assert_eq!(app.scroll_positions, scroll);
+    }
     #[test]
     fn demo_link_handler_is_immediate_and_survives_panel_reopening() {
         let mut app = super::super::tests::demo_app();

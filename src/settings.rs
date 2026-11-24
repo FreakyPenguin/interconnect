@@ -46,6 +46,7 @@ impl Default for Settings {
 pub struct Appearance {
     pub theme: ThemeMode,
     pub interface_scale: InterfaceScale,
+    pub message_text_size: MessageTextSize,
     pub limit_room_width: bool,
 }
 impl Default for Appearance {
@@ -53,6 +54,7 @@ impl Default for Appearance {
         Self {
             theme: ThemeMode::Light,
             interface_scale: InterfaceScale::default(),
+            message_text_size: MessageTextSize::default(),
             limit_room_width: true,
         }
     }
@@ -83,6 +85,40 @@ impl std::fmt::Display for ThemeMode {
             Self::Dark => "Dark",
             Self::System => "System",
         })
+    }
+}
+/// Conversation body typography, independent of shell/control scaling.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageTextSize {
+    Small,
+    #[default]
+    Normal,
+    Large,
+    ExtraLarge,
+}
+impl MessageTextSize {
+    pub const ALL: [Self; 4] = [Self::Small, Self::Normal, Self::Large, Self::ExtraLarge];
+    pub fn points(self) -> u16 {
+        match self {
+            Self::Small => 12,
+            Self::Normal => 14,
+            Self::Large => 16,
+            Self::ExtraLarge => 18,
+        }
+    }
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Normal => "normal",
+            Self::Large => "large",
+            Self::ExtraLarge => "extra_large",
+        }
+    }
+}
+impl std::fmt::Display for MessageTextSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} px", self.points())
     }
 }
 /// Scale the whole interface so text, controls, and hit targets grow together.
@@ -351,6 +387,10 @@ impl Store {
             settings.appearance.interface_scale.as_str().into(),
         );
         replace(
+            &mut document["appearance"]["message_text_size"],
+            settings.appearance.message_text_size.as_str().into(),
+        );
+        replace(
             &mut document["appearance"]["limit_room_width"],
             settings.appearance.limit_room_width.into(),
         );
@@ -474,6 +514,25 @@ fn read(path: &Path) -> anyhow::Result<Option<String>> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn message_text_size_defaults_round_trips_and_is_independent_of_interface_scale() {
+        assert_eq!(
+            decode("").unwrap().appearance.message_text_size,
+            MessageTextSize::Normal
+        );
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("settings.toml");
+        let (mut store, mut settings) = Store::load(path.clone()).unwrap();
+        settings.appearance.interface_scale = InterfaceScale::Large;
+        for size in MessageTextSize::ALL {
+            settings.appearance.message_text_size = size;
+            store.save(&settings).unwrap();
+            assert_eq!(Store::load(path.clone()).unwrap().1, settings);
+            assert_eq!(settings.appearance.interface_scale, InterfaceScale::Large);
+        }
+        assert!(decode("[appearance]\nmessage_text_size = 500").is_err());
+        assert!(decode("[appearance]\nmessage_text_size = 'huge'").is_err());
+    }
     #[test]
     fn privacy_defaults_preserve_older_settings_and_partial_tables() {
         for source in ["", "[privacy]", "[privacy]\nsend_typing = true"] {

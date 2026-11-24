@@ -214,7 +214,7 @@ Override with `--config /path/to/settings.toml`. Legacy settings files require
 manual copying or `--config`. [config.example.toml](../config.example.toml)
 is the complete key/default reference.
 
-- Theme, interface size, and room-width preferences apply immediately on Save.
+- Theme, interface size, message text size, and room-width preferences apply on Save.
   Light/Dark override desktop appearance; System follows native appearance changes
   without polling, falling back to Light when the platform has no preference.
   Existing files retain the Light default. Native window decorations follow the
@@ -223,6 +223,11 @@ is the complete key/default reference.
   It enlarges all text and controls together, including message formatting,
   composers, and dialogs. Larger sizes leave less content visible; resize the
   window as needed.
+- Message text offers 12, 14 (default), 16, and 18 logical pixels for plain and
+  formatted conversation bodies, including code, tables, and message previews.
+  Interface and desktop scaling still apply. Headers, navigation, dialogs,
+  composer editing, and authored image/formula dimensions keep their own sizes.
+  Changing this preference preserves selection, code state, and reading anchors.
 - Composer defaults to Ctrl+Enter to send; Enter-to-send is optional.
 - Presence polling defaults off (60-second interval; allowed range 15–3600).
   On-demand snapshots use a 60-second cache; polling runs only while focused.

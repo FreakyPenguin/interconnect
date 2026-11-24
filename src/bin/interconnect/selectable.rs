@@ -215,13 +215,14 @@ fn normalize_selection(content: &mut text_editor::Content) {
 fn editor(
     content: &text_editor::Content,
     appearance: Appearance,
+    text_size: u16,
 ) -> text_editor::TextEditor<'_, emoji::Highlighter, Action> {
     iced::widget::text_editor(content)
         .highlight_fonts_with::<emoji::Highlighter>(emoji::font(), |font| *font)
-        .size(match appearance {
-            Appearance::Message => 14,
+        .size(f32::from(match appearance {
+            Appearance::Message => text_size,
             Appearance::Activity => 12,
-        })
+        }))
         .padding(0)
         .cursor_blinking(false)
         .show_cursor(false)
@@ -275,7 +276,11 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
     }
     fn children(&self) -> Vec<Tree> {
         let content = text_editor::Content::new();
-        vec![Tree::new(Element::from(editor(&content, self.appearance)))]
+        vec![Tree::new(Element::from(editor(
+            &content,
+            self.appearance,
+            self.assets.message_text_size.points(),
+        )))]
     }
     fn diff(&self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<State>();
@@ -336,7 +341,12 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
             rich.set_theme(self.mode);
             return rich.layout(limits.max().width);
         }
-        editor(&state.content, self.appearance).layout(&mut tree.children[0], renderer, limits)
+        editor(
+            &state.content,
+            self.appearance,
+            self.assets.message_text_size.points(),
+        )
+        .layout(&mut tree.children[0], renderer, limits)
     }
     fn update(
         &mut self,
@@ -580,7 +590,12 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         }
         let mut actions = Vec::new();
         let mut local = Shell::new(&mut actions);
-        editor(&state.content, self.appearance).update(
+        editor(
+            &state.content,
+            self.appearance,
+            self.assets.message_text_size.points(),
+        )
+        .update(
             &mut tree.children[0],
             event,
             layout,
@@ -693,7 +708,12 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                 }
             });
         }
-        editor(&state.content, self.appearance).draw(
+        editor(
+            &state.content,
+            self.appearance,
+            self.assets.message_text_size.points(),
+        )
+        .draw(
             &tree.children[0],
             renderer,
             theme,
@@ -756,6 +776,50 @@ mod tests {
         }
         fn write(&mut self, _: iced::advanced::clipboard::Kind, text: String) {
             self.0 = text;
+        }
+    }
+    #[test]
+    fn message_text_size_reflows_plain_and_rich_text_without_resetting_selection() {
+        use interconnect::settings::MessageTextSize;
+        let body = "A longer café 👩🏽‍💻 technical explanation with wrapping text. ".repeat(12);
+        let document = Arc::new(Document::parse(&format!("<p>{body}</p><table><tr><th>Name</th><th>Value</th></tr><tr><td>café</td><td>42</td></tr></table><pre><code>let value = 42;</code></pre>")).unwrap());
+        for rich in [None, Some(&document)] {
+            let mut view = Selectable {
+                search: None,
+                id: "size",
+                name: "Alice",
+                body: Cow::Borrowed(&body),
+                appearance: Appearance::Message,
+                mode: ThemeMode::Light,
+                assets: Default::default(),
+                context: None,
+                document: rich,
+            };
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+            let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
+            let limits = layout::Limits::new(Size::ZERO, Size::new(240.0, 10000.0));
+            view.assets.message_text_size = MessageTextSize::Small;
+            let small = view.layout(&mut tree, &renderer, &limits).bounds();
+            let selection = {
+                let state = tree.state.downcast_mut::<State>();
+                state.content.perform(Action::SelectAll);
+                state.selected = true;
+                state.content.selection()
+            };
+            view.assets.message_text_size = MessageTextSize::ExtraLarge;
+            view.diff(&mut tree);
+            let large = view.layout(&mut tree, &renderer, &limits).bounds();
+            assert!(large.height > small.height);
+            assert_eq!(
+                tree.state.downcast_ref::<State>().content.selection(),
+                selection
+            );
+            view.assets.message_text_size = MessageTextSize::Small;
+            assert_eq!(view.layout(&mut tree, &renderer, &limits).bounds(), small);
+            assert_eq!(
+                tree.state.downcast_ref::<State>().content.selection(),
+                selection
+            );
         }
     }
     #[test]

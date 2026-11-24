@@ -122,6 +122,7 @@ pub struct State {
     pub(super) semantics_restored: bool,
     blocks: Vec<LaidBlock>,
     width: Option<f32>,
+    text_size: interconnect::settings::MessageTextSize,
     mode: interconnect::settings::ThemeMode,
     image_metrics: Vec<inline_image::Metrics>,
     link_metadata: Option<link_preview::Metadata>,
@@ -143,6 +144,7 @@ impl State {
             semantics_restored: false,
             blocks: Vec::new(),
             width: None,
+            text_size: Default::default(),
             mode: interconnect::settings::ThemeMode::Light,
             image_metrics: Vec::new(),
             link_metadata: None,
@@ -185,6 +187,11 @@ impl State {
         }
     }
     pub fn layout(&mut self, width: f32) -> layout::Node {
+        if self.text_size != self.assets.message_text_size {
+            self.text_size = self.assets.message_text_size;
+            self.width = None;
+        }
+
         if self
             .link_metadata
             .as_ref()
@@ -346,7 +353,8 @@ impl State {
                 let size = match block.kind {
                     BlockKind::Heading(level) => 23.0 - f32::from(level.min(6)),
                     _ => 14.0,
-                };
+                } * f32::from(self.text_size.points())
+                    / 14.0;
                 let mut spans: Vec<text::Span<'_, (), Font>> = Vec::new();
                 let mut runs = Vec::new();
                 let mut objects = Vec::new();

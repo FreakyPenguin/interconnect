@@ -2746,6 +2746,7 @@ impl App {
     }
     fn inline_assets(&self) -> inline_image::Assets {
         inline_image::Assets {
+            message_text_size: self.settings.current.appearance.message_text_size,
             remote: self.model.images.clone(),
             local: self.local_inline.clone(),
             links: link_preview::Metadata {
