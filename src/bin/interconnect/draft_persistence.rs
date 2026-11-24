@@ -64,10 +64,11 @@ fn entry(key: &DraftKey, draft: &Draft) -> Option<Entry> {
         .as_ref()
         .map_or(draft, |edit| edit.saved.as_ref());
     let text = draft.content.text();
-    if text.is_empty() && draft.reply.is_none() {
+    if text.is_empty() && draft.reply.is_none() && draft.poll.is_none() {
         return None;
     }
     Some(Entry {
+        poll: draft.poll.clone(),
         room: key.room.clone(),
         root: key.root.clone(),
         reply: draft.reply.clone(),
@@ -94,7 +95,9 @@ fn entry(key: &DraftKey, draft: &Draft) -> Option<Entry> {
 pub fn may_change(message: &Message) -> bool {
     matches!(
         message,
-        Message::Edit(_, iced::widget::text_editor::Action::Edit(_))
+        Message::StartPoll(_)
+            | Message::PollCreate(_)
+            | Message::Edit(_, iced::widget::text_editor::Action::Edit(_))
             | Message::DeleteWord(..)
             | Message::Send(_)
             | Message::Sent(..)
@@ -164,6 +167,7 @@ impl App {
                     // one, wins over a snapshot from an earlier session.
                     self.drafts.entry(key).or_insert_with(|| {
                         let mut draft = Draft {
+                            poll: saved.poll.clone(),
                             reply: saved.reply.clone(),
                             content: iced::widget::text_editor::Content::with_text(&saved.text),
                             ..Default::default()
@@ -851,6 +855,31 @@ mod tests {
                 .is_room_wide()
         );
         assert_eq!(*restored.draft_persistence.current, *expected);
+    }
+
+    #[tokio::test]
+    async fn restart_restores_incomplete_poll_forms_alongside_ordinary_text() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut first = app(loaded(directory.path()).await);
+        let key = first.draft_key(false).unwrap();
+        first.drafts.get_mut(&key).unwrap().poll = Some(interconnect::polls::Creation {
+            question: "Unfinished".into(),
+            answers: vec!["Soup".into(), String::new()],
+            max_selections: 2,
+            hidden_results: true,
+        });
+        first.capture_persistent_drafts();
+        let _ = first.save_drafts();
+        complete_save(&mut first).await;
+        let restored = app(loaded(directory.path()).await);
+        assert_eq!(restored.drafts[&key].poll, first.drafts[&key].poll);
+        assert!(restored.drafts[&key].content.text().is_empty());
+        type_text(&mut first, 'x');
+        let _ = first.save_drafts();
+        complete_save(&mut first).await;
+        let restored = app(loaded(directory.path()).await);
+        assert_eq!(restored.drafts[&key].content.text(), "x");
+        assert_eq!(restored.drafts[&key].poll, first.drafts[&key].poll);
     }
 
     #[tokio::test]

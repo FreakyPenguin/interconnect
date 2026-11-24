@@ -779,14 +779,24 @@ selections up to the poll limit (at least one selection is required). Pending
 votes disable controls and failures allow retry. Confirm updates from another
 client, hidden counts, permission failures, and navigation during a vote manually.
 
-Create a poll with the composer’s **Poll** button (available for an empty room
-draft), edit `/poll Question?` and put each answer on its own following line,
-then use Send. Creation requires 2–20 distinct, nonempty answers and currently
-creates disclosed single-choice polls in the room. Reply targets and attachments
-are rejected with the draft retained. Ordinary draft persistence also retains
-this template. Demo creation and voting stay in memory and use no network.
-Verify cross-client rendering and voting, permission errors, offline failure,
-and successful creation after retry with a dedicated account.
+The composer’s **Poll** button opens a room poll form with question/answer
+fields, add/remove controls, **Allow multiple answers** and an explicit selection
+limit, and **Hide results until the poll ends**. Defaults are disclosed and
+single-choice. Creation requires 2–20 distinct, nonempty answers. Closing retains
+the unfinished form per room; its values and settings survive restart in the
+existing encrypted draft store, independently of ordinary message text, replies,
+and attachments. Successful form creation clears only the poll draft. Failures
+retain its values; a timed-out request may have succeeded, so check the room
+before retrying.
+
+**Insert text template** remains available from the form for an empty room draft.
+Edit `/poll Question?`, put each answer on a following line, then use Send. This
+quick path creates disclosed single-choice polls. Reply targets, attachments, and
+thread creation are rejected with the text draft retained. Both entry paths and
+voting stay in memory in demo, without saved-account or network access. Check all
+four creation modes, form close/reopen/restart, ordinary draft and scroll
+preservation, keyboard/Escape behavior, denied/offline sends, and cross-client
+rendering/voting with a dedicated account.
 
 Local validation for this implementation: locked workspace tests, Clippy with
 warnings denied, formatting check, and the desktop binary build passed. Poll

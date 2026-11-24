@@ -272,6 +272,7 @@ pub struct Demo {
     pub(super) managed_members: HashMap<String, Vec<interconnect::connected::Member>>,
     pub(super) invitations: HashMap<String, Vec<interconnect::connected::Member>>,
     conversations: HashMap<DraftKey, Vec<MessageRow>>,
+    hidden_poll_votes: HashMap<(String, String), Vec<interconnect::polls::Answer>>,
     code: Option<std::sync::Arc<interconnect::message_document::Document>>,
     next_message: u64,
 }
@@ -890,7 +891,17 @@ impl Demo {
                 .filter(|row| row.event_id.as_deref() == Some(event))
             {
                 if let Some(poll) = &mut row.poll {
-                    for answer in &mut poll.answers {
+                    if poll.validate_vote(answers).is_err() {
+                        continue;
+                    }
+                    let selections = if poll.disclosed {
+                        &mut poll.answers
+                    } else {
+                        self.hidden_poll_votes
+                            .entry((room.into(), event.into()))
+                            .or_insert_with(|| poll.answers.clone())
+                    };
+                    for answer in selections.iter_mut() {
                         answer.votes = answer.votes.saturating_sub(usize::from(answer.selected));
                         answer.selected = answers.contains(&answer.id);
                         answer.votes += usize::from(answer.selected);
@@ -904,6 +915,11 @@ impl Demo {
                         answer
                             .voters
                             .sort_unstable_by(|a, b| a.user_id.cmp(&b.user_id));
+                    }
+                    if !poll.disclosed {
+                        for answer in &mut poll.answers {
+                            answer.selected = answers.contains(&answer.id);
+                        }
                     }
                 }
             }
@@ -938,8 +954,9 @@ impl Demo {
                     })
                     .collect(),
                 ended: false,
-                disclosed: true,
-                max_selections: 1,
+                disclosed: content.poll_start.kind
+                    == matrix_sdk::ruma::events::poll::start::PollKind::Disclosed,
+                max_selections: content.poll_start.max_selections.into(),
             });
         }
     }

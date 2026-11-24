@@ -233,6 +233,22 @@ impl std::fmt::Debug for Composer {
     }
 }
 impl Composer {
+    pub async fn create_poll(self, creation: crate::polls::Creation) -> Result<(), String> {
+        self.check_active_room()?;
+        if self.0.is_threaded() {
+            return Err("Create polls in the room.".into());
+        }
+        let content = creation.to_content()?;
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            self.0.room().send(content),
+        )
+        .await
+        .map_err(|_| "Creating poll timed out; check the room before retrying.".to_owned())?
+        .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
     pub async fn vote_poll(self, event: String, answers: Vec<String>) -> Result<(), String> {
         self.check_active_room()?;
         let event_id = matrix_sdk::ruma::EventId::parse(event).map_err(|e| e.to_string())?;

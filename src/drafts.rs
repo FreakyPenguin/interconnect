@@ -26,6 +26,8 @@ const MAX_NOTIFICATION_BODY_BYTES: usize = 8192;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Entry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<crate::polls::Creation>,
     pub room: String,
     pub root: Option<String>,
     #[serde(default)]
@@ -112,6 +114,18 @@ impl Snapshot {
                         .all(|pair| pair[0].range.end <= pair[1].range.start),
                 "Invalid named draft mentions"
             );
+            if let Some(poll) = &entry.poll {
+                ensure!(entry.root.is_none(), "Poll drafts belong to rooms");
+                ensure!(
+                    (2..=20).contains(&poll.answers.len())
+                        && (1..=poll.answers.len() as u64).contains(&poll.max_selections),
+                    "Invalid poll draft options"
+                );
+                bytes = bytes.saturating_add(poll.question.len());
+                for answer in &poll.answers {
+                    bytes = bytes.saturating_add(answer.len());
+                }
+            }
             bytes = bytes.saturating_add(entry.text.len());
             ensure!(
                 bytes <= MAX_TEXT_BYTES,
@@ -383,6 +397,7 @@ mod tests {
             }],
             entries: vec![
                 Entry {
+                    poll: None,
                     room: "!room:example.org".into(),
                     root: None,
                     reply: Some("$original".into()),
@@ -393,6 +408,7 @@ mod tests {
                     named_mentions: vec![],
                 },
                 Entry {
+                    poll: None,
                     room: "!room:example.org".into(),
                     root: Some("$thread".into()),
                     reply: None,

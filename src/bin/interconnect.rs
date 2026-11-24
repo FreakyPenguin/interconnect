@@ -105,6 +105,8 @@ mod people_picker;
 mod pin_action;
 #[path = "interconnect/pinned.rs"]
 mod pinned;
+#[path = "interconnect/poll_create.rs"]
+mod poll_create;
 #[path = "interconnect/poll_view.rs"]
 mod poll_view;
 #[path = "interconnect/popover.rs"]
@@ -200,6 +202,8 @@ struct DraftKey {
 }
 #[derive(Default)]
 struct Draft {
+    poll: Option<interconnect::polls::Creation>,
+    poll_error: Option<String>,
     editing: Option<message_edit::State>,
     reply: Option<String>,
     composer_height: Option<f32>,
@@ -266,6 +270,7 @@ struct App {
     image_view: Option<images::Viewing>,
     inline_gif: Option<images::Viewing>,
     downloads: downloads::State,
+    poll_creation: poll_create::State,
     poll_votes: Option<reaction_picker::Target>,
     poll_sends: HashSet<reaction_picker::Target>,
     poll_error: Option<(reaction_picker::Target, String)>,
@@ -348,6 +353,7 @@ enum Message {
     Image(images::Event),
     Download(downloads::Event),
     StartPoll(DraftKey),
+    PollCreate(poll_create::Event),
     Poll(poll_view::Event),
     Reaction(reaction_picker::Event),
     ComposerEmoji(composer_picker::Event),
@@ -511,6 +517,7 @@ impl App {
             image_view: None,
             inline_gif: None,
             downloads: downloads::State::default(),
+            poll_creation: poll_create::State::default(),
             poll_votes: None,
             poll_sends: HashSet::new(),
             poll_error: None,
@@ -653,6 +660,7 @@ impl App {
         self.conversation_history.depth = depth;
         if outermost {
             // Early dialog handlers also invalidate covered inline confirmations.
+            self.validate_poll_creation();
             self.validate_queued_send();
             self.validate_devices();
             task = Task::batch([task, self.refresh_message_highlights()]);
@@ -795,6 +803,19 @@ impl App {
         ])
     }
     fn update_inner(&mut self, message: Message) -> Task<Message> {
+        if let Message::PollCreate(event) = message {
+            let task = self.poll_create_event(event);
+            if self.closing && self.pending_ops == 0 {
+                return task.chain(self.update(Message::Close));
+            }
+            return task;
+        }
+        if self.poll_creation_open()
+            && matches!(message, Message::Escape)
+            && let Some(dismiss) = self.dismiss_poll_creation()
+        {
+            return self.update(dismiss);
+        }
         if let Message::NotificationCenter(event) = message {
             let task = self.notification_center_event(event);
             self.refresh_media_demand();
@@ -1301,6 +1322,7 @@ impl App {
             return self.update(dismiss);
         }
         if self.membership.open
+            || self.poll_creation_open()
             || self.activation_picker_open()
             || self.emoji_management.is_some()
             || self.create_room.is_some()
@@ -3117,7 +3139,8 @@ impl App {
                                 draft.reply.is_some() && draft.editing.is_none() && !draft.pending
                             })
                         });
-                let scoped_escape = self.notification_center.open
+                let scoped_escape = self.poll_creation_open()
+                    || self.notification_center.open
                     || self.queued_send_confirmation_open()
                     || self.settings.draft.is_some()
                     || self.emoji_management.is_some()
@@ -3254,7 +3277,8 @@ impl App {
         {
             return self.login_view(authentication);
         }
-        let covered = self.draft_persistence.close_requested
+        let covered = self.poll_creation_open()
+            || self.draft_persistence.close_requested
             || self.sign_out_open
             || self.membership.open
             || self.room_settings.is_open()
@@ -3277,6 +3301,9 @@ impl App {
         if self.membership.open {
             return self
                 .context_menu_view(self.space_menu_view(layers.push(self.membership_view())));
+        }
+        if self.poll_creation_open() {
+            layers = layers.push(self.poll_creation_view());
         }
         if self.room_settings.is_open() {
             layers = layers.push(self.room_settings_view());
@@ -4456,11 +4483,8 @@ impl App {
                                 && !draft.pending
                                 && !self.closing
                                 && !self.stopped
-                                && draft.content.text().is_empty()
-                                && draft.editing.is_none()
-                                && draft.reply.is_none()
-                                && draft.attachments.is_empty())
-                            .then(|| Message::StartPoll(key.clone()))
+                                && draft.editing.is_none())
+                            .then(|| Message::PollCreate(poll_create::Event::Open(key.clone())))
                         )
                         .style(shell::quiet_button),
                     self.attachment_button(&key, *generation),

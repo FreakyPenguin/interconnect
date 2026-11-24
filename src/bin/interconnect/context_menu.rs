@@ -125,6 +125,7 @@ impl App {
             && self.composer_picker.is_none()
             && self.room_picker.is_none()
             && self.new_chat.is_none()
+            && !self.poll_creation_open()
             && self.create_room.is_none()
             && self.invite.is_none()
             && self.topic_editor.is_none()
