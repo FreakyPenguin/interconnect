@@ -32,6 +32,7 @@ struct LaidBlock {
     lines: Vec<usize>,
     size: f32,
     code: Option<CodeLayout>,
+    table_bounds: Option<Rectangle>,
 }
 const CODE_LINES: usize = 12;
 const CODE_BYTES: usize = 2048;
@@ -210,6 +211,15 @@ impl State {
         }
         let active_theme = super::appearance::theme(self.mode);
         let theme = &active_theme;
+        let mut table_columns: HashMap<usize, usize> = HashMap::new();
+        for block in &self.document.blocks {
+            if let BlockKind::TableCell(cell) = &block.kind {
+                table_columns
+                    .entry(cell.table)
+                    .and_modify(|count| *count = (*count).max(cell.column + 1))
+                    .or_insert(cell.column + 1);
+            }
+        }
         let mut image_metrics = Vec::new();
         for block in &self.document.blocks {
             let inset = ((block.quote_depth + block.list_depth.saturating_sub(1)).min(8) as f32
@@ -241,7 +251,12 @@ impl State {
                         source
                             .as_ref()
                             .and_then(|source| self.assets.intrinsic(source)),
-                        (width - inset - padding).max(1.0),
+                        (if let BlockKind::TableCell(cell) = &block.kind {
+                            (width - inset) / table_columns[&cell.table] as f32 - 16.0
+                        } else {
+                            width - inset - padding
+                        })
+                        .max(1.0),
                     ));
                 }
             }
@@ -302,9 +317,22 @@ impl State {
                     ((block.quote_depth + block.list_depth.saturating_sub(1)).min(8) as f32 * 14.0)
                         .min(width / 3.0);
                 let code = matches!(block.kind, BlockKind::Code { .. });
-                let padding = if code { 8.0 } else { 0.0 };
-                let mut x = inset + padding;
-                let mut paragraph_width = (width - x - padding).max(1.0);
+                let cell = if let BlockKind::TableCell(cell) = &block.kind {
+                    Some(*cell)
+                } else {
+                    None
+                };
+                let padding = if code || cell.is_some() { 8.0 } else { 0.0 };
+                let cell_width =
+                    cell.map(|cell| (width - inset) / table_columns[&cell.table] as f32);
+                let mut x = inset
+                    + padding
+                    + cell
+                        .zip(cell_width)
+                        .map_or(0.0, |(cell, width)| cell.column as f32 * width);
+                let mut paragraph_width = cell_width
+                    .map_or(width - x - padding, |width| width - 2.0 * padding)
+                    .max(1.0);
                 if matches!(block.kind, BlockKind::Math)
                     && block
                         .runs
@@ -471,6 +499,11 @@ impl State {
                     } else {
                         text::Wrapping::WordOrGlyph
                     },
+                    match cell.map(|cell| cell.alignment) {
+                        Some(document::TableAlignment::Center) => text::Alignment::Center,
+                        Some(document::TableAlignment::Right) => text::Alignment::Right,
+                        _ => text::Alignment::Default,
+                    },
                 );
                 let mut images = Vec::new();
                 let mut links = Vec::new();
@@ -602,7 +635,7 @@ impl State {
                     links,
                     bounds: Rectangle::new(
                         Point::new(x, y + padding + if code { CODE_HEADER } else { 0.0 }),
-                        Size::new((width - x - padding).max(1.0), height),
+                        Size::new(paragraph_width, height),
                     ),
                     range,
                     block: block.clone(),
@@ -610,27 +643,77 @@ impl State {
                     lines,
                     size,
                     code: code_layout,
+                    table_bounds: None,
                 });
                 y += height + padding * 2.0 + 8.0 + if code { CODE_HEADER } else { 0.0 };
             }
+            let mut top = 0.0;
+            let mut index = 0;
+            while index < self.blocks.len() {
+                if let BlockKind::TableCell(cell) = self.blocks[index].block.kind {
+                    let end = (index + 1..self.blocks.len()).find(|&next| !matches!(self.blocks[next].block.kind, BlockKind::TableCell(next_cell) if next_cell.table == cell.table && next_cell.row == cell.row)).unwrap_or(self.blocks.len());
+                    let row_height = self.blocks[index..end]
+                        .iter()
+                        .map(|block| block.bounds.height + 16.0)
+                        .fold(0.0_f32, f32::max);
+                    for block in &mut self.blocks[index..end] {
+                        block.bounds.y = top + 8.0;
+                        block.table_bounds = Some(Rectangle::new(
+                            Point::new(block.bounds.x - 8.0, top),
+                            Size::new(block.bounds.width + 16.0, row_height),
+                        ));
+                    }
+                    top += row_height;
+                    if !matches!(self.blocks.get(end).map(|block| &block.block.kind), Some(BlockKind::TableCell(next)) if next.table == cell.table)
+                    {
+                        top += 8.0;
+                    }
+                    index = end;
+                } else {
+                    let block = &mut self.blocks[index];
+                    let padding = if block.code.is_some() { 8.0 } else { 0.0 };
+                    block.bounds.y = top
+                        + padding
+                        + if block.code.is_some() {
+                            CODE_HEADER
+                        } else {
+                            0.0
+                        };
+                    if let Some(code) = &mut block.code {
+                        for (bounds, _, _) in &mut code.controls {
+                            bounds.y = top;
+                        }
+                    }
+                    top = block.bounds.y + block.bounds.height + padding + 8.0;
+                    index += 1;
+                }
+            }
             self.width = Some(width);
         }
-        let height = self.blocks.last().map_or(0.0, |b| {
-            b.bounds.y
-                + b.bounds.height
-                + if matches!(b.block.kind, BlockKind::Code { .. }) {
-                    8.0
-                } else {
-                    0.0
-                }
-        });
+        let height = self
+            .blocks
+            .iter()
+            .map(|block| {
+                block.table_bounds.map_or(
+                    block.bounds.y
+                        + block.bounds.height
+                        + if block.code.is_some() { 8.0 } else { 0.0 },
+                    |bounds| bounds.y + bounds.height,
+                )
+            })
+            .fold(0.0_f32, f32::max);
         layout::Node::new(Size::new(width, height))
     }
     pub fn hit(&self, point: Point) -> usize {
         let Some(block) = self
             .blocks
             .iter()
-            .find(|b| point.y < b.bounds.y + b.bounds.height)
+            .find(|b| {
+                b.table_bounds
+                    .map_or(point.y < b.bounds.y + b.bounds.height, |bounds| {
+                        bounds.contains(point)
+                    })
+            })
             .or(self.blocks.last())
         else {
             return 0;
@@ -952,7 +1035,7 @@ impl State {
         for block in &self.blocks {
             let translation = origin - Point::ORIGIN;
             let bounds = block.bounds + translation;
-            if !bounds.intersects(&viewport) {
+            if !(block.table_bounds.unwrap_or(block.bounds) + translation).intersects(&viewport) {
                 continue;
             }
             let code = matches!(block.block.kind, BlockKind::Code { .. });
@@ -977,6 +1060,25 @@ impl State {
                         viewport,
                     );
                 }
+            }
+            if let Some(cell_bounds) = block.table_bounds {
+                let cell_bounds = cell_bounds + translation;
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: cell_bounds,
+                        border: iced::Border {
+                            color: shell::palette(theme).muted.scale_alpha(0.25),
+                            width: 1.0,
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    },
+                    if matches!(block.block.kind, BlockKind::TableCell(cell) if cell.header) {
+                        shell::palette(theme).code
+                    } else {
+                        iced::Color::TRANSPARENT
+                    },
+                );
             }
             let clip = bounds
                 .intersection(&viewport)
@@ -1265,6 +1367,61 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 mod tests {
     use super::*;
 
+    #[test]
+    fn table_grid_wraps_cells_shares_row_heights_and_keeps_unicode_hit_offsets() {
+        let document = Arc::new(Document::parse("<p>Before</p><table><tr><th>Name</th><th align='right'>Count</th></tr><tr><td>A long café 👩🏽‍💻 label that wraps across lines</td><td align='right'><a href='https://example.org'>42</a></td></tr><tr><td></td><td>done</td></tr></table><p>After</p>").unwrap());
+        let mut state = State::new(document);
+        let canonical = state.text();
+        for width in [640.0, 280.0, 160.0] {
+            state.layout(width);
+            let cells: Vec<_> = state
+                .blocks
+                .iter()
+                .filter(|block| block.table_bounds.is_some())
+                .collect();
+            assert_eq!(cells.len(), 6);
+            for pair in cells.chunks(2) {
+                assert_eq!(
+                    pair[0].table_bounds.unwrap().height,
+                    pair[1].table_bounds.unwrap().height
+                );
+                assert_eq!(pair[0].bounds.y, pair[1].bounds.y);
+                assert!((pair[0].table_bounds.unwrap().width - width / 2.0).abs() < 0.1);
+                assert!(
+                    pair[0].table_bounds.unwrap().x + pair[0].table_bounds.unwrap().width
+                        <= pair[1].table_bounds.unwrap().x + 0.1
+                );
+            }
+            for cell in &cells {
+                for line in cell.paragraph.buffer().layout_runs() {
+                    for glyph in line.glyphs {
+                        let point = cell.bounds.position()
+                            + Vector::new(
+                                glyph.x + glyph.w / 2.0,
+                                line.line_top + line.line_height / 2.0,
+                            );
+                        let hit = state.hit(point);
+                        assert!(canonical.is_char_boundary(hit));
+                        assert!(cell.range.start <= hit && hit <= cell.range.end);
+                    }
+                }
+            }
+            assert!(
+                state.blocks.last().unwrap().bounds.y
+                    >= cells.last().unwrap().table_bounds.unwrap().y
+                        + cells.last().unwrap().table_bounds.unwrap().height
+            );
+            assert_eq!(state.text(), canonical);
+            let mut renderer = crate::test_renderer(Font::DEFAULT, iced::Pixels(14.0));
+            state.draw(
+                &mut renderer,
+                Point::ORIGIN,
+                Rectangle::with_size(Size::new(width, 600.0)),
+                Some(0..canonical.len()),
+                None,
+            );
+        }
+    }
     #[test]
     fn code_preview_bounds_shaping_preserves_full_copy_and_releases_expanded_layout() {
         for source in [

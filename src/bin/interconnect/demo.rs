@@ -632,6 +632,7 @@ impl Demo {
             ],
             "formatting" => vec![
                 formatted("format-intro", "<h2>Formatting preview</h2><p>Try <b>bold <i>and italic</i></b>, <u>underline</u>, <del>strikethrough</del>, and <code>inline code</code>. Emoji stay intact: café 👩🏽‍💻 ❤️ 🇩🇪.</p><p>Select across paragraphs and into the next message. العربية עברית 日本語</p>"),
+                formatted("format-table", "<table><tr><th>Operation</th><th align='right'>Items</th><th>Status</th></tr><tr><td><code>sync()</code></td><td align='right'>1,024</td><td><b>Ready</b> 👩🏽‍💻</td></tr><tr><td>A longer label wraps inside its cell</td><td align='right'>42</td><td><a href='https://example.org'>Details</a></td></tr></table>"),
                 formatted("format-blocks", "<blockquote><p>A quiet quotation.</p><blockquote>Nested quotation.</blockquote></blockquote><ol start='3'><li>Third item<ul><li>Nested item</li></ul></li><li>Fourth item</li></ol>"),
                 {
                     let mut row = formatted("format-code", CODE_SAMPLE);

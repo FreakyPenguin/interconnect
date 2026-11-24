@@ -74,6 +74,21 @@ pub struct Run {
     pub content: Inline,
     pub style: Style,
 }
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TableAlignment {
+    #[default]
+    Left,
+    Center,
+    Right,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TableCell {
+    pub table: usize,
+    pub row: usize,
+    pub column: usize,
+    pub header: bool,
+    pub alignment: TableAlignment,
+}
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum BlockKind {
     #[default]
@@ -81,6 +96,7 @@ pub enum BlockKind {
     /// Display math gets its own centered block; inline math stays in its paragraph.
     Math,
     Heading(u8),
+    TableCell(TableCell),
     /// Language is deliberately independent of any syntax-highlighting library.
     Code {
         language: Option<String>,
@@ -302,16 +318,17 @@ impl Document {
     }
     /// Visible canonical text. Hidden spoilers never enter selection or clipboard text.
     pub fn text(&self, revealed: &BTreeSet<usize>) -> String {
-        self.visible_blocks(revealed)
-            .into_iter()
-            .map(|b| {
-                b.runs
-                    .into_iter()
-                    .map(|r| r.content.text().to_owned())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n")
+        let blocks = self.visible_blocks(revealed);
+        let mut text = String::new();
+        for (index, block) in blocks.iter().enumerate() {
+            if index > 0 {
+                text.push_str(block_separator(&blocks[index - 1], block));
+            }
+            for run in &block.runs {
+                text.push_str(run.content.text());
+            }
+        }
+        text
     }
     pub fn visible_blocks(&self, revealed: &BTreeSet<usize>) -> Vec<Block> {
         let mut hidden = BTreeSet::new();
@@ -472,6 +489,9 @@ struct Builder {
     spoiler: usize,
     pre: usize,
     anchors: usize,
+    tables: Vec<(usize, usize, usize)>,
+    next_table: usize,
+    table_cell_depth: usize,
     formulas: bool,
     formula_count: usize,
     formula_pixels: usize,
@@ -479,7 +499,7 @@ struct Builder {
 impl Builder {
     fn flush(&mut self) {
         self.list_marker_only = false;
-        if !self.current.runs.is_empty() {
+        if !self.current.runs.is_empty() || matches!(self.current.kind, BlockKind::TableCell(_)) {
             self.blocks.push(std::mem::take(&mut self.current));
         }
         self.current.quote_depth = self.quotes;
@@ -497,6 +517,9 @@ impl Builder {
         Some(())
     }
     fn text(&mut self, text: &str, style: Style) -> Option<()> {
+        if !self.tables.is_empty() && self.table_cell_depth == 0 {
+            return Some(());
+        }
         let text = if self.pre > 0 {
             text.replace("\r\n", "\n").replace('\r', "\n")
         } else {
@@ -551,40 +574,82 @@ impl Builder {
         if matches!(tag, "script" | "style" | "iframe" | "object" | "mx-reply") {
             return Some(());
         }
-        let block = matches!(
-            tag,
-            "p" | "div"
-                | "h1"
-                | "h2"
-                | "h3"
-                | "h4"
-                | "h5"
-                | "h6"
-                | "blockquote"
-                | "ul"
-                | "ol"
-                | "li"
-                | "pre"
-                | "table"
-                | "tr"
-                | "details"
-                | "summary"
-                | "hr"
-        );
+        let block = self.table_cell_depth == 0
+            && matches!(
+                tag,
+                "p" | "div"
+                    | "h1"
+                    | "h2"
+                    | "h3"
+                    | "h4"
+                    | "h5"
+                    | "h6"
+                    | "blockquote"
+                    | "ul"
+                    | "ol"
+                    | "li"
+                    | "pre"
+                    | "table"
+                    | "tr"
+                    | "details"
+                    | "summary"
+                    | "hr"
+            );
         // A list item may begin with a paragraph or another list (e.g. Markdown
         // `* 12. April`). Keep leading markers with the first text; later
         // paragraphs and nested items still start separate blocks.
         if block && !(self.list_marker_only && matches!(tag, "p" | "div" | "ul" | "ol" | "li")) {
             self.flush();
         }
+        if matches!(tag, "td" | "th") && !self.tables.is_empty() {
+            if self.table_cell_depth != 0 {
+                return None;
+            }
+            self.flush();
+            let (table, row, column) = self.tables.last_mut()?;
+            if *column >= 32 {
+                return None;
+            }
+            self.current.kind = BlockKind::TableCell(TableCell {
+                table: *table,
+                row: *row,
+                column: *column,
+                header: tag == "th",
+                alignment: match attr("align")
+                    .or_else(|| {
+                        attr("style").and_then(|style| {
+                            style.split(';').find_map(|part| {
+                                let (name, value) = part.split_once(':')?;
+                                (name.trim() == "text-align").then(|| value.trim().to_owned())
+                            })
+                        })
+                    })
+                    .as_deref()
+                {
+                    Some("center") => TableAlignment::Center,
+                    Some("right") => TableAlignment::Right,
+                    _ => TableAlignment::Left,
+                },
+            });
+            *column += 1;
+            self.table_cell_depth += 1;
+            style.bold |= tag == "th";
+        }
         match tag {
+            "table" => {
+                if !self.tables.is_empty() {
+                    return None;
+                }
+                self.next_table += 1;
+                self.tables.push((self.next_table, 0, 0));
+            }
             "b" | "strong" => style.bold = true,
             "i" | "em" => style.italic = true,
             "u" => style.underline = true,
             "s" | "del" | "strike" => style.strike = true,
             "code" => {
                 style.code = true;
-                if self.pre > 0 {
+                if self.pre > 0 && self.table_cell_depth == 0 {
                     self.current.kind = BlockKind::Code {
                         language: attr("class").and_then(|c| {
                             c.split_whitespace()
@@ -626,11 +691,15 @@ impl Builder {
             }
             "pre" => {
                 self.pre += 1;
-                self.current.kind = BlockKind::Code { language: None };
+                if self.table_cell_depth == 0 {
+                    self.current.kind = BlockKind::Code { language: None };
+                }
                 style.code = true;
             }
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
-                self.current.kind = BlockKind::Heading(tag[1..].parse().ok()?);
+                if self.table_cell_depth == 0 {
+                    self.current.kind = BlockKind::Heading(tag[1..].parse().ok()?);
+                }
                 style.bold = true;
             }
             "img" => {
@@ -661,9 +730,6 @@ impl Builder {
             "hr" => {
                 self.push(Inline::Text("────────".into()), style.clone())?;
             }
-            "td" | "th" if !self.current.runs.is_empty() => {
-                self.push(Inline::Text(" | ".into()), style.clone())?;
-            }
             _ => {}
         }
         if attr("data-mx-spoiler").is_some() {
@@ -675,7 +741,7 @@ impl Builder {
             .flatten()
             .filter(|s| !s.trim().is_empty() && self.pre == 0 && !style.code);
         if let Some(latex) = &math {
-            let display = tag == "div";
+            let display = tag == "div" && self.table_cell_depth == 0;
             let image = if self.formulas && self.formula_count < crate::formula::MAX_FORMULAS {
                 self.formula_count += 1;
                 crate::formula::render(latex, display, &mut self.formula_pixels)
@@ -712,10 +778,20 @@ impl Builder {
         {
             self.text(&latex, style)?;
         }
-        if block {
+        if block || (matches!(tag, "td" | "th") && self.table_cell_depth > 0) {
             self.flush();
         }
         match tag {
+            "td" | "th" if self.table_cell_depth > 0 => self.table_cell_depth -= 1,
+            "tr" => {
+                if let Some((_, row, column)) = self.tables.last_mut() {
+                    *row += 1;
+                    *column = 0;
+                }
+            }
+            "table" => {
+                self.tables.pop();
+            }
             "blockquote" => self.quotes -= 1,
             "ul" | "ol" => {
                 self.lists.pop();
@@ -729,10 +805,18 @@ impl Builder {
         Some(())
     }
 }
+fn block_separator(previous: &Block, next: &Block) -> &'static str {
+    match (&previous.kind, &next.kind) {
+        (BlockKind::TableCell(a), BlockKind::TableCell(b)) if a.table == b.table => {
+            if a.row == b.row { "\t" } else { "\n" }
+        }
+        _ => "\n\n",
+    }
+}
 /// Byte ranges for a block within the canonical message text.
 pub fn block_ranges(blocks: &[Block]) -> impl Iterator<Item = Range<usize>> + '_ {
     let mut start = 0;
-    blocks.iter().map(move |block| {
+    blocks.iter().enumerate().map(move |(index, block)| {
         let end = start
             + block
                 .runs
@@ -740,7 +824,10 @@ pub fn block_ranges(blocks: &[Block]) -> impl Iterator<Item = Range<usize>> + '_
                 .map(|r| r.content.text().len())
                 .sum::<usize>();
         let range = start..end;
-        start = end + 2;
+        start = end
+            + blocks
+                .get(index + 1)
+                .map_or(0, |next| block_separator(block, next).len());
         range
     })
 }
@@ -755,6 +842,37 @@ mod tests {
             .flat_map(|b| &b.runs)
             .filter_map(|r| r.style.link.as_deref())
             .collect()
+    }
+    #[test]
+    fn tables_preserve_cells_alignment_empty_values_and_canonical_ranges() {
+        let document = Document::parse("<p>Before</p><table>\n<tr><th>Label</th><th align='right'>Count</th></tr>\n<tr><td><b>café 👩🏽‍💻</b></td><td style='text-align: right'>42</td></tr><tr><td></td><td>last</td></tr></table><p>After</p>").unwrap();
+        let text = document.text(&BTreeSet::new());
+        assert_eq!(text, "Before\n\nLabel\tCount\ncafé 👩🏽‍💻\t42\n\tlast\n\nAfter");
+        let cells: Vec<_> = document
+            .blocks
+            .iter()
+            .filter_map(|block| {
+                if let BlockKind::TableCell(cell) = block.kind {
+                    Some(cell)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert_eq!(cells.len(), 6);
+        assert!(cells[0].header);
+        assert_eq!(cells[1].alignment, TableAlignment::Right);
+        assert_eq!(cells[3].alignment, TableAlignment::Right);
+        for (block, range) in document.blocks.iter().zip(block_ranges(&document.blocks)) {
+            assert_eq!(
+                &text[range],
+                block
+                    .runs
+                    .iter()
+                    .map(|run| run.content.text())
+                    .collect::<String>()
+            );
+        }
     }
     #[test]
     fn room_wide_rendering_uses_metadata_preserves_text_and_invalidates_cache() {

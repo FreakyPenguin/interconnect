@@ -262,7 +262,7 @@ fn convert_with_choices(
     } else {
         Box::new(Parser::new_ext(
             &protected,
-            Options::ENABLE_STRIKETHROUGH | Options::ENABLE_MATH,
+            Options::ENABLE_STRIKETHROUGH | Options::ENABLE_MATH | Options::ENABLE_TABLES,
         ))
     };
     let mut code = false;
@@ -570,6 +570,21 @@ mod tests {
     use crate::message_document::{BlockKind, Inline};
     use std::collections::BTreeSet;
 
+    #[tokio::test]
+    async fn markdown_tables_keep_source_and_produce_native_aligned_cells() {
+        let source = "| Name | Count |\n| :--- | ---: |\n| **café** | 42 |";
+        let prepared = prepare(source.into(), Format::Markdown).await.unwrap();
+        assert_eq!(prepared.source, source);
+        assert!(prepared.html.as_ref().unwrap().contains("<table>"));
+        let document = prepared.document.unwrap();
+        assert_eq!(
+            document.text(&std::collections::BTreeSet::new()),
+            "Name\tCount\ncafé\t42"
+        );
+        assert!(
+            matches!(document.blocks[1].kind, crate::message_document::BlockKind::TableCell(cell) if cell.alignment == crate::message_document::TableAlignment::Right)
+        );
+    }
     #[tokio::test]
     async fn explicit_room_wide_choices_emit_metadata_and_recover_through_edits() {
         for format in [Format::Plain, Format::Markdown] {

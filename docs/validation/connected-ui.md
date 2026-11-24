@@ -946,3 +946,18 @@ the bottom; ordinary resize/prepend keeps the existing event anchor. Collapse
 returns to the bounded layout. Automated widget checks exercise control presses,
 copy, resize, generation changes, and cache bounds. Check native room/thread
 navigation with an active selection and horizontal offset before release.
+
+## Markdown tables
+
+Markdown pipe tables now produce native table cells in previews and sent
+formatted payloads. Incoming HTML tables share the same grid. Columns share
+widths across rows; cells wrap, row heights follow the tallest cell, headers
+have a quiet background, and left/center/right alignment is retained. Copy uses
+tabs between cells and newlines between rows, preserving styled Unicode text,
+links, empty cells, and spoiler placeholders. Table chrome is not copied.
+
+The parser retains existing byte/node/depth bounds and allows up to 32 columns;
+nested tables fall back to plain message text. Row/column spans are flattened
+into individual cells. Demo → Message formatting includes a wrapping table.
+Automated parsing, outgoing Markdown, grid geometry, Unicode hit testing, and
+canonical-copy checks are covered; native GPU/input acceptance remains manual.

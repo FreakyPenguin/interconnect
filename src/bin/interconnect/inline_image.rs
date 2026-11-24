@@ -120,6 +120,7 @@ impl Paragraph {
         size: f32,
         objects: &[Object],
         wrapping: text::Wrapping,
+        alignment: text::Alignment,
     ) -> Self {
         if objects.is_empty() {
             return Self::Text(graphics::Paragraph::with_spans(text::Text {
@@ -128,7 +129,7 @@ impl Paragraph {
                 size: iced::Pixels(size),
                 line_height: text::LineHeight::Relative(1.45),
                 font: Font::with_name("Inter"),
-                align_x: text::Alignment::Default,
+                align_x: alignment,
                 align_y: iced::alignment::Vertical::Top,
                 shaping: text::Shaping::Advanced,
                 wrapping,
@@ -157,7 +158,11 @@ impl Paragraph {
             }),
             &graphics::to_attributes(Font::with_name("Inter")),
             cosmic::Shaping::Advanced,
-            None,
+            match alignment {
+                text::Alignment::Center => Some(cosmic::Align::Center),
+                text::Alignment::Right => Some(cosmic::Align::Right),
+                _ => None,
+            },
         );
         for line in &mut buffer.lines {
             line.customize_shape(fonts, 8, |shape| {
