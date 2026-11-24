@@ -359,6 +359,32 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if let Some(rich) = &mut tree.state.downcast_mut::<State>().rich {
+            match event {
+                Event::Window(iced::window::Event::Unfocused) => {
+                    rich.finish_code_scroll();
+                }
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                    if rich.finish_code_scroll() =>
+                {
+                    shell.capture_event();
+                    shell.request_redraw();
+                    return;
+                }
+                Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                    // The timeline can mark its cursor unavailable outside the
+                    // viewport; a captured horizontal drag still follows raw X.
+                    let point = iced::Point::ORIGIN
+                        + (cursor.position().unwrap_or(*position) - layout.position());
+                    if rich.drag_code_scroll(point) {
+                        shell.capture_event();
+                        shell.request_redraw();
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
             && let Some(point) = cursor
                 .position_in(layout.bounds())
@@ -429,6 +455,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                     let rich = state.rich.as_mut().unwrap();
                     if let Some((index, action)) = rich.code_control(point) {
                         match action {
+                            formatted::CodeAction::Scroll => rich.begin_code_scroll(index, point),
                             formatted::CodeAction::Copy => clipboard.write(
                                 iced::advanced::clipboard::Kind::Standard,
                                 rich.code_text(index),
@@ -438,7 +465,9 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                             }
                             _ => rich.code_action(index, action),
                         }
-                        shell.invalidate_layout();
+                        if matches!(action, formatted::CodeAction::Toggle) {
+                            shell.invalidate_layout();
+                        }
                         shell.capture_event();
                         shell.request_redraw();
                         return;
@@ -745,12 +774,27 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         viewport: &Rectangle,
         _: &Renderer,
     ) -> mouse::Interaction {
+        if tree
+            .state
+            .downcast_ref::<State>()
+            .rich
+            .as_ref()
+            .is_some_and(|rich| rich.dragging_code())
+        {
+            return mouse::Interaction::Grabbing;
+        }
         if cursor
             .position()
             .is_some_and(|p| layout.bounds().contains(p) && viewport.contains(p))
         {
             let state = tree.state.downcast_ref::<State>();
-            if state.rich.as_ref().is_some_and(|rich| {
+            if let Some(interaction) = state.rich.as_ref().and_then(|rich| {
+                cursor
+                    .position_in(layout.bounds())
+                    .and_then(|point| rich.code_mouse_interaction(point))
+            }) {
+                interaction
+            } else if state.rich.as_ref().is_some_and(|rich| {
                 cursor
                     .position_in(layout.bounds())
                     .is_some_and(|point| rich.interactive(point))

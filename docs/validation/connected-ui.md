@@ -929,7 +929,11 @@ and disclosure changes; live cross-client updates remain a manual check.
 Demo → Message formatting includes a 100-line code sample. Code starts with a
 12-line / 2 KiB preview; Expand and Collapse control shaping, rather than merely
 clipping a fully laid-out block. Wide lines do not wrap. Use horizontal trackpad
-scrolling or the ‹ / › controls. Vertical scrolling remains with the timeline.
+scrolling, the ‹ / › controls, or the visible horizontal scrollbar when the
+rendered code overflows. Drag the thumb or click the track; the bar disappears
+when the code fits. Vertical scrolling remains with the timeline. Collapsed
+truncated code has a translucent bottom fade with a clickable **Expand code**
+overlay; expanded and complete blocks omit this cue.
 Copy and Save export the full visible-spoiler code source, preserving whitespace
 and Unicode. Save uses an asynchronous native picker and file write.
 
@@ -996,3 +1000,18 @@ Native clipboard round trips, Save code portal/native file dialogs, hardware GPU
 rendering, and macOS remain manual checks. Extremely long plain prose still uses
 full layout; explicitly expanded code can also be expensive. Incoming HTML keeps
 its existing byte/node/depth limits and plain fallback behavior.
+
+Code affordance regressions cover overflow appearing on expansion, fitting after
+resize, scrollbar endpoint clamping and track presses, drag release/focus loss,
+and preserving full-code selection when dragging the thumb or pressing the
+bottom Expand overlay. Captured drags follow horizontal movement outside the
+viewport; cancellation and settled redraws schedule no timers. The overlay and
+scrollbar are presentation only and never enter copied/saved code.
+
+The code-affordance follow-up passed 707 UI tests (one opt-in measurement ignored),
+format checking, workspace/all-target Clippy with warnings denied, and the binary
+build. An isolated tiny-skia/Wayland demo checked the fade and scrollbar in Light
+and Dark at 1440×960 and Dark at 640×480. Real virtual-pointer button/motion events
+verified thumb dragging beyond the block with selection retained; clicking the
+bottom overlay expanded the code with its header anchored. Screenshots stay
+outside Git. Native GPU rendering and macOS remain manual checks.

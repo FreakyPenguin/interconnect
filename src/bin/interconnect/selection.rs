@@ -1099,6 +1099,98 @@ mod tests {
         )
     }
     #[test]
+    fn code_scrollbar_drag_and_bottom_expand_preserve_selection_and_settle_without_timers() {
+        let mut row = crate::demo::Demo::default()
+            .pane(
+                crate::DraftKey {
+                    room: "studio".into(),
+                    root: None,
+                },
+                1,
+            )
+            .rows[0]
+            .clone();
+        row.key = "code".into();
+        row.event_id = Some("$code".into());
+        let body = "let café = long_identifier(); ".repeat(200);
+        row.formatted = Some(Arc::new(
+            Document::parse(&format!("<pre><code>{body}</code></pre>")).unwrap(),
+        ));
+        let rows = Arc::new(vec![row]);
+        let shared = Shared::default();
+        let mut h = Harness::new();
+        let mut element = code_view(&rows, shared.clone(), 1);
+        h.layout(&mut element);
+        shared.borrow_mut().range = Some((
+            logical_endpoint("code", &body, start()),
+            logical_endpoint("code", &body, end(&body)),
+        ));
+        let node = h.layout(&mut element);
+        #[derive(Default)]
+        struct Bar(Option<super::super::formatted::CodeScrollbar>, bool);
+        impl widget::Operation for Bar {
+            fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                f(self);
+            }
+            fn custom(&mut self, _: Option<&widget::Id>, _: Rectangle, state: &mut dyn Any) {
+                if let Some(state) = state.downcast_ref::<selectable::State>()
+                    && let Some(rich) = &state.rich
+                {
+                    self.0 = rich.code_scrollbar(0);
+                    self.1 = rich.dragging_code();
+                }
+            }
+        }
+        let geometry = |h: &mut Harness,
+                        element: &mut Element<'_, Message>,
+                        node: &layout::Node| {
+            let mut bar = Bar::default();
+            element
+                .as_widget_mut()
+                .operate(&mut h.tree, Layout::new(node), &h.renderer, &mut bar);
+            bar
+        };
+        let initial = geometry(&mut h, &mut element, &node).0.unwrap();
+        h.event(&mut element, &node, down(), initial.thumb.center());
+        let node = h.layout(&mut element);
+        let outside = Point::new(500.0, initial.track.center_y());
+        h.event(&mut element, &node, moved(outside), outside);
+        let dragged = geometry(&mut h, &mut element, &node);
+        let right = dragged.0.unwrap();
+        assert!(dragged.1);
+        assert!(
+            (right.thumb.x + right.thumb.width - right.track.x - right.track.width).abs() < 0.1
+        );
+        h.event(&mut element, &node, up(), outside);
+        assert!(!geometry(&mut h, &mut element, &node).1);
+        assert_eq!(h.copy(&mut element, &node), body);
+        // The overlay covers the last preview rows, immediately above the bar.
+        let expand = Point::new(initial.track.center_x(), initial.track.y - 16.0);
+        h.event(&mut element, &node, down(), expand);
+        let node = h.layout(&mut element);
+        assert!(shared.borrow().semantic["code"].code_views[&0].expanded);
+        assert_eq!(h.copy(&mut element, &node), body);
+        // Losing window focus cancels the scrollbar drag without a timer.
+        let bar = geometry(&mut h, &mut element, &node).0.unwrap();
+        let press = Point::new(bar.track.center_x(), bar.track.center_y());
+        h.event(&mut element, &node, down(), press);
+        h.event(
+            &mut element,
+            &node,
+            Event::Window(iced::window::Event::Unfocused),
+            press,
+        );
+        let cancelled = geometry(&mut h, &mut element, &node).0.unwrap();
+        h.event(&mut element, &node, moved(outside), outside);
+        assert_eq!(
+            geometry(&mut h, &mut element, &node).0.unwrap().thumb,
+            cancelled.thumb
+        );
+        assert!(!geometry(&mut h, &mut element, &node).1);
+        let (request, _) = h.event(&mut element, &node, redraw(), Point::ORIGIN);
+        assert!(!matches!(request, iced::window::RedrawRequest::At(_)));
+    }
+    #[test]
     fn pinned_thread_original_restores_selection_code_state_and_its_own_scroll_after_loading() {
         let mut row = crate::demo::Demo::default()
             .pane(

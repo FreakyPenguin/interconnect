@@ -37,6 +37,8 @@ struct LaidBlock {
 const CODE_LINES: usize = 12;
 const CODE_BYTES: usize = 2048;
 const CODE_HEADER: f32 = 28.0;
+const CODE_SCROLLBAR: f32 = 16.0;
+const CODE_OVERLAY: f32 = 48.0;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct CodeView {
     pub expanded: bool,
@@ -48,6 +50,55 @@ struct CodeLayout {
     truncated: bool,
     controls: Vec<(Rectangle, CodeAction, Paragraph)>,
     max_x: f32,
+    expand_label: Option<Paragraph>,
+}
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CodeScrollbar {
+    pub track: Rectangle,
+    pub thumb: Rectangle,
+    max_x: f32,
+}
+#[derive(Debug)]
+struct CodeDrag {
+    index: usize,
+    /// Fraction of thumb width, retained across Iced's intermediate measurements.
+    grab: f32,
+}
+impl LaidBlock {
+    fn code_footer(&self) -> f32 {
+        if self.code.as_ref().is_some_and(|code| code.max_x > 0.0) {
+            CODE_SCROLLBAR
+        } else {
+            0.0
+        }
+    }
+    fn expand_overlay(&self) -> Option<Rectangle> {
+        self.code.as_ref()?.expand_label.as_ref()?;
+        Some(Rectangle::new(
+            Point::new(
+                self.bounds.x - 8.0,
+                self.bounds.y + self.bounds.height - CODE_OVERLAY,
+            ),
+            Size::new(self.bounds.width + 16.0, CODE_OVERLAY),
+        ))
+    }
+    fn paint_bounds(&self) -> Rectangle {
+        if let Some(code) = &self.code {
+            let top = code
+                .controls
+                .first()
+                .map_or(self.bounds.y, |(bounds, _, _)| bounds.y);
+            Rectangle::new(
+                Point::new(self.bounds.x - 8.0, top),
+                Size::new(
+                    self.bounds.width + 16.0,
+                    self.bounds.y + self.bounds.height + 8.0 + self.code_footer() - top,
+                ),
+            )
+        } else {
+            self.table_bounds.unwrap_or(self.bounds)
+        }
+    }
 }
 #[derive(Clone, Copy, Debug)]
 pub(super) enum CodeAction {
@@ -56,6 +107,7 @@ pub(super) enum CodeAction {
     Save,
     Left,
     Right,
+    Scroll,
 }
 fn preview_end(text: &str) -> usize {
     let mut end = text.len().min(CODE_BYTES);
@@ -118,6 +170,7 @@ pub struct State {
     pub document: Arc<Document>,
     revealed: BTreeSet<usize>,
     pub(super) code_views: HashMap<usize, CodeView>,
+    code_drag: Option<CodeDrag>,
     pub(super) reflow_requested: bool,
     pub(super) semantics_restored: bool,
     blocks: Vec<LaidBlock>,
@@ -140,6 +193,7 @@ impl State {
             document,
             revealed: BTreeSet::new(),
             code_views: HashMap::new(),
+            code_drag: None,
             reflow_requested: false,
             semantics_restored: false,
             blocks: Vec::new(),
@@ -570,7 +624,14 @@ impl State {
                         }
                     }
                 }
-                let height = paragraph.min_height().max(size * 1.45);
+                let height = paragraph
+                    .min_height()
+                    .max(size * 1.45)
+                    .max(if code && truncated {
+                        CODE_OVERLAY + size * 1.45
+                    } else {
+                        0.0
+                    });
                 let mut offset = 0;
                 let lines = paragraph
                     .buffer()
@@ -628,7 +689,24 @@ impl State {
                         controls.push((bounds, action, label));
                         control_x += control_width;
                     }
+                    let expand_label = (truncated && !expanded).then(|| {
+                        Paragraph::with_text(text::Text {
+                            content: "Expand code",
+                            bounds: Size::new(paragraph_width, 24.0),
+                            size: iced::Pixels(12.0),
+                            line_height: text::LineHeight::default(),
+                            font: Font {
+                                weight: font::Weight::Semibold,
+                                ..Font::with_name("Inter")
+                            },
+                            align_x: text::Alignment::Default,
+                            align_y: iced::alignment::Vertical::Top,
+                            shaping: text::Shaping::Advanced,
+                            wrapping: text::Wrapping::None,
+                        })
+                    });
                     Some(CodeLayout {
+                        expand_label,
                         index: block_index,
                         truncated,
                         controls,
@@ -693,7 +771,8 @@ impl State {
                             bounds.y = top;
                         }
                     }
-                    top = block.bounds.y + block.bounds.height + padding + 8.0;
+                    top =
+                        block.bounds.y + block.bounds.height + padding + block.code_footer() + 8.0;
                     index += 1;
                 }
             }
@@ -706,7 +785,8 @@ impl State {
                 block.table_bounds.map_or(
                     block.bounds.y
                         + block.bounds.height
-                        + if block.code.is_some() { 8.0 } else { 0.0 },
+                        + if block.code.is_some() { 8.0 } else { 0.0 }
+                        + block.code_footer(),
                     |bounds| bounds.y + bounds.height,
                 )
             })
@@ -888,15 +968,122 @@ impl State {
             .flatten()
     }
     pub(super) fn code_control(&self, point: Point) -> Option<(usize, CodeAction)> {
-        self.blocks
+        self.blocks.iter().find_map(|block| {
+            let code = block.code.as_ref()?;
+            if self
+                .scrollbar(block)
+                .is_some_and(|bar| bar.track.contains(point))
+            {
+                return Some((code.index, CodeAction::Scroll));
+            }
+            if block
+                .expand_overlay()
+                .is_some_and(|bounds| bounds.contains(point))
+            {
+                return Some((code.index, CodeAction::Toggle));
+            }
+            code.controls
+                .iter()
+                .find(|(bounds, _, _)| bounds.contains(point))
+                .map(|(_, action, _)| (code.index, *action))
+        })
+    }
+    pub(super) fn code_scrollbar(&self, index: usize) -> Option<CodeScrollbar> {
+        let block = self
+            .blocks
             .iter()
-            .filter_map(|block| block.code.as_ref())
-            .find_map(|code| {
-                code.controls
-                    .iter()
-                    .find(|(bounds, _, _)| bounds.contains(point))
-                    .map(|(_, action, _)| (code.index, *action))
-            })
+            .find(|block| block.code.as_ref().is_some_and(|code| code.index == index))?;
+        self.scrollbar(block)
+    }
+    fn scrollbar(&self, block: &LaidBlock) -> Option<CodeScrollbar> {
+        let code = block.code.as_ref()?;
+        let index = code.index;
+        if code.max_x <= 0.0 {
+            return None;
+        }
+        let track = Rectangle::new(
+            Point::new(block.bounds.x, block.bounds.y + block.bounds.height),
+            Size::new(block.bounds.width, CODE_SCROLLBAR),
+        );
+        let thumb_width = (track.width * track.width / (track.width + code.max_x))
+            .clamp(24.0_f32.min(track.width), track.width);
+        let offset = self
+            .code_views
+            .get(&index)
+            .map_or(0.0, |view| view.x)
+            .clamp(0.0, code.max_x);
+        let thumb = Rectangle::new(
+            Point::new(
+                track.x + (track.width - thumb_width) * offset / code.max_x,
+                track.y,
+            ),
+            Size::new(thumb_width, track.height),
+        );
+        Some(CodeScrollbar {
+            track,
+            thumb,
+            max_x: code.max_x,
+        })
+    }
+    pub(super) fn begin_code_scroll(&mut self, index: usize, point: Point) {
+        let Some(bar) = self.code_scrollbar(index) else {
+            return;
+        };
+        let grab = if bar.thumb.contains(point) {
+            ((point.x - bar.thumb.x) / bar.thumb.width).clamp(0.0, 1.0)
+        } else {
+            0.5
+        };
+        self.code_drag = Some(CodeDrag { index, grab });
+        self.drag_code_scroll(point);
+    }
+    pub(super) fn drag_code_scroll(&mut self, point: Point) -> bool {
+        let Some(drag) = &self.code_drag else {
+            return false;
+        };
+        let index = drag.index;
+        let Some(bar) = self.code_scrollbar(index) else {
+            self.code_drag = None;
+            return false;
+        };
+        let travel = bar.track.width - bar.thumb.width;
+        let offset = if travel > 0.0 {
+            ((point.x - bar.track.x - drag.grab * bar.thumb.width) / travel).clamp(0.0, 1.0)
+                * bar.max_x
+        } else {
+            0.0
+        };
+        self.code_views.entry(index).or_default().x = offset;
+        true
+    }
+    pub(super) fn finish_code_scroll(&mut self) -> bool {
+        self.code_drag.take().is_some()
+    }
+    pub(super) fn dragging_code(&self) -> bool {
+        self.code_drag
+            .as_ref()
+            .is_some_and(|drag| self.code_scrollbar(drag.index).is_some())
+    }
+    pub(super) fn code_mouse_interaction(
+        &self,
+        point: Point,
+    ) -> Option<iced::advanced::mouse::Interaction> {
+        use iced::advanced::mouse::Interaction;
+        if self.dragging_code() {
+            return Some(Interaction::Grabbing);
+        }
+        let (index, action) = self.code_control(point)?;
+        Some(
+            if matches!(action, CodeAction::Scroll)
+                && self
+                    .code_scrollbar(index)
+                    .is_some_and(|bar| bar.thumb.contains(point))
+            {
+                Interaction::Grab
+            } else {
+                Interaction::Pointer
+            },
+        )
     }
     pub(super) fn code_text(&self, index: usize) -> String {
         self.document
@@ -930,7 +1117,12 @@ impl State {
         let Some(code) = self
             .blocks
             .iter()
-            .find(|block| block.bounds.contains(point))
+            .find(|block| {
+                block.bounds.contains(point)
+                    || self
+                        .scrollbar(block)
+                        .is_some_and(|bar| bar.track.contains(point))
+            })
             .and_then(|block| block.code.as_ref())
         else {
             return false;
@@ -1044,7 +1236,7 @@ impl State {
         for block in &self.blocks {
             let translation = origin - Point::ORIGIN;
             let bounds = block.bounds + translation;
-            if !(block.table_bounds.unwrap_or(block.bounds) + translation).intersects(&viewport) {
+            if !(block.paint_bounds() + translation).intersects(&viewport) {
                 continue;
             }
             let code = matches!(block.block.kind, BlockKind::Code { .. });
@@ -1053,7 +1245,10 @@ impl State {
                     renderer,
                     Rectangle::new(
                         Point::new(origin.x, bounds.y - 8.0),
-                        Size::new(self.width.unwrap_or(bounds.width), bounds.height + 16.0),
+                        Size::new(
+                            self.width.unwrap_or(bounds.width),
+                            bounds.height + 16.0 + block.code_footer(),
+                        ),
                     ),
                     shell::palette(theme).code,
                 );
@@ -1300,6 +1495,87 @@ impl State {
                     }
                 }
             });
+            if let Some(code) = &block.code {
+                if let Some(overlay) = block.expand_overlay() {
+                    let overlay = overlay + translation;
+                    if let Some(clip) = overlay.intersection(&viewport) {
+                        renderer.with_layer(clip, |renderer| {
+                            let palette = shell::palette(theme);
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: overlay,
+                                    ..Default::default()
+                                },
+                                iced::gradient::Linear::new(iced::Radians::PI / 2.0)
+                                    .add_stop(0.0, palette.code.scale_alpha(0.0))
+                                    .add_stop(0.45, palette.code.scale_alpha(0.85))
+                                    .add_stop(1.0, palette.code.scale_alpha(0.98)),
+                            );
+                            let width = 112.0_f32.min((overlay.width - 12.0).max(1.0));
+                            let pill = Rectangle::new(
+                                Point::new(
+                                    overlay.center_x() - width / 2.0,
+                                    overlay.y + overlay.height - 30.0,
+                                ),
+                                Size::new(width, 24.0),
+                            );
+                            renderer.fill_quad(
+                                renderer::Quad {
+                                    bounds: pill,
+                                    border: iced::Border {
+                                        color: palette.accent.scale_alpha(0.22),
+                                        width: 1.0,
+                                        radius: 12.0.into(),
+                                    },
+                                    ..Default::default()
+                                },
+                                palette.code.scale_alpha(0.92),
+                            );
+                            if let Some(label) = &code.expand_label {
+                                renderer.fill_paragraph(
+                                    label,
+                                    Point::new(
+                                        pill.center_x() - label.min_width() / 2.0,
+                                        pill.y + 4.0,
+                                    ),
+                                    palette.accent,
+                                    clip,
+                                );
+                            }
+                        });
+                    }
+                }
+                if let Some(bar) = self.scrollbar(block)
+                    && let Some(clip) = (bar.track + translation).intersection(&viewport)
+                {
+                    renderer.with_layer(clip, |renderer| {
+                        let rail = Rectangle::new(
+                            Point::new(bar.track.x, bar.track.y + 5.0),
+                            Size::new(bar.track.width, 6.0),
+                        ) + translation;
+                        let thumb = Rectangle::new(
+                            Point::new(bar.thumb.x, bar.thumb.y + 4.0),
+                            Size::new(bar.thumb.width, 8.0),
+                        ) + translation;
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: rail,
+                                border: iced::Border::default().rounded(3.0),
+                                ..Default::default()
+                            },
+                            shell::palette(theme).muted.scale_alpha(0.15),
+                        );
+                        renderer.fill_quad(
+                            renderer::Quad {
+                                bounds: thumb,
+                                border: iced::Border::default().rounded(4.0),
+                                ..Default::default()
+                            },
+                            shell::palette(theme).muted.scale_alpha(0.65),
+                        );
+                    });
+                }
+            }
         }
     }
 }
@@ -1376,6 +1652,82 @@ impl iced::advanced::Overlay<Message, iced::Theme, iced::Renderer> for LinkPrevi
 mod tests {
     use super::*;
 
+    #[test]
+    fn code_scrollbars_track_overflow_resize_and_expansion_without_changing_source() {
+        let source = format!("{}{}", "short\n".repeat(12), "wide_column ".repeat(300));
+        let mut state = State::new(Arc::new(
+            Document::parse(&format!("<pre><code>{source}</code></pre>")).unwrap(),
+        ));
+        state.layout(180.0);
+        assert!(
+            state.code_scrollbar(0).is_none(),
+            "collapsed visible lines fit"
+        );
+        let overlay = state.blocks[0].expand_overlay().unwrap();
+        assert!(matches!(
+            state.code_control(overlay.center()),
+            Some((0, CodeAction::Toggle))
+        ));
+        state.code_action(0, CodeAction::Toggle);
+        let expanded = state.layout(180.0).bounds();
+        assert!(state.blocks[0].expand_overlay().is_none());
+        let bar = state.code_scrollbar(0).unwrap();
+        assert!(bar.thumb.width >= 24.0 && bar.thumb.width < bar.track.width);
+        assert_eq!(bar.thumb.x, bar.track.x);
+        assert!(expanded.height >= bar.track.y + bar.track.height);
+        assert!(matches!(
+            state.code_control(bar.thumb.center()),
+            Some((0, CodeAction::Scroll))
+        ));
+        state.begin_code_scroll(0, bar.thumb.center());
+        state.drag_code_scroll(Point::new(
+            bar.track.x + bar.track.width + 100.0,
+            bar.track.y,
+        ));
+        assert_eq!(state.code_views[&0].x, bar.max_x);
+        let right = state.code_scrollbar(0).unwrap();
+        assert!(
+            (right.thumb.x + right.thumb.width - right.track.x - right.track.width).abs() < 0.1
+        );
+        state.drag_code_scroll(Point::new(bar.track.x - 100.0, bar.track.y));
+        assert_eq!(state.code_views[&0].x, 0.0);
+        assert!(state.finish_code_scroll());
+        assert!(!state.drag_code_scroll(bar.thumb.center()));
+        state.begin_code_scroll(
+            0,
+            Point::new(bar.track.x + bar.track.width / 2.0, bar.track.center_y()),
+        );
+        assert!(state.code_views[&0].x > 0.0, "track presses move the thumb");
+        // Iced may measure at several widths before committing a row layout.
+        // Preserve a captured grab while recomputing its current thumb geometry.
+        state.layout(250.0);
+        assert!(state.dragging_code());
+        let resized = state.code_scrollbar(0).unwrap();
+        state.drag_code_scroll(Point::new(
+            resized.track.x + resized.track.width + 100.0,
+            resized.track.y,
+        ));
+        assert_eq!(state.code_views[&0].x, resized.max_x);
+        state.layout(100_000.0);
+        assert!(!state.dragging_code(), "resizing cancels captured geometry");
+        assert!(
+            state.code_scrollbar(0).is_none(),
+            "fitting code has no scrollbar"
+        );
+        assert_eq!(state.code_views[&0].x, 0.0);
+        assert_eq!(state.code_text(0), source);
+        state.code_action(0, CodeAction::Toggle);
+        state.layout(180.0);
+        assert!(state.blocks[0].expand_overlay().is_some());
+        assert!(state.code_scrollbar(0).is_none());
+        assert_eq!(state.text(), source);
+        let mut short = State::new(Arc::new(
+            Document::parse("<pre><code>short</code></pre>").unwrap(),
+        ));
+        short.layout(180.0);
+        assert!(short.blocks[0].expand_overlay().is_none());
+        assert!(short.code_scrollbar(0).is_none());
+    }
     #[test]
     fn table_grid_wraps_cells_shares_row_heights_and_keeps_unicode_hit_offsets() {
         let document = Arc::new(Document::parse("<p>Before</p><table><tr><th>Name</th><th align='right'>Count</th></tr><tr><td>A long café 👩🏽‍💻 label that wraps across lines</td><td align='right'><a href='https://example.org'>42</a></td></tr><tr><td></td><td>done</td></tr></table><p>After</p>").unwrap());
