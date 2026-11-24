@@ -883,6 +883,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reordered_poll_answers_survive_encrypted_draft_restore() {
+        use crate::poll_create;
+        let directory = tempfile::tempdir().unwrap();
+        let mut first = app(loaded(directory.path()).await);
+        let key = first.draft_key(false).unwrap();
+        type_text(&mut first, 'x');
+        first.drafts.get_mut(&key).unwrap().poll = Some(interconnect::polls::Creation {
+            question: "Lunch?".into(),
+            answers: vec!["Soup".into(), "Salad".into()],
+            max_selections: 2,
+            hidden_results: true,
+        });
+        let _ = first.update(Message::PollCreate(poll_create::Event::Open(key.clone())));
+        let Message::PollCreate(poll_create::Event::Close(serial)) =
+            first.dismiss_poll_creation().unwrap()
+        else {
+            panic!()
+        };
+        let _ = first.update(Message::PollCreate(poll_create::Event::Reorder {
+            serial,
+            revision: 0,
+            from: 1,
+            to: 0,
+        }));
+        let _ = first.save_drafts();
+        complete_save(&mut first).await;
+        let restored = app(loaded(directory.path()).await);
+        let poll = restored.drafts[&key].poll.as_ref().unwrap();
+        assert_eq!(poll.answers, ["Salad", "Soup"]);
+        assert_eq!(poll.max_selections, 2);
+        assert!(poll.hidden_results);
+        assert_eq!(restored.drafts[&key].content.text(), "x");
+    }
+
+    #[tokio::test]
     async fn edits_coalesce_and_late_saves_never_mark_newer_text_durable() {
         let directory = tempfile::tempdir().unwrap();
         let mut app = app(loaded(directory.path()).await);

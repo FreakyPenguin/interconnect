@@ -1,4 +1,9 @@
 //! Per-room poll forms, with captured writes that drain independently of the dialog.
+#[path = "poll_create/answer_reorder.rs"]
+mod answer_reorder;
+#[cfg(test)]
+#[path = "poll_create/reorder_tests.rs"]
+mod reorder_tests;
 use super::{
     App, DraftKey, MAX_PENDING_OPERATIONS, Message, current_pane, icons::Kind, shell, tooltips,
 };
@@ -19,6 +24,9 @@ struct Form {
     account: Option<String>,
     key: DraftKey,
     generation: u64,
+    revision: u64,
+    answer_ids: Vec<usize>,
+    next_answer_id: usize,
 }
 struct Write {
     account: Option<String>,
@@ -32,6 +40,12 @@ pub enum Event {
     Answer(u64, usize, String),
     AddAnswer(u64),
     RemoveAnswer(u64, usize),
+    Reorder {
+        serial: u64,
+        revision: u64,
+        from: usize,
+        to: usize,
+    },
     Multiple(u64, bool),
     Limit(u64, u64),
     Hidden(u64, bool),
@@ -133,12 +147,16 @@ impl App {
                 .unwrap()
                 .poll
                 .get_or_insert_with(Creation::default);
+            let answer_count = self.drafts[&key].poll.as_ref().unwrap().answers.len();
             self.generation += 1;
             self.poll_creation.form = Some(Form {
                 serial: self.generation,
                 account: self.account_id.clone(),
                 generation: self.selection.room.as_ref().unwrap().0,
                 key,
+                revision: 0,
+                answer_ids: (0..answer_count).collect(),
+                next_answer_id: answer_count,
             });
             self.poll_votes = None;
             self.context_menu = None;
@@ -153,6 +171,7 @@ impl App {
             | Event::Answer(serial, ..)
             | Event::AddAnswer(serial)
             | Event::RemoveAnswer(serial, _)
+            | Event::Reorder { serial, .. }
             | Event::Multiple(serial, _)
             | Event::Limit(serial, _)
             | Event::Hidden(serial, _)
@@ -232,21 +251,43 @@ impl App {
             }
             return Task::none();
         }
+        let form = self.poll_creation.form.as_mut().unwrap();
         let draft = self.drafts.get_mut(&key).unwrap();
         let poll = draft.poll.as_mut().unwrap();
+        if let Event::Reorder {
+            revision, from, to, ..
+        } = &event
+            && (*revision != form.revision
+                || *from >= poll.answers.len()
+                || *to >= poll.answers.len()
+                || from == to)
+        {
+            return Task::none();
+        }
         match event {
             Event::Question(_, value) => poll.question = value,
-            Event::Answer(_, index, value) => {
-                if let Some(answer) = poll.answers.get_mut(index) {
-                    *answer = value;
+            Event::Answer(_, id, value) => {
+                if let Some(index) = form.answer_ids.iter().position(|answer| *answer == id) {
+                    poll.answers[index] = value;
                 }
             }
-            Event::AddAnswer(_) if poll.answers.len() < 20 => poll.answers.push(String::new()),
-            Event::RemoveAnswer(_, index)
-                if poll.answers.len() > 2 && index < poll.answers.len() =>
-            {
-                poll.answers.remove(index);
-                poll.max_selections = poll.max_selections.min(poll.answers.len() as u64);
+            Event::AddAnswer(_) if poll.answers.len() < 20 => {
+                poll.answers.push(String::new());
+                form.answer_ids.push(form.next_answer_id);
+                form.next_answer_id += 1;
+            }
+            Event::RemoveAnswer(_, id) if poll.answers.len() > 2 => {
+                if let Some(index) = form.answer_ids.iter().position(|answer| *answer == id) {
+                    poll.answers.remove(index);
+                    form.answer_ids.remove(index);
+                    poll.max_selections = poll.max_selections.min(poll.answers.len() as u64);
+                }
+            }
+            Event::Reorder { from, to, .. } => {
+                let answer = poll.answers.remove(from);
+                poll.answers.insert(to, answer);
+                let id = form.answer_ids.remove(from);
+                form.answer_ids.insert(to, id);
             }
             Event::Multiple(_, multiple) => {
                 poll.max_selections = if multiple {
@@ -261,6 +302,7 @@ impl App {
             Event::Hidden(_, hidden) => poll.hidden_results = hidden,
             _ => {}
         }
+        form.revision += 1;
         draft.poll_error = None;
         Task::none()
     }
@@ -293,29 +335,45 @@ impl App {
             text("Answers").size(12),
         ]
         .spacing(10);
-        for (index, answer) in poll.answers.iter().enumerate() {
-            body =
-                body.push(
-                    row![
-                        text_input(&format!("Option {}", index + 1), answer)
-                            .cursor_blinking(false)
-                            .size(13)
-                            .padding(8)
-                            .style(shell::search_style)
-                            .on_input_maybe(editable.then_some(move |value| message(
-                                Event::Answer(serial, index, value)
-                            ))),
-                        tooltips::icon_button(
-                            Kind::Delete,
-                            "Remove answer",
-                            (editable && poll.answers.len() > 2)
-                                .then(|| message(Event::RemoveAnswer(serial, index))),
+        let answers =
+            iced::widget::column(poll.answers.iter().enumerate().map(|(index, answer)| {
+                let id = form.answer_ids[index];
+                row![
+                    tooltips::tooltip(
+                        iced::widget::container(super::icons::icon(Kind::Grip))
+                            .center_x(28)
+                            .center_y(32),
+                        "Drag to reorder · Alt+↑/↓ in an answer field",
+                        iced::widget::tooltip::Position::Top,
+                    ),
+                    text_input(&format!("Option {}", index + 1), answer)
+                        .cursor_blinking(false)
+                        .size(13)
+                        .padding(8)
+                        .style(shell::search_style)
+                        .on_input_maybe(
+                            editable
+                                .then_some(move |value| message(Event::Answer(serial, id, value)))
                         ),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
-                );
-        }
+                    tooltips::icon_button(
+                        Kind::Delete,
+                        "Remove answer",
+                        (editable && poll.answers.len() > 2)
+                            .then(|| message(Event::RemoveAnswer(serial, id)))
+                    ),
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+                .into()
+            }))
+            .spacing(10)
+            .width(Length::Fill);
+        body = body.push(answer_reorder::view(
+            answers.into(),
+            (serial, form.revision),
+            &form.answer_ids,
+            editable && !self.composing,
+        ));
         body = body.push(tooltips::icon_button(
             Kind::Plus,
             "Add answer",

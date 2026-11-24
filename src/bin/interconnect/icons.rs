@@ -51,6 +51,7 @@ pub(super) enum Kind {
     ArrowDown,
     Smile,
     Poll,
+    Grip,
     AddReaction,
     Attach,
     Image,
@@ -539,6 +540,13 @@ impl<Message> advanced::Widget<Message, iced::Theme, iced::Renderer> for Icon {
                             &Path::line(Point::new(20.0, 1.0), Point::new(20.0, 7.0)),
                             stroke,
                         );
+                    }
+                }
+                Grip => {
+                    for x in [9.0, 15.0] {
+                        for y in [6.0, 12.0, 18.0] {
+                            frame.fill(&Path::circle(Point::new(x, y), 1.3), style.text_color);
+                        }
                     }
                 }
                 Poll => {

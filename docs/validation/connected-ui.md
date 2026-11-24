@@ -791,6 +791,15 @@ and attachments. Successful form creation clears only the poll draft. Failures
 retain its values; a timed-out request may have succeeded, so check the room
 before retrying.
 
+Each answer has a drag grip. Drag it to the insertion marker and release to move
+the answer; clicking alone or dropping outside the visible answer list leaves
+the order unchanged. Escape cancels a drag without closing the form. Scrolling,
+window focus loss, and changed/closed/disabled forms also cancel it. For longer
+lists, scroll to expose the intended target before dragging. With an answer field
+focused, **Alt+↑/↓** moves that answer one position. Editor focus/selection follow
+the answer, and the reordered list is retained in the encrypted draft and used
+in the sent poll. Reordering preserves the selection limit and disclosure mode.
+
 **Insert text template** remains available from the form for an empty room draft.
 Edit `/poll Question?`, put each answer on a following line, then use Send. This
 quick path creates disclosed single-choice polls. Reply targets, attachments, and
@@ -821,21 +830,29 @@ room/thread pending guards, draft/scroll preservation, and stale/duplicate
 completions. These fixtures do not establish live-server interoperability.
 
 Local validation for the completed workflow: locked workspace tests passed,
-followed by the final UI suite (679 passed, one opt-in test ignored), Clippy with
+followed by the final UI suite (686 passed, one opt-in test ignored), Clippy with
 warnings denied, formatting check, and desktop binary build. The poll form fixture
 checks Tab confinement, inclusion of both checkboxes and the selection-limit
 control, and no caret redraw deadline in Light/Dark at 640×480.
+Answer-reordering fixtures cover handle-only presses, release/drop boundaries,
+Escape/focus-loss/scroll cancellation, unchanged-form rebuilds, stale and disabled
+forms, keyboard movement, editor focus continuity, stable edit/remove targets,
+encoded answer order, and encrypted draft restoration.
 
 Linux/Wayland demo acceptance used an isolated headless Sway desktop and tiny-skia
 at 1200×900 and 640×480. Checks covered Light/Dark forms, retained values after
 closing/reopening, keyboard creation of a hidden multi-choice poll, dropdown
 Escape without closing the form, scrolling focused controls into view, two
 selected answers with hidden counts/names, cancelling the end confirmation,
-ending the poll, and revealed counts/bars/voter details. A settled, focused Dark
+ending the poll, and revealed counts/bars/voter details. Icon-only form actions
+and answer grips were checked with three answers: pointer movement in both
+directions, the insertion marker, Escape cancellation without closing the form,
+Alt+↓ with selected text retained, and creation using the resulting answer order.
+A settled, focused Dark
 poll form at 640×480 added 0.0 procfs CPU seconds over ten seconds (quantized),
 with unchanged diagnostic redraw/update counters and stable endpoint thread
 sets. Scheduler wakeups were unmeasured. Captures/logs remain outside Git under
-`/tmp/interconnect-polls-native-*`.
+`/tmp/interconnect-polls-native-*` and `/tmp/interconnect-poll-reorder-*`.
 
 No saved account or live-server message was used. Live-server interoperability,
 GPU rendering, macOS behavior, and scheduler wakeups remain separate acceptance

@@ -10,6 +10,10 @@ use iced::{
     },
 };
 
+/// A child with an active interaction can reserve Escape for local cancellation.
+/// Report this marker through `Operation::custom` before handling that key.
+pub(super) struct EscapeCapture;
+
 pub(super) fn view<'a, Message: 'a>(
     content: impl Into<Element<'a, Message>>,
     id: &'static str,
@@ -21,8 +25,8 @@ pub(super) fn view<'a, Message: 'a>(
     })
 }
 
-/// Escape dismisses a form in one press, while an open child dropdown or IME
-/// retains precedence. Text fields otherwise consume Escape just to unfocus.
+/// Escape dismisses a form in one press, while an open child dropdown, pointer
+/// drag, or IME retains precedence. Text fields otherwise consume Escape just to unfocus.
 pub(super) fn dismissible<'a, Message: Clone + 'a>(
     content: impl Into<Element<'a, Message>>,
     id: &'static str,
@@ -353,6 +357,7 @@ impl widget::Operation for OpenDropdown {
         if let Some(menu) = state.downcast_ref::<iced::widget::pick_list::KeyboardState>() {
             self.0 |= menu.is_open();
         }
+        self.0 |= state.is::<EscapeCapture>();
     }
 }
 struct Reveal {
