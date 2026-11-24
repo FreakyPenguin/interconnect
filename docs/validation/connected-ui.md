@@ -777,3 +777,16 @@ state, invalid votes, creation validation, draft preservation, and local demo
 creation/voting. An earlier workspace run failed the encrypted-attachment fixture;
 the final full run passed. No connected account or native desktop acceptance was
 exercised for this change.
+
+Poll presentation uses a column capped at 380 px, outlined answer cards, a
+selection indicator, and static result bars. Questions use the regular message
+size (14 px) in bold; option labels and vote counts use 12 px. Disclosed single-choice polls show
+a vote total; multi-choice totals are labelled selections. Undisclosed polls
+omit counts and bars. The local layout fixture checks wrapping at 380, 260, and
+180 px in Light/Dark. To export its software-rendered previews outside Git:
+
+```sh
+INTERCONNECT_POLL_PREVIEW_DIR=/tmp/interconnect-poll-preview cargo test --locked --bin interconnect poll_cards_wrap_and_render_in_both_themes
+```
+
+These isolated widget previews do not establish native desktop acceptance.

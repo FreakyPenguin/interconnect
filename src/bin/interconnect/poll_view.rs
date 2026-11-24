@@ -1,7 +1,7 @@
-use super::{App, MAX_PENDING_OPERATIONS, Message, reaction_picker::Target};
+use super::{App, MAX_PENDING_OPERATIONS, Message, reaction_picker::Target, shell};
 use iced::{
-    Element, Task,
-    widget::{button, column, text},
+    Border, Element, Length, Task,
+    widget::{button, column, container, progress_bar, row, text},
 };
 use interconnect::{connected::MessageRow, polls::Poll};
 #[derive(Clone, Debug)]
@@ -32,18 +32,13 @@ impl App {
             && target
                 .as_ref()
                 .is_some_and(|t| !self.poll_sends.contains(t));
-        let mut content = column![text(&poll.question).size(16)].spacing(8);
+        let total: usize = poll.answers.iter().map(|a| a.votes).sum();
+        let mut content = column![text(&poll.question).size(14).font(iced::Font {
+            weight: iced::font::Weight::Bold,
+            ..iced::Font::DEFAULT
+        })]
+        .spacing(10);
         for answer in &poll.answers {
-            let label = format!(
-                "{}{}{}",
-                if answer.selected { "✓ " } else { "" },
-                answer.text,
-                if poll.disclosed {
-                    format!(" · {} votes", answer.votes)
-                } else {
-                    String::new()
-                }
-            );
             let mut answers: Vec<_> = if poll.max_selections > 1 {
                 poll.answers
                     .iter()
@@ -61,18 +56,103 @@ impl App {
                 .flatten()
                 .filter(|_| poll.validate_vote(&answers).is_ok())
                 .map(|t| Message::Poll(Event::Vote(t, answers)));
-            content = content.push(button(text(label)).on_press_maybe(action));
+            let selected = answer.selected;
+            let indicator = container(text(if selected { "✓" } else { "" }).size(11))
+                .center_x(16)
+                .center_y(16)
+                .style(move |theme| {
+                    let p = shell::palette(theme);
+                    container::Style {
+                        background: selected.then_some(p.ink.into()),
+                        text_color: Some(p.background),
+                        border: Border {
+                            color: p.muted,
+                            width: if selected { 0.0 } else { 1.0 },
+                            radius: 8.0.into(),
+                        },
+                        ..Default::default()
+                    }
+                });
+            let mut heading =
+                row![indicator, text(&answer.text).size(12).width(Length::Fill)].spacing(8);
+            if poll.disclosed {
+                heading = heading.push(
+                    text(format!(
+                        "{} {}",
+                        answer.votes,
+                        if answer.votes == 1 { "vote" } else { "votes" }
+                    ))
+                    .size(12)
+                    .style(shell::muted_text),
+                );
+            }
+            let mut option = column![heading].spacing(9);
+            if poll.disclosed {
+                option = option.push(
+                    progress_bar(
+                        0.0..=1.0,
+                        if total == 0 {
+                            0.0
+                        } else {
+                            answer.votes as f32 / total as f32
+                        },
+                    )
+                    .girth(6)
+                    .style(|theme| {
+                        let p = shell::palette(theme);
+                        progress_bar::Style {
+                            background: p.rail.into(),
+                            bar: p.ink.into(),
+                            border: Border {
+                                radius: 3.0.into(),
+                                ..Default::default()
+                            },
+                        }
+                    }),
+                );
+            }
+            content = content.push(
+                button(option)
+                    .width(Length::Fill)
+                    .padding(12)
+                    .on_press_maybe(action)
+                    .style(|theme, status| {
+                        let p = shell::palette(theme);
+                        button::Style {
+                            background: matches!(
+                                status,
+                                button::Status::Hovered | button::Status::Pressed
+                            )
+                            .then_some(p.rail.into()),
+                            text_color: p.ink,
+                            border: Border {
+                                color: p.line,
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            ..Default::default()
+                        }
+                    }),
+            );
         }
-        content = content.push(
-            text(if poll.ended {
-                "Poll ended"
-            } else if poll.disclosed {
-                "Select an answer to vote"
+        let footer = if poll.disclosed {
+            let unit = if poll.max_selections > 1 {
+                "selections"
+            } else if total == 1 {
+                "vote"
             } else {
-                "Results hidden until the poll ends"
-            })
-            .size(12),
-        );
+                "votes"
+            };
+            format!(
+                "{}Based on {total} {unit}",
+                if poll.ended { "Poll ended · " } else { "" }
+            )
+        } else if poll.ended {
+            "Poll ended".into()
+        } else {
+            "Results hidden until the poll ends".into()
+        };
+        content = content.push(text(footer).size(12).style(shell::muted_text));
         if let Some((_, error)) = self
             .poll_error
             .as_ref()
@@ -80,7 +160,15 @@ impl App {
         {
             content = content.push(text(error.clone()).size(12));
         }
-        content.into()
+        container(content)
+            .width(Length::Fill)
+            .max_width(380)
+            .padding([4, 0])
+            .style(|theme| container::Style {
+                text_color: Some(shell::palette(theme).ink),
+                ..Default::default()
+            })
+            .into()
     }
     pub(super) fn poll_event(&mut self, event: Event) -> Task<Message> {
         match event {
@@ -181,5 +269,91 @@ mod tests {
         assert_eq!(poll.answers[0].votes, 1);
         assert!(poll.answers[0].selected);
         assert_eq!(app.pending_ops, 0);
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use iced::{
+        Rectangle, Size,
+        advanced::{Layout, Renderer as _, layout, mouse, renderer, widget::Tree},
+    };
+
+    #[test]
+    fn poll_cards_wrap_and_render_in_both_themes() {
+        let app = crate::tests::demo_app();
+        let row = app.model.room.as_ref().unwrap().rows[0].clone();
+        let poll = Poll {
+            question: "On Dec 14 Christina is organizing a gift exchange. Indicate here if you will be around and want to participate.".into(),
+            answers: vec![
+                interconnect::polls::Answer { id: "a".into(), text: "I am around and will participate. 🎁🎄".into(), votes: 5, selected: true },
+                interconnect::polls::Answer { id: "b".into(), text: "I am the Grinch out to ruin Christmas. 🧌".into(), votes: 3, selected: false },
+            ], ended: false, disclosed: true, max_selections: 1,
+        };
+        let mut heights = Vec::new();
+        for (name, mode) in [
+            ("light", interconnect::settings::ThemeMode::Light),
+            ("dark", interconnect::settings::ThemeMode::Dark),
+        ] {
+            for width in [380, 260, 180] {
+                let mut view = app.poll_view(&row, &poll, false, 0);
+                let mut tree = Tree::new(&view);
+                let mut renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+                let size = Size::new(width as f32, 700.0);
+                let bounds = Rectangle::with_size(size);
+                renderer.reset(bounds);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(Size::ZERO, size),
+                );
+                fn fits(node: Layout<'_>, width: f32) {
+                    let b = node.bounds();
+                    assert!(
+                        b.x >= 0.0 && b.x + b.width <= width + 0.1,
+                        "{b:?} exceeds {width}"
+                    );
+                    for child in node.children() {
+                        fits(child, width);
+                    }
+                }
+                fits(Layout::new(&node), width as f32);
+                heights.push(node.size().height);
+                if let Some(dir) = std::env::var_os("INTERCONNECT_POLL_PREVIEW_DIR") {
+                    let theme = super::super::appearance::theme(mode);
+                    view.as_widget().draw(
+                        &tree,
+                        &mut renderer,
+                        &theme,
+                        &renderer::Style::default(),
+                        Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &bounds,
+                    );
+                    let iced::Renderer::Secondary(software) = &mut renderer else {
+                        unreachable!()
+                    };
+                    let mut pixels = tiny_skia::Pixmap::new(width, 700).unwrap();
+                    let mut mask = tiny_skia::Mask::new(width, 700).unwrap();
+                    software.draw(
+                        &mut pixels.as_mut(),
+                        &mut mask,
+                        &iced_tiny_skia::graphics::Viewport::with_physical_size(
+                            Size::new(width, 700),
+                            1.0,
+                        ),
+                        &[bounds],
+                        shell::palette(&theme).background,
+                    );
+                    let dir = std::path::PathBuf::from(dir);
+                    std::fs::create_dir_all(&dir).unwrap();
+                    pixels
+                        .save_png(dir.join(format!("poll-{name}-{width}.png")))
+                        .unwrap();
+                }
+            }
+        }
+        assert!(heights[0] < heights[1] && heights[1] < heights[2]);
     }
 }
