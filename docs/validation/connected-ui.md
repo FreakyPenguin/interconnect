@@ -818,13 +818,26 @@ on the synchronized end event. Demo UI tests cover cancellation, stale controls,
 room/thread pending guards, draft/scroll preservation, and stale/duplicate
 completions. These fixtures do not establish live-server interoperability.
 
-Local validation for this implementation: locked workspace tests, Clippy with
-warnings denied, formatting check, and the desktop binary build passed. Poll
-fixtures cover structured answers versus fallback text, undisclosed presentation
-state, invalid votes, creation validation, draft preservation, and local demo
-creation/voting. An earlier workspace run failed the encrypted-attachment fixture;
-the final full run passed. No connected account or native desktop acceptance was
-exercised for this change.
+Local validation for the completed workflow: locked workspace tests passed,
+followed by the final UI suite (679 passed, one opt-in test ignored), Clippy with
+warnings denied, formatting check, and desktop binary build. The poll form fixture
+checks Tab confinement, inclusion of both checkboxes and the selection-limit
+control, and no caret redraw deadline in Light/Dark at 640×480.
+
+Linux/Wayland demo acceptance used an isolated headless Sway desktop and tiny-skia
+at 1200×900 and 640×480. Checks covered Light/Dark forms, retained values after
+closing/reopening, keyboard creation of a hidden multi-choice poll, dropdown
+Escape without closing the form, scrolling focused controls into view, two
+selected answers with hidden counts/names, cancelling the end confirmation,
+ending the poll, and revealed counts/bars/voter details. A settled, focused Dark
+poll form at 640×480 added 0.0 procfs CPU seconds over ten seconds (quantized),
+with unchanged diagnostic redraw/update counters and stable endpoint thread
+sets. Scheduler wakeups were unmeasured. Captures/logs remain outside Git under
+`/tmp/interconnect-polls-native-*`.
+
+No saved account or live-server message was used. Live-server interoperability,
+GPU rendering, macOS behavior, and scheduler wakeups remain separate acceptance
+checks; software demo captures and unit tests do not establish them.
 
 Poll presentation uses a column capped at 380 px, outlined answer cards, a
 selection indicator, and static result bars. Questions use the regular message

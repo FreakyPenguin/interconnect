@@ -91,6 +91,7 @@ fn votes_popup(poll: &Poll) -> Element<'_, Message> {
                 text("Votes").size(14),
                 iced::widget::space().width(Length::Fill),
                 button(text("Close").size(12))
+                    .keyboard_navigation(true)
                     .style(button::text)
                     .padding(0)
                     .on_press(Message::Poll(Event::CloseVotes))
@@ -221,6 +222,7 @@ impl App {
                 );
             }
             let option = button(option)
+                .keyboard_navigation(true)
                 .width(Length::Fill)
                 .padding(12)
                 .on_press_maybe(action)
@@ -275,6 +277,7 @@ impl App {
             content = content.push(
                 container(
                     button(text("Show votes").size(12))
+                        .keyboard_navigation(true)
                         .padding(0)
                         .style(button::text)
                         .on_press_maybe(

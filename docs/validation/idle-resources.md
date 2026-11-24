@@ -77,7 +77,8 @@ memory nor an allocation/leak count.
 
 Compare settled visible/hidden windows, focused composers, open/closed threads,
 repeated/distinct-room navigation, offline/reconnect, suspend/resume, presence
-off/on, verification closed/pending, and drafts dirty/clean.
+off/on, verification closed/pending, poll forms open/closed and hidden/ended
+poll cards, and drafts dirty/clean.
 
 For inline/viewer GIFs compare unopened, still, playing, completed, stopped, closed,
 and unfocused. Viewport departure/navigation must remove animation deadlines;

@@ -326,6 +326,7 @@ impl App {
         body = body.push(
             checkbox(poll.max_selections > 1)
                 .label("Allow multiple answers")
+                .keyboard_navigation(true)
                 .on_toggle_maybe(
                     editable.then_some(move |value| message(Event::Multiple(serial, value))),
                 ),
@@ -336,6 +337,10 @@ impl App {
                 pick_list(limits, Some(poll.max_selections), move |limit| {
                     message(Event::Limit(serial, limit))
                 })
+                .keyboard_navigation(true)
+                .text_size(13)
+                .padding([7, 10])
+                .style(shell::select_style)
                 .into()
             } else {
                 text(poll.max_selections.to_string()).into()
@@ -349,6 +354,7 @@ impl App {
         body = body.push(
             checkbox(poll.hidden_results)
                 .label("Hide results until the poll ends")
+                .keyboard_navigation(true)
                 .on_toggle_maybe(
                     editable.then_some(move |value| message(Event::Hidden(serial, value))),
                 ),
@@ -549,5 +555,106 @@ mod tests {
         assert_eq!(app.pending_ops, 0);
         assert!(app.drafts[&key].poll.is_some());
         assert!(!app.poll_creation_open());
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+    use iced::advanced::{
+        Shell, layout, mouse,
+        widget::{
+            self, Operation,
+            operation::{self, Outcome},
+        },
+    };
+
+    #[test]
+    fn poll_form_confines_keyboard_focus_and_has_no_idle_caret_timer_in_both_themes() {
+        for mode in [
+            interconnect::settings::ThemeMode::Light,
+            interconnect::settings::ThemeMode::Dark,
+        ] {
+            for multiple in [false, true] {
+                let mut app = crate::tests::demo_app();
+                app.settings.current.appearance.theme = mode;
+                let key = app.draft_key(false).unwrap();
+                let _ = app.update(message(Event::Open(key)));
+                let serial = app.poll_creation.form.as_ref().unwrap().serial;
+                let _ = app.update(message(Event::Multiple(serial, multiple)));
+                let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+                let size = iced::Size::new(640.0, 480.0);
+                let mut view = app.view();
+                let mut tree = widget::Tree::new(&view);
+                let node = view.as_widget_mut().layout(
+                    &mut tree,
+                    &renderer,
+                    &layout::Limits::new(size, size),
+                );
+                assert_eq!(node.size(), size);
+                let count = if multiple { 10 } else { 9 };
+                for index in 0..count + 2 {
+                    let mut inspect = operation::map(operation::focusable::count(), move |focus| {
+                        assert_eq!(
+                            focus.total, count,
+                            "covered shell controls must not participate"
+                        );
+                        assert_eq!(focus.focused, Some(index % count));
+                    });
+                    view.as_widget_mut().operate(
+                        &mut tree,
+                        layout::Layout::new(&node),
+                        &renderer,
+                        &mut inspect,
+                    );
+                    assert!(matches!(inspect.finish(), Outcome::Some(())));
+                    let tab = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                        modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Tab),
+                        physical_key: iced::keyboard::key::Physical::Unidentified(
+                            iced::keyboard::key::NativeCode::Unidentified,
+                        ),
+                        location: iced::keyboard::Location::Standard,
+                        modifiers: iced::keyboard::Modifiers::empty(),
+                        text: None,
+                        repeat: false,
+                    });
+                    let mut messages = Vec::new();
+                    let mut shell = Shell::new(&mut messages);
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &tab,
+                        layout::Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut shell,
+                        &iced::Rectangle::with_size(size),
+                    );
+                    assert!(shell.is_event_captured());
+                    assert!(messages.is_empty());
+                }
+                let now = iced::time::Instant::now();
+                for millis in [0, 750, 1250] {
+                    let mut messages = Vec::new();
+                    let mut shell = Shell::new(&mut messages);
+                    view.as_widget_mut().update(
+                        &mut tree,
+                        &iced::Event::Window(iced::window::Event::RedrawRequested(
+                            now + std::time::Duration::from_millis(millis),
+                        )),
+                        layout::Layout::new(&node),
+                        mouse::Cursor::Unavailable,
+                        &renderer,
+                        &mut iced::advanced::clipboard::Null,
+                        &mut shell,
+                        &iced::Rectangle::with_size(size),
+                    );
+                    if millis > 0 {
+                        assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
+                    }
+                }
+            }
+        }
     }
 }

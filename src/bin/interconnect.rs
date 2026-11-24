@@ -4488,6 +4488,7 @@ impl App {
             let actions = row![
                 row![
                     button(text("Poll").size(12))
+                        .keyboard_navigation(true)
                         .on_press_maybe(
                             (!thread
                                 && !draft.pending
