@@ -700,6 +700,12 @@ impl Widget<Message, Theme, Renderer> for Timeline<'_> {
         if matches!(
             event,
             Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
+                | Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(
+                        iced::keyboard::key::Named::Enter | iced::keyboard::key::Named::Space
+                    ),
+                    ..
+                })
         ) {
             let mut probe = Reflow::default();
             self.content.as_widget_mut().operate(

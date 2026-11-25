@@ -1329,6 +1329,11 @@ mod tests {
     }
     #[test]
     fn code_controls_keep_selection_and_expansion_anchor_and_restore_across_conversations() {
+        for keyboard in [false, true] {
+            check_code_selection_and_anchor(keyboard);
+        }
+    }
+    fn check_code_selection_and_anchor(keyboard: bool) {
         let mut row = crate::demo::Demo::default()
             .pane(
                 crate::DraftKey {
@@ -1366,8 +1371,42 @@ mod tests {
         ));
         let node = h.layout_size(&mut element, size);
         let before = h.read(&mut element, &node).rows[0].bounds.y;
-        let toggle = code_toggle_point(&mut h, &mut element, &node);
-        h.event(&mut element, &node, down(), toggle);
+        if keyboard {
+            let mut operation: Box<dyn widget::Operation> =
+                Box::new(widget::operation::focusable::focus_next::<()>());
+            loop {
+                element.as_widget_mut().operate(
+                    &mut h.tree,
+                    Layout::new(&node),
+                    &h.renderer,
+                    operation.as_mut(),
+                );
+                if let widget::operation::Outcome::Chain(next) = operation.finish() {
+                    operation = next;
+                } else {
+                    break;
+                }
+            }
+            h.event(
+                &mut element,
+                &node,
+                Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                    modified_key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
+                    physical_key: iced::keyboard::key::Physical::Unidentified(
+                        iced::keyboard::key::NativeCode::Unidentified,
+                    ),
+                    location: iced::keyboard::Location::Standard,
+                    modifiers: iced::keyboard::Modifiers::empty(),
+                    text: None,
+                    repeat: false,
+                }),
+                Point::ORIGIN,
+            );
+        } else {
+            let toggle = code_toggle_point(&mut h, &mut element, &node);
+            h.event(&mut element, &node, down(), toggle);
+        }
         let node = h.layout_size(&mut element, size);
         assert!((h.read(&mut element, &node).rows[0].bounds.y - before).abs() <= 1.0);
         assert_eq!(h.copy(&mut element, &node), body);

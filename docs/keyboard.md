@@ -164,6 +164,11 @@ reached first. The upper-right corner contains icons with hover tooltips:
 | Download | **Save code**: choose a file for the entire block; the suggested name is `code.txt`. |
 | Down/up chevron | **Expand code** / **Collapse code**; shown only when the block exceeds the preview limit. |
 
+Tab / Shift+Tab visits visible corner icons in visual order. The focused icon
+shows an outline and its tooltip; Enter or Space activates it. Escape releases
+code-control focus. Focus stays on the same icon through expansion and resize;
+controls outside the conversation viewport are skipped.
+
 A translucent fade with **Expand code** at the bottom also expands a truncated
 preview. Wide lines stay unwrapped: drag the horizontal scrollbar, click its
 track, or use horizontal trackpad scrolling. The bar appears only when the

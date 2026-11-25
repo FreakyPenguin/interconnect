@@ -85,6 +85,24 @@ struct CodeDrag {
     /// Fraction of thumb width, retained across Iced's intermediate measurements.
     grab: f32,
 }
+/// Focus belongs to the live widget, not the conversation presentation cache.
+struct CodeFocus<'a> {
+    current: &'a mut Option<(usize, CodeAction)>,
+    target: (usize, CodeAction),
+}
+impl iced::advanced::widget::operation::Focusable for CodeFocus<'_> {
+    fn is_focused(&self) -> bool {
+        *self.current == Some(self.target)
+    }
+    fn focus(&mut self) {
+        *self.current = Some(self.target);
+    }
+    fn unfocus(&mut self) {
+        if self.is_focused() {
+            *self.current = None;
+        }
+    }
+}
 impl LaidBlock {
     fn code_footer(&self) -> f32 {
         if self.code.as_ref().is_some_and(|code| code.max_x > 0.0) {
@@ -190,6 +208,8 @@ pub struct State {
     revealed: BTreeSet<usize>,
     pub(super) code_views: HashMap<usize, CodeView>,
     code_drag: Option<CodeDrag>,
+    pub(super) code_focus: Option<(usize, CodeAction)>,
+    code_viewport: Option<Rectangle>,
     pub(super) reflow_requested: bool,
     pub(super) semantics_restored: bool,
     blocks: Vec<LaidBlock>,
@@ -213,6 +233,8 @@ impl State {
             revealed: BTreeSet::new(),
             code_views: HashMap::new(),
             code_drag: None,
+            code_focus: None,
+            code_viewport: None,
             reflow_requested: false,
             semantics_restored: false,
             blocks: Vec::new(),
@@ -1005,6 +1027,41 @@ impl State {
                 .map(|control| (code.index, control.action))
         })
     }
+    pub(super) fn code_focus_viewport(&mut self, viewport: Rectangle) {
+        self.code_viewport = Some(viewport);
+        if self.code_focus.is_some_and(|(index, action)| {
+            self.code_button(index, action)
+                .is_none_or(|bounds| !viewport.contains(bounds.center()))
+        }) {
+            self.code_focus = None;
+        }
+    }
+    pub(super) fn operate_code_controls(
+        &mut self,
+        origin: Point,
+        operation: &mut dyn iced::advanced::widget::Operation,
+    ) {
+        for code in self.blocks.iter().filter_map(|block| block.code.as_ref()) {
+            for control in &code.controls {
+                // Virtualized overscan and controls scrolled out of a large
+                // message must not create invisible Tab stops.
+                if self
+                    .code_viewport
+                    .is_some_and(|viewport| !viewport.contains(control.bounds.center()))
+                {
+                    continue;
+                }
+                operation.focusable(
+                    None,
+                    control.bounds + (origin - Point::ORIGIN),
+                    &mut CodeFocus {
+                        current: &mut self.code_focus,
+                        target: (code.index, control.action),
+                    },
+                );
+            }
+        }
+    }
     fn code_tooltip(&self, point: Point) -> Option<&'static str> {
         self.blocks
             .iter()
@@ -1013,7 +1070,6 @@ impl State {
             .find(|control| control.bounds.contains(point))
             .map(|control| control.tooltip)
     }
-    #[cfg(test)]
     pub(super) fn code_button(&self, index: usize, action: CodeAction) -> Option<Rectangle> {
         self.blocks.iter().find_map(|block| {
             let code = block.code.as_ref().filter(|code| code.index == index)?;
@@ -1218,13 +1274,20 @@ impl State {
         if self.pressed.is_some() {
             return None;
         }
-        let point = self.hover?;
+        let point = self
+            .code_focus
+            .and_then(|(index, action)| self.code_button(index, action))
+            .map(|bounds| Point::new(bounds.center_x(), bounds.y + bounds.height))
+            .or(self.hover)?;
         let position = origin + (point - Point::ORIGIN);
         if !viewport.contains(position) {
             return None;
         }
         let label = self
-            .code_tooltip(point)
+            .code_focus
+            .and_then(|(index, action)| self.code_button(index, action))
+            .and_then(|bounds| self.code_tooltip(bounds.center()))
+            .or_else(|| self.code_tooltip(point))
             .or_else(|| self.run_at(point)?.style.link.as_deref())?;
         let width = (viewport.width - 16.0).clamp(1.0, 500.0);
         let mut preview = self.preview.borrow_mut();
@@ -1318,11 +1381,16 @@ impl State {
                             let hovered = self
                                 .hover
                                 .is_some_and(|point| control.bounds.contains(point));
-                            if hovered {
+                            let focused = self.code_focus == Some((code.index, control.action));
+                            if hovered || focused {
                                 renderer.fill_quad(
                                     renderer::Quad {
                                         bounds,
-                                        border: iced::Border::default().rounded(4.0),
+                                        border: iced::Border {
+                                            color: palette.accent,
+                                            width: if focused { 2.0 } else { 0.0 },
+                                            radius: 4.0.into(),
+                                        },
                                         ..Default::default()
                                     },
                                     palette.accent.scale_alpha(0.10),
@@ -1340,7 +1408,7 @@ impl State {
                                 renderer,
                                 control.icon,
                                 icon,
-                                if hovered {
+                                if hovered || focused {
                                     palette.accent
                                 } else {
                                     palette.muted

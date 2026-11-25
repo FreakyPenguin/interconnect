@@ -44,6 +44,14 @@ hover toolbar leaves that corner clear and wraps in narrow panes without changin
 text width. There is no text-control row or horizontal-arrow control.
 A translucent bottom fade with **Expand code** also activates expansion.
 
+Visible corner controls participate in Iced focus operations in visual order.
+Tab/Shift+Tab traverses them; an accent outline and tooltip identify focus.
+Enter/Space shares the pointer action path, ignoring key repeats; Escape releases
+focus. A live-widget block/action key retains focus through reflow, independently
+of text selection and cached conversation semantics. Viewport filtering excludes
+invisible controls, and document replacement drops keyboard focus. Keyboard
+expansion uses the same message-body anchor as pointer expansion.
+
 Code stays unwrapped. Overflow supplies a horizontal track/thumb; dragging,
 track presses, and horizontal wheel/trackpad input share the stored horizontal
 pixel offset. The overlay stays fixed while glyphs scroll, and hit-testing uses

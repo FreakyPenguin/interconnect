@@ -311,6 +311,7 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         operation.custom(None, layout.bounds(), state);
         if let Some(rich) = &mut state.rich {
             rich.focused = state.selected;
+            rich.operate_code_controls(layout.position(), operation);
             return;
         }
         if was_selected && !state.selected {
@@ -360,9 +361,20 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         viewport: &Rectangle,
     ) {
         if let Some(rich) = &mut tree.state.downcast_mut::<State>().rich {
+            rich.code_focus_viewport(*viewport - (layout.position() - iced::Point::ORIGIN));
+            if matches!(event, Event::Mouse(mouse::Event::ButtonPressed(_)))
+                && rich.code_focus.take().is_some()
+            {
+                shell.invalidate_layout();
+                shell.request_redraw();
+            }
             match event {
                 Event::Window(iced::window::Event::Unfocused) => {
                     rich.finish_code_scroll();
+                    if rich.code_focus.take().is_some() {
+                        shell.invalidate_layout();
+                        shell.request_redraw();
+                    }
                 }
                 Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
                     if rich.finish_code_scroll() =>
@@ -383,6 +395,31 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                     }
                 }
                 _ => {}
+            }
+            if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: iced::keyboard::Key::Named(key),
+                modifiers,
+                repeat,
+                ..
+            }) = event
+                && modifiers.is_empty()
+                && let Some((index, action)) = rich.code_focus
+            {
+                use iced::keyboard::key::Named;
+                if matches!(key, Named::Enter | Named::Space) {
+                    if !repeat {
+                        activate_code(rich, index, action, clipboard, shell);
+                    }
+                    shell.capture_event();
+                    return;
+                }
+                if *key == Named::Escape {
+                    rich.code_focus = None;
+                    shell.invalidate_layout();
+                    shell.request_redraw();
+                    shell.capture_event();
+                    return;
+                }
             }
         }
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
@@ -454,19 +491,10 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                     let point = point.unwrap();
                     let rich = state.rich.as_mut().unwrap();
                     if let Some((index, action)) = rich.code_control(point) {
-                        match action {
-                            formatted::CodeAction::Scroll => rich.begin_code_scroll(index, point),
-                            formatted::CodeAction::Copy => clipboard.write(
-                                iced::advanced::clipboard::Kind::Standard,
-                                rich.code_text(index),
-                            ),
-                            formatted::CodeAction::Save => {
-                                shell.publish(Message::SaveCode(rich.code_text(index)))
-                            }
-                            _ => rich.code_action(index, action),
-                        }
-                        if matches!(action, formatted::CodeAction::Toggle) {
-                            shell.invalidate_layout();
+                        if matches!(action, formatted::CodeAction::Scroll) {
+                            rich.begin_code_scroll(index, point);
+                        } else {
+                            activate_code(rich, index, action, clipboard, shell);
                         }
                         shell.capture_event();
                         shell.request_redraw();
@@ -547,7 +575,9 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                     modifiers,
                     physical_key,
                     ..
-                }) if state.rich.as_ref().unwrap().focused => {
+                }) if state.rich.as_ref().unwrap().focused
+                    && state.rich.as_ref().unwrap().code_focus.is_none() =>
+                {
                     use iced::keyboard::{Key, key::Named};
                     if matches!(key.as_ref(), Key::Named(Named::ArrowUp | Named::ArrowDown)) {
                         let cursor = state.content.cursor();
@@ -809,6 +839,28 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
     }
 }
 
+fn activate_code(
+    rich: &mut formatted::State,
+    index: usize,
+    action: formatted::CodeAction,
+    clipboard: &mut dyn Clipboard,
+    shell: &mut Shell<'_, Message>,
+) {
+    match action {
+        formatted::CodeAction::Copy => clipboard.write(
+            iced::advanced::clipboard::Kind::Standard,
+            rich.code_text(index),
+        ),
+        formatted::CodeAction::Save => shell.publish(Message::SaveCode(rich.code_text(index))),
+        formatted::CodeAction::Toggle => {
+            rich.code_action(index, action);
+            shell.invalidate_layout();
+        }
+        formatted::CodeAction::Scroll => {}
+    }
+    shell.request_redraw();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -821,6 +873,236 @@ mod tests {
         fn write(&mut self, _: iced::advanced::clipboard::Kind, text: String) {
             self.0 = text;
         }
+    }
+    fn key(named: iced::keyboard::key::Named, repeat: bool) -> Event {
+        Event::Keyboard(iced::keyboard::Event::KeyPressed {
+            key: iced::keyboard::Key::Named(named),
+            modified_key: iced::keyboard::Key::Named(named),
+            physical_key: iced::keyboard::key::Physical::Unidentified(
+                iced::keyboard::key::NativeCode::Unidentified,
+            ),
+            location: iced::keyboard::Location::Standard,
+            modifiers: iced::keyboard::Modifiers::empty(),
+            text: None,
+            repeat,
+        })
+    }
+    fn cycle(
+        view: &mut dyn Widget<Message, Theme, Renderer>,
+        tree: &mut Tree,
+        node: &layout::Node,
+        renderer: &Renderer,
+        backwards: bool,
+    ) {
+        let mut operation: Box<dyn widget::Operation> = if backwards {
+            Box::new(widget::operation::focusable::focus_previous::<()>())
+        } else {
+            Box::new(widget::operation::focusable::focus_next::<()>())
+        };
+        loop {
+            view.operate(tree, Layout::new(node), renderer, operation.as_mut());
+            if let widget::operation::Outcome::Chain(next) = operation.finish() {
+                operation = next;
+            } else {
+                break;
+            }
+        }
+    }
+    #[test]
+    fn code_icons_tab_in_visual_order_activate_once_and_keep_selection_through_reflow() {
+        use formatted::CodeAction::{Copy, Save, Toggle};
+        use iced::keyboard::key::Named;
+        let code = "let café = 42; // 👩🏽‍💻\n".repeat(30);
+        let document = Arc::new(
+            Document::parse(&format!(
+                "<pre><code>{code}</code></pre><pre><code>short</code></pre>"
+            ))
+            .unwrap(),
+        );
+        let mut view = preview_view("", Some(&document), Default::default(), ThemeMode::Light);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&view);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(400.0, 10000.0));
+        let mut node = view.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        tree.state
+            .downcast_mut::<State>()
+            .content
+            .perform(Action::SelectAll);
+        let selection = tree.state.downcast_ref::<State>().content.selection();
+        let mut clipboard = ClipboardText::default();
+        // Tab and Shift+Tab use these same global focus operations. Non-truncated
+        // code has only Copy/Save stops; leaving either end releases the widget.
+        for (backwards, expected) in [
+            (false, Some((0, Toggle))),
+            (false, Some((0, Copy))),
+            (false, Some((0, Save))),
+            (false, Some((1, Copy))),
+            (false, Some((1, Save))),
+            (false, None),
+            (true, Some((1, Save))),
+            (true, Some((1, Copy))),
+            (true, Some((0, Save))),
+            (true, Some((0, Copy))),
+            (true, Some((0, Toggle))),
+        ] {
+            cycle(view.as_widget_mut(), &mut tree, &node, &renderer, backwards);
+            assert_eq!(
+                tree.state
+                    .downcast_ref::<State>()
+                    .rich
+                    .as_ref()
+                    .unwrap()
+                    .code_focus,
+                expected
+            );
+        }
+        for (named, repeat, expanded) in [
+            (Named::Enter, false, true),
+            (Named::Enter, true, true),
+            (Named::Space, false, false),
+        ] {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut tree,
+                &key(named, repeat),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &Rectangle::with_size(Size::new(400.0, 10000.0)),
+            );
+            assert!(shell.is_event_captured());
+            assert!(!matches!(
+                shell.redraw_request(),
+                iced::window::RedrawRequest::At(_)
+            ));
+            node = view.as_widget_mut().layout(&mut tree, &renderer, &limits);
+            let state = tree.state.downcast_ref::<State>();
+            let rich = state.rich.as_ref().unwrap();
+            assert_eq!(rich.code_views[&0].expanded, expanded);
+            assert_eq!(rich.code_focus, Some((0, Toggle)));
+            assert_eq!(state.content.selection(), selection);
+            assert!(
+                view.as_widget_mut()
+                    .overlay(
+                        &mut tree,
+                        Layout::new(&node),
+                        &renderer,
+                        &Rectangle::with_size(Size::new(400.0, 10000.0)),
+                        iced::Vector::ZERO,
+                    )
+                    .is_some(),
+                "focused icons expose their tooltip without a pointer"
+            );
+        }
+        // Reflow preserves focus; Copy/Save export the entire untruncated code.
+        node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(260.0, 10000.0)),
+        );
+        for action in [Copy, Save] {
+            cycle(view.as_widget_mut(), &mut tree, &node, &renderer, false);
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut tree,
+                &key(Named::Space, false),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &Rectangle::with_size(Size::new(400.0, 10000.0)),
+            );
+            assert!(shell.is_event_captured());
+            if action == Copy {
+                assert_eq!(clipboard.0, code);
+            } else {
+                assert!(matches!(messages.as_slice(), [Message::SaveCode(text)] if text == &code));
+            }
+        }
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        view.as_widget_mut().update(
+            &mut tree,
+            &key(Named::Escape, false),
+            Layout::new(&node),
+            mouse::Cursor::Unavailable,
+            &renderer,
+            &mut clipboard,
+            &mut shell,
+            &Rectangle::with_size(Size::new(400.0, 10000.0)),
+        );
+        assert!(shell.is_event_captured());
+        assert!(
+            tree.state
+                .downcast_ref::<State>()
+                .rich
+                .as_ref()
+                .unwrap()
+                .code_focus
+                .is_none()
+        );
+        assert_eq!(
+            tree.state.downcast_ref::<State>().content.selection(),
+            selection
+        );
+    }
+    #[test]
+    fn code_focus_skips_invisible_controls_and_clears_on_source_changes() {
+        let document = Arc::new(
+            Document::parse("<pre><code>one</code></pre><p>gap</p><pre><code>two</code></pre>")
+                .unwrap(),
+        );
+        let mut view = preview_view("", Some(&document), Default::default(), ThemeMode::Light);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&view);
+        let limits = layout::Limits::new(Size::ZERO, Size::new(400.0, 10000.0));
+        let node = view.as_widget_mut().layout(&mut tree, &renderer, &limits);
+        let rich = tree.state.downcast_mut::<State>().rich.as_mut().unwrap();
+        let button = rich.code_button(2, formatted::CodeAction::Copy).unwrap();
+        rich.code_focus_viewport(Rectangle::new(
+            iced::Point::new(0.0, button.y),
+            Size::new(400.0, 30.0),
+        ));
+        cycle(view.as_widget_mut(), &mut tree, &node, &renderer, false);
+        assert_eq!(
+            tree.state
+                .downcast_ref::<State>()
+                .rich
+                .as_ref()
+                .unwrap()
+                .code_focus,
+            Some((2, formatted::CodeAction::Copy))
+        );
+        let rich = tree.state.downcast_mut::<State>().rich.as_mut().unwrap();
+        rich.code_focus_viewport(Rectangle::with_size(Size::new(400.0, 50.0)));
+        assert!(rich.code_focus.is_none());
+        cycle(view.as_widget_mut(), &mut tree, &node, &renderer, false);
+        assert_eq!(
+            tree.state
+                .downcast_ref::<State>()
+                .rich
+                .as_ref()
+                .unwrap()
+                .code_focus,
+            Some((0, formatted::CodeAction::Copy))
+        );
+        let changed = Arc::new(Document::parse("<pre><code>edited</code></pre>").unwrap());
+        let replacement = preview_view("", Some(&changed), Default::default(), ThemeMode::Light);
+        tree.diff(&replacement);
+        assert!(
+            tree.state
+                .downcast_ref::<State>()
+                .rich
+                .as_ref()
+                .unwrap()
+                .code_focus
+                .is_none()
+        );
     }
     #[test]
     fn code_corner_icons_and_message_hover_actions_do_not_overlap_or_reduce_text_width() {

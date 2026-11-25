@@ -969,6 +969,13 @@ keeps its own selection and top-anchored scroll offset, independently of replies
 An intermediate loading view must not erase it. These presentation choices are
 not saved across app restarts; persisted event reading anchors are separate.
 
+Tab / Shift+Tab traverses visible corner icons in visual order; the focused icon
+shows an accent outline and tooltip. Enter/Space activates once per key press,
+including full-code Copy/Save. Escape releases code-control focus. Controls
+outside the viewport are skipped, and source replacement clears stale focus.
+Check keyboard expansion/collapse with selection and event anchors retained,
+then continue traversal into the composer and reverse back into the code.
+
 For desktop acceptance, select code, expand via both the chevron and bottom cue,
 drag the scrollbar past both endpoints, collapse, resize, and switch rooms or
 close/reopen the thread. Check full-code copy, fixed overlays, the visible event
@@ -1028,3 +1035,15 @@ Native clipboard round trips, Save code portal/native file dialogs, hardware GPU
 rendering, macOS, and live cross-client table behavior remain manual acceptance.
 Very long plain prose and explicitly expanded code still use full layout. The
 incoming HTML byte/node/depth limits and plain fallback behavior remain in place.
+
+Keyboard-control follow-up, **2026-11-25**: the locked UI suite passed **719
+tests**, with one opt-in measurement ignored. Formatting, workspace/all-target
+Clippy with warnings denied, and the desktop build passed. Automated checks
+cover forward/reverse traversal, viewport filtering, full-code Copy/Save, repeat
+suppression, focus/selection across resize and expand/collapse, source replacement,
+and keyboard expansion with a retained message-body anchor. An isolated network-free
+Linux/Wayland tiny-skia demo at 1400×900 in Light verified Shift+Tab from the
+composer into Save/Copy/Expand, forward traversal, focus outlines/tooltips, and
+Enter/Space expansion/collapse with the code header anchored. Screenshots remain
+outside Git. Native Save dialogs, hardware GPU rendering, compact/theme desktop
+coverage, and macOS remain manual checks for keyboard controls.
