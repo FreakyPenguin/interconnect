@@ -140,6 +140,9 @@ mod tests {
             "👩🏽‍💻",
             "👨‍👩‍👧‍👦",
             "1️⃣",
+            // Exercise an unconsumed default-ignorable even with fonts that
+            // consume VS16 into the preceding emoji glyph.
+            "😀\u{200b}",
         ] {
             let mut editor = text::Editor::with_text(emoji);
             let mut highlighter = Highlighter::new(&Some(font));
@@ -162,18 +165,38 @@ mod tests {
                 .layout_runs()
                 .flat_map(|run| run.glyphs)
                 .collect();
-            assert_eq!(glyphs.len(), 1, "{emoji} must stay one glyph");
-            let glyph = glyphs[0];
-            let key = glyph.physical((0.0, 0.0), 1.0).cache_key;
             let mut system = font_system().write().unwrap();
-            let image = text::cosmic_text::SwashCache::new()
-                .get_image_uncached(system.raw(), key)
-                .unwrap_or_else(|| panic!("{emoji} must rasterize"));
-            assert_eq!(
-                image.content,
-                text::cosmic_text::SwashContent::Color,
-                "{emoji}"
-            );
+            let mut cache = text::cosmic_text::SwashCache::new();
+            let mut visible_glyphs = 0;
+            for glyph in glyphs {
+                assert_ne!(glyph.glyph_id, 0, "{emoji} must not use a missing glyph");
+                let key = glyph.physical((0.0, 0.0), 1.0).cache_key;
+                let image = cache.get_image_uncached(system.raw(), key);
+                let visible = image.as_ref().is_some_and(|image| match image.content {
+                    text::cosmic_text::SwashContent::Color => image
+                        .data
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .any(|pixel| pixel[3] != 0),
+                    _ => image.data.iter().any(|byte| *byte != 0),
+                });
+                // Shaping may retain VS16 (e.g. with Apple Color Emoji) as
+                // an invisible space glyph. It must neither draw nor advance.
+                if glyph.w == 0.0 {
+                    assert!(!visible, "{emoji} has a visible zero-width glyph");
+                    continue;
+                }
+                let image = image.unwrap_or_else(|| panic!("{emoji} must rasterize"));
+                assert!(visible, "{emoji} must have visible pixels");
+                assert_eq!(
+                    image.content,
+                    text::cosmic_text::SwashContent::Color,
+                    "{emoji}"
+                );
+                visible_glyphs += 1;
+            }
+            assert_eq!(visible_glyphs, 1, "{emoji} must stay one visible glyph");
         }
     }
 

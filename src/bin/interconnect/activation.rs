@@ -706,7 +706,8 @@ mod tests {
         (directory, registry)
     }
     async fn owner(registry: &Registry, profile: &str) -> Server {
-        let Claim::Owner(server) = registry.claim(profile).await.unwrap() else {
+        let profile = activation::canonical_profile(profile).unwrap();
+        let Claim::Owner(server) = registry.claim(&profile).await.unwrap() else {
             panic!();
         };
         server
@@ -735,14 +736,18 @@ mod tests {
             "activation cannot create an account store"
         );
         drop(server);
-        let personal_path = directory.path().join("personal");
+        // Exercise a symlinked ancestor on every platform, like /var ->
+        // /private/var for temporary profiles on macOS. The profiles stay absent.
+        let alias = directory.path().join("profiles");
+        std::os::unix::fs::symlink(directory.path(), &alias).unwrap();
+        let personal_path = alias.join("personal");
         let personal = owner(&registry, personal_path.to_str().unwrap()).await;
         assert!(matches!(
             prepare_in(&args, registry.clone()).await.unwrap(),
             Launch::Forwarded
         ));
         assert_eq!(personal.handle().pending(), 1);
-        let work_path = directory.path().join("work");
+        let work_path = alias.join("work");
         let work = owner(&registry, work_path.to_str().unwrap()).await;
         assert!(matches!(
             prepare_in(&args, registry.clone()).await.unwrap(),

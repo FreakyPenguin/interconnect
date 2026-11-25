@@ -36,6 +36,14 @@ tests cannot establish that Command and Control remain distinct on macOS.
 These automated checks do not establish native desktop/IME acceptance; use the
 [manual keyboard checks](validation/connected-ui.md#macos-keyboard-checks) in demo mode.
 
+Activation fixtures canonicalize profile paths just like startup, including
+symlinked ancestors such as macOS's temporary directory. The startup routing test
+exercises that aliasing on Linux too, without creating account stores. Emoji
+raster tests require one visible color glyph per sequence; any retained invisible
+selector glyph must have zero advance and no visible pixels. They use the installed
+color emoji font (and skip raster checks when none is available), so Linux/Noto
+results do not establish Apple Color Emoji behavior; macOS CI covers that font.
+
 ## Running the client
 
 ```sh
