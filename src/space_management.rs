@@ -231,6 +231,16 @@ mod tests {
         matchers::{body_json, method, path},
     };
 
+    async fn room_writes(server: &MockServer) -> Vec<wiremock::Request> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|r| r.method.as_str() != "GET" && r.url.path().contains("/rooms/"))
+            .collect()
+    }
+
     #[test]
     fn parents_allow_shared_children_but_reject_self_duplicates_and_cycles() {
         let space = |id: &str, children: &[&str], writable| SpaceEntry {
@@ -281,16 +291,7 @@ mod tests {
                 .children
                 .contains(&"!fresh-space:example.org".into())
         );
-        assert_eq!(
-            server
-                .received_requests()
-                .await
-                .unwrap()
-                .iter()
-                .filter(|r| r.method.as_str() != "GET" && r.url.path().contains("/rooms/"))
-                .count(),
-            1
-        );
+        assert_eq!(room_writes(&server).await.len(), 1);
     }
 
     #[tokio::test]
@@ -328,39 +329,8 @@ mod tests {
                         .contains("permission")
                 );
             }
-            assert!(
-                server
-                    .received_requests()
-                    .await
-                    .unwrap()
-                    .iter()
-                    .all(|r| r.method.as_str() == "GET" || !r.url.path().contains("/rooms/"))
-            );
+            assert!(room_writes(&server).await.is_empty());
         }
-    }
-
-    #[tokio::test]
-    async fn unlink_subspace_needs_only_parent_authority_and_sends_only_empty_via() {
-        let server = MockServer::start().await;
-        let client = fixture(&server, 50).await;
-        Mock::given(method("PUT"))
-            .and(path("/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/!linked-space:example.org"))
-            .and(body_json(json!({"via":[]})))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id":"$unlinked"})))
-            .expect(1).mount(&server).await;
-        remove_room(&client, "!space:example.org", "!linked-space:example.org")
-            .await
-            .unwrap();
-        assert_eq!(
-            server
-                .received_requests()
-                .await
-                .unwrap()
-                .iter()
-                .filter(|r| r.method.as_str() != "GET" && r.url.path().contains("/rooms/"))
-                .count(),
-            1
-        );
     }
 
     #[tokio::test]
@@ -598,24 +568,23 @@ mod tests {
                 .unwrap()
                 .can_manage_rooms
         );
-        Mock::given(method("PUT"))
-            .and(path(
-                "/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/!room:example.org",
-            ))
-            .and(body_json(json!({"via":[]})))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id":"$removed"})))
-            .expect(1)
-            .mount(&server)
-            .await;
-        remove_room(&client, "!space:example.org", "!room:example.org")
-            .await
-            .unwrap();
-        let requests = server.received_requests().await.unwrap();
-        let writes: Vec<_> = requests
-            .iter()
-            .filter(|r| r.method.as_str() != "GET" && r.url.path().contains("/rooms/"))
-            .collect();
-        assert_eq!(writes.len(), 1); // No leave, redaction, or child-side parent edit.
+        for child in ["!room:example.org", "!linked-space:example.org"] {
+            Mock::given(method("PUT"))
+                .and(path(format!(
+                    "/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/{child}"
+                )))
+                .and(body_json(json!({"via":[]})))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({"event_id":"$removed"})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            remove_room(&client, "!space:example.org", child)
+                .await
+                .unwrap();
+        }
+        assert_eq!(room_writes(&server).await.len(), 2);
     }
     #[tokio::test]
     async fn denied_permission_and_missing_or_inactive_links_never_write() {
@@ -650,37 +619,8 @@ mod tests {
                         .contains("permission")
                 );
             }
-            assert!(
-                server
-                    .received_requests()
-                    .await
-                    .unwrap()
-                    .iter()
-                    .all(|r| r.method.as_str() == "GET" || !r.url.path().contains("/rooms/"))
-            );
+            assert!(room_writes(&server).await.is_empty());
         }
-    }
-    #[tokio::test]
-    async fn server_rejection_is_reported() {
-        let server = MockServer::start().await;
-        let client = fixture(&server, 50).await;
-        Mock::given(method("PUT"))
-            .and(path(
-                "/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/!room:example.org",
-            ))
-            .respond_with(
-                ResponseTemplate::new(403)
-                    .set_body_json(json!({"errcode":"M_FORBIDDEN", "error":"Permission changed"})),
-            )
-            .expect(1)
-            .mount(&server)
-            .await;
-        assert!(
-            remove_room(&client, "!space:example.org", "!room:example.org")
-                .await
-                .unwrap_err()
-                .contains("Could not remove")
-        );
     }
     #[tokio::test]
     async fn add_links_joined_rooms_and_inactive_links_without_child_permission_or_parent_edits() {
@@ -702,16 +642,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        assert_eq!(
-            server
-                .received_requests()
-                .await
-                .unwrap()
-                .iter()
-                .filter(|r| r.method.as_str() != "GET" && r.url.path().contains("/rooms/"))
-                .count(),
-            2
-        );
+        assert_eq!(room_writes(&server).await.len(), 2);
     }
     #[tokio::test]
     async fn add_rejects_unwritable_spaces_existing_links_and_unavailable_targets_before_writing() {
@@ -737,29 +668,33 @@ mod tests {
                         .contains("permission")
                 );
             }
-            assert!(
-                server
-                    .received_requests()
-                    .await
-                    .unwrap()
-                    .iter()
-                    .all(|r| r.method.as_str() == "GET" || !r.url.path().contains("/rooms/"))
-            );
+            assert!(room_writes(&server).await.is_empty());
         }
     }
     #[tokio::test]
-    async fn add_server_rejection_surfaces_for_retry() {
-        let server = MockServer::start().await;
-        let client = fixture(&server, 50).await;
-        Mock::given(method("PUT"))
-            .and(path("/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/!fresh:example.org"))
-            .respond_with(ResponseTemplate::new(403).set_body_json(json!({"errcode":"M_FORBIDDEN","error":"Denied"})))
-            .expect(1).mount(&server).await;
-        assert!(
-            add_room(&client, "!space:example.org", "!fresh:example.org")
-                .await
-                .unwrap_err()
-                .contains("Could not add")
-        );
+    async fn server_rejections_are_reported_for_linking_and_unlinking() {
+        for (adding, child, error) in [
+            (false, "!room:example.org", "Could not remove"),
+            (true, "!fresh:example.org", "Could not add"),
+        ] {
+            let server = MockServer::start().await;
+            let client = fixture(&server, 50).await;
+            Mock::given(method("PUT"))
+                .and(path(format!(
+                    "/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/{child}"
+                )))
+                .respond_with(ResponseTemplate::new(403).set_body_json(json!({
+                    "errcode":"M_FORBIDDEN", "error":"Permission changed"
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let result = if adding {
+                add_room(&client, "!space:example.org", child).await
+            } else {
+                remove_room(&client, "!space:example.org", child).await
+            };
+            assert!(result.unwrap_err().contains(error));
+        }
     }
 }

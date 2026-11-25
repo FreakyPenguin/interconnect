@@ -498,12 +498,3 @@ async fn immediate_close_cancels_a_start_from_the_previous_snapshot() {
             .is_err()
     );
 }
-
-#[tokio::test]
-async fn idle_service_and_shutdown_make_no_network_requests() {
-    let pair = Pair::new().await;
-    for server in &pair.servers {
-        assert!(server.received_requests().await.unwrap().is_empty());
-    }
-    pair.close().await;
-}

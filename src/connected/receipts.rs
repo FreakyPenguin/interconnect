@@ -350,39 +350,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn private_thread_receipts_keep_thread_scope_and_do_not_clear_room() {
-        let (server, timeline) = fixture(true).await;
-        Mock::given(method("POST"))
-            .and(path_regex(".*/receipt/m.read.private/.*"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
-            .expect(1)
-            .mount(&server)
-            .await;
-        let mut initial = selection(true);
-        initial.privacy.public_read_receipts = false;
-        let (control, requests) = watch::channel(initial);
-        let (state, _) = watch::channel(Model::default());
-        let worker = tokio::spawn(run(timeline, requests, 2, true, state));
-        wait_requests(&server, 1).await;
-        control.send_modify(|s| s.shutdown = true);
-        worker.await.unwrap();
-        let requests = server.received_requests().await.unwrap();
-        let receipt = requests
-            .iter()
-            .find(|r| r.url.path().contains("/receipt/"))
-            .unwrap();
-        assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&receipt.body).unwrap(),
-            json!({"thread_id":"$root"})
-        );
-        assert!(
-            !requests
-                .iter()
-                .any(|r| r.method == "PUT" || r.url.path().contains("m.fully_read"))
-        );
-    }
-
-    #[tokio::test]
     async fn catch_up_boundary_is_frozen_per_room_visit() {
         use super::super::{History, publish};
         use iced::futures::StreamExt;
@@ -497,15 +464,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn private_thread_receipts_keep_thread_scope_and_do_not_clear_room() {
+        check_thread_receipt(false).await;
+    }
+
+    #[tokio::test]
     async fn thread_receipt_does_not_clear_room_marker() {
+        check_thread_receipt(true).await;
+    }
+
+    async fn check_thread_receipt(public: bool) {
         let (server, timeline) = fixture(true).await;
+        let kind = if public { "m.read" } else { "m.read.private" };
         Mock::given(method("POST"))
-            .and(path_regex(".*/receipt/m.read/.*"))
+            .and(path_regex(format!(".*/receipt/{kind}/.*")))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
             .expect(1)
             .mount(&server)
             .await;
-        let (control, requests) = watch::channel(selection(true));
+        let mut initial = selection(true);
+        initial.privacy.public_read_receipts = public;
+        let (control, requests) = watch::channel(initial);
         let (state, _) = watch::channel(Model::default());
         let worker = tokio::spawn(run(timeline, requests, 2, true, state));
         wait_requests(&server, 1).await;

@@ -2179,14 +2179,11 @@ mod tests {
         matchers::{method, path, path_regex, query_param},
     };
 
-    #[tokio::test]
-    async fn newly_created_room_waits_for_sync_and_wait_is_cancellable() {
-        use matrix_sdk::{authentication::matrix::MatrixSession, config::SyncSettings};
-        let server = MockServer::start().await;
+    async fn navigation_client(server: &MockServer) -> Client {
         Mock::given(method("GET"))
             .and(path("/_matrix/client/versions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
-            .mount(&server)
+            .mount(server)
             .await;
         let client = Client::builder()
             .homeserver_url(server.uri())
@@ -2205,6 +2202,14 @@ mod tests {
             )
             .await
             .unwrap();
+        client
+    }
+
+    #[tokio::test]
+    async fn newly_created_room_waits_for_sync_and_wait_is_cancellable() {
+        use matrix_sdk::config::SyncSettings;
+        let server = MockServer::start().await;
+        let client = navigation_client(&server).await;
         let id = matrix_sdk::ruma::room_id!("!new:example.org");
         let wait = wait_for_room(&client, id);
         tokio::pin!(wait);
@@ -3050,28 +3055,7 @@ mod tests {
     async fn navigation_tracks_sdk_state_and_account_data_without_timelines() {
         use matrix_sdk::config::SyncSettings;
         let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/_matrix/client/versions"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"versions":["v1.11"]})))
-            .mount(&server)
-            .await;
-        let client = Client::builder()
-            .homeserver_url(server.uri())
-            .sliding_sync_version_builder(matrix_sdk::sliding_sync::VersionBuilder::Native)
-            .build()
-            .await
-            .unwrap();
-        client
-            .matrix_auth()
-            .restore_session(
-                serde_json::from_value::<MatrixSession>(
-                    json!({"user_id":"@test:example.org","device_id":"TEST","access_token":"fake"}),
-                )
-                .unwrap(),
-                Default::default(),
-            )
-            .await
-            .unwrap();
+        let client = navigation_client(&server).await;
         let event = |kind: &str, key: &str, content: serde_json::Value| json!({"type":kind,"state_key":key,"sender":"@test:example.org","event_id":format!("${kind}-{key}"),"origin_server_ts":1,"content":content});
         let room = |name: &str, space: bool, mut extra: Vec<serde_json::Value>| {
             extra.extend([
