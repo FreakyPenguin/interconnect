@@ -1,5 +1,5 @@
 //! Merge bounded worker snapshots with encrypted, device-local read state.
-use super::{App, current_pane};
+use super::{App, current_pane, thread_activity, timeline};
 use interconnect::notifications::{Entry, HISTORY_LIMIT, Record, Target};
 use std::{
     collections::{HashMap, HashSet},
@@ -11,8 +11,97 @@ pub(super) struct State {
     pub dirty: bool,
     seen: Option<Arc<Vec<Entry>>>,
     previous: HashMap<String, Entry>,
+    visible: [Option<Visible>; 2],
+}
+struct Visible {
+    generation: u64,
+    keys: HashSet<String>,
+    metrics: timeline::Metrics,
 }
 impl App {
+    pub(super) fn observe_notification_visibility(
+        &mut self,
+        thread: bool,
+        generation: u64,
+        keys: &[String],
+        metrics: timeline::Metrics,
+    ) {
+        let selected = if thread {
+            &self.selection.thread
+        } else {
+            &self.selection.room
+        };
+        if self.selection.conversation_visible
+            && self.pending_scroll[usize::from(thread)].is_none()
+            && selected
+                .as_ref()
+                .is_some_and(|(view, _)| *view == generation)
+            && metrics.height.is_finite()
+            && metrics.height > 0.0
+            && metrics.content_height.is_finite()
+            && metrics.translation.is_finite()
+        {
+            self.notification_history.visible[usize::from(thread)] = Some(Visible {
+                generation,
+                keys: keys.iter().cloned().collect(),
+                metrics,
+            });
+        }
+    }
+
+    fn visible_notification_events(&self, thread: bool) -> HashSet<String> {
+        let index = usize::from(thread);
+        let Some(visible) = &self.notification_history.visible[index] else {
+            return HashSet::new();
+        };
+        let selected = if thread {
+            &self.selection.thread
+        } else {
+            &self.selection.room
+        };
+        let Some((generation, id)) = selected else {
+            return HashSet::new();
+        };
+        let offset = visible.metrics.maximum() - visible.metrics.translation;
+        if !self.selection.conversation_visible
+            || *generation != visible.generation
+            || self.pending_scroll[index].is_some()
+            || (!thread
+                && (self
+                    .window_width
+                    .is_some_and(|width| self.side_panel_replaces_room(width))
+                    || (offset - self.saved_scroll(false).min(visible.metrics.maximum())).abs()
+                        > 1.0))
+            || (thread
+                && self.thread_scroll_target.is_some_and(|(view, target)| {
+                    view != *generation
+                        || (offset - target.min(visible.metrics.maximum())).abs() > 1.0
+                }))
+        {
+            return HashSet::new();
+        }
+        let Some(pane) = current_pane(
+            if thread {
+                &self.model.thread
+            } else {
+                &self.model.room
+            },
+            *generation,
+        ) else {
+            return HashSet::new();
+        };
+        if pane.error.is_some() || matches!(pane.history, super::History::Loading) {
+            return HashSet::new();
+        }
+        thread_activity::project(&pane.rows, thread.then_some(id.as_str()))
+            .into_iter()
+            // A room's collapsed thread summary does not expose the reply itself.
+            .filter(|row| matches!(row, thread_activity::Row::Event(_)))
+            .filter(|row| visible.keys.contains(&row.key()))
+            .filter_map(|row| row.message().event_id.clone())
+            .collect()
+    }
+
     pub(super) fn merge_notification_history(&mut self) -> bool {
         // Restore durable read state before importing the session's first events.
         if self.demo.is_none() && !self.draft_persistence.belongs_to(&self.account_id) {
@@ -86,6 +175,8 @@ impl App {
 
     pub(super) fn reconcile_notification_reads(&mut self) -> bool {
         self.update_notification_context();
+        // Keep the last viewport so history delivered after layout is reconciled too.
+        let visible = [false, true].map(|thread| self.visible_notification_events(thread));
         let latest = [false, true].map(|thread| {
             if !self.selection.conversation_visible || self.saved_scroll(thread) > 1.0 {
                 return None;
@@ -139,18 +230,33 @@ impl App {
             if record.read {
                 continue;
             }
-            let read = match &record.entry.target {
-                Target::Conversation { room, thread, .. } => {
+            let read = match &record.entry.destination() {
+                Target::Conversation {
+                    room,
+                    thread,
+                    event,
+                } => {
                     self.selection
                         .room
                         .as_ref()
                         .is_some_and(|(_, selected)| selected == room)
-                        && latest[usize::from(thread.is_some())].as_ref().is_some_and(
+                        && (event.as_ref().is_some_and(|event| {
+                            let index = usize::from(thread.is_some());
+                            let selected = if thread.is_some() {
+                                &self.selection.thread
+                            } else {
+                                &self.selection.room
+                            };
+                            selected.as_ref().is_some_and(|(_, id)| {
+                                id == thread.as_ref().unwrap_or(room)
+                                    && visible[index].contains(event)
+                            })
+                        }) || latest[usize::from(thread.is_some())].as_ref().is_some_and(
                             |(id, timestamp)| {
                                 id == thread.as_ref().unwrap_or(room)
                                     && record.entry.timestamp <= *timestamp
                             },
-                        )
+                        ))
                 }
                 Target::Invitation { room } => {
                     self.membership.open && self.membership.focus_invitation.as_ref() == Some(room)
@@ -205,6 +311,199 @@ mod tests {
         let mut model = app.model.clone();
         model.notification_history = entries.into();
         let _ = app.update(Message::State(Box::new(model)));
+    }
+
+    fn message_entry(id: &str, room: &str, thread: Option<&str>, event: Option<&str>) -> Entry {
+        Entry {
+            target: Target::Conversation {
+                room: room.into(),
+                thread: thread.map(str::to_owned),
+                event: event.map(str::to_owned),
+            },
+            // Exact visibility must work independently of timestamp ordering.
+            ..entry(id, u64::MAX)
+        }
+    }
+
+    fn older_view(app: &mut App, thread: bool, keys: &[&str]) -> Message {
+        let index = usize::from(thread);
+        app.pending_scroll[index] = None;
+        app.thread_scroll_target = None;
+        let key = app.draft_key(thread).unwrap();
+        app.scroll_positions.insert(key, 200.0);
+        Message::TimelineVisible {
+            thread,
+            generation: if thread {
+                &app.selection.thread
+            } else {
+                &app.selection.room
+            }
+            .as_ref()
+            .unwrap()
+            .0,
+            keys: keys.iter().map(|key| (*key).into()).collect(),
+            metrics: timeline::Metrics {
+                height: 100.0,
+                content_height: 600.0,
+                translation: 300.0,
+            },
+        }
+    }
+
+    #[test]
+    fn reading_an_older_message_clears_only_its_notification_and_preserves_room_state() {
+        let mut app = app();
+        let _ = app.update(Message::Room("busy".into()));
+        let _ = app.update(Message::WindowFocused(true));
+        let view = older_view(&mut app, false, &["busy-20"]);
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("unfinished");
+        let room = Arc::make_mut(&mut app.model.rooms)
+            .iter_mut()
+            .find(|room| room.id == "busy")
+            .unwrap();
+        room.unread = true;
+        room.unread_count = 3;
+        publish(
+            &mut app,
+            vec![
+                message_entry("seen", "busy", None, Some("busy-20")),
+                message_entry("offscreen", "busy", None, Some("busy-21")),
+                message_entry("other-room", "general", None, Some("busy-20")),
+                message_entry("thread", "busy", Some("root"), Some("busy-20")),
+                message_entry("legacy-room-only", "busy", None, None),
+            ],
+        );
+        let _ = app.update(view);
+        assert_eq!(app.notification_center.unread_count(), 4);
+        assert!(
+            app.notification_center
+                .records
+                .iter()
+                .all(|record| record.read == (record.entry.id == "seen"))
+        );
+        assert!(app.selection.read[0].is_none());
+        let room = app
+            .model
+            .rooms
+            .iter()
+            .find(|room| room.id == "busy")
+            .unwrap();
+        assert!(room.unread);
+        assert_eq!(room.unread_count, 3);
+        assert_eq!(app.saved_scroll(false), 200.0);
+        assert_eq!(app.drafts[&key].content.text(), "unfinished");
+    }
+
+    #[test]
+    fn history_arriving_after_visibility_clears_the_exact_event_including_legacy_identity() {
+        let mut app = app();
+        let _ = app.update(Message::Room("general".into()));
+        let _ = app.update(Message::WindowFocused(true));
+        let view = older_view(&mut app, false, &["$preview-message"]);
+        let _ = app.update(view);
+        let legacy = format!(
+            "message:{}",
+            serde_json::to_string(&("general", "$preview-message")).unwrap()
+        );
+        publish(
+            &mut app,
+            vec![message_entry(&legacy, "general", None, None)],
+        );
+        assert_eq!(app.notification_center.unread_count(), 0);
+    }
+
+    #[test]
+    fn thread_summary_stays_unread_until_the_reply_is_visible_in_its_thread() {
+        let mut app = app();
+        let _ = app.update(Message::Room("studio".into()));
+        let _ = app.update(Message::WindowFocused(true));
+        publish(
+            &mut app,
+            vec![
+                message_entry("seen", "studio", Some("review"), Some("review-reply-2")),
+                message_entry(
+                    "offscreen",
+                    "studio",
+                    Some("review"),
+                    Some("review-reply-1"),
+                ),
+                message_entry(
+                    "other-thread",
+                    "studio",
+                    Some("other"),
+                    Some("review-reply-2"),
+                ),
+            ],
+        );
+        let summary = "thread:review:review-reply-2";
+        let view = older_view(&mut app, false, &[summary]);
+        let _ = app.update(view);
+        assert_eq!(app.notification_center.unread_count(), 3);
+        let _ = app.update(Message::Thread("review".into()));
+        let view = older_view(&mut app, true, &["review-reply-2"]);
+        let _ = app.update(view);
+        assert_eq!(app.notification_center.unread_count(), 2);
+        assert!(
+            app.notification_center
+                .records
+                .iter()
+                .all(|record| record.read == (record.entry.id == "seen"))
+        );
+    }
+
+    #[test]
+    fn stale_hidden_loading_and_unsettled_viewports_do_not_clear_notifications() {
+        for state in [
+            "stale",
+            "unfocused",
+            "covered",
+            "pending",
+            "restoring",
+            "loading",
+            "invalid",
+        ] {
+            let mut app = app();
+            let _ = app.update(Message::Room("busy".into()));
+            let _ = app.update(Message::WindowFocused(true));
+            let mut view = older_view(&mut app, false, &["busy-20"]);
+            publish(
+                &mut app,
+                vec![message_entry("seen", "busy", None, Some("busy-20"))],
+            );
+            match state {
+                "stale" => {
+                    if let Message::TimelineVisible { generation, .. } = &mut view {
+                        *generation -= 1;
+                    }
+                }
+                "unfocused" => {
+                    let _ = app.update(Message::WindowFocused(false));
+                }
+                "covered" => {
+                    let _ = app.update(Message::NotificationCenter(
+                        notification_center::Event::Open,
+                    ));
+                }
+                "pending" => app.pending_scroll[0] = Some(200.0),
+                "restoring" => {
+                    app.scroll_positions
+                        .insert(app.draft_key(false).unwrap(), 400.0);
+                }
+                "loading" => {
+                    app.model.room.as_mut().unwrap().history = super::super::History::Loading
+                }
+                "invalid" => {
+                    if let Message::TimelineVisible { metrics, .. } = &mut view {
+                        metrics.translation = f32::NAN;
+                    }
+                }
+                _ => unreachable!(),
+            }
+            let _ = app.update(view);
+            assert_eq!(app.notification_center.unread_count(), 1, "{state}");
+        }
     }
     #[test]
     fn merges_replaceable_snapshots_without_replaying_read_notifications() {

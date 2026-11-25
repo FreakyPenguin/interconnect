@@ -71,8 +71,12 @@ History and read flags are local to the profile/device, share encrypted draft
 storage, and survive a normal restart. The newest 256 entries are retained; this
 is observed notification history, not a homeserver-wide or cross-device archive.
 Messages follow SDK push rules even when native alerts are disabled. Reading the
-latest visible conversation clears matching older message notifications; reading
-older history does not. Inbox read controls do not send Matrix read receipts.
+latest visible conversation clears matching older message notifications. Viewing
+a specific message in older history clears its own notification, including history
+that arrives after layout; other offscreen messages stay unread. Thread replies
+clear in their own thread, not from a collapsed room summary. Covered, unfocused,
+loading, or unsettled views do not clear entries. Inbox read controls do not send
+Matrix read receipts.
 Opening the inbox suspends the underlying conversation widgets and inline GIFs,
 preserving room/thread drafts and live scroll positions without hidden input,
 read receipts, media demand, or animation timers. Closing it returns to the same
@@ -80,7 +84,8 @@ conversation. Demo contains only local sample history and performs no delivery.
 
 Automated UI/store tests cover category filters, read controls, unavailable and
 stale-account activation, small-window layout, keyboard dismissal, idle redraws,
-mounted timeline preservation, encrypted restart/read-state restoration, and
+mounted timeline preservation, exact visible-event clearing in older room/thread
+history, late history delivery, encrypted restart/read-state restoration, and
 history arriving during sign-out or shutdown. Manually check native clicks on
 Linux/macOS, toolbar placement at different scales, and connected history across
 restart using an authorized isolated account. No connected desktop acceptance is
@@ -133,6 +138,11 @@ Use a dedicated account and second client:
   verification requests: history must still update. Check generic previews in both
   native payloads and newly collected history. Native alerts off and focused-room
   suppression must leave collection active.
+- Open an unread message through ordinary room navigation or search, including
+  older history, and check that its bell entry becomes read. Leave other messages
+  offscreen and confirm their entries remain unread. Repeat for a thread reply;
+  viewing only its room summary must not clear the reply's entry. Check after a
+  normal restart that the updated read state is retained.
 
 Automated policy/history/queue/observer/lifecycle tests and a private D-Bus daemon
 fixture cover payloads, actions, mismatched IDs, dismissal, escaped previews,

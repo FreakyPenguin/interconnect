@@ -662,6 +662,7 @@ impl App {
                 &message,
                 Message::State(_)
                     | Message::TimelineVisible { .. }
+                    | Message::Scrolled { .. }
                     | Message::WindowFocused(_)
                     | Message::Membership(_)
                     | Message::Verification(_)
@@ -1814,6 +1815,7 @@ impl App {
                 metrics,
             } => {
                 self.read_visible(thread, generation, &keys, metrics);
+                self.observe_notification_visibility(thread, generation, &keys, metrics);
                 if thread
                     && self.selection.conversation_visible
                     && self.pending_scroll[1].is_none()
