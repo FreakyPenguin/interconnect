@@ -19,8 +19,13 @@ builds are experimental.
   no QR or verification of other users. [Recovery](validation/recovery.md) supports
   key creation/import/replacement, but no destructive identity reset or manual
   room-key export/import.
-- No abuse reports. Privacy settings control outgoing typing and public read
-  receipts; private read state still reaches your homeserver and other own devices.
+- Room and thread message reports require a synced event ID, a reason (up to
+  4000 UTF-8 bytes), and explicit confirmation. Reports go to your homeserver
+  administrators; they do not redact messages or ban senders. See
+  [reporting checks](validation/ui-management.md#reporting-messages) for validation
+  boundaries.
+- Privacy settings control outgoing typing and public read receipts; private read
+  state still reaches your homeserver and other own devices.
   Room notification presets support account default, all
   messages, mentions/keywords, and mute; there is no general push-rule editor,
   timed mute, or per-room sound.
@@ -33,20 +38,28 @@ builds are experimental.
 
 ## Rooms and spaces
 
-- No custom power-rule editing, encryption changes, initiating upgrades, bans/
-  unbans, or join-request management. Restricted/knock/custom access is read-only.
+- No custom power-rule editing, encryption changes, initiating upgrades, or
+  join-request management. Restricted/knock/custom access is read-only.
   Replaced rooms offer successor navigation; histories remain separate.
-- Local room addresses can be created/removed and existing aliases published;
-  creating aliases on other servers is unsupported. See [settings](settings.md).
-- Invitations, member removal, invitation revocation, and Member/Moderator/Admin
-  role changes are supported; no custom numeric role entry or self-role changes.
-  Membership/permissions are synced snapshots.
-- Adding existing space children accepts joined rooms and subspaces, including
-  shared parents. Self/duplicate links and cycles through known joined-space
-  state are rejected; unknown/unjoined paths and concurrent server changes cannot
-  be checked atomically. Unjoined children cannot be linked. Creating and linking
-  new subspaces is supported. Disband is partial/retryable, not atomic or a purge; child rooms/history/aliases/
-  external references remain.
+- Local room and space addresses can be created/removed and existing aliases
+  published; creating aliases on other servers is unsupported. See
+  [settings](settings.md).
+- Invitations, member removal, invitation revocation, confirmed bans/unbans, and
+  Member/Moderator/Admin role changes are supported within permission boundaries;
+  no custom numeric role entry or self-role changes. Bans accept full Matrix user
+  IDs, including departed or unknown users. Unbanning does not invite or join the
+  person; space moderation does not affect child rooms. Membership/permissions
+  are synced snapshots. See [moderation checks](validation/ui-management.md#basic-moderation).
+- Existing space children can be linked without joining them, using discovery
+  results or an alias, room ID, `matrix.to` link, or `matrix:` room link. Linking
+  requires routing servers and permission in the parent; it writes only the
+  parent's child link. Aliases resolve routing servers; opaque IDs need a link
+  with `via` servers. Shared parents are supported. Self/duplicate links and
+  cycles through known joined-space state are rejected; unknown/unjoined paths
+  and concurrent server changes cannot be checked atomically. Creating and
+  linking new subspaces is supported. Disband is partial/retryable, not atomic
+  or a purge; child rooms/history/aliases/external references remain. See
+  [discovery checks](validation/connected-ui.md#discovering-rooms).
 - Directory search covers the connected homeserver. Space search covers loaded
   results (1,000 per tab). No knocking, hidden-room discovery, remote-homeserver
   directory selection, or email/phone invitations.
