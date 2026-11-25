@@ -79,8 +79,8 @@ pub enum Event {
     Banned(bool),
     Role(String, Role),
     Reason(u64, u64, String),
-    Confirm,
-    Cancel,
+    Confirm(u64, u64),
+    Cancel(u64, u64),
     Ignore,
     Loaded(u64, u64, Box<Result<Roster, String>>),
     Saved(u64, u64, MemberChange, Result<(), String>),
@@ -265,6 +265,14 @@ impl App {
             return Task::none();
         };
         let session = panel.request;
+        if let Event::Confirm(request, confirmation) | Event::Cancel(request, confirmation) =
+            &incoming
+            && (*request != session
+                || *confirmation != panel.members.reason_request
+                || panel.members.confirm.is_none())
+        {
+            return Task::none();
+        }
         match incoming {
             Event::Ready(request, result) => {
                 if request != session {
@@ -515,8 +523,8 @@ impl App {
                 panel.members.reason = reason;
                 panel.error = None;
             }
-            Event::Cancel if !panel.pending => panel.members.confirm = None,
-            Event::Invite | Event::Confirm
+            Event::Cancel(..) if !panel.pending => panel.members.confirm = None,
+            Event::Invite | Event::Confirm(..)
                 if !panel.pending
                     && self.pending_ops < MAX_PENDING_OPERATIONS
                     && !self.composing
@@ -1248,13 +1256,15 @@ fn confirmation<'a>(
             .keyboard_navigation(true)
             .on_press_maybe(
                 (!busy && interconnect::moderation::reason(reason).is_ok())
-                    .then_some(host.message(Event::Confirm))
+                    .then_some(host.message(Event::Confirm(request.0, request.1)))
             ),
             button(text("Cancel").size(13))
                 .padding([7, 10])
                 .style(shell::quiet_button)
                 .keyboard_navigation(true)
-                .on_press_maybe((!busy).then_some(host.message(Event::Cancel)))
+                .on_press_maybe(
+                    (!busy).then_some(host.message(Event::Cancel(request.0, request.1)))
+                )
         ]
         .spacing(8)
         .wrap(),
@@ -1292,6 +1302,143 @@ mod tests {
     fn open_sidebar(app: &mut App) -> u64 {
         let _ = app.update(Message::Members(crate::members::Event::Open));
         app.space_settings.sidebar.as_ref().unwrap().request
+    }
+    fn prompt(app: &App, host: Host, action: fn(u64, u64) -> Event) -> Message {
+        let panel = match host {
+            Host::Panel => app.space_settings.panel.as_ref(),
+            Host::Sidebar => app.space_settings.sidebar.as_ref(),
+        }
+        .unwrap();
+        host.message(action(panel.request, panel.members.reason_request))
+    }
+
+    fn editor(app: &App, host: Host) -> &State {
+        match host {
+            Host::Panel => &app.space_settings.panel.as_ref().unwrap().members,
+            Host::Sidebar => &app.space_settings.sidebar.as_ref().unwrap().members,
+        }
+    }
+    #[test]
+    fn stale_confirm_and_cancel_cannot_act_on_a_different_person() {
+        for (host, space) in [
+            (Host::Panel, false),
+            (Host::Panel, true),
+            (Host::Sidebar, false),
+        ] {
+            let mut app = demo_app();
+            let selected = app.selection.room.clone();
+            let key = app.draft_key(false).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("keep draft");
+            app.scroll_positions.insert(key.clone(), 120.0);
+            let session = match host {
+                Host::Panel => open(&mut app, space),
+                Host::Sidebar => open_sidebar(&mut app),
+            };
+            let _ = app.update(host.message(Event::Ban("@maya:example.org".into())));
+            let old_confirm = prompt(&app, host, Event::Confirm);
+            let old_cancel = prompt(&app, host, Event::Cancel);
+            let _ = app.update(old_cancel.clone());
+            assert!(editor(&app, host).confirm.is_none());
+            let _ = app.update(host.message(Event::Ban("@sam:example.org".into())));
+            let confirmation = editor(&app, host).reason_request;
+            let _ = app.update(host.message(Event::Reason(
+                session,
+                confirmation,
+                "Sam's prompt".into(),
+            )));
+            let current_confirm = prompt(&app, host, Event::Confirm);
+            let _ = app.update(old_confirm);
+            assert!(
+                matches!(&editor(&app, host).confirm, Some(MemberChange::Ban { user, .. }) if user == "@sam:example.org")
+            );
+            let _ = app.update(old_cancel);
+            assert!(
+                matches!(&editor(&app, host).confirm, Some(MemberChange::Ban { user, .. }) if user == "@sam:example.org")
+            );
+            assert_eq!(editor(&app, host).reason, "Sam's prompt");
+            let roster = editor(&app, host).roster.as_ref().unwrap();
+            assert!(roster.banned.is_empty());
+            for user in ["@maya:example.org", "@sam:example.org"] {
+                assert!(roster.rows.iter().any(|row| row.member.user_id == user));
+            }
+            assert_eq!(app.pending_ops, 0);
+            let _ = app.update(current_confirm.clone());
+            let _ = app.update(current_confirm);
+            let roster = editor(&app, host).roster.as_ref().unwrap();
+            assert_eq!(roster.banned.len(), 1);
+            assert_eq!(roster.banned[0].user_id, "@sam:example.org");
+            assert!(
+                roster
+                    .rows
+                    .iter()
+                    .any(|row| row.member.user_id == "@maya:example.org")
+            );
+            assert!(editor(&app, host).confirm.is_none());
+            assert_eq!(app.pending_ops, 0);
+            assert_eq!(app.selection.room, selected);
+            assert_eq!(app.drafts[&key].content.text(), "keep draft");
+            assert_eq!(app.scroll_positions[&key], 120.0);
+        }
+    }
+    #[test]
+    fn stale_confirm_and_cancel_cannot_act_on_a_reopened_panel() {
+        for (host, space) in [
+            (Host::Panel, false),
+            (Host::Panel, true),
+            (Host::Sidebar, false),
+        ] {
+            let mut app = demo_app();
+            let old_session = match host {
+                Host::Panel => open(&mut app, space),
+                Host::Sidebar => open_sidebar(&mut app),
+            };
+            let _ = app.update(host.message(Event::Ban("@maya:example.org".into())));
+            let old_confirmation = editor(&app, host).reason_request;
+            let old_confirm = prompt(&app, host, Event::Confirm);
+            let old_cancel = prompt(&app, host, Event::Cancel);
+            let _ = app.update(match host {
+                Host::Panel => message(PanelEvent::Close),
+                Host::Sidebar => Message::Members(crate::members::Event::Close),
+            });
+            let new_session = match host {
+                Host::Panel => open(&mut app, space),
+                Host::Sidebar => open_sidebar(&mut app),
+            };
+            let _ = app.update(host.message(Event::Ban("@sam:example.org".into())));
+            assert_ne!(old_session, new_session);
+            assert_eq!(old_confirmation, editor(&app, host).reason_request);
+            let current_confirm = prompt(&app, host, Event::Confirm);
+            let current_cancel = prompt(&app, host, Event::Cancel);
+            let _ = app.update(old_confirm);
+            assert!(
+                matches!(&editor(&app, host).confirm, Some(MemberChange::Ban { user, .. }) if user == "@sam:example.org")
+            );
+            let _ = app.update(old_cancel);
+            assert!(
+                matches!(&editor(&app, host).confirm, Some(MemberChange::Ban { user, .. }) if user == "@sam:example.org")
+            );
+            assert!(
+                editor(&app, host)
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned
+                    .is_empty()
+            );
+            let _ = app.update(current_cancel);
+            let _ = app.update(current_confirm);
+            assert!(editor(&app, host).confirm.is_none());
+            assert!(
+                editor(&app, host)
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned
+                    .is_empty()
+            );
+            assert_eq!(app.pending_ops, 0);
+        }
     }
     #[test]
     fn reopening_room_members_resumes_after_an_old_member_write_finishes() {
@@ -1402,7 +1549,7 @@ mod tests {
                 .is_some()
         );
         let _ = app.members_view();
-        let _ = app.update(Host::Sidebar.message(Event::Cancel));
+        let _ = app.update(prompt(&app, Host::Sidebar, Event::Cancel));
         assert!(
             app.model
                 .members
@@ -1417,7 +1564,7 @@ mod tests {
         );
         let _ = app
             .update(Host::Sidebar.message(Event::Role("@sam:example.org".into(), Role::Moderator)));
-        let _ = app.update(Host::Sidebar.message(Event::Confirm));
+        let _ = app.update(prompt(&app, Host::Sidebar, Event::Confirm));
         assert_eq!(
             app.model
                 .members
@@ -1441,7 +1588,7 @@ mod tests {
                     .confirm
                     .is_some()
             );
-            let _ = app.update(Host::Sidebar.message(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Sidebar, Event::Confirm));
             assert!(
                 !app.model
                     .members
@@ -1517,7 +1664,7 @@ mod tests {
                 app.space_settings.panel.as_ref().unwrap().members.reason,
                 "  Spam  "
             );
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             let details = app
                 .space_settings
                 .panel
@@ -1578,7 +1725,7 @@ mod tests {
             assert_eq!(panel.members.reason, "Reviewed");
             assert!(panel.members.confirm.is_some());
             assert_eq!(app.pending_ops, 0);
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             assert!(
                 app.space_settings
                     .panel
@@ -1631,8 +1778,8 @@ mod tests {
                     .banned
                     .is_empty()
             );
-            let _ = app.update(event(Event::Cancel));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Cancel));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             assert!(
                 app.space_settings
                     .panel
@@ -1646,7 +1793,7 @@ mod tests {
                     .is_empty()
             );
             let _ = app.update(event(Event::PrepareBanId(session)));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             let _ = app.update(event(Event::Reload));
             assert_eq!(
                 app.space_settings
@@ -1693,7 +1840,7 @@ mod tests {
             open(&mut app, space);
             let user = "@maya:example.org";
             let _ = app.update(event(Event::Ban(user.into())));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             let _ = app.update(event(Event::Banned(true)));
             let _ = app.update(event(Event::Reload));
             assert_eq!(
@@ -1711,7 +1858,7 @@ mod tests {
             );
             let _ = app.update(event(Event::Unban(user.into())));
             let _ = app.update(event(Event::Search("hidden".into())));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             assert_eq!(
                 app.space_settings
                     .panel
@@ -1727,7 +1874,7 @@ mod tests {
             );
             let _ = app.update(event(Event::Search(String::new())));
             let _ = app.update(event(Event::Unban(user.into())));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             let _ = app.update(event(Event::Reload));
             assert!(
                 app.space_settings
@@ -1759,8 +1906,8 @@ mod tests {
             let user = "@maya:example.org";
             let _ = app.update(event(Event::Ban(user.into())));
             assert!(rows(&app).iter().any(|m| m.member.user_id == user));
-            let _ = app.update(event(Event::Cancel));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Cancel));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             assert!(rows(&app).iter().any(|m| m.member.user_id == user));
             let _ = app.update(event(Event::Ban("@you:example.org".into())));
             assert!(
@@ -1773,7 +1920,7 @@ mod tests {
                     .is_none()
             );
             let _ = app.update(event(Event::Ban(user.into())));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             assert!(!rows(&app).iter().any(|m| m.member.user_id == user));
             let _ = app.update(event(Event::Reload));
             assert!(!rows(&app).iter().any(|m| m.member.user_id == user));
@@ -1784,7 +1931,7 @@ mod tests {
         let mut app = demo_app();
         open_sidebar(&mut app);
         let _ = app.update(Host::Sidebar.message(Event::Ban("@maya:example.org".into())));
-        let _ = app.update(Host::Sidebar.message(Event::Confirm));
+        let _ = app.update(prompt(&app, Host::Sidebar, Event::Confirm));
         assert!(
             !app.model
                 .members
@@ -1819,15 +1966,15 @@ mod tests {
                     .iter()
                     .any(|m| m.member.user_id == "@maya:example.org")
             );
-            let _ = app.update(event(Event::Cancel));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Cancel));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             assert!(
                 rows(&app)
                     .iter()
                     .any(|m| m.member.user_id == "@maya:example.org")
             );
             let _ = app.update(event(Event::Remove("@maya:example.org".into())));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             assert!(
                 !rows(&app)
                     .iter()
@@ -1837,7 +1984,7 @@ mod tests {
                 "@sam:example.org".into(),
                 Role::Moderator,
             )));
-            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(prompt(&app, Host::Panel, Event::Confirm));
             assert_eq!(
                 rows(&app)
                     .iter()

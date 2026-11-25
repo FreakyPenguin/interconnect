@@ -190,3 +190,16 @@ and ban detail presentation; sender confirmation remained usable at 1280×800 an
 640×480. No saved account was used. Live server enforcement/propagation, complete
 native keyboard/IME acceptance, Dark/GPU rendering, macOS, and resource measurements
 remain outside this run.
+
+## Stale member confirmations
+
+- Confirm and Cancel carry both the panel session and confirmation ID. Open Maya's
+  ban prompt, retain its actions, cancel, then open Sam's prompt: replayed old
+  Confirm/Cancel must neither ban Sam nor dismiss his prompt or discard its reason.
+  The current prompt's actions must still work. Repeat in room member management,
+  space settings, and the People sidebar.
+- Close/reopen the panel and repeat while the new panel's confirmation counter
+  equals the old counter. The old panel's actions must be rejected by session ID.
+  Regression fixtures cover both sequences, reason/draft/scroll preservation,
+  current-action behavior, and absence of pending writes from rejected actions.
+  These are headless UI checks; no connected account or desktop session is needed.
