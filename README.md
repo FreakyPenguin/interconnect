@@ -15,8 +15,9 @@ A native desktop [Matrix](https://matrix.org/) client built with Rust,
   room sections, bookmarks, and unread activity in one place.
 - **Keyboard-first navigation.** IDE-style quick pickers and conversation
   back/forward history that remembers your room, thread, and reading position.
-- **Made for technical conversations.** Markdown, syntax-highlighted code,
-  rendered LaTeX formulas, and custom emoji and reactions.
+- **Made for technical conversations.** Markdown tables, syntax-highlighted code
+  with bounded previews and Copy/Save, rendered LaTeX formulas, and custom emoji
+  and reactions.
 
 Experimental and fully AI-coded for personal use. Developed on Linux/Wayland;
 Apple Silicon macOS builds are best-effort.
@@ -36,14 +37,19 @@ your steps from the keyboard. Text drafts persist encrypted across restarts.
 
 ![Dark theme: use quick pickers, search messages, and return through conversation history](docs/images/keyboard-navigation.gif)
 
-Write code and math as naturally as plain text, then preview before sending.
-Select and copy across messages; bookmark the ones you want to find again.
+Write code, tables, and math, then preview before sending. Long code blocks start
+with a bounded preview: use the corner icons to expand/collapse, copy, or save,
+and the horizontal scrollbar for wide lines. Size message text independently
+from the interface in Settings → General. Select and copy across messages;
+bookmark the ones you want to find again.
 
 ![Dark theme: syntax-highlighted code and a LaTeX draft toggled between Markdown source and rendered preview](docs/images/formatting.gif)
 
-All images use local demo data. See [keyboard shortcuts](docs/keyboard.md),
-[settings](docs/settings.md), and [current limitations](docs/limitations.md)
-for details.
+All images use local demo data captured on 2026-11-22, before the current code
+controls. See [code blocks](docs/keyboard.md#code-blocks),
+[Markdown tables](docs/keyboard.md#markdown-tables),
+[keyboard shortcuts](docs/keyboard.md), [settings](docs/settings.md), and
+[current limitations](docs/limitations.md) for the implemented behavior.
 
 ## Get started
 

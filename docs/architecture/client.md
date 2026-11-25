@@ -79,8 +79,13 @@ Shutdown waits for admission/retry operations and flushes drafts.
 Room/thread panes use [variable-height virtual rows](timeline.md) for long loaded
 histories. Cached projections and a prefix-height index retain lightweight metadata;
 only the viewport and overscan own paragraph/editor/widget state. Model-backed
-selection and sparse spoiler state survive row unmounting. Small conversations
-retain exact full geometry. Widget virtualization does not discard SDK history.
+selection and sparse spoiler/code state survive row unmounting. A bounded
+64-conversation session cache restores selections, code expansion, and horizontal
+offsets on return; pinned originals keep independent selection/scroll state.
+Small conversations retain exact geometry, with event-anchor restoration after
+code interactions change layout. Collapsed code shapes at most 12 lines / 2 KiB;
+very long plain prose and expanded code still use full layout. Widget
+virtualization does not discard SDK history.
 
 Room/thread panes follow arrivals only when already at newest; otherwise message
 anchors preserve position across arrivals/pagination. Closed-pane offsets remain

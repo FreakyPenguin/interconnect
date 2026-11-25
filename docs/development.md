@@ -45,11 +45,14 @@ Use `cargo run --locked --bin interconnect -- --help` to list startup options.
 
 ### README screenshots and tours
 
-The media in `docs/images/` was refreshed from the current demo on 2026-11-22,
+The media in `docs/images/` was last refreshed from the demo on 2026-11-22,
 using an isolated headless Sway display on Linux/Wayland, a 1440×960 window,
 and the tiny-skia renderer. Install Noto Color Emoji and a CJK font for the
 multilingual samples. Capture only the app content, excluding desktop chrome,
 tooltips, and other windows. Use demo data only; never capture a connected account.
+These captures predate the bounded code previews, corner icons, table grid, and
+Message text preference. They illustrate the workflows; use the current
+[code/table guide](keyboard.md#code-blocks) for control behavior.
 
 | Asset | Theme | Workflow |
 | --- | --- | --- |

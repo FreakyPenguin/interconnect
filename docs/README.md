@@ -2,7 +2,8 @@
 
 See the [project README](../README.md) for features and screenshots.
 
-- [Keyboard shortcuts](keyboard.md)
+- [Keyboard shortcuts](keyboard.md), [code blocks](keyboard.md#code-blocks),
+  and [Markdown tables](keyboard.md#markdown-tables).
 - [Settings and account profiles](settings.md)
 - [Saved messages](bookmarks.md)
 - [Current limitations](limitations.md) and [ideas](todo.md)
@@ -11,5 +12,5 @@ See the [project README](../README.md) for features and screenshots.
   [message formatting](architecture/message-formatting.md),
   [virtual timelines](architecture/timeline.md), and [file drops](architecture/winit-file-drops.md).
 - Validation: [UI and accounts](validation/connected-ui.md),
-  [idle resources](validation/idle-resources.md), [long histories](validation/long-history.md), [notifications](validation/notifications.md),
+  [idle resources](validation/idle-resources.md), [long histories and large messages](validation/long-history.md), [notifications](validation/notifications.md),
   [device verification](validation/verification.md), and [key recovery](validation/recovery.md).

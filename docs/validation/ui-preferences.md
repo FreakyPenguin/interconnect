@@ -30,6 +30,12 @@ see [account validation](connected-ui.md#desktop-login).
   native window after Save, toggle the compact sidebar and drop files on each
   visible conversation pane; hidden panes must reject drops. Repeat after Reload
   and Save and after returning to defaults.
+- General → Message text: stage/cancel/save each 12/14/16/18 px choice independently
+  of Interface size. Check plain/formatted bodies, Markdown headings, code, tables,
+  and previews; navigation, room/thread headers, controls, composer editing, and
+  authored media sizes retain their own sizes. Preserve selection, expanded code,
+  horizontal offsets, and reading anchors through Save, resize, room changes,
+  and thread reopenings. Repeat after Reload/defaults; a missing setting uses 14 px.
 - Select System and change desktop appearance while reading and while Settings
   has unsaved edits. All message/code/topic and widget colors follow the native
   event without changing the draft. Explicit Light/Dark ignore desktop changes.

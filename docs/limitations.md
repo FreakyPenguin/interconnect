@@ -74,10 +74,17 @@ builds are experimental.
   differ in other clients. Initial hydration loads all
   bookmark history; writes require complete decrypted bookmark history and do
   not use an offline send queue.
-- No full tables, visual rich-text editor, inline-image authoring, formatted media
-  captions, language detection, or composer-source highlighting. Code highlighting
-  needs a bundled declared language; blocks over 16 KiB or lines over 2048 bytes
-  stay plain. Excerpts are plain text.
+- Markdown pipe tables and received HTML tables use a native grid with wrapping
+  cells and left/center/right alignment. At most 32 columns; nested tables fall
+  back to plain text, and row/column spans are flattened into individual cells.
+  See [table controls](keyboard.md#markdown-tables).
+- No visual rich-text editor, inline-image authoring, formatted media captions,
+  language detection, or composer-source highlighting. Code highlighting needs a
+  bundled declared language; blocks over 16 KiB or lines over 2048 bytes stay
+  uncolored monospace. This does not disable their bounded code previews.
+  Incoming HTML over the document limit instead uses the plain-message fallback;
+  see [formatting limits](architecture/message-formatting.md#received-messages).
+  Excerpts are plain text.
 - User completion shows six matches from at most 4096 joined members; room links
   use joined rooms/canonical aliases. Room notifications require explicit
   completion and permission; received `@room` styling requires `m.mentions.room`
@@ -97,8 +104,15 @@ builds are experimental.
   4,096 reading positions persist; see [local storage limits](architecture/drafts.md). Attachments and unfinished
   edits do not survive restart. Restoring an old position requires available
   history/keys; unavailable anchors fall back to the newest timeline. No complete
-  offline history or configurable storage retention. Long timelines virtualize row widgets;
-  scrollbar geometry uses estimated offscreen heights, and individual very long
-  messages still lay out as a whole. Loaded SDK data remains in memory.
+  offline history or configurable storage retention. Long timelines virtualize
+  row widgets; scrollbar geometry uses estimated offscreen heights. Collapsed
+  code shapes at most 12 lines / 2 KiB, but very long plain prose and explicitly
+  expanded code still use full layout. Preview limits are not configurable.
+  Loaded SDK data remains in memory.
+- Recent conversations retain selection, spoiler reveals, code expansion, and
+  horizontal offsets in a 64-conversation session cache. These presentation
+  choices are not saved across restarts; account changes clear them, and older
+  cache entries can be evicted. Persisted reading positions and drafts are
+  separate; see [timeline state](architecture/timeline.md).
 
 See [ideas](todo.md) and [validation boundaries](validation/connected-ui.md#validation-scope).

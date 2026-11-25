@@ -225,9 +225,12 @@ is the complete key/default reference.
   window as needed.
 - Message text offers 12, 14 (default), 16, and 18 logical pixels for plain and
   formatted conversation bodies, including code, tables, and message previews.
-  Interface and desktop scaling still apply. Headers, navigation, dialogs,
-  composer editing, and authored image/formula dimensions keep their own sizes.
-  Changing this preference preserves selection, code state, and reading anchors.
+  Markdown headings scale proportionally; interface and desktop scaling still
+  apply. Room/thread headers, navigation, dialogs, composer editing, and authored
+  image/formula dimensions keep their own sizes. Changing this preference
+  preserves selection, code state, and reading anchors. The setting is
+  `appearance.message_text_size`: `small`, `normal`, `large`, or `extra_large`.
+  Existing files default to `normal` (14 px).
 - Composer defaults to Ctrl+Enter to send; Enter-to-send is optional.
 - Presence polling defaults off (60-second interval; allowed range 15–3600).
   On-demand snapshots use a 60-second cache; polling runs only while focused.

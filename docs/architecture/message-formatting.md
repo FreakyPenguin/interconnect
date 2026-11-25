@@ -4,7 +4,7 @@
 
 SDK-sanitized `m.text`, `m.notice`, and `m.emote` HTML projects to native
 `message_document::Document` on blocking workers. Paragraphs, headings, lists,
-quotes, code, links, spoilers, and inline styles are supported; unsupported
+quotes, code, tables, links, spoilers, and inline styles are supported; unsupported
 structures degrade to text. CSS/scripts are inert; plain messages stay literal.
 Projection is bounded to 64 KiB HTML/output, 4096 nodes, and 32 levels; oversized
 content falls back to plain text. Reuse unchanged documents, replace on edit, and
@@ -12,8 +12,11 @@ check cancellation/generation before publishing.
 
 Measurement, drawing, hit-testing, selection, and decoration share Iced/Cosmic
 Text paragraphs. Copy uses canonical displayed text, image alternatives, and
-LaTeX source; hidden spoilers copy placeholders. Reveal is widget-local and
-resets selection/layout. Excerpts use the SDK plain fallback.
+LaTeX source; hidden spoilers copy placeholders. Revealing changes canonical
+text and layout, so affected selections are revalidated. Spoiler reveals, code
+expansion, and horizontal offsets survive widget eviction and recent conversation
+navigation in the bounded [session cache](timeline.md); edits/account changes
+invalidate stale state. Excerpts use the SDK plain fallback.
 
 Bare HTTP/HTTPS/`www.` links exclude code, existing anchors, hidden spoilers, and
 object alternatives. Activation validates destinations; ordinary links use the
@@ -23,7 +26,61 @@ Code uses syntect with two-face's bundled syntax/themes (Oniguruma backend).
 Light/dark colors are document-owned and prepared on workers with formulas;
 `Document::parse` stays structural, while `parse_with_formulas` prepares assets.
 Resize/theme changes reuse colors. Missing languages, blocks over 16 KiB, or lines
-over 2048 bytes fall back to monospace. Assets are embedded; no global content cache.
+over 2048 bytes fall back to uncolored monospace. These are highlighting limits,
+independent of the preview limits below. Assets are embedded; no global content
+cache.
+
+## Bounded code previews
+
+`formatted::State` shapes a UTF-8-safe prefix of at most 12 lines / 2048 bytes for
+collapsed code. The document and canonical selection/copy text retain the entire
+block. Expand explicitly opts into full layout; Collapse drops expanded
+paragraphs and returns to the prefix budget. These controls do not apply to a
+plain-message fallback when HTML exceeds the document parser's limits.
+
+Cached outline icons form an upper-right corner overlay: Copy, Save, and, for
+truncated blocks, Expand/Collapse. Hover tooltips name each action. The message
+hover toolbar leaves that corner clear and wraps in narrow panes without changing
+text width. There is no text-control row or horizontal-arrow control.
+A translucent bottom fade with **Expand code** also activates expansion.
+
+Code stays unwrapped. Overflow supplies a horizontal track/thumb; dragging,
+track presses, and horizontal wheel/trackpad input share the stored horizontal
+pixel offset. The overlay stays fixed while glyphs scroll, and hit-testing uses
+the same translation. Release/focus loss ends a drag. No idle animation or polling
+is introduced. Code controls preserve selection and anchor the message body
+through expansion; see [timeline restoration](timeline.md).
+
+Copy and Save use the complete block with spoiler placeholders, never control
+labels. Save captures that text, opens an asynchronous file picker suggesting
+`code.txt`, and writes asynchronously. Superseding saves, account transitions,
+and shutdown abort the task; request/account checks reject stale completion UI.
+Plain prose still lays out as a whole, as does explicitly expanded code.
+
+## Tables
+
+Incoming HTML tables and authored Markdown pipe tables become `TableCell` blocks
+with table/row/column identities, header state, and alignment. Columns share equal
+widths within each table; cells wrap and each row uses its tallest measured cell.
+Header styling, borders, text drawing, and hit-testing share those cell bounds.
+Cells retain inline styles and validated links. Canonical text separates cells
+with tabs and rows with newlines, preserving displayed labels, empty cells, and
+hidden-spoiler placeholders.
+
+Existing byte/node/depth limits still apply. Tables allow at most 32 columns;
+nested tables reject formatted parsing and use the event's plain fallback.
+Row/column spans do not create merged cells. Alignment reads `align` or the
+recognized `text-align` value; arbitrary CSS remains inert.
+
+## Message text sizing
+
+`appearance.message_text_size` selects a 12/14/16/18 logical-pixel body size,
+independent of interface scaling. Plain editors update their font metrics;
+formatted paragraphs invalidate layout while retaining canonical positions and
+sparse interaction state. Headings scale relative to the 14 px default. Code,
+tables, and message previews use the body preference; room headers, controls,
+composer editing, and authored image/formula dimensions retain their own sizes.
+Interface and desktop scaling still apply to the result.
 
 ## Received user mentions
 
@@ -68,9 +125,10 @@ retain fallback text (or LaTeX attribute). Sources/errors are not logged.
 
 ## Markdown composition
 
-Drafts default to Markdown; Plain text preserves source. CommonMark plus
-strikethrough supports headings/lists/quotes/code/links; soft breaks become chat
-breaks, raw HTML escapes, and image syntax becomes alternative text. `$…$` and
+Drafts default to Markdown; Plain text preserves source. CommonMark with
+strikethrough and pipe-table extensions supports headings, lists, quotes, code,
+links, and tables. Soft breaks become chat breaks, raw HTML escapes, and image
+syntax becomes alternative text. `$…$` and
 `$$…$$` produce Matrix math HTML; code/Plain text stay literal. Backslash math
 delimiters are not composer syntax. Attachment captions stay plain.
 

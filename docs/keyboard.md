@@ -153,6 +153,48 @@ Escape keeps sending. Both choices return focus to the composer. Cancellation st
 pending uploads; a message already being sent may finish and then be removed by
 Matrix. Sent messages use the separate confirmed **Delete message…** action.
 
+## Code blocks
+
+Long code blocks initially show at most 12 lines or 2 KiB, whichever limit is
+reached first. The upper-right corner contains icons with hover tooltips:
+
+| Icon | Action |
+| --- | --- |
+| Overlapping pages | **Copy code**: copy the entire block, including text outside the preview. |
+| Download | **Save code**: choose a file for the entire block; the suggested name is `code.txt`. |
+| Down/up chevron | **Expand code** / **Collapse code**; shown only when the block exceeds the preview limit. |
+
+A translucent fade with **Expand code** at the bottom also expands a truncated
+preview. Wide lines stay unwrapped: drag the horizontal scrollbar, click its
+track, or use horizontal trackpad scrolling. The bar appears only when the
+currently rendered code overflows; vertical scrolling stays with the conversation.
+The old text-control row and left/right arrow controls are removed.
+
+Copy/Save retain code whitespace and Unicode; hidden spoilers remain placeholders.
+Controls preserve an existing text selection. Recent conversations restore
+selection, expansion, and horizontal offsets when switching rooms or reopening
+threads during the session, including the pinned thread original's own scroll
+area. These presentation choices do not persist across app restarts.
+
+## Markdown tables
+
+Use pipe-table syntax in Markdown mode, then preview or send:
+
+```markdown
+| Operation | Items |
+| :--- | ---: |
+| `sync()` | 1024 |
+```
+
+Received HTML tables use the same grid. Cells wrap within shared column widths;
+row height follows the tallest cell, headers are emphasized, and left/center/right
+alignment is retained. Selecting and copying a table uses tabs between cells and
+newlines between rows, including empty cells. Plain text mode keeps the source
+literal. See [table limits](limitations.md#conversations-and-storage).
+
+To change conversation typography without enlarging navigation and controls,
+use Settings → General → **Message text**; see [settings](settings.md#configuration-file).
+
 ## Dialogs and viewers
 
 Routine actions use contextual icon tooltips: disk for Save, circular arrow for

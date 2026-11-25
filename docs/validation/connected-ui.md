@@ -438,7 +438,7 @@ remote sign-out retains them. See [storage boundaries](../architecture/drafts.md
 - Toggle themes with pending drafts/older positions. Check Save/Cancel/Defaults,
   persistence/Reload in a test profile, legacy missing theme, and invalid theme
   retaining the last valid settings. Demo never writes settings.
-- Inspect code, lists, links, spoilers, math, images/placeholders, mentions, and
+- Inspect code, tables, lists, links, spoilers, math, images/placeholders, mentions, and
   selection in room/thread messages and previews. Test Unicode/bidi and copy
   across runs/blocks; hidden spoilers copy placeholders.
 - Preview Markdown lists using `*`, `-`, `+`, and numbered markers, both with
@@ -450,8 +450,10 @@ remote sign-out retains them. See [storage boundaries](../architecture/drafts.md
   a nested list marker, which should remain on the same line as the bullet.
 - Highlight Rust/TypeScript/TOML/Dockerfile blocks in both themes. Unknown/unset
   languages, blocks over 16 KiB, or lines over 2048 bytes stay plain monospace.
-  Colors survive resize/theme changes; inline code stays plain. Stale preview
-  preparation must not replace a newer source/conversation.
+  This disables colors, not bounded code previews. Colors survive resize/theme
+  changes; inline code stays plain. Stale preview preparation must not replace
+  a newer source/conversation. Follow the [long-code checks](#long-technical-code-messages)
+  and [table checks](#markdown-tables) below.
 
 ### Mentions and room links
 
@@ -926,104 +928,94 @@ and disclosure changes; live cross-client updates remain a manual check.
 
 ## Long technical code messages
 
-Demo → Message formatting includes a 100-line code sample. Code starts with a
-12-line / 2 KiB preview; Expand and Collapse control shaping, rather than merely
-clipping a fully laid-out block. Wide lines do not wrap. Use horizontal trackpad
-scrolling or the visible horizontal scrollbar when the rendered code overflows.
-Drag the thumb or click the track; the bar disappears when the code fits. Vertical scrolling remains with the timeline. Collapsed
-truncated code has a translucent bottom fade with a clickable **Expand code**
-overlay; expanded and complete blocks omit this cue.
-A compact corner overlay provides Copy, Save, and (for truncated code)
-Expand/Collapse icons, with hover tooltips. Horizontal arrow controls are removed.
-Copy and Save export the full visible-spoiler code source, preserving whitespace
-and Unicode. Save uses an asynchronous native picker and file write.
+Demo → Message formatting includes a 100-line code sample. Collapsed code shapes
+at most 12 lines / 2 KiB, whichever limit is reached first. Expansion uses full
+code layout; Collapse releases it. Uncolored oversized/unknown-language code
+keeps these controls. Incoming HTML beyond parser limits instead uses the plain
+message fallback, which has no code preview.
 
-Automated layout checks cover preview budgets, full canonical text, horizontal
-hit testing, and releasing expanded paragraphs on collapse. Native clipboard,
-file-picker cancellation/errors, macOS gestures, and GPU clipping require desktop
-acceptance; headless tests do not establish those integrations.
+The upper-right corner contains Copy and Save icons, plus Expand/Collapse when
+truncated, with named hover tooltips. The message hover actions leave this corner
+clear and wrap in narrow panes without reducing text width. There is no top text
+row or left/right arrow control. A translucent bottom fade with **Expand code**
+also expands a truncated preview; it disappears when expanded or complete.
 
-Code actions preserve canonical selection, including text hidden by the preview.
-A bounded session cache restores selections, expansion, spoiler reveals, and
-horizontal offsets on return to a room/thread. Edited or removed endpoints are
-rejected by the current source. Code expansion anchors the message body even at
-the bottom; ordinary resize/prepend keeps the existing event anchor. Collapse
-returns to the bounded layout. Automated widget checks exercise control presses,
-copy, resize, generation changes, and cache bounds. Check native room/thread
-navigation with an active selection and horizontal offset before release.
+Wide lines remain unwrapped. A horizontal scrollbar appears only when rendered
+code overflows; drag the thumb, click the track, or scroll horizontally with a
+trackpad. Glyph hit-testing follows the stored offset while overlays stay fixed.
+Vertical scrolling remains with the conversation. Release or focus loss cancels
+a captured drag, including after moving beyond the block. Settled redraws must
+not schedule timers.
+
+Copy and Save use the entire block, including text outside the preview, with
+Unicode/whitespace and hidden-spoiler placeholders intact. Icons, tooltips, the
+fade, and the scrollbar are excluded from copied/saved code. Save opens an
+asynchronous native picker suggesting `code.txt`, followed by an asynchronous
+write. Verify native cancellation and errors separately from source-copy tests.
+
+A 64-conversation session cache restores logical selection, spoiler reveals,
+code expansion, and horizontal offsets on return to a room/thread. Changed
+source rejects stale state; account transitions clear it. The pinned original
+keeps its own selection and top-anchored scroll offset, independently of replies.
+An intermediate loading view must not erase it. These presentation choices are
+not saved across app restarts; persisted event reading anchors are separate.
+
+For desktop acceptance, select code, expand via both the chevron and bottom cue,
+drag the scrollbar past both endpoints, collapse, resize, and switch rooms or
+close/reopen the thread. Check full-code copy, fixed overlays, the visible event
+anchor, and the pinned original's independent position. Repeat at each message
+text size, in Light/Dark and compact panes. Also exercise all message hover
+actions beside the corner icons; none should cover another control.
 
 ## Markdown tables
 
-Markdown pipe tables now produce native table cells in previews and sent
-formatted payloads. Incoming HTML tables share the same grid. Columns share
-widths across rows; cells wrap, row heights follow the tallest cell, headers
-have a quiet background, and left/center/right alignment is retained. Copy uses
-tabs between cells and newlines between rows, preserving styled Unicode text,
-links, empty cells, and spoiler placeholders. Table chrome is not copied.
+Markdown pipe tables use the native grid in previews and sent formatted payloads;
+incoming HTML tables share it. Columns share equal widths, cells wrap, and row
+height follows the tallest cell. Headers are emphasized; left/center/right
+alignment is retained. Copy uses tabs between cells and newlines between rows,
+including empty cells, Unicode labels, and hidden-spoiler placeholders. Table
+chrome is excluded; links copy their displayed labels.
 
-The parser retains existing byte/node/depth bounds and allows up to 32 columns;
-nested tables fall back to plain message text. Row/column spans are flattened
-into individual cells. Demo → Message formatting includes a wrapping table.
-Automated parsing, outgoing Markdown, grid geometry, Unicode hit testing, and
-canonical-copy checks are covered; native GPU/input acceptance remains manual.
+The parser retains its byte/node/depth bounds and allows at most 32 columns.
+Nested tables fall back to plain message text; row/column spans do not create
+merged cells. Demo → Message formatting includes a wrapping table. Inspect
+aligned numbers, inline code/links/spoilers, empty cells, narrow widths, selection,
+and theme/size reflow. Automated parsing, outgoing Markdown, geometry, and
+Unicode hit-testing checks do not establish live cross-client interoperability.
 
 ## Independent message text sizing
 
 Settings → General → Message text offers 12/14/16/18 logical pixels separately
-from Interface size. Save applies it to plain and formatted bodies, code, tables,
-and message previews. Navigation, controls, composer editing, and authored media
-sizes are unchanged. Existing configurations default to 14 px. Automated checks
-cover config round trips, invalid settings, save-only application, retained
-navigation/scroll state, and plain/rich selection through size changes. Validate
-native clipping, selected-text copy, and event anchors in both room and thread
-panes at each size before release.
+from Interface size; existing files default to 14 px. Stage/cancel/Save and
+Reload/defaults must retain their ordinary preference semantics. Save updates
+plain/formatted bodies, proportional Markdown headings, code, tables, and
+previews. Room/thread headers, navigation, controls, composer editing, and
+authored media sizes retain their own sizes. Interface/desktop scaling still
+applies. Check selected-text copy, code state, and event anchors in both panes
+at each size. See [preference validation](ui-preferences.md#preferences).
 
-Thread originals use a separate retained selection and scroll offset within the
-same conversation cache. A widget regression reopens an expanded original through
-an intermediate loading view, resizes it, and verifies full-code copy and its
-original scroll offset. Reply selection stays independent.
+## Recorded technical-message validation
 
-### Local validation, 2026-11-24
+Implementation checks recorded on **2026-11-24**:
 
-The locked workspace suite passed; after the final UI fixes, the UI suite passed
-705 tests with one opt-in measurement ignored. Formatting, workspace/all-target
-Clippy with warnings denied, and the desktop binary build passed. All three
-individual-message workloads ran in the debug fixture at 1,000 units (one or two
-samples); these are functional measurements, not release performance acceptance.
+- The locked workspace suite passed during the milestone. The final UI suite
+  passed **709 tests**, with one opt-in measurement ignored. Format checking,
+  workspace/all-target Clippy with warnings denied, and the desktop build passed.
+- All three individual-message workloads ran in the debug fixture at 1,000 units
+  with one or two samples. These are functional measurements, not release
+  performance acceptance; see [the repeatable fixture](long-history.md).
+- An isolated tiny-skia/Wayland demo checked the final corner controls in Light
+  at 1440×960 and Dark at 640×480, tooltips, and icon expansion/collapse with
+  selection retained. Earlier milestone checks also exercised the bottom fade,
+  real-pointer scrollbar dragging beyond the block, room-return restoration,
+  pinned-original expansion/scroll through thread reopening, table alignment,
+  and applying 18 px text without enlarging shell/composer editing.
+- Automated regressions cover preview budgets, canonical copy, icon hit areas,
+  all message hover actions at narrow widths, scrollbar geometry/cancellation,
+  source changes, retained selection/anchors, and independent original/reply
+  state through a loading view. Screenshots/logs remain outside Git.
 
-An isolated headless Sway desktop with tiny-skia exercised the network-free demo
-at 1440×960 and 640×480: table grid/right alignment, code expand/collapse with a
-stable header, horizontal position and expansion through room navigation,
-Ctrl+A selection retained on collapse, pinned-original expansion/scroll through
-thread close/reopen, and applying 18 px text through Settings while shell and
-composer sizing stayed unchanged. Screenshots/logs remain outside the repository.
 Native clipboard round trips, Save code portal/native file dialogs, hardware GPU
-rendering, and macOS remain manual checks. Extremely long plain prose still uses
-full layout; explicitly expanded code can also be expensive. Incoming HTML keeps
-its existing byte/node/depth limits and plain fallback behavior.
-
-Code affordance regressions cover overflow appearing on expansion, fitting after
-resize, scrollbar endpoint clamping and track presses, drag release/focus loss,
-and preserving full-code selection when dragging the thumb or pressing the
-bottom Expand overlay. Captured drags follow horizontal movement outside the
-viewport; cancellation and settled redraws schedule no timers. The overlay and
-scrollbar are presentation only and never enter copied/saved code.
-
-The code-affordance follow-up passed 707 UI tests (one opt-in measurement ignored),
-format checking, workspace/all-target Clippy with warnings denied, and the binary
-build. An isolated tiny-skia/Wayland demo checked the fade and scrollbar in Light
-and Dark at 1440×960 and Dark at 640×480. Real virtual-pointer button/motion events
-verified thumb dragging beyond the block with selection retained; clicking the
-bottom overlay expanded the code with its header anchored. Screenshots stay
-outside Git. Native GPU rendering and macOS remain manual checks.
-
-The corner-icon refinement passed 709 UI tests (one opt-in measurement ignored),
-format checking, workspace/all-target Clippy with warnings denied, and the desktop
-build. Tests cover icon hit areas/tooltips, unchanged canonical text, retained
-selection/anchors, and separation from all message hover actions at narrow widths.
-Message hover actions wrap beside the reserved code corner without reducing body
-text width. The isolated tiny-skia/Wayland demo checked Light at 1440×960 and Dark
-at 640×480, the Copy tooltip, and icon expansion/collapse with selection retained.
-The scrollbar and bottom Expand overlay remain; the top text row and horizontal
-arrow controls are removed. Screenshots remain outside Git; native GPU/macOS
-acceptance remains manual.
+rendering, macOS, and live cross-client table behavior remain manual acceptance.
+Very long plain prose and explicitly expanded code still use full layout. The
+incoming HTML byte/node/depth limits and plain fallback behavior remain in place.
