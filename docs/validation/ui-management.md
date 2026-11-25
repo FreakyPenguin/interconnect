@@ -138,3 +138,22 @@ receipt, Dark/GPU, and native macOS acceptance were not established by this run.
 - Fixture coverage includes room/space requests for joined, departed, and unknown
   people, permission boundaries, cancellation, reload, and stale form input.
   Native desktop and live-server acceptance still require the dedicated checks.
+
+## Moderation reasons and ban details
+
+- Kick, invitation revocation, ban, unban, and message deletion accept optional
+  reasons. Whitespace-only reasons are omitted; reasons are bounded to 4000 UTF-8
+  bytes. Reasons are included in moderation events and may be visible in room
+  history. Cancellation, failed requests, and unrelated conversations retain their
+  own drafts. A new confirmation starts with an empty reason.
+- Banned-member entries show the actor, server event time, and available reason.
+  Missing/redacted details remain unavailable. A confirmed local ban shows its
+  known actor/reason and requires Reload for an authoritative server timestamp.
+  Demo details are local simulation data.
+- Failed member writes retain the confirmation and reason for explicit retry.
+  Deletion retries retain their transaction and original reason; the reason field
+  becomes read-only after the first attempt. Enter in the reason field does not
+  confirm deletion. Check room, thread, and space confirmations at compact sizes.
+- Fixtures cover trimmed/omitted/oversized payloads, reason-bearing kick/ban/unban
+  and redaction requests, server ban details, stale input, and retry preservation.
+  Live-server event propagation and native platform acceptance remain manual.

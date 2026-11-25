@@ -14,6 +14,16 @@ impl Composer {
         event: String,
         transaction: matrix_sdk::ruma::OwnedTransactionId,
     ) -> Result<(), String> {
+        self.delete_message_with_reason(event, transaction, String::new())
+            .await
+    }
+    pub async fn delete_message_with_reason(
+        self,
+        event: String,
+        transaction: matrix_sdk::ruma::OwnedTransactionId,
+        input: String,
+    ) -> Result<(), String> {
+        let reason = crate::moderation::reason(&input)?;
         let delete = async {
             let event: matrix_sdk::ruma::OwnedEventId = event
                 .parse()
@@ -41,7 +51,7 @@ impl Composer {
             if !permitted {
                 return Err("You no longer have permission to delete this message.".into());
             }
-            room.redact(&event, None, Some(transaction))
+            room.redact(&event, reason.as_deref(), Some(transaction))
                 .await
                 .map(|_| ())
                 .map_err(|error| error.to_string())

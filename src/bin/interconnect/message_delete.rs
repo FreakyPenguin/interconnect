@@ -2,7 +2,7 @@
 use super::{App, MAX_PENDING_OPERATIONS, Message, reaction_picker::Target, shell};
 use iced::{
     Element, Length, Task,
-    widget::{button, column, container, row, text},
+    widget::{button, column, container, row, text, text_input},
 };
 use interconnect::connected::{MessageRow, RowKind};
 
@@ -18,11 +18,15 @@ pub struct State {
     request: u64,
     transaction: matrix_sdk::ruma::OwnedTransactionId,
     pending: bool,
+    attempted: bool,
+    reason: String,
     error: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub enum Event {
     Open(Target),
+    Reason(u64, String),
+    Ignore,
     Confirm(u64),
     Cancel(u64),
     Finished {
@@ -37,11 +41,12 @@ impl State {
         message(Event::Cancel(self.request))
     }
 }
-fn confirm_key(event: iced::Event, _: iced::event::Status, _: iced::window::Id) -> Option<()> {
-    matches!(event, iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+fn confirm_key(event: iced::Event, status: iced::event::Status, _: iced::window::Id) -> Option<()> {
+    (status != iced::event::Status::Captured
+        && matches!(event, iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter),
         modifiers, repeat: false, ..
-    }) if modifiers.is_empty())
+    }) if modifiers.is_empty()))
     .then_some(())
 }
 fn message(event: Event) -> Message {
@@ -146,6 +151,8 @@ impl App {
                     request: self.generation,
                     transaction: matrix_sdk::ruma::TransactionId::new(),
                     pending: false,
+                    attempted: false,
+                    reason: String::new(),
                     error: None,
                 });
                 self.context_menu = None;
@@ -169,6 +176,17 @@ impl App {
                     });
                 }
             }
+            Event::Reason(request, reason) => {
+                if let Some(state) = &mut self.message_delete
+                    && state.request == request
+                    && !state.pending
+                    && !state.attempted
+                {
+                    state.reason = reason;
+                    state.error = None;
+                }
+            }
+            Event::Ignore => {}
             Event::Confirm(request) => {
                 let Some(state) = self.message_delete.as_ref().filter(|state| {
                     state.request == request
@@ -178,9 +196,14 @@ impl App {
                 }) else {
                     return Task::none();
                 };
-                if self.pending_ops >= MAX_PENDING_OPERATIONS {
+                if self.pending_ops >= MAX_PENDING_OPERATIONS || self.composing {
                     return Task::none();
                 }
+                if let Err(error) = interconnect::moderation::reason(&state.reason) {
+                    self.message_delete.as_mut().unwrap().error = Some(error);
+                    return Task::none();
+                }
+                let reason = state.reason.clone();
                 let target = state.target.clone();
                 if self.demo.is_some() {
                     self.demo
@@ -202,17 +225,21 @@ impl App {
                 }
                 let state = self.message_delete.as_mut().unwrap();
                 state.pending = true;
+                state.attempted = true;
                 state.error = None;
                 self.pending_ops += 1;
                 let event = target.event.clone();
-                return Task::perform(composer.delete_message(event, transaction), move |result| {
-                    message(Event::Finished {
-                        target: target.clone(),
-                        account: account.clone(),
-                        request,
-                        result,
-                    })
-                });
+                return Task::perform(
+                    composer.delete_message_with_reason(event, transaction, reason),
+                    move |result| {
+                        message(Event::Finished {
+                            target: target.clone(),
+                            account: account.clone(),
+                            request,
+                            result,
+                        })
+                    },
+                );
             }
             Event::Finished {
                 target,
@@ -272,6 +299,8 @@ impl App {
         if !state.pending
             && self.pending_ops < MAX_PENDING_OPERATIONS
             && self.delete_eligible(&state.target)
+            && !self.composing
+            && interconnect::moderation::reason(&state.reason).is_ok()
         {
             confirm = confirm.on_press(message(Event::Confirm(request)));
         }
@@ -282,6 +311,32 @@ impl App {
                 .style(shell::muted_text),
         ]
         .spacing(10);
+        let mut reason = text_input("Reason (optional)", &state.reason)
+            .cursor_blinking(false)
+            .padding(8);
+        if !state.pending && !state.attempted {
+            reason = reason
+                .on_input(move |value| message(Event::Reason(request, value)))
+                .on_submit(message(Event::Ignore));
+        }
+        content = content.push(reason);
+        content = content.push(
+            text("The reason may be visible in room history.")
+                .size(11)
+                .style(shell::muted_text),
+        );
+        if state.error.is_none()
+            && let Err(error) = interconnect::moderation::reason(&state.reason)
+        {
+            content = content.push(text(error).size(12).style(shell::danger_text));
+        }
+        if state.attempted {
+            content = content.push(
+                text("The reason stays fixed when retrying this deletion.")
+                    .size(11)
+                    .style(shell::muted_text),
+            );
+        }
         if let Some(error) = &state.error {
             content = content.push(text(error).size(12).style(shell::danger_text));
         }
@@ -501,6 +556,28 @@ mod tests {
         let row = app.message_row(&media).unwrap();
         assert!(row.image.is_none() && row.download.is_none() && row.formatted.is_none());
         assert!(row.reactions.is_empty());
+    }
+    #[test]
+    fn deletion_reason_is_validated_preserved_and_fixed_after_an_attempt() {
+        let mut app = demo_app();
+        let target = make_target(&app, false, "proposal");
+        let request = open(&mut app, &target);
+        let _ = app.update(message(Event::Reason(
+            request,
+            "x".repeat(interconnect::moderation::MAX_REASON_BYTES + 1),
+        )));
+        let _ = app.update(message(Event::Confirm(request)));
+        assert!(app.message_delete.as_ref().unwrap().error.is_some());
+        assert!(app.message_row(&target).unwrap().redactable);
+        let _ = app.update(message(Event::Reason(request, "Spam".into())));
+        let _ = app.update(message(Event::Reason(request + 1, "stale".into())));
+        let operation = arm(&mut app);
+        app.message_delete.as_mut().unwrap().attempted = true;
+        finish(&mut app, operation, Err("fixture refusal".into()));
+        let _ = app.update(message(Event::Reason(request, "changed".into())));
+        assert_eq!(app.message_delete.as_ref().unwrap().reason, "Spam");
+        let _ = app.update(message(Event::Confirm(request)));
+        assert!(app.message_delete.is_none());
     }
     #[test]
     fn retry_keeps_transaction_and_late_completions_do_not_replace_another_confirmation() {

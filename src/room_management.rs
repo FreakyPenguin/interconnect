@@ -198,7 +198,7 @@ mod tests {
                     event("m.room.member", "@other:example.org", json!({"membership":"join","displayname":"Other"})),
                     event("m.room.member", "@peer:example.org", json!({"membership":"join"})),
                     event("m.room.member", "@pending:example.org", json!({"membership":"invite"})),
-                    event("m.room.member", "@banned:example.org", json!({"membership":"ban"})),
+                    event("m.room.member", "@banned:example.org", json!({"membership":"ban","reason":"Repeated spam"})),
                     event("m.room.member", "@departed:example.org", json!({"membership":"leave"})),
                     event("m.room.name", "", json!({"name":"Original"})),
                     event("m.room.topic", "", json!({"topic":"Topic"})),
@@ -675,6 +675,93 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn moderation_reasons_and_authoritative_ban_details_cover_rooms_and_spaces() {
+        for space in [false, true] {
+            let (server, control) = fixture_kind(100, "invite", space).await;
+            let roster = control.clone().members().await.unwrap();
+            let details = roster.banned[0].details.as_ref().unwrap();
+            assert_eq!(details.actor.as_deref(), Some("@test:example.org"));
+            assert_eq!(details.timestamp_ms, Some(1));
+            assert_eq!(details.reason.as_deref(), Some("Repeated spam"));
+            for (action, user, change) in [
+                (
+                    "kick",
+                    "@other:example.org",
+                    MemberChange::Remove {
+                        user: "@other:example.org".into(),
+                        invited: false,
+                    },
+                ),
+                (
+                    "ban",
+                    "@other:example.org",
+                    MemberChange::Ban {
+                        user: "@other:example.org".into(),
+                        invited: false,
+                    },
+                ),
+                (
+                    "ban",
+                    "@unknown:example.org",
+                    MemberChange::BanId("@unknown:example.org".into()),
+                ),
+                (
+                    "unban",
+                    "@banned:example.org",
+                    MemberChange::Unban("@banned:example.org".into()),
+                ),
+            ] {
+                let request = Mock::given(method("POST"))
+                    .and(path(format!(
+                        "/_matrix/client/v3/rooms/!space:example.org/{action}"
+                    )))
+                    .and(body_json(json!({"user_id":user,"reason":"Spam"})))
+                    .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                    .expect(1)
+                    .mount_as_scoped(&server)
+                    .await;
+                assert!(
+                    control
+                        .clone()
+                        .change_member_with_reason(
+                            change.clone(),
+                            "x".repeat(crate::moderation::MAX_REASON_BYTES + 1)
+                        )
+                        .await
+                        .is_err()
+                );
+                control
+                    .clone()
+                    .change_member_with_reason(change, "  Spam  ".into())
+                    .await
+                    .unwrap();
+                drop(request);
+            }
+        }
+    }
+    #[tokio::test]
+    async fn redacted_ban_reasons_and_times_remain_unavailable() {
+        for space in [false, true] {
+            let (server, control) = fixture_kind(100, "invite", space).await;
+            Mock::given(method("GET")).and(path("/_matrix/client/v3/sync"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"next_batch":"redacted","rooms":{"join":{"!space:example.org":{
+                    "state":{"events":[{"type":"m.room.member","state_key":"@banned:example.org","sender":"@moderator:example.org","event_id":"$ban-redacted","origin_server_ts":2,"content":{"membership":"ban"},"unsigned":{"redacted_because":{"type":"m.room.redaction","event_id":"$redact","sender":"@test:example.org","origin_server_ts":3,"redacts":"$ban-redacted","content":{}}}}]},
+                    "timeline":{"events":[],"limited":false}
+                }}}}))).with_priority(1).mount(&server).await;
+            control
+                .0
+                .client()
+                .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+                .await
+                .unwrap();
+            let roster = control.members().await.unwrap();
+            let details = roster.banned[0].details.as_ref().unwrap();
+            assert_eq!(details.actor.as_deref(), Some("@moderator:example.org"));
+            assert!(details.reason.is_none());
+            assert!(details.timestamp_ms.is_none());
+        }
+    }
+    #[tokio::test]
     async fn ban_by_id_covers_departed_and_unknown_people_in_rooms_and_spaces() {
         for space in [false, true] {
             for power in [0, 50, 100] {
@@ -895,6 +982,13 @@ pub struct BannedMember {
     pub user_id: String,
     pub name: String,
     pub can_unban: bool,
+    pub details: Option<BanDetails>,
+}
+#[derive(Clone, Debug)]
+pub struct BanDetails {
+    pub actor: Option<String>,
+    pub timestamp_ms: Option<i64>,
+    pub reason: Option<String>,
 }
 #[derive(Clone, Debug)]
 pub struct Roster {
@@ -970,6 +1064,14 @@ impl Management {
                     user_id: m.user_id().to_string(),
                     name: m.name().to_owned(),
                     can_unban: m.user_id() != own && levels.user_can_unban_user(own, m.user_id()),
+                    details: Some(BanDetails {
+                        actor: Some(m.event().sender().to_string()),
+                        timestamp_ms: m
+                            .event()
+                            .timestamp()
+                            .and_then(|ts| i64::try_from(u64::from(ts)).ok()),
+                        reason: m.event().reason().map(ToOwned::to_owned),
+                    }),
                 })
                 .collect();
             banned.sort_by_cached_key(|m| (m.name.to_lowercase(), m.user_id.clone()));
@@ -985,6 +1087,18 @@ impl Management {
         .map_err(|_| "Loading members timed out. Try Reload.".to_owned())?
     }
     pub async fn change_member(self, change: MemberChange) -> Result<(), String> {
+        self.change_member_with_reason(change, String::new()).await
+    }
+    pub async fn change_member_with_reason(
+        self,
+        change: MemberChange,
+        input: String,
+    ) -> Result<(), String> {
+        let reason = crate::moderation::reason(&input)?;
+        if reason.is_some() && matches!(change, MemberChange::Invite(_) | MemberChange::Role { .. })
+        {
+            return Err("Reasons apply to removals, bans, and unbans.".into());
+        }
         if let MemberChange::Invite(input) = change {
             return invite(&self.0, &input).await;
         }
@@ -1043,10 +1157,22 @@ impl Management {
                     if !levels.user_can_kick_user(own, &user) {
                         return Err("You no longer have permission to remove this person.".into());
                     }
+                    let mut request =
+                        matrix_sdk::ruma::api::client::membership::kick_user::v3::Request::new(
+                            self.0.room_id().to_owned(),
+                            user,
+                        );
+                    request.reason = reason;
                     self.0
-                        .kick_user(&user, None)
+                        .client()
+                        .send(request)
+                        .with_request_config(
+                            matrix_sdk::config::RequestConfig::short_retry().retry_limit(0),
+                        )
                         .await
-                        .map_err(|_| "Could not remove this person.")?;
+                        .map_err(
+                            |_| "Could not confirm the removal. Reload membership before retrying.",
+                        )?;
                 }
                 MemberChange::Ban { invited, .. } => {
                     let expected = if invited {
@@ -1063,11 +1189,12 @@ impl Management {
                     if !levels.user_can_ban_user(own, &user) {
                         return Err("You no longer have permission to ban this person.".into());
                     }
-                    let request =
+                    let mut request =
                         matrix_sdk::ruma::api::client::membership::ban_user::v3::Request::new(
                             self.0.room_id().to_owned(),
                             user,
                         );
+                    request.reason = reason;
                     self.0
                         .client()
                         .send(request)
@@ -1091,11 +1218,12 @@ impl Management {
                     if !levels.user_can_ban_user(own, &user) {
                         return Err("You no longer have permission to ban this person.".into());
                     }
-                    let request =
+                    let mut request =
                         matrix_sdk::ruma::api::client::membership::ban_user::v3::Request::new(
                             self.0.room_id().to_owned(),
                             user,
                         );
+                    request.reason = reason;
                     self.0
                         .client()
                         .send(request)
@@ -1117,11 +1245,12 @@ impl Management {
                     if !levels.user_can_unban_user(own, &user) {
                         return Err("You no longer have permission to unban this person.".into());
                     }
-                    let request =
+                    let mut request =
                         matrix_sdk::ruma::api::client::membership::unban_user::v3::Request::new(
                             self.0.room_id().to_owned(),
                             user,
                         );
+                    request.reason = reason;
                     self.0
                         .client()
                         .send(request)

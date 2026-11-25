@@ -372,3 +372,31 @@ async fn permission_changes_and_departure_are_rechecked_before_a_redaction() {
         1
     );
 }
+
+#[tokio::test]
+async fn deletion_reasons_are_trimmed_bounded_and_attached_to_redactions() {
+    let fixture = Fixture::new().await;
+    Mock::given(method("PUT"))
+        .and(path_regex(".*/redact/.*"))
+        .and(wiremock::matchers::body_json(json!({"reason":"Spam"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"event_id":"$deleted"})))
+        .expect(1)
+        .mount(&fixture.server)
+        .await;
+    let composer = fixture.composer();
+    assert!(
+        composer
+            .clone()
+            .delete_message_with_reason(
+                "$media".into(),
+                TransactionId::new(),
+                "x".repeat(crate::moderation::MAX_REASON_BYTES + 1)
+            )
+            .await
+            .is_err()
+    );
+    composer
+        .delete_message_with_reason("$media".into(), TransactionId::new(), "  Spam  ".into())
+        .await
+        .unwrap();
+}

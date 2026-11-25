@@ -21,6 +21,7 @@ pub mod live;
 pub mod media;
 pub mod message_document;
 pub mod message_reporting;
+pub mod moderation;
 pub mod navigation;
 pub mod navigation_preferences;
 pub mod notifications;

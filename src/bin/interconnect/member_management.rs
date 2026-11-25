@@ -11,7 +11,9 @@ use iced::{
 };
 use interconnect::{
     connected::Member,
-    room_management::{BannedMember, ManagedMember, Management, MemberChange, Role, Roster},
+    room_management::{
+        BanDetails, BannedMember, ManagedMember, Management, MemberChange, Role, Roster,
+    },
 };
 use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
 
@@ -27,9 +29,17 @@ pub(super) struct State {
     load: Option<iced::task::Handle>,
     picker: people_picker::State,
     confirm: Option<MemberChange>,
+    reason: String,
+    reason_request: u64,
     feedback: Option<String>,
 }
 impl State {
+    fn begin_confirmation(&mut self, change: MemberChange) {
+        self.reason.clear();
+        self.reason_request += 1;
+        self.confirm = Some(change);
+    }
+
     pub(super) fn can_remove_others(&self, own: &str) -> bool {
         self.roster.as_ref().is_some_and(|r| {
             r.rows
@@ -68,6 +78,7 @@ pub enum Event {
     Unban(String),
     Banned(bool),
     Role(String, Role),
+    Reason(u64, u64, String),
     Confirm,
     Cancel,
     Ignore,
@@ -129,7 +140,7 @@ fn apply_snapshot(snapshot: &mut interconnect::connected::Members, change: &Memb
         }
     }
 }
-fn apply(roster: &mut Roster, change: &MemberChange) {
+fn apply(roster: &mut Roster, change: &MemberChange, details: BanDetails) {
     match change {
         MemberChange::Invite(user) => {
             if !roster.rows.iter().any(|m| m.member.user_id == *user) {
@@ -156,12 +167,14 @@ fn apply(roster: &mut Roster, change: &MemberChange) {
                     user_id: user.clone(),
                     name: member.member.name,
                     can_unban: member.can_remove && member.can_ban,
+                    details: Some(details.clone()),
                 });
             } else if !roster.banned.iter().any(|m| m.user_id == *user) {
                 roster.banned.push(BannedMember {
                     user_id: user.clone(),
                     name: user.clone(),
                     can_unban: roster.can_unban,
+                    details: Some(details),
                 });
             }
             roster
@@ -219,8 +232,20 @@ impl App {
                 match result {
                     Ok(()) => {
                         if let Some(roster) = &mut panel.members.roster {
-                            apply(roster, &change);
+                            apply(
+                                roster,
+                                &change,
+                                BanDetails {
+                                    actor: account.clone(),
+                                    timestamp_ms: None,
+                                    reason: interconnect::moderation::reason(&panel.members.reason)
+                                        .ok()
+                                        .flatten(),
+                                },
+                            );
                         }
+                        panel.members.confirm = None;
+                        panel.members.reason.clear();
                         panel.members.picker.clear();
                         panel.members.feedback = Some(change_feedback(&change));
                         panel.success = true;
@@ -420,7 +445,7 @@ impl App {
                     panel.error = None;
                     panel.success = false;
                     panel.members.feedback = None;
-                    panel.members.confirm = Some(MemberChange::BanId(user));
+                    panel.members.begin_confirmation(MemberChange::BanId(user));
                 }
             }
             Event::Remove(user) if !panel.pending => {
@@ -431,7 +456,7 @@ impl App {
                         .iter()
                         .find(|m| m.member.user_id == user && m.can_remove)
                 }) {
-                    panel.members.confirm = Some(MemberChange::Remove {
+                    panel.members.begin_confirmation(MemberChange::Remove {
                         user,
                         invited: member.member.invited,
                     });
@@ -446,7 +471,7 @@ impl App {
                     .as_ref()
                     .is_some_and(|r| r.banned.iter().any(|m| m.user_id == user && m.can_unban))
                 {
-                    panel.members.confirm = Some(MemberChange::Unban(user));
+                    panel.members.begin_confirmation(MemberChange::Unban(user));
                 }
             }
             Event::Ban(user) if !panel.pending => {
@@ -457,7 +482,7 @@ impl App {
                         .iter()
                         .find(|m| m.member.user_id == user && m.can_ban)
                 }) {
-                    panel.members.confirm = Some(MemberChange::Ban {
+                    panel.members.begin_confirmation(MemberChange::Ban {
                         user,
                         invited: member.member.invited,
                     });
@@ -471,12 +496,21 @@ impl App {
                         .iter()
                         .find(|m| m.member.user_id == user && m.roles.contains(&role))
                 }) {
-                    panel.members.confirm = Some(MemberChange::Role {
+                    panel.members.begin_confirmation(MemberChange::Role {
                         user,
                         before: member.power,
                         role,
                     });
                 }
+            }
+            Event::Reason(request, confirmation, reason)
+                if request == session
+                    && confirmation == panel.members.reason_request
+                    && !panel.pending
+                    && panel.members.confirm.is_some() =>
+            {
+                panel.members.reason = reason;
+                panel.error = None;
             }
             Event::Cancel if !panel.pending => panel.members.confirm = None,
             Event::Invite | Event::Confirm
@@ -508,17 +542,37 @@ impl App {
                     }
                     MemberChange::Invite(user)
                 } else {
-                    let Some(change) = panel.members.confirm.take() else {
+                    let Some(change) = panel.members.confirm.clone() else {
                         return Task::none();
                     };
                     change
                 };
+                let reason =
+                    if matches!(change, MemberChange::Invite(_) | MemberChange::Role { .. }) {
+                        String::new()
+                    } else {
+                        panel.members.reason.clone()
+                    };
+                if let Err(error) = interconnect::moderation::reason(&reason) {
+                    panel.error = Some(error);
+                    return Task::none();
+                }
                 panel.error = None;
                 panel.success = false;
                 panel.members.picker.cancel_search();
                 if let Some(demo) = &mut self.demo {
                     if let Some(roster) = &mut panel.members.roster {
-                        apply(roster, &change);
+                        apply(
+                            roster,
+                            &change,
+                            BanDetails {
+                                actor: Some("@you:example.org".into()),
+                                timestamp_ms: Some(chrono::Utc::now().timestamp_millis()),
+                                reason: interconnect::moderation::reason(&panel.members.reason)
+                                    .ok()
+                                    .flatten(),
+                            },
+                        );
                         demo.banned_members
                             .insert(panel.id.clone(), roster.banned.clone());
                         demo.managed_members.insert(
@@ -543,6 +597,8 @@ impl App {
                     {
                         apply_snapshot(snapshot, &change);
                     }
+                    panel.members.confirm = None;
+                    panel.members.reason.clear();
                     panel.members.picker.clear();
                     panel.members.feedback = Some(change_feedback(&change));
                     panel.success = true;
@@ -557,9 +613,17 @@ impl App {
                         .writes
                         .insert(operation, (panel.account.clone(), panel.id.clone()));
                     let completed = change.clone();
-                    return Task::perform(control.change_member(change), move |result| {
-                        host.message(Event::Saved(session, operation, completed.clone(), result))
-                    });
+                    return Task::perform(
+                        control.change_member_with_reason(change, reason),
+                        move |result| {
+                            host.message(Event::Saved(
+                                session,
+                                operation,
+                                completed.clone(),
+                                result,
+                            ))
+                        },
+                    );
                 }
             }
             _ => {}
@@ -625,7 +689,14 @@ impl App {
             .confirm
             .as_ref()
             .filter(|change| change_user(change) == user)?;
-        Some(confirmation(change, false, panel.pending, Host::Sidebar))
+        Some(confirmation(
+            change,
+            false,
+            panel.pending,
+            Host::Sidebar,
+            &panel.members.reason,
+            (panel.request, panel.members.reason_request),
+        ))
     }
     pub(crate) fn member_management_avatars(&self) -> Vec<matrix_sdk::ruma::OwnedMxcUri> {
         self.space_settings
@@ -709,7 +780,14 @@ impl App {
             ]
             .spacing(8);
             if let Some(change @ MemberChange::BanId(_)) = &state.confirm {
-                form = form.push(confirmation(change, panel.space, busy, Host::Panel));
+                form = form.push(confirmation(
+                    change,
+                    panel.space,
+                    busy,
+                    Host::Panel,
+                    &state.reason,
+                    (panel.request, state.reason_request),
+                ));
             }
             content = content.push(form);
         }
@@ -794,12 +872,56 @@ impl App {
                     ]
                     .spacing(8),
                 );
+                if let Some(details) = &member.details {
+                    content = content.push(
+                        text(format!(
+                            "Banned by {}",
+                            details
+                                .actor
+                                .as_deref()
+                                .unwrap_or("an unavailable moderator")
+                        ))
+                        .size(12)
+                        .style(shell::muted_text),
+                    );
+                    let time = details
+                        .timestamp_ms
+                        .and_then(chrono::DateTime::from_timestamp_millis)
+                        .map(|time| {
+                            time.with_timezone(&chrono::Local)
+                                .format("%b %-d, %Y · %H:%M")
+                                .to_string()
+                        });
+                    content = content.push(
+                        text(time.unwrap_or_else(|| {
+                            "Time unavailable · Reload for server details".into()
+                        }))
+                        .size(12)
+                        .style(shell::muted_text),
+                    );
+                    content = content.push(
+                        text(details.reason.as_deref().unwrap_or("No reason available.")).size(13),
+                    );
+                } else {
+                    content = content.push(
+                        text("Ban details unavailable. Use Reload to check again.")
+                            .size(12)
+                            .style(shell::muted_text),
+                    );
+                }
                 if let Some(change) = state
                     .confirm
                     .as_ref()
                     .filter(|c| change_user(c) == member.user_id)
                 {
-                    content = content.push(confirmation(change, panel.space, busy, Host::Panel));
+                    content = content.push(confirmation(
+                        change,
+                        panel.space,
+                        busy,
+                        Host::Panel,
+                        &state.reason,
+                        (panel.request, state.reason_request),
+                    ));
                 }
                 content = content.push(rule::horizontal(1));
             }
@@ -871,7 +993,14 @@ impl App {
             if let Some(change) = state.confirm.as_ref().filter(|change| {
                 !matches!(change, MemberChange::BanId(_)) && change_user(change) == member.user_id
             }) {
-                entry = entry.push(confirmation(change, panel.space, busy, Host::Panel));
+                entry = entry.push(confirmation(
+                    change,
+                    panel.space,
+                    busy,
+                    Host::Panel,
+                    &state.reason,
+                    (panel.request, state.reason_request),
+                ));
             }
             entry = entry.push(rule::horizontal(1));
             content = content.push(entry);
@@ -1039,12 +1168,14 @@ fn change_feedback(change: &MemberChange) -> String {
         }
     }
 }
-fn confirmation(
-    change: &MemberChange,
+fn confirmation<'a>(
+    change: &'a MemberChange,
     space: bool,
     busy: bool,
     host: Host,
-) -> Element<'_, Message> {
+    reason: &'a str,
+    request: (u64, u64),
+) -> Element<'a, Message> {
     let description = match change {
         MemberChange::Remove { user, invited } => format!(
             "{} {user}?",
@@ -1075,43 +1206,60 @@ fn confirmation(
         change,
         MemberChange::Remove { .. } | MemberChange::Ban { .. } | MemberChange::BanId(_)
     );
-    container(
-        column![
-            text(description).size(14),
-            text(if space {
-                "This changes only this space. Membership in its rooms stays intact."
+    let mut content = column![
+        text(description).size(14),
+        text(if space {
+            "This changes only this space. Membership in its rooms stays intact."
+        } else {
+            "This changes membership or permissions in this room."
+        })
+        .size(12)
+        .style(shell::muted_text),
+    ]
+    .spacing(10);
+    if !matches!(change, MemberChange::Invite(_) | MemberChange::Role { .. }) {
+        content = content.push(
+            text_input("Reason (optional, visible in room history)", reason)
+                .cursor_blinking(false)
+                .padding(8)
+                .on_input_maybe((!busy).then_some(move |value| {
+                    host.message(Event::Reason(request.0, request.1, value))
+                })),
+        );
+    }
+    if let Err(error) = interconnect::moderation::reason(reason) {
+        content = content.push(text(error).size(12).style(shell::danger_text));
+    }
+    content = content.push(
+        row![
+            button(
+                row![icons::icon(Kind::Check), text(label).size(13)]
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center)
+            )
+            .style(if destructive {
+                button::danger
             } else {
-                "This changes membership or permissions in this room."
+                shell::primary_button
             })
-            .size(12)
-            .style(shell::muted_text),
-            row![
-                button(
-                    row![icons::icon(Kind::Check), text(label).size(13)]
-                        .spacing(6)
-                        .align_y(iced::Alignment::Center)
-                )
-                .style(if destructive {
-                    button::danger
-                } else {
-                    shell::primary_button
-                })
+            .keyboard_navigation(true)
+            .on_press_maybe(
+                (!busy && interconnect::moderation::reason(reason).is_ok())
+                    .then_some(host.message(Event::Confirm))
+            ),
+            button(text("Cancel").size(13))
+                .padding([7, 10])
+                .style(shell::quiet_button)
                 .keyboard_navigation(true)
-                .on_press_maybe((!busy).then_some(host.message(Event::Confirm))),
-                button(text("Cancel").size(13))
-                    .padding([7, 10])
-                    .style(shell::quiet_button)
-                    .keyboard_navigation(true)
-                    .on_press_maybe((!busy).then_some(host.message(Event::Cancel)))
-            ]
-            .spacing(8)
-            .wrap()
+                .on_press_maybe((!busy).then_some(host.message(Event::Cancel)))
         ]
-        .spacing(10),
-    )
-    .padding(12)
-    .style(|theme| shell::surface(theme, shell::palette(theme).rail))
-    .into()
+        .spacing(8)
+        .wrap(),
+    );
+    container(content)
+        .padding(12)
+        .style(|theme| shell::surface(theme, shell::palette(theme).rail))
+        .into()
 }
 
 #[cfg(test)]
@@ -1353,6 +1501,94 @@ mod tests {
         assert!(panel.error.is_none());
         let _ = app.update(Message::Thread("proposal".into()));
         assert!(app.space_settings.sidebar.is_none());
+    }
+    #[test]
+    fn moderation_reasons_survive_errors_and_are_specific_to_each_confirmation() {
+        for space in [false, true] {
+            let mut app = demo_app();
+            let session = open(&mut app, space);
+            let _ = app.update(event(Event::Ban("@maya:example.org".into())));
+            let _ = app.update(event(Event::Reason(session, 1, "  Spam  ".into())));
+            let _ = app.update(event(Event::Reason(session + 999, 1, "stale".into())));
+            assert_eq!(
+                app.space_settings.panel.as_ref().unwrap().members.reason,
+                "  Spam  "
+            );
+            let _ = app.update(event(Event::Confirm));
+            let details = app
+                .space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .members
+                .roster
+                .as_ref()
+                .unwrap()
+                .banned[0]
+                .details
+                .as_ref()
+                .unwrap();
+            assert_eq!(details.reason.as_deref(), Some("Spam"));
+            assert_eq!(details.actor.as_deref(), Some("@you:example.org"));
+            assert!(details.timestamp_ms.is_some());
+            let _ = app.update(event(Event::Reload));
+            let _ = app.update(event(Event::Unban("@maya:example.org".into())));
+            assert!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .reason
+                    .is_empty()
+            );
+            let _ = app.update(event(Event::Reason(
+                session,
+                1,
+                "stale previous confirmation".into(),
+            )));
+            assert!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .reason
+                    .is_empty()
+            );
+            let _ = app.update(event(Event::Reason(session, 2, "Reviewed".into())));
+            app.generation += 1;
+            let operation = app.generation;
+            let panel = app.space_settings.panel.as_mut().unwrap();
+            panel.pending = true;
+            app.space_settings
+                .writes
+                .insert(operation, (panel.account.clone(), panel.id.clone()));
+            app.pending_ops += 1;
+            let _ = app.update(event(Event::Saved(
+                session,
+                operation,
+                MemberChange::Unban("@maya:example.org".into()),
+                Err("fixture refusal".into()),
+            )));
+            let panel = app.space_settings.panel.as_ref().unwrap();
+            assert_eq!(panel.members.reason, "Reviewed");
+            assert!(panel.members.confirm.is_some());
+            assert_eq!(app.pending_ops, 0);
+            let _ = app.update(event(Event::Confirm));
+            assert!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned
+                    .is_empty()
+            );
+        }
     }
     #[test]
     fn ban_by_id_is_confirmed_session_scoped_and_preserves_the_conversation() {
