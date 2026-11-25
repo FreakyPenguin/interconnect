@@ -33,3 +33,8 @@ assets retain their own copyright notices and licenses.
 Other Cargo dependencies retain their upstream licenses. [Cargo.lock](Cargo.lock)
 records the resolved versions; this file highlights copied assets and patched
 components rather than listing every transitive dependency.
+
+Release packages share the notice inventory in `scripts/release-notices.sh`.
+Notice files retain their repository-relative paths under the Linux tarball root,
+`/usr/share/doc/interconnect/` in Debian packages, and
+`Interconnect.app/Contents/Resources/licenses/` in macOS bundles.

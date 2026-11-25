@@ -69,7 +69,12 @@ jobs:
 
       - name: Package bleeding-edge app
         # Archive the bundle before uploading to preserve executable permissions.
-        run: tar -czf target/Interconnect-macos-arm64.tar.gz -C target Interconnect.app
+        run: |
+          tar -czf target/Interconnect-macos-arm64.tar.gz -C target Interconnect.app
+          verify_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$verify_dir"' EXIT
+          tar -xzf target/Interconnect-macos-arm64.tar.gz -C "$verify_dir"
+          bash scripts/release-notices.sh check "$verify_dir/Interconnect.app/Contents/Resources/licenses"
 
       - name: Upload bleeding-edge app
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7

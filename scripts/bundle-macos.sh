@@ -24,12 +24,7 @@ mkdir -p "$bundle_path/Contents/MacOS" "$bundle_path/Contents/Resources"
 cp "$build_root/$binary_profile/interconnect" "$bundle_path/Contents/MacOS/interconnect"
 cp packaging/macos/Info.plist "$bundle_path/Contents/Info.plist"
 cp assets/icons/interconnect.icns "$bundle_path/Contents/Resources/interconnect.icns"
-mkdir -p "$bundle_path/Contents/Resources/licenses/katex"
-cp assets/licenses/katex/OFL.txt assets/licenses/katex/FONT_NOTICE.txt \
-    "$bundle_path/Contents/Resources/licenses/katex/"
-mkdir -p "$bundle_path/Contents/Resources/licenses/two-face"
-cp assets/licenses/two-face/LICENSE-MIT assets/licenses/two-face/ACKNOWLEDGEMENTS.md \
-    "$bundle_path/Contents/Resources/licenses/two-face/"
+bash scripts/release-notices.sh copy "$bundle_path/Contents/Resources/licenses"
 plutil -lint "$bundle_path/Contents/Info.plist"
 # Give local builds a stable app identity. Distribution requires proper signing
 # and notarization; ad-hoc signing is only for development on this machine.

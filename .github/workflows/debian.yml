@@ -90,6 +90,14 @@ jobs:
           fi
           dpkg-deb --info target/debian/*.deb
           dpkg-deb --contents target/debian/*.deb
+          verify_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$verify_dir"' EXIT
+          dpkg-deb --extract target/debian/*.deb "$verify_dir/debian"
+          bash scripts/release-notices.sh check "$verify_dir/debian/usr/share/doc/interconnect"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            tar -xzf target/linux-release/*.tar.gz -C "$verify_dir"
+            bash scripts/release-notices.sh check "$verify_dir"/interconnect-*-linux-x86_64
+          fi
 
       - name: Upload bleeding-edge package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -160,6 +168,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release notes
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       - name: Download Linux release assets
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
@@ -185,8 +198,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          args=(--verify-tag --generate-notes --title "Interconnect $RELEASE_TAG")
           version="${RELEASE_TAG#v}"
+          notes="docs/releases/v${version}.md"
+          test -s "$notes"
+          args=(--verify-tag --notes-file "$notes" --title "Interconnect $RELEASE_TAG")
           if [[ "${version%%+*}" == *-* ]]; then
             args+=(--prerelease)
           fi

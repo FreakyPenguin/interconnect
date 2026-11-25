@@ -35,16 +35,7 @@ archive_name="interconnect-$version-linux-x86_64"
 archive_root="$work_dir/$archive_name"
 install -Dm755 "$binary" "$archive_root/interconnect"
 strip --strip-unneeded "$archive_root/interconnect"
-for notice in \
-    LICENSE THIRD_PARTY_NOTICES.md \
-    assets/fonts/LICENSE \
-    assets/licenses/katex/OFL.txt assets/licenses/katex/FONT_NOTICE.txt \
-    assets/licenses/two-face/LICENSE-MIT assets/licenses/two-face/ACKNOWLEDGEMENTS.md \
-    vendor/iced_widget/LICENSE \
-    vendor/iced_tiny_skia/LICENSE \
-    vendor/cosmic-text/LICENSE-MIT vendor/cosmic-text/LICENSE-APACHE; do
-    install -Dm644 "$project_root/$notice" "$archive_root/$notice"
-done
+bash "$project_root/scripts/release-notices.sh" copy "$archive_root"
 tar -czf "$output_dir/$archive_name.tar.gz" -C "$work_dir" "$archive_name"
 
 bash "$project_root/scripts/package-debian.sh" stable "$debian_version" "$binary"

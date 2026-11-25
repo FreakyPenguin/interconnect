@@ -149,6 +149,11 @@ containing an amd64 `.deb`, `interconnect-VERSION-linux-x86_64.tar.gz`,
 `Interconnect-macos-arm64.tar.gz`, and `SHA256SUMS` covering all three downloads.
 Prerelease versions create prereleases and use Debian `~` ordering. Other runs
 do not publish. The release must not already exist when the publishing job runs.
+The release description comes from `docs/releases/vVERSION.md`, where `VERSION`
+matches `Cargo.toml`, including any prerelease suffix; see the
+[v0.5.0 notes](releases/v0.5.0.md).
+All three formats use the [shared notice inventory](../scripts/release-notices.sh);
+CI extracts the packages and checks every listed notice against the source file.
 
 Download from **Releases** and verify with `sha256sum --check SHA256SUMS`.
 Published Linux builds use Debian stable's library baseline. Graphics libraries,
@@ -167,16 +172,15 @@ and `target/debian/`. Direct Debian packaging uses
 `scripts/package-debian.sh stable VERSION BINARY`.
 
 Version bumps must update `Cargo.toml`, the root entry in `Cargo.lock`, packaging
-examples, and both `CFBundleShortVersionString` and `CFBundleVersion` in
-`packaging/macos/Info.plist` (numeric version only, without the prerelease suffix).
+examples, release notes at `docs/releases/vVERSION.md`, and both
+`CFBundleShortVersionString` and `CFBundleVersion` in `packaging/macos/Info.plist`
+(numeric version only, without the prerelease suffix).
 
 ### Before tagging
 
 - Run the locked format, build, workspace tests, and Clippy checks above.
 - Inspect demo screenshots and Light/Dark layouts at desktop and 640×480 sizes;
   check both renderers where available and measure settled visible/hidden idle use.
-- Upgrade a disposable 0.2.0 profile in place: retain device identity, drafts,
-  room organization, and available encrypted history. Test restart/offline resume.
 - Register and recover encrypted history on fresh dedicated profiles; check the
   recovery key with a second client. Exercise verification in both directions.
 - Test native Linux/macOS credential prompts, notifications, clipboard, and file

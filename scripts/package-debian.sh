@@ -28,14 +28,7 @@ for size in 16 32 48 64 128 256 512 1024; do
     install -Dm644 "$project_root/assets/icons/interconnect-$size.png" \
         "$package_root/usr/share/icons/hicolor/${size}x${size}/apps/interconnect.png"
 done
-for notice in OFL.txt FONT_NOTICE.txt; do
-    install -Dm644 "$project_root/assets/licenses/katex/$notice" \
-        "$package_root/usr/share/doc/interconnect/katex/$notice"
-done
-for notice in LICENSE-MIT ACKNOWLEDGEMENTS.md; do
-    install -Dm644 "$project_root/assets/licenses/two-face/$notice" \
-        "$package_root/usr/share/doc/interconnect/two-face/$notice"
-done
+bash "$project_root/scripts/release-notices.sh" copy "$package_root/usr/share/doc/interconnect"
 strip --strip-unneeded "$package_root/usr/bin/interconnect"
 
 # dpkg-shlibdeps resolves linked libraries using this distribution's metadata.
