@@ -61,7 +61,29 @@ struct Editing {
     original: Creation,
     values: Creation,
     error: Option<String>,
-    transaction: matrix_sdk::ruma::OwnedTransactionId,
+    submission: Option<(Creation, matrix_sdk::ruma::OwnedTransactionId)>,
+}
+impl Editing {
+    fn prepare_submission(
+        &mut self,
+        replacement: &Creation,
+    ) -> Option<matrix_sdk::ruma::OwnedTransactionId> {
+        // A failed response does not establish whether the server applied the edit.
+        // Only an unchanged first Save is a no-op; restoring the original after an
+        // attempted edit must also send a replacement.
+        if self.submission.is_none() && self.original == *replacement {
+            return None;
+        }
+        let (submitted, transaction) = self
+            .submission
+            .get_or_insert_with(|| (replacement.clone(), matrix_sdk::ruma::TransactionId::new()));
+        // Compare normalized outgoing values, so only retransmissions reuse an ID.
+        if submitted != replacement {
+            *submitted = replacement.clone();
+            *transaction = matrix_sdk::ruma::TransactionId::new();
+        }
+        Some(transaction.clone())
+    }
 }
 #[derive(Clone, Debug)]
 pub enum Event {
@@ -366,7 +388,7 @@ impl App {
                     values: original.clone(),
                     original,
                     error: None,
-                    transaction: matrix_sdk::ruma::TransactionId::new(),
+                    submission: None,
                 }),
             );
             return Task::none();
@@ -435,17 +457,16 @@ impl App {
                 max_selections: replacement.max_selections,
                 hidden_results: replacement.hidden_results,
             };
-            if edit.is_some_and(|edit| edit.original == replacement) {
-                self.poll_creation.form = None;
-                return focus(&key);
-            }
-            let editing = edit.map(|edit| {
-                (
-                    edit.target.clone(),
-                    edit.original.clone(),
-                    edit.transaction.clone(),
-                )
-            });
+            let editing =
+                if let Some(edit) = self.poll_creation.form.as_mut().unwrap().edit.as_mut() {
+                    let Some(transaction) = edit.prepare_submission(&replacement) else {
+                        self.poll_creation.form = None;
+                        return focus(&key);
+                    };
+                    Some((edit.target.clone(), edit.original.clone(), transaction))
+                } else {
+                    None
+                };
             if let Some(demo) = &mut self.demo {
                 if let Some((target, original, _)) = editing {
                     if let Err(error) =

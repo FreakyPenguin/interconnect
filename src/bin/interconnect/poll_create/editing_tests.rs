@@ -366,6 +366,98 @@ fn saving_unchanged_poll_content_closes_without_replacing_answer_ids() {
     assert_eq!(app.pending_ops, 0);
 }
 
+fn prepare_edit(app: &mut App, key: &DraftKey) -> matrix_sdk::ruma::OwnedTransactionId {
+    let replacement = app.poll_values(key).clone();
+    app.poll_creation
+        .form
+        .as_mut()
+        .unwrap()
+        .edit
+        .as_mut()
+        .unwrap()
+        .prepare_submission(&replacement)
+        .unwrap()
+}
+
+#[test]
+fn failed_poll_edit_retries_bind_transactions_to_submitted_content() {
+    for thread in [false, true] {
+        let (mut app, key, target) = poll(thread);
+        let serial = open(&mut app, &target);
+        let _ = app.update(message(Event::Question(serial, "Dinner?".into())));
+        let first = prepare_edit(&mut app, &key);
+        // The request may have reached the server even though the UI saw a timeout.
+        app.poll_creation.writes.insert(
+            999,
+            Write {
+                account: app.account_id.clone(),
+                key: key.clone(),
+                form: serial,
+                edit: Some(target.clone()),
+                original: None,
+            },
+        );
+        app.pending_ops += 1;
+        let _ = app.update(message(Event::Finished(999, Err("Timed out".into()))));
+        assert_eq!(prepare_edit(&mut app, &key), first);
+
+        let mut previous = first;
+        for change in [
+            Event::Question(serial, "Breakfast?".into()),
+            Event::Answer(serial, 0, "Pasta".into()),
+            Event::Hidden(serial, false),
+            Event::Multiple(serial, false),
+        ] {
+            let _ = app.update(message(change));
+            let next = prepare_edit(&mut app, &key);
+            assert_ne!(previous, next);
+            assert_eq!(prepare_edit(&mut app, &key), next);
+            previous = next;
+        }
+
+        let revision = app.poll_creation.form.as_ref().unwrap().revision;
+        let _ = app.update(message(Event::Reorder {
+            serial,
+            revision,
+            from: 1,
+            to: 0,
+        }));
+        assert_ne!(prepare_edit(&mut app, &key), previous);
+    }
+}
+
+#[test]
+fn unsaved_poll_changes_do_not_replace_the_retry_transaction() {
+    let (mut app, key, target) = poll(false);
+    let serial = open(&mut app, &target);
+    let _ = app.update(message(Event::Question(serial, "Dinner?".into())));
+    let first = prepare_edit(&mut app, &key);
+    let _ = app.update(message(Event::Question(serial, "Temporary".into())));
+    let _ = app.update(message(Event::Question(serial, "Dinner?".into())));
+    assert_eq!(prepare_edit(&mut app, &key), first);
+
+    // An intervening submission may already be applied, so returning to an older
+    // submission's values needs a fresh ID rather than reusing that older ID.
+    let _ = app.update(message(Event::Answer(serial, 0, "Pasta".into())));
+    let second = prepare_edit(&mut app, &key);
+    let _ = app.update(message(Event::Answer(serial, 0, "Soup".into())));
+    let third = prepare_edit(&mut app, &key);
+    assert_ne!(third, first);
+    assert_ne!(third, second);
+}
+
+#[test]
+fn reverting_poll_content_after_an_uncertain_save_is_a_new_submission() {
+    let (mut app, key, target) = poll(false);
+    let serial = open(&mut app, &target);
+    let _ = app.update(message(Event::Question(serial, "Dinner?".into())));
+    let first = prepare_edit(&mut app, &key);
+    let _ = app.update(message(Event::Question(serial, "Lunch?".into())));
+    let restored = prepare_edit(&mut app, &key);
+    assert_ne!(restored, first);
+    assert_eq!(prepare_edit(&mut app, &key), restored);
+}
+
 #[test]
 fn other_dialog_shortcuts_cannot_discard_an_unfinished_poll_edit() {
     let (mut app, key, target) = poll(false);

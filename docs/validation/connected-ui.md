@@ -833,15 +833,20 @@ previews. The SDK eligibility flag applies even when undisclosed/invalid respons
 leave visible counts at zero. The editor starts with the current question,
 ordered answers, disclosure mode, and selection limit. It keeps ordinary message
 and unfinished new-poll drafts separate. Close/Escape cancels the edit without
-creating another poll. An unchanged Save sends nothing.
+creating another poll. An unchanged first Save sends nothing. After a failed or
+timed-out Save, restoring the original values sends a replacement because the
+earlier request may have reached the server.
 
 Saving validates the original snapshot again, then sends a Matrix replacement
 for the original event. It rechecks ownership, membership, poll-start event
 permission, SDK edit eligibility, and intervening content changes around original
 event preparation. Responses, remote edits, endings, and redactions disable stale
 forms; close and reopen to review current content. Failed sends retain the form
-and its values, and retry uses the same transaction within that editor. Successful
-sends keep old answer controls disabled with **Updating poll…** until an updated
+and its values. Retrying the same normalized content uses the same transaction;
+changing the question, ordered answers, disclosure mode, or selection limit
+allocates a new transaction on Save. Changes consisting only of trimmed
+whitespace keep the retry transaction. Successful sends keep old answer controls
+disabled with **Updating poll…** until an updated
 SDK snapshot arrives. Editing, voting, and ending the same poll cannot overlap
 across panes. The original event/thread identity and other drafts remain intact. Navigation/account changes cannot publish stale completions into another
 editor. Global races with responses on other clients are not an atomic server-side
@@ -855,6 +860,10 @@ on the synchronized end event. Poll editing tests cover complete replacement
 payloads and original thread identity, hidden/invalid responses, permission loss,
 stale originals, redaction/end rejection, server errors and transaction reuse,
 no-op saves, cross-pane snapshot guards, and separate message/creation drafts.
+Editor regressions cover unchanged retries after a timeout, revised questions/
+answers/settings and reordered answers receiving fresh transactions, unsaved
+changes restored before retry, and reverting to original values after an
+uncertain Save.
 Demo UI tests cover cancellation, stale controls, room/thread pending guards,
 draft/scroll preservation, covered-dialog shortcuts, and stale/duplicate completions. These fixtures do not establish live-server interoperability.
 
