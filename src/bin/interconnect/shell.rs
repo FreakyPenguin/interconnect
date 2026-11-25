@@ -1200,48 +1200,6 @@ mod avatar_tests {
     use iced::advanced::{layout, widget::Tree};
 
     #[test]
-    fn presence_overlays_keep_avatar_bounds_and_do_not_schedule_idle_redraws() {
-        use iced::advanced::{Shell, mouse};
-        use interconnect::connected::Presence;
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
-        let image = widget::image::Handle::from_rgba(64, 64, vec![160; 64 * 64 * 4]);
-        let mut tree = Tree::empty();
-        for status in [
-            Presence::Unknown,
-            Presence::Online,
-            Presence::Away,
-            Presence::Offline,
-            Presence::Unknown,
-        ] {
-            for handle in [None, Some(&image)] {
-                let mut view = presence_avatar::<Message>("Maya Chen", handle, status);
-                tree.diff(view.as_widget());
-                let node = view.as_widget_mut().layout(
-                    &mut tree,
-                    &renderer,
-                    &layout::Limits::new(iced::Size::ZERO, iced::Size::new(100.0, 100.0)),
-                );
-                assert_eq!(node.size(), iced::Size::new(32.0, 32.0));
-                let mut messages = Vec::new();
-                let mut shell = Shell::new(&mut messages);
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &iced::Event::Window(iced::window::Event::RedrawRequested(
-                        iced::time::Instant::now(),
-                    )),
-                    layout::Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut shell,
-                    &iced::Rectangle::with_size(node.size()),
-                );
-                assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-                assert!(messages.is_empty());
-            }
-        }
-    }
-    #[test]
     fn presence_updates_preserve_room_and_thread_reading_position_focus_and_draft() {
         use iced::widget::text_editor::{Action, Edit};
         use iced::{

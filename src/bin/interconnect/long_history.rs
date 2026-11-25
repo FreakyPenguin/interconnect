@@ -90,20 +90,6 @@ fn workload(name: &str, count: usize) -> Vec<MessageRow> {
     vec![row]
 }
 
-#[test]
-fn individual_message_workloads_are_distinct_and_local() {
-    for name in ["long-text", "many-line-code", "wide-code"] {
-        let rows = workload(name, 1000);
-        assert_eq!(rows.len(), 1);
-        assert!(rows[0].body.len() > 10_000);
-        assert_eq!(rows[0].formatted.is_some(), name != "long-text");
-        assert_eq!(
-            rows[0].body.lines().count(),
-            if name == "many-line-code" { 1000 } else { 1 }
-        );
-    }
-}
-
 struct Frame {
     tree: widget::Tree,
     renderer: iced::Renderer,

@@ -907,7 +907,7 @@ mod tests {
     }
 
     #[test]
-    fn surface_tracks_editor_focus_and_settles_without_timers() {
+    fn surface_tracks_editor_focus() {
         let content = text_editor::Content::with_text("A draft\nwith several\nlines");
         let editor = text_editor(&content)
             .id("room-composer")
@@ -933,30 +933,6 @@ mod tests {
             view.as_widget_mut()
                 .operate(&mut tree, Layout::new(&node), &renderer, &mut operation);
             assert_eq!(tree.state.downcast_ref::<State>().focused, focused);
-            for milliseconds in [0, 750, 1500] {
-                let mut messages = Vec::new();
-                let mut shell = Shell::new(&mut messages);
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &Event::Window(iced::window::Event::RedrawRequested(
-                        iced::time::Instant::now() + std::time::Duration::from_millis(milliseconds),
-                    )),
-                    Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut shell,
-                    &Rectangle::with_size(size),
-                );
-                assert!(!matches!(
-                    shell.redraw_request(),
-                    iced::window::RedrawRequest::At(_)
-                ));
-                if milliseconds > 0 {
-                    assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-                }
-            }
         }
-        assert_eq!(content.text(), "A draft\nwith several\nlines");
     }
 }

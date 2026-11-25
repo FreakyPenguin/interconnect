@@ -296,11 +296,9 @@ Use the [poll controls](../keyboard.md#polls) and a second client:
   Same normalized retry reuses the transaction; changed content gets a new one.
   Reverting after an uncertain Save still sends replacement. Await the SDK update
   with controls disabled; edits/votes/end cannot overlap across panes.
-- Inspect wrapping at 380/260/180 px in both themes. Export local software previews:
-
-```sh
-INTERCONNECT_POLL_PREVIEW_DIR=/tmp/interconnect-poll-preview cargo test --locked --bin interconnect poll_cards_wrap_and_render_in_both_themes
-```
+- The headless `poll_cards_wrap_at_narrow_widths` test checks wrapping at
+  380/260/180 px. Inspect poll appearance in both themes in demo mode; the layout
+  test does not establish rendered theme appearance.
 
 Local fixtures do not establish encrypted cross-client races or native acceptance.
 

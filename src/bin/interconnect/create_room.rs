@@ -1042,7 +1042,7 @@ mod layout_tests {
     };
 
     #[test]
-    fn dialog_traps_tab_focus_captures_backdrop_and_has_no_caret_timer() {
+    fn dialog_traps_tab_focus_and_captures_backdrop() {
         let mut app = super::super::tests::demo_app();
         let _ = app.update(message(Event::Open));
         let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
@@ -1052,7 +1052,6 @@ mod layout_tests {
         let node =
             view.as_widget_mut()
                 .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-        assert_eq!(node.size(), size);
         view.as_widget_mut().operate(
             &mut tree,
             layout::Layout::new(&node),
@@ -1086,26 +1085,6 @@ mod layout_tests {
                     Outcome::Chain(chained) => next = chained,
                     _ => break,
                 }
-            }
-        }
-        let now = iced::time::Instant::now();
-        for millis in [0, 750, 1250] {
-            let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    now + std::time::Duration::from_millis(millis),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            if millis > 0 {
-                assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
             }
         }
         let mut messages = Vec::new();

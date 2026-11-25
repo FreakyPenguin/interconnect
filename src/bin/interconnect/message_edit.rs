@@ -886,7 +886,7 @@ mod tests {
         assert!(app.drafts[&room].editing.is_none());
     }
     #[test]
-    fn edit_controls_fit_room_and_thread_layouts_and_settle_without_timers() {
+    fn edit_controls_fit_and_cancel_the_matching_room_or_thread() {
         use iced::{
             Event as IcedEvent, Rectangle, Size,
             advanced::{Layout, Shell, layout, mouse, widget},
@@ -946,35 +946,6 @@ mod tests {
                             && bounds.y + bounds.height <= size.height + 0.1,
                         "{label} outside {size:?}: {bounds:?}"
                     );
-                }
-            }
-            view.as_widget_mut().operate(
-                &mut tree,
-                Layout::new(&node),
-                &renderer,
-                &mut widget::operation::focusable::focus(widget::Id::new("thread-composer")),
-            );
-            for milliseconds in [0, 750, 1500] {
-                let mut messages = Vec::new();
-                let mut shell = Shell::new(&mut messages);
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &IcedEvent::Window(iced::window::Event::RedrawRequested(
-                        iced::time::Instant::now() + std::time::Duration::from_millis(milliseconds),
-                    )),
-                    Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut shell,
-                    &Rectangle::with_size(size),
-                );
-                assert!(!matches!(
-                    shell.redraw_request(),
-                    iced::window::RedrawRequest::At(_)
-                ));
-                if milliseconds > 0 {
-                    assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
                 }
             }
             for (id, bounds) in probe

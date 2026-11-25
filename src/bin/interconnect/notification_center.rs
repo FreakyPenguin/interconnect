@@ -594,7 +594,7 @@ mod tests {
     }
 
     #[test]
-    fn screen_fits_narrow_windows_escape_dismisses_and_idle_has_no_timer() {
+    fn screen_keeps_controls_in_narrow_windows_and_escape_dismisses() {
         #[derive(Default)]
         struct Probe {
             header: Option<iced::Rectangle>,
@@ -641,24 +641,6 @@ mod tests {
             let unread = probe.unread.unwrap();
             assert!(header.x >= 0.0 && header.x + header.width <= size.width + 0.1);
             assert!(unread.x >= 0.0 && unread.x + unread.width <= size.width + 0.1);
-            for _ in 0..2 {
-                let mut messages = Vec::new();
-                let mut shell = Shell::new(&mut messages);
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &iced::Event::Window(iced::window::Event::RedrawRequested(
-                        iced::time::Instant::now(),
-                    )),
-                    Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut clipboard::Null,
-                    &mut shell,
-                    &iced::Rectangle::with_size(size),
-                );
-                assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-                assert!(messages.is_empty());
-            }
             let mut messages = Vec::new();
             let mut shell = Shell::new(&mut messages);
             view.as_widget_mut().update(

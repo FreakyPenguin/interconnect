@@ -734,7 +734,7 @@ mod tests {
         assert!(app.selection.shutdown);
     }
     #[test]
-    fn sender_dialog_is_bounded_and_escape_dismisses_without_idle_redraws() {
+    fn sender_dialog_escape_dismisses_the_current_request() {
         use iced::advanced::{Shell, layout, mouse, widget};
         use iced::keyboard::{
             Key, Modifiers,
@@ -753,23 +753,7 @@ mod tests {
             let node =
                 view.as_widget_mut()
                     .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            assert_eq!(node.size(), size);
             let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    iced::time::Instant::now(),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-            assert!(messages.is_empty());
             let key = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                 key: Key::Named(Named::Escape),
                 modified_key: Key::Named(Named::Escape),

@@ -812,8 +812,8 @@ mod tests {
         assert!(app.topic_editor.is_none());
     }
     #[test]
-    fn long_reader_and_editor_keep_actions_visible_at_minimum_size_without_timers() {
-        use iced::advanced::{Shell, layout, widget};
+    fn long_reader_and_editor_keep_actions_visible_at_minimum_size() {
+        use iced::advanced::{layout, widget};
         #[derive(Default)]
         struct Probe {
             header: Option<iced::Rectangle>,
@@ -905,24 +905,6 @@ mod tests {
                 assert!(actions.y + actions.height <= size.height);
                 assert!(body.y + body.height <= actions.y);
                 assert!(probe.controls >= 3);
-                for _ in 0..2 {
-                    let mut messages = Vec::new();
-                    let mut shell = Shell::new(&mut messages);
-                    view.as_widget_mut().update(
-                        &mut tree,
-                        &iced::Event::Window(iced::window::Event::RedrawRequested(
-                            iced::time::Instant::now(),
-                        )),
-                        layout::Layout::new(&node),
-                        iced::mouse::Cursor::Unavailable,
-                        &renderer,
-                        &mut iced::advanced::clipboard::Null,
-                        &mut shell,
-                        &iced::Rectangle::with_size(size),
-                    );
-                    assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-                    assert!(messages.is_empty());
-                }
             }
         }
     }

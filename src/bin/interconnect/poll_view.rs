@@ -730,12 +730,12 @@ mod tests {
 mod layout_tests {
     use super::*;
     use iced::{
-        Rectangle, Size,
-        advanced::{Layout, Renderer as _, layout, mouse, renderer, widget::Tree},
+        Size,
+        advanced::{Layout, layout, widget::Tree},
     };
 
     #[test]
-    fn poll_cards_wrap_and_render_in_both_themes() {
+    fn poll_cards_wrap_at_narrow_widths() {
         let app = crate::tests::demo_app();
         let row = app.model.room.as_ref().unwrap().rows[0].clone();
         let poll = Poll {
@@ -746,67 +746,27 @@ mod layout_tests {
             ], ended: false, editable: true, disclosed: true, max_selections: 1,
         };
         let mut heights = Vec::new();
-        for (name, mode) in [
-            ("light", interconnect::settings::ThemeMode::Light),
-            ("dark", interconnect::settings::ThemeMode::Dark),
-        ] {
-            for width in [380, 260, 180] {
-                let mut view = app.poll_view(&row, &poll, false, 0);
-                let mut tree = Tree::new(&view);
-                let mut renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-                let size = Size::new(width as f32, 700.0);
-                let bounds = Rectangle::with_size(size);
-                renderer.reset(bounds);
-                let node = view.as_widget_mut().layout(
-                    &mut tree,
-                    &renderer,
-                    &layout::Limits::new(Size::ZERO, size),
+        for width in [380.0, 260.0, 180.0] {
+            let mut view = app.poll_view(&row, &poll, false, 0);
+            let mut tree = Tree::new(&view);
+            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+            let node = view.as_widget_mut().layout(
+                &mut tree,
+                &renderer,
+                &layout::Limits::new(Size::ZERO, Size::new(width, 700.0)),
+            );
+            fn fits(node: Layout<'_>, width: f32) {
+                let b = node.bounds();
+                assert!(
+                    b.x >= 0.0 && b.x + b.width <= width + 0.1,
+                    "{b:?} exceeds {width}"
                 );
-                fn fits(node: Layout<'_>, width: f32) {
-                    let b = node.bounds();
-                    assert!(
-                        b.x >= 0.0 && b.x + b.width <= width + 0.1,
-                        "{b:?} exceeds {width}"
-                    );
-                    for child in node.children() {
-                        fits(child, width);
-                    }
-                }
-                fits(Layout::new(&node), width as f32);
-                heights.push(node.size().height);
-                if let Some(dir) = std::env::var_os("INTERCONNECT_POLL_PREVIEW_DIR") {
-                    let theme = super::super::appearance::theme(mode);
-                    view.as_widget().draw(
-                        &tree,
-                        &mut renderer,
-                        &theme,
-                        &renderer::Style::default(),
-                        Layout::new(&node),
-                        mouse::Cursor::Unavailable,
-                        &bounds,
-                    );
-                    let iced::Renderer::Secondary(software) = &mut renderer else {
-                        unreachable!()
-                    };
-                    let mut pixels = tiny_skia::Pixmap::new(width, 700).unwrap();
-                    let mut mask = tiny_skia::Mask::new(width, 700).unwrap();
-                    software.draw(
-                        &mut pixels.as_mut(),
-                        &mut mask,
-                        &iced_tiny_skia::graphics::Viewport::with_physical_size(
-                            Size::new(width, 700),
-                            1.0,
-                        ),
-                        &[bounds],
-                        shell::palette(&theme).background,
-                    );
-                    let dir = std::path::PathBuf::from(dir);
-                    std::fs::create_dir_all(&dir).unwrap();
-                    pixels
-                        .save_png(dir.join(format!("poll-{name}-{width}.png")))
-                        .unwrap();
+                for child in node.children() {
+                    fits(child, width);
                 }
             }
+            fits(Layout::new(&node), width);
+            heights.push(node.size().height);
         }
         assert!(heights[0] < heights[1] && heights[1] < heights[2]);
     }

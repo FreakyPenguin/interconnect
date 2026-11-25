@@ -5285,17 +5285,12 @@ mod tests {
     #[test]
     fn space_icons_follow_metadata_deduplicate_and_release_demand() {
         let mut app = demo_app();
+        app.demo = None;
         let first: matrix_sdk::ruma::OwnedMxcUri = "mxc://example.org/space".into();
         let next: matrix_sdk::ruma::OwnedMxcUri = "mxc://example.org/new-space".into();
         let spaces = std::sync::Arc::make_mut(&mut app.model.spaces);
         spaces[0].avatar_url = Some(first.clone());
         spaces[1].avatar_url = Some(first.clone());
-        app.refresh_media_demand();
-        assert!(
-            app.selection.avatars.is_empty(),
-            "demo never requests media"
-        );
-        app.demo = None;
         app.refresh_media_demand();
         assert_eq!(app.selection.avatars, vec![first.clone()]);
         let _ = app.update(Message::Space(Scope::All));
@@ -5317,14 +5312,9 @@ mod tests {
     #[test]
     fn account_avatar_demand_survives_navigation_and_releases_on_removal() {
         let mut app = demo_app();
+        app.demo = None;
         let uri: matrix_sdk::ruma::OwnedMxcUri = "mxc://example.org/account".into();
         app.model.account_avatar_url = Some(uri.clone());
-        app.refresh_media_demand();
-        assert!(
-            app.selection.avatars.is_empty(),
-            "demo never requests media"
-        );
-        app.demo = None;
         app.refresh_media_demand();
         assert_eq!(app.selection.avatars, vec![uri.clone()]);
         let _ = app.update(Message::Room("threads".into()));

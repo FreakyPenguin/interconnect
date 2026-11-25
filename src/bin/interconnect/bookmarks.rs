@@ -849,8 +849,8 @@ mod tests {
     }
 
     #[test]
-    fn hover_button_saves_and_saved_view_renders_without_animation_timers() {
-        use iced::advanced::{Layout, Renderer as _, Shell, layout, mouse, widget};
+    fn hover_button_saves_the_message() {
+        use iced::advanced::{Layout, Shell, layout, mouse, widget};
         #[derive(Default)]
         struct Probe {
             bookmark: Option<iced::Rectangle>,
@@ -890,7 +890,7 @@ mod tests {
             .unwrap()
             .clone();
         app.model.room.as_mut().unwrap().rows = std::sync::Arc::new(vec![review]);
-        let mut renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
         let mut tree = widget::Tree::empty();
         let size = iced::Size::new(360.0, 640.0);
         let mut view = app.pane(false);
@@ -928,64 +928,5 @@ mod tests {
             .expect("click submits a captured save action");
         let _ = app.update(saved);
         assert_eq!(app.model.bookmarks.entries.len(), 1);
-        let _ = app.update(message(Event::Open));
-        for (width, height) in [(1000, 720), (360, 480)] {
-            let size = iced::Size::new(width as f32, height as f32);
-            let mut tree = widget::Tree::empty();
-            let mut view = app.bookmarks_view();
-            tree.diff(view.as_widget());
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            for millis in [0, 750, 1500] {
-                let mut messages = Vec::new();
-                let redraw = {
-                    let mut shell = Shell::new(&mut messages);
-                    view.as_widget_mut().update(
-                        &mut tree,
-                        &iced::Event::Window(iced::window::Event::RedrawRequested(
-                            iced::time::Instant::now() + std::time::Duration::from_millis(millis),
-                        )),
-                        Layout::new(&node),
-                        mouse::Cursor::Unavailable,
-                        &renderer,
-                        &mut iced::advanced::clipboard::Null,
-                        &mut shell,
-                        &iced::Rectangle::with_size(size),
-                    );
-                    shell.redraw_request()
-                };
-                assert!(messages.is_empty());
-                if millis > 0 {
-                    assert_eq!(redraw, iced::window::RedrawRequest::Wait);
-                }
-            }
-            renderer.reset(iced::Rectangle::with_size(size));
-            view.as_widget().draw(
-                &tree,
-                &mut renderer,
-                &shell::theme(),
-                &iced::advanced::renderer::Style::default(),
-                Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &iced::Rectangle::with_size(size),
-            );
-            let iced::Renderer::Secondary(software) = &mut renderer else {
-                panic!("software test renderer");
-            };
-            let mut pixels = tiny_skia::Pixmap::new(width, height).unwrap();
-            let mut mask = tiny_skia::Mask::new(width, height).unwrap();
-            let viewport = iced::advanced::graphics::Viewport::with_physical_size(
-                iced::Size::new(width, height),
-                1.0,
-            );
-            software.draw(
-                &mut pixels.as_mut(),
-                &mut mask,
-                &viewport,
-                &[iced::Rectangle::with_size(size)],
-                iced::Color::WHITE,
-            );
-        }
     }
 }

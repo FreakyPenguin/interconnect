@@ -2138,48 +2138,6 @@ mod tests {
                 size.height,
                 "draw keeps layout stable"
             );
-            if let Ok(path) = std::env::var("INTERCONNECT_LINK_PREVIEW")
-                && width == 320.0
-            {
-                renderer.reset(Rectangle::with_size(size));
-                state.draw(
-                    &mut renderer,
-                    Point::ORIGIN,
-                    Rectangle::with_size(size),
-                    None,
-                    None,
-                );
-                let iced::Renderer::Secondary(software) = &mut renderer else {
-                    panic!("software renderer");
-                };
-                let mut pixels = tiny_skia::Pixmap::new(width as u32, size.height as u32).unwrap();
-                let mut mask = tiny_skia::Mask::new(width as u32, size.height as u32).unwrap();
-                software.draw(
-                    &mut pixels.as_mut(),
-                    &mut mask,
-                    &iced::advanced::graphics::Viewport::with_physical_size(
-                        Size::new(width as u32, size.height as u32),
-                        1.0,
-                    ),
-                    &[Rectangle::with_size(size)],
-                    iced::Color::from_rgb8(24, 26, 28),
-                );
-                let rgba: Vec<u8> = pixels
-                    .data()
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .flat_map(|p| [p[2], p[1], p[0], p[3]])
-                    .collect();
-                image::save_buffer(
-                    path,
-                    &rgba,
-                    width as u32,
-                    size.height as u32,
-                    image::ColorType::Rgba8,
-                )
-                .unwrap();
-            }
             let spoiler = &state.blocks[2];
             let point = spoiler.paragraph.span_bounds(0)[0].center()
                 + (spoiler.bounds.position() - Point::ORIGIN);
@@ -2612,41 +2570,6 @@ mod tests {
                 first,
                 "drawing must not alter layout"
             );
-            if let Ok(path) = std::env::var("INTERCONNECT_FORMATTING_PREVIEW")
-                && width == 300.0
-            {
-                let iced::Renderer::Secondary(software) = &mut renderer else {
-                    panic!("software renderer");
-                };
-                let mut pixels = tiny_skia::Pixmap::new(width as u32, size.height as u32).unwrap();
-                let mut mask = tiny_skia::Mask::new(width as u32, size.height as u32).unwrap();
-                software.draw(
-                    &mut pixels.as_mut(),
-                    &mut mask,
-                    &iced::advanced::graphics::Viewport::with_physical_size(
-                        iced::Size::new(width as u32, size.height as u32),
-                        1.0,
-                    ),
-                    &[Rectangle::with_size(size)],
-                    iced::Color::WHITE,
-                );
-                // Iced's software renderer writes BGRA for the window surface.
-                let rgba: Vec<u8> = pixels
-                    .data()
-                    .as_chunks::<4>()
-                    .0
-                    .iter()
-                    .flat_map(|p| [p[2], p[1], p[0], p[3]])
-                    .collect();
-                image::save_buffer(
-                    path,
-                    &rgba,
-                    width as u32,
-                    size.height as u32,
-                    image::ColorType::Rgba8,
-                )
-                .unwrap();
-            }
         }
     }
     #[test]

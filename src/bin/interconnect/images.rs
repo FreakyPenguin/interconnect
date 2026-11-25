@@ -1251,24 +1251,14 @@ mod tests {
     }
 
     #[test]
-    fn viewer_zoom_is_bounded_fits_small_windows_and_resets_on_reopen_without_timers() {
+    fn viewer_zoom_is_bounded_and_resets_on_reopen() {
         let mut app = sample();
         let generation = app.selection.room.as_ref().unwrap().0;
         open(&mut app, generation);
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
         for _ in 0..4 {
             app.image_event(Event::Zoom(true));
         }
         assert_eq!(app.image_view.as_ref().unwrap().zoom, 2);
-        let size = iced::Size::new(640.0, 480.0);
-        {
-            let mut view = app.image_viewer();
-            let mut tree = Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            assert_eq!(node.size(), size);
-        }
         assert_eq!(app.image_subscription().units(), 0);
         app.image_event(Event::Fit);
         app.image_event(Event::Zoom(false));

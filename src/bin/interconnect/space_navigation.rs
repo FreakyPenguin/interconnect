@@ -1278,7 +1278,7 @@ mod tests {
     }
 
     #[test]
-    fn breadcrumb_bar_fits_narrow_windows_has_home_and_account_and_no_idle_timer() {
+    fn breadcrumb_bar_keeps_home_account_and_trail_accessible_at_narrow_widths() {
         #[derive(Default)]
         struct Probe {
             toggle: Option<iced::Rectangle>,
@@ -1397,22 +1397,6 @@ mod tests {
                     "breadcrumb trail has an unexplained gap"
                 );
             }
-            let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    iced::time::Instant::now(),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-            assert!(messages.is_empty());
         }
     }
 

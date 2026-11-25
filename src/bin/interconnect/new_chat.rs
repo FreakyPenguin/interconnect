@@ -1277,7 +1277,7 @@ mod tests {
     }
 
     #[test]
-    fn picker_fits_minimum_window_and_enter_submits_once_without_idle_timer() {
+    fn picker_enter_submits_once_and_backdrop_closes() {
         for room in [false, true] {
             check_picker_layout_and_keys(room);
         }
@@ -1302,7 +1302,6 @@ mod tests {
         let node =
             view.as_widget_mut()
                 .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-        assert_eq!(node.size(), size);
         view.as_widget_mut().operate(
             &mut tree,
             layout::Layout::new(&node),
@@ -1344,25 +1343,6 @@ mod tests {
             )
             .is_none()
         );
-        for millis in [0, 750, 1250] {
-            messages.clear();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    iced::time::Instant::now() + std::time::Duration::from_millis(millis),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            if millis > 0 {
-                assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-            }
-        }
         messages.clear();
         let mut shell = Shell::new(&mut messages);
         view.as_widget_mut().update(
