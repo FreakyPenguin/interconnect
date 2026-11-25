@@ -2,15 +2,16 @@
 
 See the [project README](../README.md) for features and screenshots.
 
-- [Keyboard shortcuts](keyboard.md), [code blocks](keyboard.md#code-blocks),
-  and [Markdown tables](keyboard.md#markdown-tables).
-- [Settings and account profiles](settings.md)
-- [Saved messages](bookmarks.md)
-- [Current limitations](limitations.md) and [ideas](todo.md)
-- [Development](development.md): build, packaging, and desktop/container setup.
-- [Architecture](architecture/client.md), [draft storage](architecture/drafts.md),
-  [message formatting](architecture/message-formatting.md),
-  [virtual timelines](architecture/timeline.md), and [file drops](architecture/winit-file-drops.md).
-- Validation: [UI and accounts](validation/connected-ui.md),
-  [idle resources](validation/idle-resources.md), [long histories and large messages](validation/long-history.md), [notifications](validation/notifications.md),
-  [device verification](validation/verification.md), and [key recovery](validation/recovery.md).
+- Using the client: [shortcuts and message controls](keyboard.md),
+  [settings and profiles](settings.md), [saved messages](bookmarks.md).
+- Scope: [limitations](limitations.md), [ideas](todo.md).
+- Development: [build, packaging, and desktop setup](development.md).
+- Architecture: [client](architecture/client.md), [local state](architecture/drafts.md),
+  [formatting](architecture/message-formatting.md), [timelines](architecture/timeline.md),
+  [file drops](architecture/winit-file-drops.md).
+- Validation: [accounts and connected UI](validation/connected-ui.md),
+  [preferences](validation/ui-preferences.md), [management](validation/ui-management.md),
+  [discovery/media](validation/ui-discovery.md), [ignored users](validation/ignored-users.md),
+  [notifications](validation/notifications.md), [verification](validation/verification.md),
+  [recovery](validation/recovery.md), [idle resources](validation/idle-resources.md),
+  [long-history performance](validation/long-history.md).

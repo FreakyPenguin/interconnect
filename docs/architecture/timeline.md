@@ -1,88 +1,64 @@
 # Virtual timeline rows
 
-The existing Iced Scrollable retains input, clipping, scrollbar, and native
-scroll operations. A repository-owned `virtual_rows::Rows` widget supplies a
-virtual content height and positions only mounted children at their prefix
-offsets. No Iced vendor changes or global update timer are required.
+Iced Scrollable owns input, clipping, scrollbars, and native scroll operations.
+`virtual_rows::Rows` supplies virtual content height and mounts children at prefix
+offsets, without vendor changes or a global timer.
 
-`timeline_projection::Cache` describes projected room/thread rows by source
-indices and stable event/summary keys. It is reused while the SDK row snapshot,
-generation, thread root, projection mode, and read boundary are unchanged.
-Grouping, dates, thread previews, and unread decoration consult the full
-projection, so a mount boundary cannot become a false conversation boundary.
-A complete source-event index also resolves visible message actions, reply
-previews, and thread originals without rescanning loaded history for each row.
-Before a matching snapshot/generation has a cached index, lookups retain the
-ordinary guarded fallback against current data.
+## Projection and layout
 
-Conversations of at most 192 projected rows use exact full layout. Longer
-conversations mount the visible region plus roughly two viewport heights in
-each direction. Unknown rows begin with estimated heights; a Fenwick prefix
-index resolves pixel positions and incorporates measured corrections. Heights
-survive source updates by key. Reflow measures only mounted rows; unmounted
-measurements remain estimates until revisited. A bounded convergence loop fills
-the overscan after estimates change. A populated window is reused until the
-viewport approaches its buffer boundary, avoiding unnecessary cold shaping on
-small scrolls. Rows share widget state by key while mounted and release heavy
-state as they leave the window.
+`timeline_projection::Cache` keys rows by stable event/summary identity and reuses
+projections while snapshot, generation, thread root, mode, and read boundary match.
+Grouping/dates/thread previews/unread decoration use the full projection; mount
+boundaries cannot create false conversation boundaries. An event index resolves
+actions, replies, and originals, with a guarded fallback before the index is ready.
 
-The timeline observer captures the first actually visible event and its screen
-offset. After measurement corrections, prepend, or reflow, it restores that
-logical anchor. Previously virtualized conversations also reopen by their saved
-event-relative anchor when away from newest; old bottom pixel offsets refer to
-estimates that are rebuilt with a new pane. Short histories keep exact in-session
-pixel restoration; conversations with saved code-view state also prefer their
-event-relative anchor when away from newest. Settled geometry updates the saved
-scroll distance after reflow, so an old newest offset cannot override a code
-expansion. An explicit newest position overrides a stale saved anchor. Bottom-following
-remains separate. An explicit event target mounts its indexed neighborhood
-immediately, then centers the measured target or restores its saved event-relative
-offset. Native scroll operations request
-their newly needed layout on the next update; they do not require constructing
-intermediate rows. Viewport changes invalidate layout only as they approach a
-mount boundary, with no repeating idle work.
+Up to 192 projected rows use exact full layout. Larger conversations mount the
+viewport plus roughly two viewport heights each way. A Fenwick prefix index starts
+with estimated heights and incorporates measurements by row key. Reflow measures
+mounted rows; a bounded convergence loop fills overscan after corrections. Reuse
+the populated window until near its boundary, sharing widget state by key and
+releasing heavy state on unmount. Offscreen estimates can change scrollbar proportions.
 
-`RowsVisible`, read-receipt visibility, persisted reading anchors, and jump
-highlight activation use actual viewport intersection. Overscan and virtual
-empty space do not count as viewed content. History demand continues to use
-scroll metrics and existing generation/revision checks.
+## Anchors and visibility
 
-Selection retains logical message endpoints and gets canonical text from an
-ordered model adapter. Mounted widgets provide hit-testing and painting; copy
-can include unmounted intermediate messages. Canonical rich text preserves
-hidden-spoiler placeholders, object alternatives, and formula source. A removed
-or edited endpoint invalidates a selection rather than copying obsolete text.
+The observer captures the first actually visible event and its screen offset.
+Restore it after prepend, measurement corrections, or reflow. Virtualized and
+code-state conversations reopen by event-relative anchor when away from newest;
+short histories otherwise retain exact in-session pixel offsets. Settled geometry
+updates saved distance so old offsets cannot undo expansion. Explicit newest wins
+over stale anchors; bottom-following stays separate.
 
-A bounded LRU cache holds the last 64 room/thread conversations' logical
-selections and sparse document-scoped semantics: spoiler reveals, code expansion,
-and horizontal code offsets. These survive widget eviction and conversation
-navigation during the session. Restoration can trigger a bounded reflow before
-measuring anchors. Document changes reject stale semantics; account transitions
-clear the cache. It retains no widget trees or SDK handles and is not persisted
-across restarts. Persisted event anchors and drafts are separate.
+Event targets mount their indexed neighborhood, then center the measured event or
+restore its saved offset. Native scroll operations request the next layout without
+constructing intervening rows. Viewport updates invalidate layout near mount
+boundaries, with no recurring idle work.
 
-The pinned thread original retains its own selection, code semantics, and
-top-anchored scroll offset in that same conversation entry. It does not share
-reply selection or bottom-following state. A transient loading view cannot erase
-its retained range or scroll position. Sidebar/thread-header presses suspend
-keyboard Copy while retaining logical ranges for navigation. Clicking message
-text replaces the range; returning restores it without stealing Copy from another
-focused field.
+`RowsVisible`, receipts, persisted anchors, and jump highlights use actual viewport
+intersection. Overscan/empty virtual space never counts as viewed. History demand
+retains generation/revision guards.
 
-Code controls preserve selection and anchor the message body even when expansion
-begins at newest. Corner icon overlays, the bottom Expand cue, and horizontal
-scrollbars are renderer chrome, excluded from canonical text. Drag/track/wheel
-input changes the same horizontal offset; release or focus loss ends capture.
-These interactions add no idle timer. See [code rendering](message-formatting.md#bounded-code-previews).
+## Selection and retained state
 
-Projection caches clear on pane navigation/close and account transitions. They
-must not extend SDK snapshot/handle lifetimes. Widget virtualization bounds
-heavy rendering state, not loaded event data, height metadata, or explicit copy
-output. Collapsed code shapes at most 12 lines / 2 KiB; expansion opts into full
-code layout, and collapse releases those paragraphs. Plain prose still lays out
-as a whole. Offscreen height estimates mean scrollbar proportions can adjust
-while exploring history.
+Logical selection endpoints copy canonical text from an ordered model adapter,
+including unmounted rows, hidden-spoiler placeholders, object alternatives, and
+formula source. Widgets provide hit-testing/painting. Edited/removed endpoints
+invalidate selection instead of copying obsolete text.
 
-See [performance validation](../validation/long-history.md) for the opt-in
-mixed-history and individual-message workloads, and the distinction between
-software frame costs, RSS, native GPU/input behavior, and idle measurements.
+A 64-conversation LRU retains logical selections, spoiler reveals, code expansion,
+and horizontal offsets. Restoration may reflow before measuring anchors. Source
+changes reject stale semantics; account transitions clear the cache. It holds no
+widget trees/SDK handles and does not persist across restarts. Drafts and persisted
+reading anchors are separate.
+
+Pinned thread originals retain independent selection/code state/top-anchored scroll,
+including through loading views. Navigation controls suspend keyboard Copy while
+retaining ranges; returning cannot steal Copy from another focused field.
+
+Code controls preserve selection and anchor the message body. Chrome is excluded
+from canonical text; drag/track/wheel share horizontal offset and release/unfocus
+ends capture. Collapsed code shapes at most 12 lines / 2 KiB; expanded code and plain
+prose use full layout. See [code rendering](message-formatting.md#bounded-code-previews).
+
+Projection caches clear on navigation/close/account changes without extending SDK
+handle lifetimes. Virtualization bounds widgets, not loaded event data, height
+metadata, or copy output. See [performance validation](../validation/long-history.md).

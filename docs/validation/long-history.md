@@ -43,10 +43,8 @@ model history. Small conversations up
 to 192 projected rows use exact full layout; larger histories mount an overscanned
 window.
 
-Scroll samples include the corrective relayout following the widget scroll
-operation, matching the widget lifecycle needed for newly mounted rows. Older
-captures without that relayout undercount scroll work and are not identical
-workloads. Viewport/counter probes add a small bounded traversal as well.
+Scroll samples include corrective relayout for newly mounted rows. Viewport/counter
+probes add a small bounded traversal.
 
 Median, nearest-rank p95, and maximum are reported in milliseconds. The JSON
 header records revision, dirty state, platform, Rust version, renderer, and
@@ -95,7 +93,6 @@ and unusually wide code are separate cases.
 Code workloads also report expand/collapse frame costs, including corrective
 layout and rasterization. Collapsed shaping must stay within 12 lines / 2 KiB;
 expansion explicitly opts into full code layout, and collapse releases it. Plain
-prose still uses full layout. The current code UI includes corner icons, a
-translucent bottom Expand cue, and an overflow scrollbar; captures before these
-changes are different workloads. These measurements do not time native input,
-clipboard round trips, file pickers, GPU presentation, or settled idle resources.
+prose still uses full layout. The fixture includes code controls and overflow
+scrolling, but excludes native input, clipboard, file pickers, GPU presentation,
+and settled idle resources.

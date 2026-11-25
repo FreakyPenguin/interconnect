@@ -72,10 +72,6 @@ for server permissions and writes.
   stale formatting/edit completions. Raw HTML stays literal; images show alt text;
   excessive formatting falls back to plain text. No media demand or timers.
 
-UI fixtures cover layout, keyboard actions, stale results, drafts, and redraw
-deadlines. Native clipboard/browser/pickers, live server writes, macOS, and resource
-use need the dedicated desktop/connected checks.
-
 ## Basic moderation
 
 - In room members, the room People sidebar, and space settings, Ban requires a
@@ -84,20 +80,11 @@ use need the dedicated desktop/connected checks.
   controls for yourself and peers above the permitted power boundary.
 - A space ban affects the space alone. Child-room membership, the current
   conversation, drafts, and reading positions remain intact.
-- Backend fixtures cover room/space ban and unban requests, permission boundaries,
-  stale membership, and single-attempt server failures. UI fixtures cover ban
-  confirmation/cancellation and conversation preservation. Live server behavior,
-  native desktop layout, and macOS still require dedicated acceptance checks.
-
 - Room member management and space settings expose a **Banned** tab with search,
   bounded pages, an empty state, Reload, and confirmed Unban. The People sidebar
   links to **Manage members & bans**. Unbanning removes the ban without sending
   an invitation or joining the person. Toggle tabs/search/page while confirming:
   hidden confirmations cannot act. Demo bans persist in memory across reopening.
-- Fixtures verify separate banned/joined/invited projections and room/space unban
-  cancellation, reload, and preservation of the open conversation. Check a
-  dedicated server for remote bans/unbans, permission loss, and failed requests;
-  these connected checks have not been run by the fixtures.
 
 ## Reporting messages
 
@@ -112,21 +99,8 @@ use need the dedicated desktop/connected checks.
   Closing or navigating does not retarget an admitted request. Late responses
   must not update a newer dialog/account; quitting waits for admitted writes.
   Errors preserve the reason and describe ambiguous delivery without auto-retry.
-- Headless fixtures cover request paths/bodies for room and space events, ordinary
-  member access, failure/cancellation, stale completions, drafts, small-window
-  layout, and absence of idle redraw timers. With authorized dedicated profiles,
-  verify report receipt in homeserver administration and permission/server errors.
-  These live checks and native Linux/macOS acceptance remain manual.
-
-Validation on 2026-11-25: locked workspace tests passed (388 library tests;
-2 ignored); after the final UI refinements, all 727 binary tests passed (1
-ignored). Formatting, workspace/all-target Clippy with warnings denied, and the
-locked desktop build passed. An isolated Linux headless Wayland demo with
-Tiny Skia/Light verified room ban/unban and banned-list scrolling at 1280×800 and
-640×480, space ban scope and banned-list display, and report opening, preview,
-reason entry, and simulated submission. Keyboard dismissal was also covered by
-rendered-widget fixtures. No connected account was used; live moderation/report
-receipt, Dark/GPU, and native macOS acceptance were not established by this run.
+- With a dedicated profile, verify report receipt in homeserver administration,
+  permission failures, and server errors.
 
 ## Ban by Matrix ID
 
@@ -135,9 +109,6 @@ receipt, Dark/GPU, and native macOS acceptance were not established by this run.
   Departed people and IDs absent from the roster are supported. Invalid IDs,
   yourself, protected roles, and existing bans are rejected. Space scope remains
   limited to that space; conversations, drafts, and reading positions remain.
-- Fixture coverage includes room/space requests for joined, departed, and unknown
-  people, permission boundaries, cancellation, reload, and stale form input.
-  Native desktop and live-server acceptance still require the dedicated checks.
 
 ## Moderation reasons and ban details
 
@@ -154,9 +125,6 @@ receipt, Dark/GPU, and native macOS acceptance were not established by this run.
   Deletion retries retain their transaction and original reason; the reason field
   becomes read-only after the first attempt. Enter in the reason field does not
   confirm deletion. Check room, thread, and space confirmations at compact sizes.
-- Fixtures cover trimmed/omitted/oversized payloads, reason-bearing kick/ban/unban
-  and redaction requests, server ban details, stale input, and retry preservation.
-  Live-server event propagation and native platform acceptance remain manual.
 
 ## Moderate a message sender
 
@@ -165,6 +133,7 @@ receipt, Dark/GPU, and native macOS acceptance were not established by this run.
   Joined members/invitees can be removed; departed or unknown senders can still
   be banned. Yourself, protected roles, and already-banned senders have no ban
   action. Permission lookups run on demand and are cancelled with the menu.
+  Non-moderator menus must not request `/members`.
 - The confirmation names the sender and source room and accepts an optional
   reason. It targets that room even when browsing through a space. Cancel,
   Escape, navigation, and account changes cannot submit a stale prompt. Drafts,
@@ -173,23 +142,6 @@ receipt, Dark/GPU, and native macOS acceptance were not established by this run.
   explicit retry. Prevent duplicate pending actions against the same account,
   room, and sender, including actions from a different message. Admitted writes
   finish independently of dismissal and release shutdown bookkeeping once.
-- Fixtures cover room/space permission boundaries, lazy-read cancellation,
-  demotion before submission, room/thread menu dispatch, stale lookup results,
-  invalid reasons, drafts, duplicate writes, shutdown, compact layout, Escape,
-  and no idle redraw deadline. Server enforcement and native platform behavior
-  still need dedicated acceptance checks.
-
-Validation on 2026-11-25 for these additions: the locked workspace suite passed
-(396 library tests; two ignored), followed by the final binary suite (738 passed;
-one ignored). Formatting, workspace/all-target Clippy with warnings denied, and
-the locked desktop build passed. The permission fast path also has a fixture
-asserting that a non-moderator's message menu does not request `/members`.
-An isolated Linux headless Wayland demo in Light/Tiny Skia checked sender menus,
-room-specific confirmation and simulated ban, reason entry, ban-by-ID form layout,
-and ban detail presentation; sender confirmation remained usable at 1280×800 and
-640×480. No saved account was used. Live server enforcement/propagation, complete
-native keyboard/IME acceptance, Dark/GPU rendering, macOS, and resource measurements
-remain outside this run.
 
 ## Stale member confirmations
 
@@ -200,6 +152,8 @@ remain outside this run.
   space settings, and the People sidebar.
 - Close/reopen the panel and repeat while the new panel's confirmation counter
   equals the old counter. The old panel's actions must be rejected by session ID.
-  Regression fixtures cover both sequences, reason/draft/scroll preservation,
-  current-action behavior, and absence of pending writes from rejected actions.
-  These are headless UI checks; no connected account or desktop session is needed.
+  Rejecting old actions must preserve reasons/drafts/scroll and create no write.
+
+Automated fixtures cover state, requests, layout, cancellation, and stale actions.
+Live moderation/report delivery, native clipboard/pickers/IME, macOS, GPU rendering,
+and [resource use](idle-resources.md) require separate acceptance checks.

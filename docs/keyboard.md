@@ -178,7 +178,6 @@ A translucent fade with **Expand code** at the bottom also expands a truncated
 preview. Wide lines stay unwrapped: drag the horizontal scrollbar, click its
 track, or use horizontal trackpad scrolling. The bar appears only when the
 currently rendered code overflows; vertical scrolling stays with the conversation.
-The old text-control row and left/right arrow controls are removed.
 
 Copy/Save retain code whitespace and Unicode; hidden spoilers remain placeholders.
 Controls preserve an existing text selection. Recent conversations restore

@@ -53,9 +53,8 @@ still finish. Only item-not-found means missing credentials. Saves update/create
 without deleting the previous item first. Local credential removal follows
 successful server logout and draft deletion; cleanup is retryable.
 
-The private profile contains encrypted SDK stores, [encrypted text drafts](drafts.md),
-and navigation state. A process-lifetime OS lock is duplicated before opening
-SQLite and covers late SDK clones and teardown. It releases at process exit,
+The private profile contains encrypted SDK stores, conversation state, and
+navigation state. A process-lifetime OS lock is duplicated before opening SQLite and covers late SDK clones and teardown. It releases at process exit,
 limiting in-process profile reuse. All programs must honor the lock.
 
 Desktop restore checks local device identity and can show cached data offline;
@@ -67,31 +66,18 @@ SDK; account profiles cannot be imported across OS keyrings. See
 
 ## Conversations and navigation
 
-Drafts are keyed by room and optional thread root. Text, mode, and explicit emoji
-choices and per-conversation reading anchors persist encrypted; staged attachments
-remain in memory. Reading anchors store a synced event ID and its viewport offset;
-newest-following conversations have no anchor. Reopening after restart loads bounded
-history around the event asynchronously, then restores its offset. Unavailable
-anchors fall back once to the ordinary timeline. Drafts clear on SDK queue admission, independently of delivery. Local
-echoes show pending/sent/failed states; retry reuses the original transaction.
-Shutdown waits for admission/retry operations and flushes drafts.
+Room/thread drafts and event-relative reading anchors persist in
+[encrypted local storage](drafts.md); attachments remain in memory. Unavailable
+anchors fall back once. Queue admission clears drafts independently of delivery;
+local echoes expose pending/sent/failed states and retry reuses the transaction.
+Shutdown waits for writes and flushes drafts.
 
-Room/thread panes use [variable-height virtual rows](timeline.md) for long loaded
-histories. Cached projections and a prefix-height index retain lightweight metadata;
-only the viewport and overscan own paragraph/editor/widget state. Model-backed
-selection and sparse spoiler/code state survive row unmounting. A bounded
-64-conversation session cache restores selections, code expansion, and horizontal
-offsets on return; pinned originals keep independent selection/scroll state.
-Small conversations retain exact geometry, with event-anchor restoration after
-code interactions change layout. Collapsed code shapes at most 12 lines / 2 KiB;
-very long plain prose and expanded code still use full layout. Widget
-virtualization does not discard SDK history.
-
-Room/thread panes follow arrivals only when already at newest; otherwise message
-anchors preserve position across arrivals/pagination. Closed-pane offsets remain
-in memory. Search/creation commands capture account and target identity; late
-results cannot navigate a replacement form/account. Temporary retention protects
-newly created entries from older navigation snapshots.
+[Virtual rows](timeline.md) bound mounted widgets, with model-backed selection and
+a 64-conversation session cache for selection/spoilers/code state. They do not
+bound loaded SDK history or full layout of plain prose/expanded code. Newest panes
+follow arrivals; older panes retain event anchors. Search/creation capture account
+and target identity; late results cannot navigate replacement forms. Temporary
+retention protects newly created entries from older navigation snapshots.
 
 The space breadcrumb bar replaces the rail. Peer menus retain the route used
 through shared parents, expose expandable branches, and bound traversal of cycles.

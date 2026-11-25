@@ -78,19 +78,14 @@ see [account validation](connected-ui.md#desktop-login).
 - Failure retains server/username and clears secrets. Cancelling registration or
   browser approval must not claim to delete an account/device created on the server.
 
-Automated state/layout tests cover preference staging, theme resolution, native
-appearance event handling, and idle deadlines. The minimum-size preferences
-layout test loads bundled Inter Regular/SemiBold and selects Inter, matching
-application startup so system sans-serif metrics do not change category wrapping.
-Native appearance delivery and interface scaling still need the desktop checks
-above. Native prompts, IME, clipboard, browser callbacks, and server writes require
-desktop checks.
+Automated fixtures cover state/layout, staging, appearance events, and idle
+deadlines. Minimum-size layout uses bundled Inter, matching startup. Native
+appearance/scaling, IME, prompts, clipboard, callbacks, and server writes need
+desktop acceptance.
 
 ## Default Matrix link handler
 
-Automated UI state tests cover demo simulation, independent preference staging,
-panel reopening, action guards, and stale completions. Native associations require
-these desktop checks; they are not established by the automated tests:
+Native associations require desktop checks:
 
 - Demo → General → Matrix links: Check again and Make default update simulated
   status. Cancel/reopen preserves the simulated default without touching OS settings.

@@ -1,265 +1,169 @@
 # Settings and account profiles
 
-Open Settings with **Ctrl+,** (macOS: **Command+,**). Settings are application-wide;
-Save applies preferences; Close asks before discarding edits. Defaults fills
-defaults, and Advanced → Reload rereads the file. Demo ignores saved settings/accounts, including `--config`.
+Open with **Ctrl+,** (macOS: **Command+,**). Preferences are application-wide.
+Save applies edits; Close asks before discarding them. Defaults stages defaults;
+Advanced → Reload rereads the file. Demo keeps changes in memory and ignores saved
+settings/accounts, including `--config`.
 
 ## Privacy
 
-**Privacy → Send typing indicators** and **Share read receipts** both default to
-on, including when loading an older settings file. Changes take effect on Save;
-Cancel discards them and Defaults stages both controls as on. These are
-application-wide preferences, independent of the selected account. Demo keeps
-changes in memory without reading or writing saved settings.
+**Send typing indicators** and **Share read receipts** default on. Disabling typing
+stops outgoing indications; incoming ones remain. Disabling sharing sends private
+room/thread receipts: your homeserver and own devices still receive read state.
+Room fully-read markers still advance; thread receipts do not move them.
+Unsupported servers report an error without sending a public receipt instead.
 
-Turning typing off stops an active outgoing indication and suppresses new ones;
-incoming typing indicators remain available. Turning read sharing off sends
-Matrix `m.read.private` receipts instead of `m.read` for rooms and threads. Your
-homeserver and other devices on your account still receive your read position,
-so unread counts can clear across devices. Room `m.fully_read` markers still
-advance; thread receipts do not move those room markers. Local reading positions
-and the opening catch-up divider are preserved. Unsupported-server errors are
-shown without falling back to a public receipt.
-
-Previously shared receipts cannot be withdrawn, and other Matrix clients have
-their own preferences. An already delivered request cannot be recalled. Restoring
-sharing allows the current eligible viewport to publish a public receipt again.
-Settings do not create a background timer or change the focus/visibility rules
-for marking messages read. The TOML keys are `[privacy].send_typing` and
-`[privacy].public_read_receipts`.
+Previously shared receipts remain public. Re-enabling sharing lets the eligible
+viewport publish again. Focus/visibility rules and local reading positions stay
+intact. TOML keys: `[privacy].send_typing` and `[privacy].public_read_receipts`.
 
 ## Account profiles
 
-| Platform | Default profile directory |
+| Platform | Default profile |
 | --- | --- |
 | Linux | `$XDG_DATA_HOME/interconnect/profiles/default` or `~/.local/share/interconnect/profiles/default` |
 | macOS | `~/Library/Application Support/interconnect/profiles/default` |
 
-Use `--profile NAME` for a separate profile under the same platform directory
-(for example, `~/.local/share/interconnect/profiles/work` on Linux):
-
 ```sh
 cargo run --locked --bin interconnect -- --profile work
-```
-
-Names must be a single directory name, excluding `.` and `..`. Omit the option
-to use `default`. To choose a directory elsewhere, use `--profile-path PATH`;
-relative paths resolve from the current working directory:
-
-```sh
 cargo run --locked --bin interconnect -- --profile-path /path/to/test-profile
 ```
 
-The existing positional directory argument remains supported. Choose only one
-of `--profile`, `--profile-path`, or a positional directory. Run with `--help`
-for all options, including `--config`, `--demo`, and `--version`. Demo ignores
-profile selection and does not resolve or open an account directory.
+`--profile NAME` selects a sibling of `default`; names exclude separators, `.` and
+`..`. `--profile-path PATH` selects any directory, relative to the working directory
+if needed. The legacy positional directory still works. Choose only one selector;
+`--config` is independent. Demo opens no profile.
 
-Profiles contain encrypted SDK stores, [text drafts](architecture/drafts.md), and
-navigation preferences. Directories use `0700`; an OS lock permits one process.
-Keys and credentials require Linux Secret Service or macOS Keychain; there is no
-plaintext fallback. Legacy `chatclient-milestone-0` credentials migrate on load.
+Profiles hold encrypted SDK stores, [drafts](architecture/drafts.md), and navigation
+state. Directories use `0700`; an OS lock allows one process per profile. Credentials
+and keys require Linux Secret Service or macOS Keychain, with no plaintext fallback.
+Legacy `chatclient-milestone-0` credentials migrate on load.
 
-To move a profile on the same machine, close the client, preserve its
-`keyring-profile` file (if absent, create it with the old canonical absolute path,
-no trailing newline), then move the entire directory with permissions intact.
-Keep the native credential records. File copies alone cannot transfer an account
-to another OS/keyring; never reuse old crypto state for a new device.
+To move a profile on the same machine, quit, preserve its `keyring-profile` file
+(if absent, create it containing the old canonical absolute path without a trailing
+newline), and move the entire directory with permissions intact. Retain native
+credential records. File copies cannot transfer accounts across OS keyrings;
+never reuse old crypto state for a new device.
 
-Failed unlock/resume preserves the profile. Successful sign-out revokes the
-session and deletes drafts/credentials; encrypted SDK stores remain. Local cleanup
-failures offer retry. See [login validation](validation/connected-ui.md#desktop-login).
-
-Account menu → **Key backup & recovery…** creates a recovery key, imports an
-existing key, or replaces a saved key after confirmation. New accounts are offered
-setup after registration. Save the key privately before acknowledging it; see
-[key backup and recovery](validation/recovery.md) for backup status and recovery.
+Failed resume preserves data. Sign-out revokes remotely, then deletes drafts and
+credentials; encrypted SDK stores remain. Local cleanup can retry. Account menu →
+**Key backup & recovery…** manages recovery keys; save them privately before
+acknowledging. See [recovery](validation/recovery.md).
 
 ## External Matrix links
 
-Installed Linux desktop entries and macOS bundles advertise the `matrix:` scheme.
-**Settings → General → Matrix links** checks whether Interconnect is the default
-when the panel opens. **Check again** refreshes the status without polling.
-**Make default** requests the desktop association and checks the result; it applies
-immediately, independently of Save or Cancel. Linux requires the installed desktop
-package and `xdg-mime` (xdg-utils); macOS requires running the installed app bundle.
-Desktop policy or a native confirmation may prevent the change; feedback remains
-in the panel. Demo mode simulates these actions in memory without reading or changing
-desktop associations. You can also choose the handler in your desktop settings.
-The CLI also accepts `matrix:` and
-`https://matrix.to` destinations:
+Packages advertise `matrix:`. **General → Matrix links → Check again** checks the
+association; **Make default** requests it immediately, independently of Save/Cancel.
+Linux needs an installed desktop entry and `xdg-mime`; macOS needs the app bundle.
+Desktop policy may require confirmation. Demo simulates without changing the OS.
+Ordinary `https://matrix.to` browser clicks remain with the browser; the CLI accepts both:
 
 ```sh
 interconnect 'matrix:roomid/example:example.org/e/event?via=example.org'
 interconnect --profile work --open 'https://matrix.to/#/!example:example.org'
 ```
 
-An unscoped link goes to the sole running profile. When several profiles are
-active, a separate picker shows their profile labels, account names, and Matrix
-IDs; choose the intended account. It does not guess from recent focus. With no
-active profiles the default profile starts. `--profile` or `--profile-path` plus
-`--open` targets that profile directly and starts it if necessary. Existing
-profile-directory positional arguments remain supported; use `--open` when
-combining a link with an explicit profile option. Ordinary second launches of
-the same profile request its existing window instead of opening another store.
+| Active profiles | Unscoped link destination |
+| --- | --- |
+| None | Starts the default profile. |
+| One | Forwards to it. |
+| Several | Opens an account/profile picker; does not infer from focus. |
 
-Links wait in memory through sign-in, account restoration, and blocking dialogs.
-Room/event/user destinations reuse in-app link navigation and existing join/chat
-confirmation. No link sends a message or joins a room automatically. Conversation
-drafts and reading positions are preserved. Signing out cancels pending links for
-the previous account; links received on the sign-in screen can wait for sign-in.
-Closing the application or cancelling the picker discards its pending requests.
+Use an explicit profile with `--open` to target/start it directly. A second launch
+of the same profile requests its existing window. Links wait through sign-in,
+restore, and blocking dialogs, preserving drafts/positions. Joining/chat creation
+still requires confirmation. Sign-out clears old-account requests; quit/picker
+cancellation discards queued links.
 
-The picker rechecks the selected process incarnation and Matrix account before
-delivery. If a profile closed, changed accounts, or cannot respond, Refresh and
-choose again. A busy or uncertain endpoint is not treated as no active profiles.
-Delivery acknowledgements mean admission to a bounded in-memory queue, not that
-navigation or joining has completed. Retries of the same request are deduplicated
-against the receiver's last 256 accepted request IDs; this is not a persistent
-delivery service.
+If the selected process closes, changes accounts, or cannot respond, Refresh and
+choose again. ACK means in-memory admission, not completed navigation. Queues are
+bounded to 16 pending links of at most 8192 bytes; the last 256 request IDs are
+deduplicated. Delivery is not persistent; focus is compositor-controlled.
 
-On macOS, an unscoped app launch with running profiles first shows the SDK-free
-welcome/picker so a cold URL AppleEvent can arrive before any new account store is
-opened. A normal launch in that situation can select an active profile or **Open
-default profile**. Warm OS URLs always use the same global selection policy,
-even if the receiving app originally started with `--profile`. Native focus is
-requested along with attention; the window manager/compositor decides whether
-the destination can be raised (Wayland does not guarantee focus stealing).
+On macOS, unscoped launches with active profiles show an account-free welcome/picker
+before opening a store, allowing cold URL delivery. Warm URLs follow the same
+selection policy even in explicitly launched profiles.
 
-Activation uses private same-user Unix sockets and lifetime profile locks, with
-no idle polling or always-running broker. Linux uses a private directory under
-`XDG_RUNTIME_DIR` when suitably short; the fallback and macOS path is
-`/tmp/interconnect-activation-UID`. Socket metadata is not account storage.
-Incoming links are limited to 8192 bytes and 16 pending requests per receiver;
-full queues reject delivery. Raw links and picker metadata are redacted in Debug.
-Demo avoids discovery, sockets, saved accounts, and handler registration. The
-local picker can be inspected with `cargo run --locked --bin interconnect --
---demo --demo-picker`; demo `--open` links only navigate sample data.
-
-The package handles `matrix:` URLs, not all HTTPS URLs. Browsers retain ownership
-of ordinary `https://matrix.to` clicks unless explicitly passed to the client.
+Activation uses same-user private Unix sockets without a broker/polling. Linux
+uses `XDG_RUNTIME_DIR` when suitable; fallback/macOS uses
+`/tmp/interconnect-activation-UID`. See [activation checks](validation/connected-ui.md#external-matrix-activation-and-profile-selection).
+Demo avoids sockets/discovery; preview with `--demo --demo-picker`.
 
 ## Account profile
 
-Settings → Account edits the signed-in account's display name and avatar.
-**Save display name** and **Save image** publish their fields independently;
-choosing or removing an image only stages a change. Clearing the name restores
-Matrix's default label. These values are visible to other people on Matrix.
+**Account → Save display name** and **Save image** publish independently of the
+preferences Save. Clearing the name restores Matrix's default label; image choice/
+removal only stages a change. Values are visible to other people.
 
-Switching categories retains unsaved edits; closing or reloading asks before
-discarding them. Profile saves are separate from the preferences toolbar Save.
-After an uncertain response or a concurrent profile change, Reload profile before
-retrying. Uploading and publishing an avatar are separate operations, so a failed
-save may leave unused media. Demo changes remain in memory for that session.
+Category changes retain edits; close/reload asks before discarding. After a conflict
+or uncertain response, Reload profile before retry. Avatar upload/publication can
+leave unused media. Demo changes last for that session.
 
 ## Devices and sessions
 
-**Settings → Devices** loads your own devices from the homeserver when opened.
-The current device appears first with **This device**; names, IDs, and available
-last-seen times help identify the others. **Refresh devices** fetches a fresh list.
-There is no background polling. This list is separate from SAS verification;
-use the account menu's verification action to compare device keys.
+**Settings → Devices** loads own devices on open/Refresh, with IDs, available
+last-seen times, and **This device** first. Rename applies immediately (1–128
+characters, no controls). Revoke requires device-specific confirmation and server
+authentication; it ends that session without erasing the device's local data. Use
+Sign out for the current device. SAS key verification remains in the account menu.
 
-**Rename…** stages a name and **Rename device** applies it immediately, independently
-of the preferences toolbar Save. Names use 1–128 characters without control
-characters. **Revoke…** requires confirmation of the named device, then any
-homeserver authentication. Revocation signs out that device; it does not remotely
-erase its local data. This panel cannot revoke the current device; use **Sign out**.
-
-Password UIAA prompts accept your account password for this operation only.
-Browser UIAA stages open a fallback page on the authenticated homeserver after
-**Open authentication in browser**; finish there, then **Continue revoking**.
-Multiple stages and rejected passwords can prompt again. Opening a browser alone
-does not complete authentication. Some servers do not expose a fallback page or
-require OAuth-native approval; use another client if their stage cannot finish.
-Passwords, UIAA sessions, and authentication URLs are neither saved nor logged by
-the management code. Leaving this category, closing settings, account changes,
-or a covering dialog clears pending prompts/passwords. Submitted network writes
-finish for their captured device and account; closing a prompt cannot recall an
-accepted request. Refresh after errors or timeouts before retrying.
-
-Device changes preserve the open conversation, draft, and reading position.
-Demo uses an in-memory device list, without accounts, network calls, browser
-launches, or saved configuration changes.
+Password UIAA uses the password only for this operation. For browser UIAA, explicitly
+open the homeserver page, complete authentication, then **Continue revoking**.
+Unsupported fallback/OAuth-native flows may require another client. Leaving/covering
+the panel clears prompts/secrets; submitted writes may still finish. Refresh after
+errors/timeouts. Demo uses local devices without browser/network access.
 
 ## Ignored users
 
-Settings → Account → **Ignored users** manages the account-wide Matrix ignore list.
-Enter a full Matrix ID and choose **Ignore…**, then confirm. People → **Ignore user…**
-opens this section with the selected ID filled in. Use **Unignore…** beside an ID to
-restore contact; entering an already ignored ID also offers Unignore. Lists over
-100 entries show the first 100, with full-ID entry available for the rest.
+**Account → Ignored users** accepts a full Matrix ID with confirmed Ignore/Unignore.
+People → Ignore user prefills it. Lists show the first 100 entries; full-ID input
+can unignore others. Ignoring filters messages/invitations after sync; it does not
+ban, prevent reading shared rooms, or guarantee historical recovery after unignore.
 
-Ignoring hides messages/invitations through Matrix's ignore list after account data
-syncs. It does not ban someone, stop them reading your messages, or remove them
-from shared rooms. Unignore does not promise to recover previously filtered
-history. This is separate from room moderation and abuse reporting.
-
-The displayed list is a server snapshot; Reload checks changes made in other
-clients. Each confirmed edit reads fresh server state, preserves other entries,
-and makes one update attempt. Cross-client changes can still race because Matrix
-has no conditional account-data writes. After an uncertain result, Reload before
-retrying. Reads cancel when Settings closes; submitted writes finish for their
-captured account and participate in shutdown. Demo changes stay in memory.
-See [ignored-user validation](validation/ignored-users.md).
+Reload refreshes other-client edits. Writes read fresh state and preserve other
+entries, but concurrent updates can race. Reload after uncertain results. Demo stays
+local. See [ignored-user checks](validation/ignored-users.md).
 
 ## Configuration file
 
-| Platform | Default settings file |
+| Platform | Default file |
 | --- | --- |
 | Linux | `$XDG_CONFIG_HOME/interconnect/settings.toml` or `~/.config/interconnect/settings.toml` |
 | macOS | `~/Library/Application Support/interconnect/settings.toml` |
 
-Override with `--config /path/to/settings.toml`. Legacy settings files require
-manual copying or `--config`. [config.example.toml](../config.example.toml)
-is the complete key/default reference.
+Override with `--config PATH`; copy legacy files manually.
+[config.example.toml](../config.example.toml) lists all keys/defaults.
 
-- Theme, interface size, message text size, and room-width preferences apply on Save.
-  Light/Dark override desktop appearance; System follows native appearance changes
-  without polling, falling back to Light when the platform has no preference.
-  Existing files retain the Light default. Native window decorations follow the
-  desktop appearance independently of the app's colors. Custom palettes are unsupported.
-- Interface size offers 100%, 115%, 130%, and 150%, in addition to desktop scaling.
-  It enlarges all text and controls together, including message formatting,
-  composers, and dialogs. Larger sizes leave less content visible; resize the
-  window as needed.
-- Message text offers 12, 14 (default), 16, and 18 logical pixels for plain and
-  formatted conversation bodies, including code, tables, and message previews.
-  Markdown headings scale proportionally; interface and desktop scaling still
-  apply. Room/thread headers, navigation, dialogs, composer editing, and authored
-  image/formula dimensions keep their own sizes. Changing this preference
-  preserves selection, code state, and reading anchors. The setting is
-  `appearance.message_text_size`: `small`, `normal`, `large`, or `extra_large`.
-  Existing files default to `normal` (14 px).
-- Composer defaults to Ctrl+Enter to send; Enter-to-send is optional.
-- Presence polling defaults off (60-second interval; allowed range 15–3600).
-  On-demand snapshots use a 60-second cache; polling runs only while focused.
-- GIFs stay still until Play; choose one loop or 1–300 seconds of playback.
-- Graphics settings require restart. See [renderer selection](development.md#renderer-selection)
-  for environment overrides and fallback behavior.
+- Theme: Light/Dark or event-driven System (Light fallback). Existing files default
+  to Light; native decorations follow the desktop independently.
+- Interface size: 100/115/130/150%, on top of desktop scaling; enlarges all text/controls.
+- Message text: 12/14/16/18 logical px for bodies, proportional headings, code,
+  tables, and previews. Shell, composer, and authored media keep their own sizes;
+  selection/code state/anchors survive changes. `appearance.message_text_size`
+  uses `small`, `normal` (default 14 px), `large`, or `extra_large`.
+- Ctrl+Enter sends by default; Enter-to-send is optional.
+- Presence polling: off by default, focused-only, 60 seconds (range 15–3600).
+  On-demand snapshots cache for 60 seconds.
+- GIFs require Play; choose one loop or 1–300 seconds.
+- Graphics requires restart; see [renderer selection](development.md#renderer-selection).
 
-Save creates the file via private atomic replacement, retaining comments and
-unknown keys. Invalid/unsupported TOML, non-UTF-8, files over 64 KiB, and symlinks
-block saving; the last valid settings remain active. External edits require Reload
-before Save. There is no file watcher or filesystem compare-and-swap guarantee.
+Save uses private atomic replacement, retaining comments/unknown keys. Invalid or
+unsupported TOML, non-UTF-8, files over 64 KiB, and symlinks block saving; the last
+valid settings stay active. External edits require Reload. No file watcher or
+filesystem compare-and-swap guarantee.
 
 ## Notifications and recent history
 
-Settings → Notifications controls native alerts and previews. These choices do
-not disable the in-app inbox. The bell to the left of the account avatar shows
-unread message, invitation, and verification notifications; switch to History to include read entries. Read controls and up to 256 history entries persist
-encrypted in the current account profile. They are device-local and do not change
-Matrix read receipts. Preview changes apply to newly captured entries.
-See [notification behavior and validation](validation/notifications.md).
+Native alerts/previews are independent of inbox collection. The bell shows unread
+messages, invitations, and verification; History includes read entries. Up to 256
+entries/read flags persist encrypted per profile/device and do not change Matrix
+receipts. Preview changes apply to new entries. See [notifications](validation/notifications.md).
 
 ## Network proxies
 
-Set proxy environment variables before launching Interconnect. Matrix requests
-honor `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY` (or their lowercase
-forms). Protocol-specific variables take precedence over `ALL_PROXY`.
-HTTP/HTTPS and SOCKS proxies are supported; there is no proxy field in Settings.
-
-For a local SOCKS5 proxy with destination DNS resolved by the proxy:
+Matrix requests honor `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and `NO_PROXY`
+(including lowercase forms). Protocol-specific variables override `ALL_PROXY`;
+`NO_PROXY` bypasses matching hosts. No proxy field exists in Settings.
 
 ```sh
 HTTP_PROXY=socks5h://127.0.0.1:1080 \
@@ -267,132 +171,106 @@ HTTPS_PROXY=socks5h://127.0.0.1:1080 \
 cargo run --locked --bin interconnect
 ```
 
-Use `socks5://` for local destination DNS resolution. `NO_PROXY` excludes matching
-hosts from proxying. Browser SSO uses the browser's own proxy configuration.
-See [proxy validation](validation/connected-ui.md#network-proxies) for acceptance checks.
+HTTP/HTTPS and SOCKS are supported. `socks5h://` resolves destination DNS remotely;
+`socks5://` resolves locally. Browser SSO uses its own configuration.
+See [proxy checks](validation/connected-ui.md#network-proxies).
 
 ## Home and room organization
 
-Home shows rooms outside joined spaces. **Include subspaces** beside the room
-filter makes Home show all rooms; in a space it includes descendants without
-duplicates. DMs follow the same membership rule. **Ctrl+Shift+L** (macOS:
-**Command+Shift+L**) toggles it. Changing spaces filters the sidebar while keeping
-the open conversation, drafts, and reading position.
+Home shows rooms outside joined spaces; **Include subspaces** shows all. In a space
+it includes descendants without duplicates. DMs obey the same rule. Toggle with
+Ctrl+Shift+L (Command on macOS). Space changes filter the sidebar and preserve the
+open conversation/drafts/position.
 
-Browse via Home's tree menu, breadcrumb peer menus, or the searchable space picker
-(**Ctrl+Shift+P** / **Command+Shift+P**). Shared spaces retain the route used to
-reach them. Location, route, expanded branches, and per-location subspace toggles
-persist in `navigation.json`; Element's Home filter does not override them.
-Older All rooms preferences restore as recursive Home; Direct messages restores
-as Home. See [navigation shortcuts](keyboard.md#space-navigation).
+Use Home's tree, breadcrumb peers, or Ctrl+Shift+P. Shared spaces retain the route
+used. Routes/expanded branches/toggles persist in `navigation.json`, independently
+of Element's Home filter. Legacy All rooms becomes recursive Home; Direct messages
+becomes Home. See [space navigation](keyboard.md#space-navigation).
 
 ### Room sections
 
-Right-click a room → **Move to section…**. Create/rename/remove sections through
-the room-list **⋯** or header menus. Removing a section keeps its rooms joined.
-Drag the six-dot handle or use Move up/down to reorder: Unread stays first,
-Favorites next, Low priority last. Order is account-wide, including hidden sections.
+Right-click → **Move to section…**; create/rename/remove in room-list/header menus.
+Removing keeps rooms joined. Drag the handle or Move up/down: Unread first,
+Favorites next, Low priority last. Account-wide ordering includes hidden sections.
 
 ## Room settings
 
-The sliders icon beside Members opens name/topic, personal notifications, access,
-and history settings, each saved independently. Reload replaces unsaved edits.
-Shared settings require room permissions; restricted/knock/custom access is
-read-only. Public access does not publish the room in a directory; history
-visibility does not supply old encryption keys.
+The sliders icon opens independently saved name/topic, notifications, access, and
+history settings. Reload replaces edits. Shared fields require permission;
+restricted/knock/custom access stays read-only. Public access does not list a room
+in a directory; history visibility does not provide old keys.
 
-Notification choices are account default, all messages, mentions/keywords, and
-mute. These sync across clients via Matrix push rules; device-wide alert/preview
-switches remain in Settings. Mute does not clear unread badges.
+Notification presets: account default, all messages, mentions/keywords, mute.
+They sync through Matrix push rules; mute does not clear unread badges.
 
-**Leave room…** requires a fresh consequence preview and explicit confirmation.
-Warnings cover encryption/key loss, last admin/inviter/member, and lost privileges.
-Leaving does not delete keys, forget the room, or remove others' history. Changed
-consequences require Reload; check membership after an ambiguous failure.
+**Leave room…** previews key-loss/last-admin/inviter/member consequences before
+confirmation. It does not forget or delete keys/history. Changed state requires
+Reload; ambiguous failure requires checking membership.
 
 ## Finding rooms to join
 
-Open the compass action in the sidebar, Space settings, or an empty room list:
+Open the sidebar compass, Space settings, or an empty room list:
 
 | Tab | Search |
 | --- | --- |
-| Current space | Filters loaded descendant rooms/subspaces by name, topic, alias, or ID. Requires a selected space. |
-| Homeserver | Enter/Search submits to the connected server's public directory; empty search lists public rooms. Reload/Load more use the last submitted query. |
+| Current space | Loaded descendants' name/topic/alias/ID; requires a selected space. |
+| Homeserver | Explicit Enter/Search queries the connected public directory; empty lists public rooms. |
 
-Tabs retain separate queries/results/continuations. Load more is explicit, with
-50 results per page and up to 1,000 loaded rooms per tab. Server visibility rules
-apply. Join supports public rooms, eligible restricted rooms, and invitations;
-knocking is unsupported. Joining keeps the current conversation/filter and adds
-no space link. Open explicitly navigates. Nested rooms may require Include subspaces.
+Tabs retain separate queries/results/pages. Load more fetches 50, up to 1,000 per
+tab. Join supports public/eligible restricted/invited rooms; no knocking. Joining
+keeps the conversation/filter and adds no space link; Open navigates. Nested rooms
+may need Include subspaces. Linking an existing result/address is independent of joining.
 
 ## Spaces and member management
 
-The globe-plus action creates a root space from Home or a subspace of the selected
-writable space. Spaces are unencrypted and support private/public access. If
-creation succeeds but linking fails, **Retry adding to space** reuses the created
-ID. Check the tree before retrying after a timeout.
+Globe-plus creates a root space from Home or a subspace in the selected writable
+space. Spaces are unencrypted, private/public. If linking fails after creation,
+**Retry adding to space** reuses the ID; inspect the tree after ambiguous creation.
 
-To link an existing joined space, navigate to it and open the sidebar’s
-**Sidebar actions** menu (above the room filter), then **Add this space to another
-space…**. Search and choose a writable parent. This adds a direct child link;
-existing parents remain. The current conversation, drafts, scroll positions,
-and selected space stay open. You need permission in the parent, not the child.
-Self links, existing direct links, and cycles through known joined spaces are
-excluded and checked again before sending. The client does not fetch unjoined
-space hierarchies; unknown paths and concurrent changes remain possible.
+For joined spaces, **Sidebar actions → Add this space to another space…** adds a
+writable parent without removing others. **Remove this subspace from parent**
+unlinks only the current breadcrumb parent. Membership/child metadata/conversation
+stay intact; the route falls back if needed. Parent permission is required.
+Self/duplicate/known-cycle links are rejected; unjoined paths/concurrent changes
+cannot be checked atomically. See [link checks](validation/connected-ui.md#add-and-remove-space-links).
 
-Navigate to a subspace through the parent you want to detach, then choose
-**Remove this subspace from parent** in the same menu. Only that breadcrumb
-parent’s direct link is removed. The subspace remains joined and keeps other
-parents, child rooms, and child-side parent metadata. Its breadcrumb falls back
-to another route or to a root while the conversation stays open. Removal needs
-the parent’s permission. Errors remain in the menu/picker; after cancellation
-or a timeout, check the tree before retrying because a request may have reached
-the server.
-
-Space settings edits name/topic and invitation/public access. The member editor
-is shared with **People** and **Room settings → Members & invitations**: search
-by name/ID, page 50 members at a time, invite, remove/revoke invitations, and set
-Member (0), Moderator (50), or Admin (100). Removal/revocation/role changes require
-confirmation. Custom levels are preserved until a role is explicitly chosen.
-You cannot change yourself or peers at equal/higher power; promoting someone to
-Admin may prevent later demotion. Removal does not ban; space membership changes
-do not affect child rooms.
+Space settings, People, and Room settings share member management: 50-member pages,
+search/invite/remove/revoke, and Member (0)/Moderator (50)/Admin (100) roles.
+Changes require confirmation and preserve custom levels until explicitly replaced.
+Self/equal-or-higher-power restrictions apply; promoting an Admin may prevent later
+demotion. Removal does not ban; space actions affect no child rooms.
 
 ## Leaving and disbanding spaces
 
 | Action | Effect |
 | --- | --- |
-| Leave space | Leaves and forgets only that space for your account; child memberships/links and other members remain. |
-| Disband space | Closes access, unlists the local public-directory entry, removes other active memberships/invitations/knocks and direct child links, verifies completion, then leaves/forgets. |
+| Leave | Leaves/forgets the space only; retains children, links, and other members. |
+| Disband | Closes access, unlists locally, removes active memberships/invitations/knocks and direct child links, verifies, then leaves/forgets. |
 
-Disband requires sufficient permissions, fresh state/counts, and the exact space
-name. Protected creators or equal-power admins may block it. Changed state requires
-review again. Child rooms, history, aliases, external listings, and parent references
-may remain: disband is neither atomic nor a data purge. Partial failure requires
-Reload and explicit retry; a failed forget retries only that step. Leaving the
-selected space returns the filter to Home and preserves the open conversation.
+Disband requires fresh permissions/counts and the exact name. Protected/equal-power
+admins may block it. Changed state needs review; partial failure needs Reload/retry
+(failed forget retries only forget). History/aliases/external references may remain;
+it is not atomic or a purge. Leaving the selected space filters to Home without
+closing the conversation.
 
 ## Room and space avatars
 
-Choose PNG/JPEG/WebP up to 10 MiB and 4096 px per side; Save uploads and publishes
-for everyone. Preparation orients/resizes to fit 512×512 and strips metadata into
-a static PNG. Reload/close discards an unsaved avatar. **Avatar media is unencrypted,
-including in encrypted rooms.** Remove clears the reference, not uploaded media/history.
+PNG/JPEG/WebP: up to 10 MiB, 4096 px/side. Preparation orients/resizes to 512×512
+and strips metadata into static PNG. Only Save uploads/publishes; Reload/close
+discards. **Media is unencrypted even in encrypted rooms.** Remove clears the
+reference, not media/history.
 
 ## Emoji packs
 
-Settings → Media & emoji → Manage emoji packs manages personal/permitted room packs and account-wide
-room-pack availability. Shortcodes use 1–100 ASCII letters, digits, `_`, or `-`.
-PNG/JPEG/WebP/GIF preparation accepts up to 2 MiB and 4096 px per side; only Save
-uploads. **Emoji media is unencrypted even in encrypted rooms.** Removing an entry
-keeps uploaded media and existing message/draft references. Conflicts require Reload.
+**Media & emoji → Manage emoji packs** edits personal/permitted room packs and
+account-wide availability. Shortcodes: 1–100 ASCII letters/digits/`_`/`-`.
+PNG/JPEG/WebP/GIF input: up to 2 MiB, 4096 px/side. Only Save uploads.
+**Media is unencrypted even in encrypted rooms.** Removal retains uploaded media
+and existing references; conflicts require Reload.
 
 ## Pending changes and failures
 
-Management reads run on open/Reload and cancel on close/navigation. Admitted writes
-finish for their captured account/target and participate in shutdown. Permissions
-and edited state are rechecked, but Matrix has no conditional state writes: remote
-changes can still race, and timeouts can leave partial or successful changes.
-Allow sync to catch up, then Reload before retrying. Uploads can leave unused media
-when publication fails. Demo management changes stay in memory without network access.
+Reads cancel on close/navigation; admitted writes finish for their captured target
+and participate in shutdown. Permissions/state are rechecked, but remote races or
+lost responses can leave partial/successful changes. Let sync settle and Reload
+before retrying. Upload/publication failure can leave unused media. Demo stays local.

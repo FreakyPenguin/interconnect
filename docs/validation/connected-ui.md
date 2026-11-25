@@ -1,24 +1,19 @@
 # UI and account validation
 
 Run the [development checks](../development.md#build-and-checks) and a locked desktop
-build first. These are acceptance procedures, not completed-run records.
+build first. This is an acceptance checklist, not a record of completed runs.
+Use dedicated authorized profiles and disposable rooms/spaces for live checks;
+do not send test messages or restart the user's connected client without authorization.
 
 ## Command-line startup
 
-- Run `target/debug/interconnect --help` (or `-h`) and `--version` without a
-  display, `HOME`, or XDG directories: exit successfully without reading settings,
-  creating profiles, opening credential storage, or starting the UI.
-- Check missing option values, unknown flags, multiple profile selectors, and
-  extra positional arguments: fail before startup with a useful error.
-- Named-profile resolution and invalid names are covered by headless unit tests:
-  `--profile work` uses the platform profiles directory, retaining the XDG/HOME
-  fallback and macOS Application Support behavior. Paths containing separators,
-  empty names, `.` and `..` must not escape that directory.
-- With an authorized test account, verify `--profile-path PATH` and the legacy
-  positional directory select the same profile, including relative paths and
-  paths with spaces. `--config FILE` must remain independent of profile selection.
-- Demo must ignore profile/configuration paths and use sample data without
-  resolving account storage, including when `HOME` and XDG directories are absent.
+- `--help`, `-h`, and `--version` work without a display, `HOME`, or XDG directories
+  and do not open settings, profiles, credentials, or UI.
+- Invalid flags, missing values, and conflicting profile selectors fail before startup.
+  Named profiles reject empty names, separators, `.` and `..`.
+- `--profile-path PATH` and the legacy positional path select the same profile,
+  including relative paths and spaces. `--config FILE` remains independent.
+- Demo ignores configuration/profile paths and works without `HOME` or XDG directories.
 
 ## Demo checks
 
@@ -26,1057 +21,450 @@ build first. These are acceptance procedures, not completed-run records.
 cargo run --locked --bin interconnect -- --demo
 ```
 
-Demo uses sample data without credentials, account stores, Matrix traffic, or
-uploads. Explicit file preparation/pickers and sample notifications can use native
-services. Use only demo data in README screenshots.
+Demo uses local data without saved accounts or Matrix traffic. Explicit file
+pickers/preparation and sample notifications can use desktop services.
+Check Light/Dark at 1400×900 and 640×480, with wgpu and tiny-skia where available.
+Throughout, retain distinct room/thread drafts and an older reading position.
+Check long labels, disabled states, keyboard/IME precedence, and static idle controls.
 
-Check Light/Dark at 1400×900, narrow widths, and 640×480; use wgpu and tiny-skia
-where available. Across the checks below, preserve distinct room/thread drafts
-and an older reading position. Check keyboard/IME/dialog precedence using the
-[shortcut reference](../keyboard.md), scrolling, long labels, tooltips, and disabled
-states. Static controls and focused fields must not schedule periodic redraws.
-
-| Area | Check |
+| Area | Checks |
 | --- | --- |
-| Navigation | Breadcrumb peer/tree menus, shared/cyclic paths, Home/subspace filtering, picker, sidebar visibility, sections and ordering. |
-| Timelines | Resize room/thread panes, load history, newest following versus anchored older positions, pending/failed/retry states. |
-| Composition | Plain/Markdown preview, math/code/spoilers, completion, replies, edit/cancel, confirmed deletion, selection/copy. |
-| Media | Inline dimensions, viewer, GIF play/stop, save/open, picker/paste/drop into each pane. |
-| Discovery | Room/account search, saved messages, People, pins, invitations, room/space creation and discovery. |
-| Management | Room/space settings, members, avatars, emoji packs, leave/disband previews and cancellation. |
+| Navigation | Breadcrumbs/tree, shared/cyclic routes, Home/subspace filters, pickers, sections, back/forward. |
+| Timelines | Room/thread resize, pagination, newest following versus older anchors, pending/failed sends. |
+| Composition | Plain/Markdown preview, mentions, replies, edits, deletion, selection/copy. |
+| Media | Viewer, GIF play/stop, save/open, picker/paste/drop into each pane. |
+| Discovery | Search, saved messages, pins, invitations, room/space creation and discovery. |
+| Management | Settings, members, avatars, emoji packs, leave/disband cancellation. |
 
-See the focused [preference/dialog](ui-preferences.md),
-[management](ui-management.md), and [discovery/media](ui-discovery.md) checks.
-Also verify the separate sidebar chat/room creation icons, sidebar actions menu,
-thread room identity/back action, composer
-shortcut hints, and conversation-level retry. Open invitations and sign-out
-over an older reading position, then cancel: the same live timeline offset and
-draft must remain. Covered conversations must not publish viewport/read demand
-or accept focus/input. Check nested forms and application close with unsaved
-changes: each confirmation must be visible in the topmost active dialog.
+Use the focused [preferences](ui-preferences.md), [management](ui-management.md),
+and [discovery/media](ui-discovery.md) checklists for details. Covered conversations
+must retain live offsets without accepting input, read receipts, or media demand.
+Nested discard/exit confirmations must appear in the topmost active dialog.
 
 ## Shared lifecycle checks
 
-For each asynchronous feature, close/reopen, navigate, switch accounts, and quit
-during reads/preparation and writes. Cancel reads and reject stale results; admitted
-writes retain their captured target and release shutdown bookkeeping once. Verify
-errors preserve drafts/forms and require explicit retry where appropriate.
-
-Management permissions/state must be rechecked before writes. Test remote changes
-while a form or confirmation is open. Matrix changes are not atomic: after a lost
-response or partial failure, let sync settle and Reload before retrying.
-
-Use dedicated accounts/profiles and disposable rooms/spaces for connected or
-destructive checks. Do not send messages, restart the user's connected client,
-or revoke its session without authorization.
+For asynchronous features, close/reopen, navigate, switch accounts, and quit during
+reads and writes. Reads cancel; stale results cannot change replacement views.
+Admitted writes retain their captured account/target and finish shutdown accounting
+once. Errors preserve drafts/forms. Recheck permissions and remote state before
+writes; after partial failure or a lost response, let sync settle and Reload before
+explicit retry. Matrix changes are not atomic.
 
 ## Network proxies
 
-With an authorized dedicated profile and a controlled proxy, use the
-[proxy environment variables](../settings.md#network-proxies) before launch:
+With a dedicated profile and controlled proxy, check the
+[proxy environment variables](../settings.md#network-proxies):
 
-- Verify HTTP/HTTPS proxying and SOCKS5 proxying cover discovery/sign-in, resumed
-  sync, and media downloads. Inspect proxy activity without retaining credentials
-  or private message content.
-- With `socks5h://`, use a homeserver hostname resolvable only by the proxy and
-  verify discovery succeeds. With `socks5://`, destination DNS resolves locally.
-- Check `HTTP_PROXY`/`HTTPS_PROXY` override `ALL_PROXY` and `NO_PROXY` bypasses
-  the proxy for a controlled host. Check the lowercase environment forms too.
-- Make the proxy unavailable: requests must fail without silently connecting
-  directly; cancellation and shutdown must remain responsive.
-- Configure the browser separately for SSO and preserve the localhost callback.
-  Demo must still work without contacting the proxy or opening an account.
-
-These are manual acceptance checks. Dependency-feature inspection and workspace
-tests alone do not establish live proxy or DNS behavior.
+- HTTP/HTTPS and SOCKS cover discovery, sign-in, resumed sync, and media.
+- `socks5h://` resolves destination DNS remotely; `socks5://` resolves locally.
+- Protocol-specific variables override `ALL_PROXY`; `NO_PROXY` bypasses a controlled
+  host. Check lowercase forms too.
+- An unavailable proxy fails without direct fallback; cancellation stays responsive.
+- Browser SSO uses its own proxy configuration and preserves the localhost callback.
+  Demo makes no proxy/account requests.
 
 ## Desktop login
 
-During browser/password sign-in, cancel while discovery, browser approval, and
-credential persistence are pending. Cancellation must return to the form only
-after the session owner acknowledges it. Admitted credential writes must finish;
-an already authenticated session must finish persistence and may still sign in.
-Check that a retry cannot overlap the previous attempt, and that a queued older
-submission cannot create another device. If browser approval raced cancellation,
-inspect the dedicated account's devices in another client. Registration remains
-subject to its existing partial-account and challenge-cancellation behavior.
-Use a homeserver with native sliding sync and working native credential storage.
-SSO requires localhost port **8765** forwarded to the browser's host. See
-[profiles](../settings.md#account-profiles) and [container setup](../development.md#using-the-host-secret-service-from-the-container).
+Use native sliding sync and working Secret Service/Keychain storage. Browser SSO
+needs localhost port **8765** reachable from the browser; see
+[container setup](../development.md#using-the-host-secret-service-from-the-container).
 
-1. Log in and open encrypted history; record account/device identity privately.
-2. Quit/resume the profile, including offline cached startup; identity and crypto
-   store must be reused. A second process must fail the profile lock.
-3. Lock/deny credential access or interrupt login: preserve existing stores/credentials.
-4. Revoke the token; reauthenticate into fresh device state while retaining old
-   encrypted stores and recoverable drafts.
-5. Sign out: revoke remotely before deleting drafts/credentials. Remote failure
-   permits cancellation; local cleanup retry must not revoke again. Retained SDK
-   stores must not resume the revoked session.
+1. Sign in, open encrypted history, and record account/device identity privately.
+2. Quit/resume, including offline cached startup: reuse device/crypto state.
+   A second process must fail the profile lock.
+3. Cancel during discovery, browser approval, and credential saving. Cleanup must
+   finish before retry; authenticated attempts may still finish persistence/sign-in.
+   Old submissions must not create another device. Inspect raced SSO in another client.
+4. Deny/lock credential access or interrupt login: preserve existing stores/keys.
+   Revoke the token, then reauthenticate with fresh device state while retaining
+   earlier encrypted stores and recoverable drafts.
+5. Sign out: remote revocation precedes draft/credential deletion. Remote failure
+   allows cancellation; local cleanup retry must not revoke again. Retained stores
+   must not resume the revoked session.
 
 ### Registration
 
-With an authorized disposable account on a server offering native Matrix
-registration and sliding sync, use a new, dedicated profile:
+Use a disposable account and fresh profile on a server supporting native registration.
 
-- Select **New to Matrix? Create an account**. Confirm mismatched passwords and
-  a full Matrix ID prevent submission; switching back to sign-in clears passwords.
-- Submit a username and matching passwords. Check unavailable registration,
-  taken/invalid usernames, weak passwords, and errors retain homeserver/username
-  while clearing passwords for an explicit retry.
-- When the server requests a registration token, enter the administrator-provided
-  token in the masked **Registration token** field and select **Continue**. This
-  submits `m.login.registration_token` directly with the current registration
-  session; it must not open a browser or require SSO. Check invalid/expired tokens
-  show a retry prompt with an empty field. A later terms/browser step must retain
-  the session without resending the token. Cancel, expiry, prompt replacement,
-  and quit must clear the token; stale inputs/submissions cannot reach a new prompt.
-- For CAPTCHA, email, or terms stages, open/copy the server's
-  browser link, complete the step, and select **Continue**. Terms must require the
-  user's acceptance. A premature Continue must show the unfinished step again;
-  multiple steps must use the same registration session. No polling is used.
-- Cancel at a token/browser step or quit while waiting; no later prompt reply may
-  advance another attempt. Registration expires after fifteen minutes overall.
-  Cancellation stops the local attempt; it cannot undo a server-created account.
-- Successful registration should open the account and
-  [key backup and recovery setup](recovery.md), including on a new verified device.
-  Quit/resume the dedicated profile and verify account/device/crypto identity is
-  reused. If account creation succeeded but session saving failed or the response
-  was lost, return to sign-in rather than creating another account.
-- Check scrolling/tab navigation at 640×480 and with long errors. Static form
-  and token/browser-wait states must settle without periodic redraws.
+- Reject mismatched passwords and full Matrix IDs as usernames. Errors retain
+  server/username and clear passwords; switching to sign-in clears secrets too.
+- Exercise `m.login.registration_token` directly in the masked field, including
+  invalid/expired tokens. Later stages retain the session without resending it.
+- Complete CAPTCHA/email/terms in the browser, then Continue. Premature Continue
+  retains the unfinished stage; terms require acceptance. No polling.
+- Cancel/expire/replace prompts and quit: stale replies cannot advance another
+  attempt. The overall deadline is fifteen minutes. Cancellation cannot undo a
+  server-created account; after ambiguous creation/save failure, return to sign-in.
+- Success opens [recovery setup](recovery.md). Resume reuses account/device/crypto
+  identity. Check keyboard/scrolling at 640×480 and settled token/browser-wait states.
 
-OAuth-only/delegated account creation is not implemented by this native
-registration form. Use the homeserver's own account creation page, then return
-to sign in using its supported method.
+OAuth-only account creation requires the homeserver's own page.
 
 ### Account profile
 
-Settings → Account loads the signed-in name/avatar. Save each field independently
-and confirm it in another client. Check empty/Unicode/long names, avatar selection
-and removal, and conflict detection after another device edits the same field.
-Only Save uploads/publishes; keep unrelated drafts. Deny/stall/lose a response:
-show an error, retain the draft, and require Reload before retrying. Close/reopen
-or switch account during reads/writes; no stale result may replace another form.
-Avatar upload/publication is not atomic and may leave unused media.
+Save name/avatar independently and confirm in another client. Check empty/Unicode
+names, image removal, remote conflicts, denied/lost responses, and stale completions.
+Only explicit Save publishes; retain unrelated edits and require Reload after
+uncertain writes. Avatar upload/publication can leave unused media.
 
 ## Native macOS account storage
 
-Use the [native bundle](../development.md#macos-builds). Check Keychain allow/deny/
-locked states, access after rebuilding, resume/offline startup, and cleanup retry.
-Demo and an empty login form must not prompt. Cancellation must retain the profile
-lock until native work finishes.
-
-Opt-in fixture (macOS; creates temporary test records):
+Use the [bundle](../development.md#macos-builds). Check Keychain allow/deny/locked
+states, access after rebuilding, offline resume, and cleanup retry. Demo and empty
+sign-in must not prompt. Cancellation retains the profile lock until native work ends.
+Opt-in Keychain fixture (creates temporary test records):
 
 ```sh
 cargo test --locked --lib session::credentials::macos::tests::native_keychain_round_trip -- --ignored
 ```
 
-Linux private Secret Service fixtures and CI tests do not validate Keychain policy.
-
 ## Home navigation
 
-- Home defaults to rooms outside joined spaces, including DMs; Include subspaces
-  shows all rooms. Spaces toggle direct/recursive rooms without duplicates.
-- Toggle each location, leave/return, then restart a test profile: retain route,
-  expanded branches, and per-location toggles. Element's Home preference must not
-  override or be written by the local toggle; legacy All rooms becomes recursive Home.
-- Exercise Home's tree, breadcrumb peers, shared-child routes, cycles, removed
-  links, and long-path overflow. Avatar arrival must not shift rows/focus.
-- Use Ctrl+Shift+P / Command+Shift+P to search names/paths, wrap selection, switch
-  to room search, and dismiss. Renamed/removed results must invalidate stale choices.
-- Toggle Include subspaces by mouse, keyboard, and Ctrl+Shift+L / Command+Shift+L
-  with sidebar hidden or composer focused. Preserve focus/query; key-repeat must
-  not toggle repeatedly. Check F6 and [space keyboard navigation](../keyboard.md#space-navigation).
+- Home shows rooms outside joined spaces; Include subspaces shows all rooms.
+  Spaces toggle direct/recursive rooms without duplicates; DMs follow the same rule.
+- Retain routes, expanded branches, and per-location toggles across navigation/restart.
+  Element's Home setting stays untouched; legacy All rooms becomes recursive Home.
+- Check shared children, cycles, removed links, long breadcrumbs, avatar arrival,
+  picker rename/removal races, F6, and [space shortcuts](../keyboard.md#space-navigation).
+  Include subspaces preserves focus/query and ignores repeated keydown toggles.
 
 ### Add and remove space links
 
-- **Add room to space…** lists only joined writable spaces lacking a direct link;
-  recursive visibility must not prevent adding a direct link. Check empty results,
-  permission changes, duplicate links, errors retaining the picker/query, and retry.
-- Demo: add General to Personal without removing Studio. Remove Design studio
-  from Studio, then Design; Home should show it only after its last link is gone.
-- Remove is available only for a direct link in the selected writable space.
-  Connected add sends `m.space.child` with non-empty `via`; removal empties `via`.
-  Neither changes child parent metadata, room membership, or other links.
-- For existing subspaces, navigate to Design and use **Sidebar actions → Add this
-  space to another space…** to add Community as a second parent. Studio → Product
-  must remain linked. Navigate through Community → Design, then **Remove this
-  subspace from parent**; only Community’s direct link is removed. The breadcrumb
-  finds another route and the current conversation, draft, and scroll remain.
-- Self/duplicate links and descendants that would introduce a cycle are excluded.
-  Shared parents remain eligible; permission loss, changed links, account changes,
-  and route changes reject stale operations. Root spaces have no unlink action.
-  Graph checking uses known joined-space state, not an unjoined hierarchy crawl,
-  and cannot make remote concurrent edits atomic. Check the tree after timeouts.
-
-Mock homeserver and UI tests cover joined subspaces, parent-only add/remove writes,
-shared-parent preservation, duplicates, self/cycle rejection, permissions, stale
-routes/completions, and conversation/draft/scroll preservation. Connected server
-writes and native Light/Dark/compact acceptance remain manual with an authorized
-test account; these automated fixtures do not establish that acceptance.
+- Add lists writable joined parents lacking a direct link; recursive visibility
+  does not exclude a valid parent. Reject self/duplicate/known-cycle links.
+- Add/remove writes only the parent's `m.space.child` (`via` populated/empty).
+  Child metadata, membership, other parents, and the conversation stay intact.
+- Demo: link General to Personal; unlink Design studio from Studio then Design.
+  It reaches Home after its last link is removed. Add Community as a second parent
+  of Design, navigate through it, then unlink: retain Studio's route.
+- Recheck permissions/links/routes before submission. Root spaces cannot unlink.
+  Unknown unjoined paths and concurrent remote edits cannot be checked atomically;
+  inspect the tree after timeouts.
 
 ## Navigation and timelines
 
-Long loaded room/thread timelines mount only the viewport plus overscan; short
-histories retain exact full layout. Automated fixtures exercise prefix-height
-updates, bounded mounting, offscreen selection/copy/spoilers, deep targets,
-prepending, row-height/width changes, newest navigation, cache release, and a
-settled widget without redraw/layout deadlines. The headless performance fixture
-reports mounted versus loaded counts; see [long-history measurements](long-history.md).
+- Load a long history and check wheel/trackpad, scrollbar, paging, newest, and
+  distant reply/search/saved/notification targets. See [performance fixtures](long-history.md).
+- Retain the visible event and pixel offset through arrivals, prepends, resize,
+  scaling, edits/redactions, media reflow, and thread close/reopen. Read partly above
+  the first loaded message, then prepend the same sender/day: regrouped headings
+  must not shift its text. Repeat below/across/above the 192-row virtualization threshold.
+- Drag/copy selections across unmounted rows in both directions; retain spoiler
+  reveals. Overscan/empty virtual space must not count as viewed for receipts,
+  highlights, media, or saved reading anchors.
+- Quit/reopen older room/thread positions with a changed window size. Restore the
+  event-relative offset; unavailable/deleted anchors, keys, or history fall back
+  once without retry loops. Navigation during restore rejects stale results.
+- Check unread shortcuts in both directions, wrap/no-match cases, collapsed sections,
+  and current rooms outside the filter. Account-wide actions preserve the filter;
+  scoped actions obey it. Inbox flags do not determine room unread status.
+- Exercise [navigation shortcuts](../keyboard.md#navigation) from composer, filter,
+  sidebar, breadcrumb, and completion. Dialogs, IME, native pickers, and shutdown
+  block covered navigation. Check native macOS Control/Command/Option behavior.
+- Back/forward restores room/thread/drafts/positions without changing the space;
+  new navigation after Back clears Forward. Sections preserve ordering/metadata
+  across clients. Rapid switching/pagination must not retarget late results.
+- Explicit event jumps show a static three-second tint/outline after visibility.
+  Repeated jumps replace expiry; old callbacks cannot clear a new marker.
+  Restored anchors stay unmarked; expiry changes no focus, layout, selection, or scroll.
 
-For connected desktop acceptance, load a long test history and check wheel,
-trackpad, scrollbar dragging, paging, jump-to-newest, and distant reply/search/
-saved/notification targets. Unknown row heights can adjust scrollbar geometry,
-but the visible event and its offset must remain stable through switching rooms,
-closing/reopening threads, pagination,
-resize/interface scaling, edits/redactions, media dimensions, and moving thread
-summaries. In particular, read the first loaded message with its text
-partly above the viewport, then fetch an older page from the same sender/day.
-The date divider and sender heading may regroup, but the text must stay at the
-same pixel offset. Repeat across the 192-row virtualization threshold and in a
-thread. The automated room fixture covers short histories, the threshold
-transition, and already virtualized histories; connected/native checks remain
-manual. Drag a selection across multiple virtual windows in both directions,
-then copy after both endpoints leave the viewport. Revealed spoilers stay revealed;
-hidden ones copy placeholders. Covering/unfocusing panes must retain existing
-read-receipt/media suppression: overscan never counts as actually viewed.
-After a scrollbar jump beyond the mounted window, reading-position reports must
-wait for an actually visible event. Close a thread over an older room position:
-the room must retain its event-relative offset as it widens, with newest-following
-checked separately. Automated regressions cover the transient offscreen-report
-case and event-anchor restoration on thread close; native reflow remains a desktop
-acceptance check.
-
-Native GPU latency, IME/focus, very long individual messages, and live homeserver
-interoperability remain manual checks. Loaded SDK history has no new retention cap.
-
-- Use Ctrl+J / Ctrl+Shift+J (macOS: Command+J / Command+Shift+J) for next/previous
-  unread room across the account; Alt+Shift+Up/Down stays within the current
-  space/text filter. Check both directions,
-  wrapping, collapsed sections, a current room outside the filter, and no other
-  unread room. Preserve space/filter, room/thread drafts, saved positions, and
-  back/forward history. Modals, IME, pending native pickers, and shutdown must
-  prevent navigation. Automated demo tests cover ordering, wrapping, guards,
-  history, and scope; live SDK unread changes and OS shortcut conflicts remain
-  desktop checks. Notification-inbox read flags do not determine this action.
-
-- Check Ctrl+Tab / Ctrl+Shift+Tab for next/previous visible room, including on
-  macOS where this uses Control. Try from the composer, breadcrumb, room filter,
-  sidebar controls, and while emoji/mention completion is open. Plain Tab and
-  Shift+Tab must still move focus, and completion Tab must still insert a choice.
-  Ctrl+K / Command+K opens the room switcher (Ctrl+P / Command+P remains an alias);
-  Ctrl+Shift+K / Command+Shift+K focuses the sidebar filter. Ctrl+T / Command+T
-  opens the latest thread. Command+Enter sends/saves on macOS alongside Ctrl+Enter;
-  check IME and unfocused composers still suppress sending. Native macOS layout,
-  Option text entry, and OS shortcut conflicts require desktop validation.
-
-  Local shortcut validation: the locked UI suite passed (669 tests; one ignored),
-  along with formatting and workspace/all-target Clippy with warnings denied.
-  The widget/subscription regression covers Ctrl+Tab in both directions from
-  the composer, filter, sidebar button, and breadcrumb, with and without emoji
-  completion, preserving draft text and saved scroll position. No connected
-  account or native desktop acceptance was exercised for this shortcut pass.
-
-- In account-wide search, combine a joined room, full Matrix sender ID, and
-  From/Through dates (inclusive UTC days). Check duplicate sender display names,
-  midnight boundaries, malformed dates/user IDs, and reversed ranges. Changing
-  any filter cancels local/server/history work, clears results and continuation,
-  and requires a new submission; late pages must not restore old results.
-  Verify filtered results and navigation in demo without network access.
-- Repeat against a test homeserver with local cached messages, server pagination,
-  and explicit older encrypted history. Room/sender restrictions are sent to
-  server search; dates are checked on returned events, so a page can have no
-  matches and still offer Load more. History scans only the selected encrypted
-  room, if any; unavailable keys retain the ordinary scan diagnostics.
-  Automated fixtures cover shared filter semantics, server request fields,
-  history filtering, stale pages, and local filtering before the result cap.
-  Live interoperability and desktop dropdown/focus behavior remain manual.
-
-- Rapidly switch/paginate/send: late results must not replace or act on another pane.
-- Newest panes follow arrivals; older positions stay anchored through arrivals,
-  pagination, resize, sidebar toggles, and space filtering.
-- Check available/missing encryption keys, offline/reconnect, and retry separately
-  from device trust.
-- Create/rename/remove/reorder custom sections; compare with Element, including
-  empty/duplicate labels and sections hidden by the current filter.
-- Open saved/search originals across rooms/threads; Back/Escape preserves the
-  source conversation. Older-event loading remains cancellable. Test inaccessible
-  saved sources and malformed/shared storage.
-
-Reading anchors persist encrypted per room/thread; loaded history can grow memory
-without virtualization. Quit/reopen over older room and thread messages, including
-a changed window size: restore the same event and its viewport offset. Check
-newest-following separately. Unavailable/deleted events, missing keys, and offline
-history failures must fall back to the ordinary timeline without a retry loop.
-Switch rooms or follow another event while restoration is loading: stale results
-must not move the replacement conversation. These connected restore checks remain
-manual; automated tests cover encrypted snapshots, anchor layout, and fallback state.
-
-Back/forward history has automated coverage for nested navigation, room/thread
-selection, draft/offset preservation, missing rooms, account changes, and bounded
-stacks. In a connected profile, follow reply/search/saved-message destinations,
-then go back and forward after history loads: check event-relative restoration,
-thread composer focus, and unchanged space filter. Desktop acceptance remains
-manual. Confirm new navigation after Back clears Forward and dialogs/IME prevent
-history shortcuts from changing the covered conversation.
-
-Explicit message jumps from reply previews, message/file permalinks, notifications,
-saved messages, search results, and pins use the same static tint/outline. Check
-both room and thread panes, text and attachment-only messages, and light/dark
-appearance. The marker lasts three seconds after the loaded target first becomes
-visible; it does not animate. Repeated jumps replace the prior expiry, and obsolete
-callbacks cannot clear a newer target. Returning to a saved reading anchor does
-not start a marker. Expiry must preserve layout, drafts, text selection, and scroll.
-Automated tests cover target routing, delayed visibility/loading, stale expiry,
-light/dark rendered pixels with stable geometry, and file-message link styling.
-Desktop acceptance and connected unavailable-key/history cases remain manual.
+Account search: combine room, full sender ID, and inclusive UTC dates; reject invalid
+IDs/dates and reversed ranges. Filter changes cancel work and clear continuation
+until resubmitted. Check cached results, server pages (including empty filtered pages
+with continuation), and explicit encrypted-history scans. Verify missing-key errors,
+stale pages, and navigation with a second client.
 
 ### Links, pills, and permalinks
 
-- Check authored user/room labels and semantic pills for raw Matrix destinations,
-  including unknown IDs, split formatting, RTL/emoji, wrapping, and hidden spoilers.
-  Rendering must not fetch profiles/media/events. Ordinary/code URLs stay literal.
-- Drag-select without activation. Text copy preserves canonical text/URLs even
-  when a pill has a short summary. **Copy link URL** copies the original destination,
-  including queries; edit/navigation invalidates an open link menu.
-- User links reuse a DM or prefill creation; self links do nothing. Known rooms
-  open, joined spaces filter without changing conversation, unfamiliar rooms
-  prefill Join without submitting. Event links load/scroll to room or thread events.
-- Test encoded IDs, `via`, `matrix:` and matrix.to, invalid/lookalike hosts,
-  unavailable/private/encrypted events, and cancellation or address edits after
-  opening Join. No stale event navigation may follow a dismissed/replaced form.
-- Connected **Copy room link** prefers the primary room alias, falling back to the
-  room ID when no valid alias is set. **Copy room alias** appears with a valid
-  primary alias; **Copy room ID** always copies the internal ID. **Copy message
-  URL** uses the room ID and exact event, including thread replies. Synthetic demo
-  IDs and pending events without server IDs omit link actions. Unit tests cover
-  alias preference, ID fallback, and preserving conversation state. Check native
-  clipboard and opening in another client manually.
+- Check raw/labelled Matrix destinations, split formatting, RTL/emoji, wrapping,
+  spoilers, and selection without activation. Rendering fetches no profiles/events.
+  Copy link URL retains the original query; source changes invalidate menus.
+- User links reuse a DM or prefill creation; self links do nothing. Known rooms open,
+  joined spaces filter, unfamiliar rooms prefill Join without submission. Event
+  links load the correct room/thread. Cancelled/replaced Join cannot navigate later.
+- Check encoded IDs, `via`, `matrix:`/matrix.to, lookalike hosts, missing keys/access,
+  and pending events. Room links prefer a valid primary alias, else ID; message URLs
+  use the room ID and exact event. Check native clipboard and another client.
 
 ### Deferred composer focus
 
-- Follow account-search and saved-message results to an unloaded room. Wait for
-  its matching pane and type: the destination composer must receive input once,
-  preserving the old draft and scroll position. Repeat after returning from
-  Search, Saved messages, or Notifications while the original pane is loading.
-  Tab/F6, IME, another dialog/native picker, unfocus, and navigation must cancel
-  delayed focus. Room settings and draft-close/sign-out prompts also cover focus.
-- Tab from account-search input through Search to the room selector; use arrows
-  to change its selection. In-room search exposes Previous, Next, and Close to
-  keyboard traversal. Existing widget typing tests plus new delayed-result,
-  cover-return, interruption, and dropdown tests exercise the automated path;
-  actual desktop/IME timing and macOS behavior remain manual.
-
-Open a thread with Ctrl+T / Command+T while its messages are still loading, then type after
-arrival: input must reach the thread composer and leave the room draft intact.
-Before arrival, switch rooms, close the thread, press F6/Tab, focus the room filter,
-open Settings, or unfocus the window: the late pane must not take focus back.
-Close Saved messages and dismiss room/thread message menus, then type: the
-corresponding composer should receive input. Automated tests cover delayed pane
-focus and interruption routing; connected latency and desktop focus remain manual.
+Open unloaded rooms/threads from search, saved messages, or Ctrl+T, then type after
+arrival: focus the destination composer once and retain the old draft. Tab/F6, IME,
+filter focus, another dialog/picker, unfocus, or navigation cancels deferred focus.
+Dismiss menus/return from covered views and check composer routing. Search selectors,
+match arrows, and Close must be keyboard accessible. Native timing/IME needs desktop checks.
 
 ## Read receipts and unread clearing
 
-Focused, uncovered newest room panes send read/fully-read updates (public by
-default, private when Privacy → Share read receipts is off). Older,
-unfocused, or covered panes must not clear new activity. Threads update their
-receipt without advancing room fully-read; reader labels are room-scoped.
-Test arrivals, manual Mark unread, reopen, and offline failure/recovery without a
-recurring retry timer.
+Focused, uncovered newest room panes advance read/fully-read state; older, covered,
+or unfocused panes do not clear arrivals. Threads send thread receipts without moving
+room fully-read. Check Mark unread, reopen, offline/reconnect, and no recurring retry.
 
-Privacy automation uses mock homeservers: default/partial TOML and round-trip
-persistence; Save/Cancel/Defaults and demo isolation; disabling active outgoing
-typing; unchanged-event public/private mode changes; private thread scope and
-preserved room markers. No live account writes are part of these tests.
-
-Connected acceptance remains manual with an authorized isolated test account:
-turn typing off while composing and confirm a peer stops seeing the indicator;
-ensure incoming indicators still appear. With sharing off, read room/thread
-messages and check unread counts on another own device, while a peer sees no new
-public receipt. Restore sharing at the same viewport and check the public receipt
-advances. Check Save/Cancel/Defaults, account changes, loss of focus, offline
-errors, and cancellation during navigation. Existing public receipts remain.
+Disable typing during composition: a peer stops seeing it; incoming indicators stay.
+Disable public receipts: another own device updates unread state while a peer sees
+no new receipt. Re-enable at the same viewport and check public advancement. Test
+Save/Cancel/Defaults and account changes; previously sent receipts remain public.
 
 ### Unread catch-up divider
 
-Demo Release notes has a deterministic New messages boundary. Check sender/date
-separation. Connected rooms capture the opening receipt and keep the divider there
-as receipts/arrivals advance; reopen captures the new position. No guessed divider
-for unloaded/missing/unrendered receipts, manual unread alone, or outgoing-only
-activity. Loading older may reveal it; thread panes have no room divider.
+Demo Release notes has a fixed New messages boundary. Connected rooms retain the
+opening receipt boundary as arrivals/receipts advance; reopening recaptures it.
+Do not guess for missing/unloaded receipts, manual unread alone, or outgoing-only
+activity. Pagination may reveal it; thread panes have no room divider.
 
 ## Draft recovery across restarts
 
-Use an isolated connected profile to restore distinct room/thread drafts with
-Plain/Markdown mode, emoji/mention bindings, and text or empty reply intent. Sent
-message edits preserve the original unsent draft on cancel/restart. Attachments
-do not persist; event-anchored reading positions share encrypted draft storage.
-Demo drafts and reading positions stay in memory.
-
-Quit during a save and confirm the newest snapshot flushes. With an unwritable or
-malformed store, check Retry, Keep open, and explicit Close without saving while
-preserving invalid data. Successful sign-out removes drafts before keys; failed
-remote sign-out retains them. See [storage boundaries](../architecture/drafts.md).
+Restore distinct room/thread text, Plain/Markdown mode, emoji/mention bindings,
+reply intent, poll drafts, and reading anchors in a dedicated profile. Sent-message
+edits retain the original unsent draft; attachments do not persist. Demo stays in memory.
+Quit during save: flush the latest snapshot. Unwritable/malformed storage preserves
+original data and offers Retry/Keep open/Close without saving. Sign-out deletes drafts
+before keys, only after remote success. See [storage boundaries](../architecture/drafts.md).
 
 ## Composition and formatting
 
-- Replaced rooms show a persistent notice in place of both room and thread
-  composers, including during loading, pagination failure, or timeline setup
-  failure. Existing drafts, attachments, and reading positions remain associated
-  with the old conversation. Space filtering must not switch the conversation.
-  Following the replacement opens a joined room or offers the ordinary Join form
-  with federation routing hints. Dismissing it must leave the old room open.
-  Redacted tombstones without a destination still disable composition and explain
-  that the replacement is unavailable. Remote upgrades stop typing/completion and
-  reject stale composer actions; already admitted writes may finish.
-- In room and thread composers, type/paste words wider than the field, including
-  long identifiers and combining Unicode characters, in Plain text and Markdown
-  modes. They should wrap within the field; resize narrower/wider, scroll through
-  the draft, and select/copy it without losing text or adding hard line breaks.
-- Toggle themes with pending drafts/older positions. Check Save/Cancel/Defaults,
-  persistence/Reload in a test profile, legacy missing theme, and invalid theme
-  retaining the last valid settings. Demo never writes settings.
-- Inspect code, tables, lists, links, spoilers, math, images/placeholders, mentions, and
-  selection in room/thread messages and previews. Test Unicode/bidi and copy
-  across runs/blocks; hidden spoilers copy placeholders.
-- Preview Markdown lists using `*`, `-`, `+`, and numbered markers, both with
-  consecutive items and blank lines between them. Each marker should share a
-  line with its first paragraph; continuation paragraphs and nested lists keep
-  their block boundaries. Automated composition/document tests cover these
-  structures and received HTML; desktop rendering still needs manual inspection.
-  Include date-like items such as `* 12. April`: CommonMark treats the number as
-  a nested list marker, which should remain on the same line as the bullet.
-- Highlight Rust/TypeScript/TOML/Dockerfile blocks in both themes. Unknown/unset
-  languages, blocks over 16 KiB, or lines over 2048 bytes stay plain monospace.
-  This disables colors, not bounded code previews. Colors survive resize/theme
-  changes; inline code stays plain. Stale preview preparation must not replace
-  a newer source/conversation. Follow the [long-code checks](#long-technical-code-messages)
-  and [table checks](#markdown-tables) below.
+- Replaced rooms disable both composers, even during loading/errors; retain old
+  drafts/attachments. Successor navigation opens or prefills Join. Missing tombstone
+  destinations explain the block; remote upgrades reject stale composition.
+- Long words/combining Unicode wrap in both composer modes without added line breaks
+  or lost selection. Check code, lists, tables, math, links, spoilers, and image
+  alternatives in both panes/previews/themes, including bidi and cross-block copy.
+- List markers share a line with their first paragraph; nested/loose lists retain
+  boundaries. Include `* 12. April`, which contains a nested CommonMark list.
+- Highlight declared languages in both themes. Unknown languages, blocks over
+  16 KiB, and lines over 2048 bytes stay uncolored but retain preview controls.
+  Stale preparation cannot replace newer source. See [code](#long-technical-code-messages)
+  and [tables](#markdown-tables).
 
 ### Mentions and room links
 
-- Accept `@` users and `#` rooms with arrows, Enter, Tab, and mouse without sending.
-  Duplicate/Unicode names retain distinct targets. Email/URL/IME contexts must
-  not spuriously open user completion; Escape dismisses before closing a thread.
-- Shorten labels, delete partially/wholly, undo, preview/send/edit, switch drafts,
-  and restore encrypted drafts. Surviving labels keep identity; whole replacement
-  removes it. Decorations follow wrapping/scrolling without shifting text/carets.
-- Plain/Markdown code, raw HTML, links, and image alternatives must not acquire
-  inferred mentions. Room links add neither user IDs nor room notification flags.
-- Explicit `@room` completion is permission-gated, amber, and non-navigable.
-  Altering/deleting its token removes the binding. Literal tokens stay unbound;
-  received styling requires `m.mentions.room`. Downgrade permission before Send.
-- Edit mixed mention kinds repeatedly: retain surviving targets/metadata, remove
-  the last explicitly represented user's ID or room flag, preserve unrepresented
-  legacy metadata, and restore the original draft on Cancel.
+Accept `@`/`#` completion with arrows/Enter/Tab/mouse without sending. Check duplicate
+names, Unicode, label edits/deletion/undo, preview/send/edit, and draft restoration.
+Code, raw HTML, URLs, image alternatives, and literal tokens infer no mentions.
+Room links never notify; explicit `@room` requires permission and metadata, and any
+token edit removes it. Recheck permission at Send. Repeated edits retain surviving
+identities, remove deleted represented metadata, and preserve unrepresented legacy metadata.
 
 ### Ordinary replies
 
-- Reply acts in the current composer; Reply in thread opens a thread. Check each
-  on room messages, roots, and thread replies, including long/attachment excerpts.
-- Choose/replace/cancel reply intent without losing source, cursor, bindings, or
-  attachments. Escape cancels reply after completion; pending send disables changes.
-- Queue admission clears reply intent; conversion/queue failure preserves it.
-  Loaded/embedded originals reflect edits/redactions; missing context shows unavailable
-  without background fetching.
-- Activate received reply previews with mouse or keyboard. Loaded originals and
-  older unavailable previews should navigate to the original with a highlighted
-  row. Known thread replies open in their thread; a reply to its thread root
-  opens the room original. Missing originals/keys and timeout show an error;
-  leaving the conversation cancels loading. Verify drafts remain intact and old
-  source generations/changed reply targets cannot navigate. Demo exercises local
-  routing only; remote history, encryption, and cancellation need connected checks.
-- Connected text/attachment sends carry `m.in_reply_to.event_id`. Room composer
-  replies have no `m.thread`; thread replies retain the root with explicit-reply
-  `is_falling_back: false` (or omitted). Check mentions, local echo, encryption,
-  retry, and the other client's rendering.
+Reply uses the current composer; Reply in thread opens a thread. Replace/cancel intent
+without losing source, bindings, or attachments. Admission clears intent; failure retains it.
+Previews reflect loaded edits/redactions without fetching missing context. Activating
+one loads/highlights the original; thread replies route to threads, roots to the room.
+Check cancellation/missing keys and cross-client relations: room replies have
+`m.in_reply_to` without `m.thread`; thread explicit replies retain the root and do not
+claim fallback-only status.
 
 ### Cancelling queued sends
 
-- Queue text and attachments while offline, including in a thread. Cancel send…
-  opens an inline confirmation without changing drafts. Keep sending retains the
-  queue entry; Confirm removes the unsent echo. Failed sends offer both Retry and
-  Cancel, with overlapping retry/cancellation disabled.
-- Cancel while an upload is active: its dependent media message must not be sent;
-  subsequent queued messages must continue. Already uploaded bytes may remain on
-  the server. If an event send is already in flight, the SDK may finish sending
-  then redact it; confirmation must explain that others may see it first.
-- Race sync/send completion with confirmation. Sent rows offer Delete message,
-  and cancellation that arrives too late reports that the message left the queue.
-  Check storage errors, room/thread switches, account changes, and shutdown during
-  cancellation. Old results cannot alter another account or any composer draft.
-  Cancellation errors stay in a dismissible footer through later SDK snapshots,
-  including when the local echo has disappeared or navigation is hidden.
-- Automated local-server tests cover pending/failed text, active upload abort,
-  already-sent handles, and the in-flight-send/redaction race. Desktop offline,
-  encrypted media, restart, and homeserver visibility remain connected checks;
-  demo has no real send queue.
+Queue offline text/media in both panes; Cancel requires confirmation and keeps drafts.
+Failed sends offer Retry/Cancel without overlap. Active-upload cancellation prevents
+its dependent send while later entries continue; uploaded bytes may remain. In-flight
+events may send before redaction, so warn that others can see them. Race sync/completion,
+storage failure, navigation, and shutdown; late results cannot change another pane.
+Cancellation errors remain dismissible even after the echo disappears. Demo has no real queue.
 
 ### Multiple attachments
 
-- Pick/paste/drop batches into both panes, append more, remove individually, and
-  check order/long names/scrolling. Cancel or invalid/inaccessible/>50 MiB input
-  preserves the existing list/caption. Reject preparation results after navigation.
-- Send one message per file, caption on first, reply relation on each. Remove the
-  second file after staging: only queued files clear; remaining files stay for
-  retry. Failure before the first admission retains the caption. Check encryption,
-  offline queue/retry, pane routing, and shutdown during a batch.
+Pick/paste/drop batches into each pane; append/remove and check order/long names.
+Invalid/inaccessible/>50 MiB inputs and cancellation preserve staged files/caption.
+Reject late preparation. Send one message per file, caption on first, reply on each.
+Only admitted files clear; failure before first admission retains the caption.
+Check encrypted/offline delivery, retry, partial admission, and shutdown.
 
-## Sending and room management
+## Polls
 
-Use a second client for server-dependent state and delivery:
+Use the [poll controls](../keyboard.md#polls) and a second client:
 
-- Send text/emotes/media in rooms/threads; test offline queue, retry, duplicate
-  prevention, encryption, editing, confirmed deletion, reactions, pins, and topics.
-- Start a DM, create/join by ID/alias/link, accept/decline invites, and leave.
-- In Ctrl+N / Command+N, enter a room alias, ID, or Matrix room link: Enter or
-  **Open or join room…** opens a joined room or prefills Join without joining.
-  Check malformed addresses, routing hints, cancellation, switching back to people
-  search, and late people results after entering a room. Preserve conversation,
-  drafts, and scroll positions when cancelling.
-- Save/remove/page bookmarks and open originals, including unavailable encrypted
-  sources and invalid storage. Manage personal/room emoji packs; only Save uploads,
-  conflicts require Reload, removal keeps media, and uploads are unencrypted.
-
-### Room and space settings
-
-Save name/topic/access/history independently; check per-target demo state, discard
-unsaved edits on close, and Reload/conflict/permission errors. Special access rules
-stay read-only. Room notification overrides sync across clients; returning to
-account defaults works. History visibility must not promise old keys. Hidden
-conversation panes must not issue read receipts or demand visible-message media.
-
-Room and space settings manage **Published Addresses** and **Local Addresses**:
-
-- Both address inputs show a fixed `#` prefix outside the text box, with no hash
-  in the placeholder. Typing or pasting a leading hash must not duplicate it.
-- Add a local address using a localpart or full alias. The suffix comes from the
-  account's Matrix server name, including any port, rather than its API URL.
-  Reject foreign-server aliases, empty/invalid input, and duplicates. Check an
-  occupied address, server policy denial, and offline failure with a test server.
-- Publish an existing alias, choose/clear the main address, and unpublish it.
-  Publishing resolves every retained address to this room and checks fresh
-  canonical-alias permissions/state before writing. Preserve other published
-  aliases when changing the main address. An alias on another server must first
-  be created there; publishing never creates or deletes an alias mapping.
-- Toggle this account server's public directory listing independently of join
-  rules, history visibility, and aliases. Server policy authorizes directory and
-  local-alias writes; canonical-alias power levels authorize publication.
-- Unpublish a local address before removing it. Removal requires an explicit
-  confirmation explaining that existing links will stop working. Cancel must not
-  delete anything. Recheck that the alias still resolves to this room before
-  deletion. Matrix offers no compare-and-swap for alias mappings or room state;
-  changes between the check and write remain possible.
-- Deny alias/directory reads: unavailable controls show an error while other room
-  settings remain usable. Close/switch during reads and saves; late results must
-  not replace another panel. Keep unrelated unsaved settings and conversation
-  drafts/scroll positions. Address writes have a 30-second deadline and disable
-  automatic retries; after an uncertain response, Reload before retrying.
-- Demo: add `friendly` locally, publish it, select it as the main address, toggle
-  the directory, and reopen. Changes persist per room or space for the demo session only.
-  Unpublish, then confirm local removal. Demo rejects publishing an address that
-  has not been created in its in-memory local list and performs no network calls.
-
-### Conversation and space creation
-
-- From Home, create private/public root spaces with no parent/link writes; from a
-  writable space, create fixed-parent unencrypted subspaces. Preserve conversation
-  and filter. Deny parent permission before submission; fail before creating.
-- On parent-link failure, retry only the link to the created ID.
-- With a controlled server/proxy, lose a creation response, return 500/429, or
-  stall. Room/DM creation sends once per explicit submission (30-second timeout),
-  without automatic replay. Check the room list before retrying ambiguous creation.
-  DM reuse must survive a failed/cancelled `m.direct` update before sync.
-
-### Members
-
-Check People and room/space member editors with large rosters, search/paging,
-pending invitations, directory/full-ID invites, denied/banned/invalid targets,
-and preserved search on permission reload. Confirm removal, revocation, and
-Member/Moderator/Admin changes; preserve unrelated power-level fields. Self,
-peer, and protected-creator restrictions apply; admin promotion may be irreversible
-by the actor. Space actions must not affect child membership; removal does not ban.
-
-### Discovering rooms
-
-- Browse nested/unjoined children; root metadata must not list itself. Search loaded
-  names/topics/aliases/IDs and explicitly load pages. Check deduplication, repeated/
-  invalid tokens, page errors, and the 1,000-room per-tab cap.
-- Homeserver queries run only on submission, including empty search. Reload/Load
-  more retain the submitted query. Tab switches cancel reads and retain separate
-  query/result/continuation state; Current space disables outside a space.
-- In a writable current space, use **Link a room or subspace** with an alias,
-  room ID, `matrix.to` link, or `matrix:` room link. Alias resolution supplies
-  the target ID and routing servers; opaque IDs need a link with `via` servers.
-  **Link** on a discovery result uses its routing hints. Linking is independent
-  of joining and works for invitation-only results without child membership.
-- Links write only the selected parent's `m.space.child`. Check self/duplicate
-  rejection, known joined-graph cycles, shared parents, permission loss during
-  resolution, server denial, and uncertain responses. No hierarchy crawl or
-  child-side parent write occurs; unknown remote cycles cannot be ruled out.
-- Closing/navigating/account changes cancel pending link work. Accepted writes
-  may still complete; refresh the captured account's navigation after cancellation.
-  Retry retains the address. Tab changes retain link progress and feedback; a
-  result's Link action preserves any separately typed address. Draft address
-  input participates in the existing discard prompt. Keep conversation, thread,
-  drafts, and reading positions unchanged throughout.
-- Join public, invited, and eligible/ineligible restricted rooms with routing hints
-  for remote/opaque IDs. No enabled join for uninvited invitation/knock-only rooms.
-  Joining does not navigate or add a space link; explicit Open may navigate.
-
-Automated mock-server and demo UI tests cover space alias loading/creation/
-publication, unjoined address linking with routing hints, parent-only writes,
-no automatic write retry, cancellation/stale completion bookkeeping, and
-conversation/draft/scroll preservation. Existing shared address tests cover
-publication conflicts, permissions, local removal, and directory policy. Native
-Light/Dark/compact acceptance and connected-server writes remain manual checks
-with an authorized disposable account; automated fixtures do not establish them.
-
-Local validation (2026-11-25): the locked workspace suite passed (384 backend
-and 714 UI tests; three existing ignores). The UI suite passed again after the
-final layout/wording refinements, as did formatting, workspace/all-target Clippy
-with warnings denied, and the desktop build. An isolated headless Wayland demo
-using tiny-skia was inspected in Light/Dark at 1400×900 and 640×480. Result linking,
-address submission, local space alias creation/publication, compact scrolling,
-and fixed header actions were exercised. These checks used demo data only;
-GPU/macOS behavior, settled idle measurements, and real server writes remain
-unvalidated for this change.
-
-### Leave and disband space confirmations
-
-Use disposable spaces. Check fresh counts/permissions, exact-name confirmation
-for Disband, and no Enter auto-submit. Change members/links/permissions after
-preview: require review again. Leave/forget must retain children and other members.
-Disband closes access, unlists locally, removes confirmed active memberships and
-links, verifies completion, then leaves. Protected peers can block it. Inject
-partial failures/new members; retain the actor until final checks pass and require
-Reload/explicit retry. A failed forget retries only forget. Child rooms/history,
-aliases, and external references remain; older snapshots must not restore the space.
-
-### Room leave consequences
-
-Check public/encrypted rooms, elevated/last admin, no remaining inviter, and final
-member warnings. Opening/Enter alone must not leave; failed previews disable
-Leave and offer Reload. Changed encryption/membership/capabilities invalidate the
-confirmation. Leaving sends no forget/key deletion and preserves other conversations.
-Review privileges/key recovery before destructive testing.
-
-### Room and space avatars
-
-Preview PNG/JPEG (EXIF rotation)/WebP; cancel, damaged/oversized input, or stale file
-results preserve the draft. Only Save uploads. Check permissions independently
-from name/topic, remote avatar changes and permission loss during upload, Reload,
-removal without media deletion, and other unsaved fields surviving. Lost responses
-require checking server state; upload/publication is not atomic.
-
-## Inline GIF playback
-
-Play animates the existing inline preview; outside-image clicks open the viewer.
-Stop/completion retains the frame and permits replay. Test both playback settings,
-rooms/threads, separate thumbnails, and encrypted GIFs. Only Play requests the
-original for inline animation; loading stays still/cancellable. Scroll out, change
-rooms, close thread, open viewer, or unfocus: stop and never auto-resume. Failures
-must offer viewer details/retry. See [idle measurement](idle-resources.md).
-
-## User presence
-
-Check on-demand snapshots/refresh, the 60-second cache, optional polling off/on
-and pause while unfocused, unavailable endpoints, and stale navigation results.
-Failures must not block conversations; no classic-sync connection is added.
-
-## Lifecycle and desktop integration
-
-Check native app identity/icons, picker permissions, clipboard formats, room/thread
-drop coordinates, external attachment opening, [notifications](notifications.md),
-and [verification](verification.md). Container file paths must be accessible.
-Include offline/reconnect, hidden windows, suspend/resume, and repeated navigation
-with released-timeline and [resource measurements](idle-resources.md).
-
-## Validation scope
-
-Automated state/mock-server/crypto/native-protocol fixtures and demo screenshots
-do not establish live-server interoperability, native prompts/fonts/IME/clipboard,
-macOS behavior, GPU rendering, or CPU/wakeups. Record platform, build, renderer,
-and observations with acceptance results; keep private data and run artifacts out
-of this reference and version control.
-
-## Device and session management
-
-Automated mock-homeserver tests cover own-device listing, current-device labels,
-rename validation and exact request bodies, current-device revocation rejection,
-password/bad-password UIAA, multi-stage browser fallback acknowledgements, bounded
-dummy authentication, challenge identity/target binding, and fixed error messages.
-UI tests cover explicit target confirmation, demo isolation, preserved conversation
-and drafts/scroll, stale prompts/accounts/completions, covered/closed prompt cleanup,
-write bookkeeping, refresh after ambiguous failures, and secret Debug redaction.
-These tests do not make real account changes or launch a browser.
-
-Manual acceptance needs an authorized isolated account with a spare device:
-
-- Open Settings → Devices and compare names/IDs/last-seen times with another client.
-  Verify the current device is labelled and cannot be revoked. Rename it and a
-  spare device; Refresh and another client should show the new names.
-- Cancel a spare-device revocation; it must remain signed in. Confirm it, exercise
-  the server's password or browser UIAA (including rejection/retry), then verify
-  only that device loses its session. Keep this client's session and conversation.
-- Check a multi-stage flow if supported. UIAA fallback pages are server-dependent;
-  OAuth-native approvals are not implemented. Unsupported flows must not bypass
-  server authentication, and another client may be required.
-- Close/switch/cover the panel during prompts and pending requests, then reopen and
-  Refresh. Passwords/prompts must clear; admitted requests may already have applied.
-  Check offline/errors and account changes without publishing stale results.
-- Check Light/Dark, keyboard traversal, long device names/IDs, and 640×480 layout.
-  Native acceptance and real cross-device/server behavior remain manual.
-
-## External Matrix activation and profile selection
-
-The package advertises `matrix:` only; ordinary HTTPS ownership is unchanged.
-Do not change the user's default handler or open real account profiles for these
-tests. Use demo for UI and private fake endpoints for IPC/native acceptance.
-
-Automated tests cover validated/case-normalized CLI links, explicit profile
-selection, zero/one/many active-profile routing, actual Unix-socket delivery and
-deduplication, queue/frame limits, stale process/account identity, endpoint locks
-and permissions, stalled live owners versus stale sockets, startup/sign-in and
-covered-dialog deferral, preserved drafts/scroll/event focus, shutdown rejection,
-sign-out ownership, and stale picker completions. Native queue admission and
-picker exit are atomic; accepted links are retained in the bounded source queue
-until the UI can route them. No account store is opened by discovery or picker.
-
-For an isolated native fixture, run the built library test executable with
-`--exact activation::tests::fixture_process --nocapture` and
-`INTERCONNECT_ACTIVATION_FIXTURE=/tmp/SHORT_PRIVATE_DIR` (mode 0700). The helper
-publishes two fake profiles under that directory, writes `ready.json`, and records
-fake deliveries in `received.jsonl`. Optional
-`INTERCONNECT_ACTIVATION_FIXTURE_SINGLE=work` exposes one fake profile. Set only the
-test client's `XDG_RUNTIME_DIR` to the fixture directory, with an absolute
-`WAYLAND_DISPLAY` if needed, so it cannot discover the real client's sockets.
-The fixture creates no profile/account directories. Never publish fake profiles
-in the user's real activation directory. Keep all artifacts outside the repo.
-
-- One fake profile: opening a link must forward and exit before creating a UI or
-  account store. Test with renderer re-exec variables absent as well.
-- Two profiles: the SDK-free picker shows both account identities, supports
-  Tab/Shift+Tab, Enter, Escape/Cancel, refresh, and 640×480 layout. Choosing one
-  must deliver only there. An explicit `--profile-path ... --open ...` bypasses it.
-- Close/restart/change the selected fake target before choosing; the picker must
-  report failure and require refresh, without choosing another account. An
-  unresponsive locked endpoint must not be interpreted as zero active profiles.
-- Inspect Light/Dark and GPU/software rendering. With a real authorized test
-  profile, hold a link through sign-in, settings/edit/confirmation dialogs, IME
-  composition, and account restoration. It must navigate when safe, retaining
-  drafts/scroll and join confirmation. Signing out cancels previous-account links.
-- On macOS, test installed bundle cold and warm URL delivery with zero, one, and
-  several active profiles, including a receiver originally launched explicitly
-  for another profile. The no-URI welcome must retain the native handler until
-  GURL delivery; pending links must not be replaced by later URLs. macOS bridge
-  sources were compiled/linted in an isolated aarch64-apple-darwin harness on
-  Linux, which does not establish native packaged AppleEvent acceptance.
-
-Focus/attention is requested, but compositor policies (especially Wayland) decide
-whether a background window can be raised. Activation ACKs indicate bounded
-in-memory admission, not durable navigation or server-side completion.
-
-Linux/Wayland native acceptance for this change used the real locked debug
-binary, an on-screen nested Sway desktop, and isolated fake profile endpoints.
-Intel ARL IntegratedGpu / Vulkan / Mesa 25.0.7 and forced tiny-skia both rendered
-the 640×480 picker cleanly in Light/Dark. GPU Tab/Enter delivered only to Work;
-software mouse selection delivered only to Personal, while Cancel,
-Escape, and native window close delivered nothing and exited. Refresh sent no
-link. Killing the fake endpoints produced a visible failure, then an empty
-refreshed list without automatic default-profile/store creation. Single-profile
-handoff, renderer re-exec, explicit-profile bypass, focus-only launch, and invalid
-URI diagnostic redaction passed without a display or account initialization.
-The software picker added 0.0 procfs CPU seconds over a five-second idle sample
-(quantized measurement; scheduler wakeups were not measured).
-
-These native checks did not touch saved accounts, send Matrix messages, change
-the default handler, or establish live-server joins/sign-in. Packaged macOS
-AppleEvents, fresh default-profile credential prompts, and OS handler selection
-remain native/manual acceptance. Run artifacts are outside version control:
-`/tmp/interconnect-activation-native-results.json` and the corresponding
-`interconnect-activation-wgpu-*` / `interconnect-activation-tiny-skia-*` captures.
-
-### Polls
-
-MSC3381 polls render their question and ordered answers from SDK timeline
-snapshots. Disclosed polls show counts; undisclosed counts remain hidden until
-an end event. Redacted polls return to the normal removed-message presentation.
-Check live responses, edited questions, end events, and redactions in both room
-and thread views with a dedicated account. Connected interoperability and native
-layout acceptance remain manual checks; local build/tests do not establish them.
-
-Voting submits selected answer IDs asynchronously against the captured poll.
-Single-choice votes replace the previous selection; multi-choice buttons toggle
-selections up to the poll limit (at least one selection is required). Pending
-votes disable controls and failures allow retry. Confirm updates from another
-client, hidden counts, permission failures, and navigation during a vote manually.
-
-The composer’s poll chart icon, immediately after the emoji button, has a
-**Create poll** tooltip and opens a poll form for that room or thread, with
-question/answer fields,
-icon controls with **Add answer**, **Remove answer**, **Close**, and **Create poll**
-tooltips, **Allow multiple answers** and an explicit selection
-limit, and **Hide results until the poll ends**. Defaults are disclosed and
-single-choice. Creation requires 2–20 distinct, nonempty answers. Closing retains
-the unfinished form per conversation; its values and settings survive restart
-in the existing encrypted draft store, independently of ordinary message text,
-replies, and attachments. Successful queue admission clears only the poll draft.
-Admission failures retain
-its values. SDK timeline local echoes show queued/offline sends and their
-Retry/Cancel controls, as with regular messages; check the conversation before
-retrying an uncertain admission timeout.
-
-Each answer has a drag grip. Drag it to the insertion marker and release to move
-the answer; clicking alone or dropping outside the visible answer list leaves
-the order unchanged. Escape cancels a drag without closing the form. Scrolling,
-window focus loss, and changed/closed/disabled forms also cancel it. For longer
-lists, scroll to expose the intended target before dragging. With an answer field
-focused, **Alt+↑/↓** moves that answer one position. Editor focus/selection follow
-the answer, and the reordered list is retained in the encrypted draft and used
-in the sent poll. Reordering preserves the selection limit and disclosure mode.
-
-**Insert text template** remains available for an empty room or thread draft.
-Edit `/poll Question?`, put each answer on a following line, then use Send. This
-quick path creates disclosed single-choice polls. Explicit reply targets and
-attachments are rejected with the text draft retained. Both entry paths and
-voting stay in memory in demo, without saved-account or network access. Check all
-four creation modes, form close/reopen/restart, ordinary draft and scroll
-preservation, keyboard/Escape behavior, denied/offline sends, and cross-client
-rendering/voting with a dedicated account.
-
-Own open polls offer **End poll** in room and thread cards, including thread roots. Opening the
-inline confirmation sends nothing; **Keep open** or Escape cancels it. Confirming
-sends an author-only end event against the captured account/room/event, rechecking
-membership, event permission, and current poll content. Voting and ending share a
-pending guard across both panes. Failures preserve retry, including the same end
-transaction ID after an uncertain response. Successful requests disable further
-actions until the SDK timeline supplies the end; undisclosed counts, bars, and
-voter names appear only after that snapshot. Navigation, account changes,
-redaction, remote ending, and covering dialogs invalidate old confirmations.
-Already-submitted writes may finish after navigation; stale completions must not
-publish into the current conversation. Demo ending is local and reveals its
-in-memory votes.
-
-Own sent polls expose the pencil action and **Edit poll** context-menu entry
-before any response or end event, including polls inside threads and thread-root
-previews. The SDK eligibility flag applies even when undisclosed/invalid responses
-leave visible counts at zero. The editor starts with the current question,
-ordered answers, disclosure mode, and selection limit. It keeps ordinary message
-and unfinished new-poll drafts separate. Close/Escape cancels the edit without
-creating another poll. An unchanged first Save sends nothing. After a failed or
-timed-out Save, restoring the original values sends a replacement because the
-earlier request may have reached the server.
-
-Saving validates the original snapshot again, then sends a Matrix replacement
-for the original event. It rechecks ownership, membership, poll-start event
-permission, SDK edit eligibility, and intervening content changes around original
-event preparation. Responses, remote edits, endings, and redactions disable stale
-forms; close and reopen to review current content. Failed sends retain the form
-and its values. Retrying the same normalized content uses the same transaction;
-changing the question, ordered answers, disclosure mode, or selection limit
-allocates a new transaction on Save. Changes consisting only of trimmed
-whitespace keep the retry transaction. Successful sends keep old answer controls
-disabled with **Updating poll…** until an updated
-SDK snapshot arrives. Editing, voting, and ending the same poll cannot overlap
-across panes. The original event/thread identity and other drafts remain intact. Navigation/account changes cannot publish stale completions into another
-editor. Global races with responses on other clients are not an atomic server-side
-edit lock; connected cross-client acceptance remains necessary.
-
-Focused mock-server tests cover creation payloads for all four modes, invalid
-creation, room/thread form and template routing (including exact thread relation
-payloads), independent persistent thread drafts, author/content/permission checks, a denied end followed by explicit
-retry with the same transaction, and hidden multi-choice votes becoming visible
-on the synchronized end event. Poll editing tests cover complete replacement
-payloads and original thread identity, hidden/invalid responses, permission loss,
-stale originals, redaction/end rejection, server errors and transaction reuse,
-no-op saves, cross-pane snapshot guards, and separate message/creation drafts.
-Editor regressions cover unchanged retries after a timeout, revised questions/
-answers/settings and reordered answers receiving fresh transactions, unsaved
-changes restored before retry, and reverting to original values after an
-uncertain Save.
-Demo UI tests cover cancellation, stale controls, room/thread pending guards,
-draft/scroll preservation, covered-dialog shortcuts, and stale/duplicate completions. These fixtures do not establish live-server interoperability.
-
-Local validation for the completed workflow: locked workspace tests passed,
-followed by the final UI suite (695 passed, one opt-in test ignored), Clippy with
-warnings denied, formatting check, and desktop binary build. The poll form fixture
-checks Tab confinement, inclusion of both checkboxes and the selection-limit
-control, and no caret redraw deadline in Light/Dark at 640×480.
-Answer-reordering fixtures cover handle-only presses, release/drop boundaries,
-Escape/focus-loss/scroll cancellation, unchanged-form rebuilds, stale and disabled
-forms, keyboard movement, editor focus continuity, stable edit/remove targets,
-encoded answer order, and encrypted draft restoration.
-
-Linux/Wayland demo acceptance used an isolated headless Sway desktop and tiny-skia
-at 1200×900 and 640×480. Checks covered Light/Dark forms, retained values after
-closing/reopening, keyboard creation of a hidden multi-choice poll, dropdown
-Escape without closing the form, scrolling focused controls into view, two
-selected answers with hidden counts/names, cancelling the end confirmation,
-ending the poll, and revealed counts/bars/voter details. Icon-only form actions
-and answer grips were checked with three answers: pointer movement in both
-directions, the insertion marker, Escape cancellation without closing the form,
-Alt+↓ with selected text retained, and creation using the resulting answer order.
-A settled, focused Dark
-poll form at 640×480 added 0.0 procfs CPU seconds over ten seconds (quantized),
-with unchanged diagnostic redraw/update counters and stable endpoint thread
-sets. Scheduler wakeups were unmeasured. Captures/logs remain outside Git under
-`/tmp/interconnect-polls-native-*` and `/tmp/interconnect-poll-reorder-*`.
-
-No saved account or live-server message was used. Live-server interoperability,
-GPU rendering, macOS behavior, and scheduler wakeups remain separate acceptance
-checks; software demo captures and unit tests do not establish them.
-
-Thread creation and sent-poll edit acceptance also used the locked demo build on
-isolated Sway/tiny-skia: Light at 1200×900 and the Dark editor at 640×480. A hidden
-multi-choice poll was created in a thread, opened through **Edit poll** and the
-pencil, cancelled without changing the poll, then saved with a new question,
-answers, single-choice limit, and visible results. Both room/thread composers
-retained their unsent text. The edited poll stayed in its thread and updated the
-room's preview; editing disappeared after voting. The small editor retained its
-values while covered-dialog shortcuts were rejected. Artifacts remain outside
-Git under `/tmp/interconnect-thread-poll-edit-*`; no connected client or saved
-account was used. Live encrypted cross-client behavior and macOS remain manual.
-
-Poll presentation uses a column capped at 380 px, outlined answer cards, a
-selection indicator, and static result bars. Questions use the regular message
-size (14 px) in bold; option labels and vote counts use 12 px. Disclosed single-choice polls show
-a vote total; multi-choice totals are labelled selections. Undisclosed polls
-omit counts and bars. The local layout fixture checks wrapping at 380, 260, and
-180 px in Light/Dark. To export its software-rendered previews outside Git:
+- Create all four disclosure/single/multi-choice modes in room/thread forms and the
+  text-template path. Check 2–20 distinct answers, explicit multi-choice limit,
+  independent message/reply/attachment drafts, form close/reopen/restart, offline
+  echoes, failure retention, and clearing only the admitted poll draft.
+- Reorder by grip and Alt+Up/Down: retain focus/selection, order, and settings in
+  sent/restored drafts. Click-only/outside drops, Escape, scroll, unfocus, and stale
+  forms cancel dragging. Check compact scrolling and dropdown-first Escape.
+- Vote/revote up to the limit; pending guards span room/thread views. Hidden counts,
+  voter names, bars, and Show votes stay hidden until the SDK end snapshot.
+  Hover/popover uses cached names, handles missing users/empty answers, scrolls,
+  and dismisses without timers. Redaction uses normal removed-message presentation.
+- End only owned polls after explicit confirmation; cancellation sends nothing.
+  Recheck ownership/permissions/content and retain the transaction on uncertain retry.
+  Disable actions until the SDK end arrives; old confirmations cannot act.
+- Edit only owned unanswered/unended polls, including thread roots. SDK eligibility
+  applies even when visible counts are zero. Cancel retains other drafts; unchanged
+  initial Save sends nothing. Recheck intervening responses/edits/permissions.
+  Same normalized retry reuses the transaction; changed content gets a new one.
+  Reverting after an uncertain Save still sends replacement. Await the SDK update
+  with controls disabled; edits/votes/end cannot overlap across panes.
+- Inspect wrapping at 380/260/180 px in both themes. Export local software previews:
 
 ```sh
 INTERCONNECT_POLL_PREVIEW_DIR=/tmp/interconnect-poll-preview cargo test --locked --bin interconnect poll_cards_wrap_and_render_in_both_themes
 ```
 
-These isolated widget previews do not establish native desktop acceptance.
+Local fixtures do not establish encrypted cross-client races or native acceptance.
 
-Hover any poll answer card to see the room display names of its voters (falling back to Matrix user IDs), one per
-line in stable order. Empty answers show “No votes yet”. Both names and counts
-remain hidden for undisclosed polls until they end. Tooltips use the existing
-hover overlay using cached room membership without network requests or background timers. Demo tests cover
-voter labels, empty options, and undisclosed tooltip suppression; verify live
-vote changes and ended polls with a dedicated account.
+## Sending and room management
 
-Disclosed polls also offer a compact **Show votes** link beneath the total. It
-opens an anchored, viewport-clamped popover grouping every voter's display name
-by answer (with handle fallback), including empty answers. Long lists scroll.
-Close it with Close, Escape, or an outside click. The popover uses current poll
-snapshots and closes when its conversation becomes stale or the poll becomes
-unavailable/undisclosed. Local demo tests cover opening, dismissal, stale targets,
-and disclosure changes; live cross-client updates remain a manual check.
+With a second client, check text/emotes/media, offline/retry, encryption, edits,
+deletion, reactions, pins, topics, DMs, invitations, and joining by ID/alias/link.
+Ctrl+N room entry opens known rooms or prefills Join; cancellation retains conversation.
+Exercise bookmarks (including unavailable sources/invalid storage) and emoji packs;
+only Save uploads, conflicts require Reload, and media is unencrypted.
+
+### Room and space settings
+
+Save fields independently; Reload/discard/conflicts retain unrelated drafts. Special
+access stays read-only; history visibility supplies no old keys. Check notification
+overrides/account defaults across clients. For addresses:
+
+- Fixed `#` prefixes do not duplicate pasted hashes. Local aliases use the account's
+  server name/port, reject foreign/invalid/duplicate aliases, and expose policy errors.
+- Publication validates resolution and fresh permissions, preserves other aliases,
+  and never creates/deletes mappings. Directory listing remains independent.
+- Removal requires unpublishing and confirmation, then rechecks resolution.
+  Denied reads leave other settings usable; uncertain writes require Reload.
+- Demo create/publish/main-address/directory/remove persists per target in memory.
+
+### Conversation and space creation
+
+Home creates root spaces; writable spaces create fixed-parent subspaces. Recheck
+parent permission before creation. Link failure retries only the created ID's link.
+Room/DM creation sends once per submission with a 30-second deadline; inject lost
+responses/500/429/stalls and inspect state before retry. DM reuse survives failed
+`m.direct` updates. Preserve conversation/filter throughout.
+
+### Members
+
+Check large rosters, search/paging, directory/full-ID invites, pending invitations,
+permissions, and confirmed removal/revocation/role changes. Preserve unrelated power
+rules; protect self/peers/creator. Space actions affect no children. Use the focused
+[moderation/reporting checklist](ui-management.md#basic-moderation).
+
+### Discovering rooms
+
+Check nested/unjoined results, deduplication, search, explicit pagination/errors,
+and the 1,000-result cap. Directory queries submit explicitly; tabs retain separate
+query/results/continuations and cancel reads when switching.
+Link an alias/ID/Matrix URL or discovery result into a writable parent without joining.
+Opaque IDs need `via`; writes affect only the parent's child link. Reject known
+cycles/duplicates and recheck permission; unknown remote cycles remain possible.
+Retain address/query/feedback on errors and across tabs; discard prompts include
+unfinished addresses. Accepted writes may complete after closing. Join eligible
+rooms with routing hints; joining neither navigates nor adds a link. Open navigates.
+
+### Leave and disband space confirmations
+
+Use disposable spaces: check fresh counts/permissions, exact-name Disband, and no
+Enter auto-submit. Changed state requires review. Leave/forget retains children/others.
+Disband closes access, unlists, removes memberships/links, verifies, then leaves.
+Protected peers/new members/partial failures require Reload/explicit retry; retain
+the actor until completion. Failed forget retries only forget. History/aliases/external
+references remain; older snapshots cannot restore a disbanded space.
+
+### Room leave consequences
+
+Check encrypted/public, last-admin/inviter/member warnings, and changed-state guards.
+Opening/Enter never leaves; failed preview disables Leave with Reload. No forget/key
+removal; retain other conversations. Review recovery before destructive tests.
+
+### Room and space avatars
+
+Check PNG/JPEG orientation/WebP, bad/oversized files, stale preparation, and independent
+permissions. Only Save uploads; remote changes/permission loss require review/Reload.
+Remove clears the reference, not media. Upload/publication is not atomic.
+
+## Inline GIF playback
+
+Play loads/animates the original; other image clicks open the viewer. Loading stays
+still/cancellable. Stop/completion permits replay; viewport departure, navigation,
+thread close, viewer open, or unfocus stops without auto-resume. Test encrypted GIFs,
+both playback settings, errors/retry, and [idle resources](idle-resources.md).
+
+## User presence
+
+Check on-demand refresh, the 60-second cache, optional polling off/on and pause while
+unfocused, endpoint failures, and stale results. No second classic-sync stream.
+
+## Lifecycle and desktop integration
+
+Check native identity/icons, file picking, clipboard, pane drop coordinates, external
+opening, [notifications](notifications.md), [verification](verification.md), and
+[recovery](recovery.md). Include offline/reconnect, hidden windows, suspend/resume,
+repeated navigation, released timelines, and [resource measurement](idle-resources.md).
+
+## Validation scope
+
+Automated state/mock-server/crypto fixtures cover guarded requests, cancellation,
+stale updates, drafts/anchors, and layout invariants. They and demo captures do not
+establish live interoperability, native prompts/fonts/IME/clipboard, macOS, GPU, or
+CPU/wakeups. Record build/platform/renderer and observed limits separately; keep
+private data and run artifacts outside Git and this reference.
+
+## Device and session management
+
+With an isolated account and spare device, compare Settings → Devices with another
+client. Rename both devices; the current one stays labelled and cannot be revoked.
+Cancel then confirm spare-device revocation; exercise password/browser/multistage
+UIAA and errors, and confirm only that session ends. Unsupported flows must not
+bypass authentication. Close/cover/switch during prompts: clear secrets, reject stale
+results, and Refresh after uncertain writes. Check compact layout/keyboard controls.
+
+## External Matrix activation and profile selection
+
+Do not change the user's default handler or open real profiles for fixture checks.
+Use `--demo --demo-picker` for UI. For isolated IPC/native checks, run the built
+library test executable with `--exact activation::tests::fixture_process --nocapture`
+and `INTERCONNECT_ACTIVATION_FIXTURE=/tmp/SHORT_PRIVATE_DIR` (0700). It publishes two
+fake profiles, `ready.json`, and `received.jsonl`; optional
+`INTERCONNECT_ACTIVATION_FIXTURE_SINGLE=work` exposes one. Point only the test client's
+`XDG_RUNTIME_DIR` there, using an absolute `WAYLAND_DISPLAY` if needed. Never publish
+fixtures in the real activation directory.
+
+- One profile forwards/exits without UI/account storage, including renderer re-exec.
+  Multiple profiles show an SDK-free picker; only the chosen endpoint receives.
+  Explicit profile plus `--open` bypasses it. Cancel/Escape/close delivers nothing.
+- Restart/change/stall the target: fail with Refresh, without another account or
+  default-store fallback. Check keyboard and Light/Dark at 640×480 in both renderers.
+- With an authorized real profile, defer links through sign-in, restore, dialogs,
+  and IME. Preserve drafts/scroll/join confirmation; sign-out clears old-account links.
+- On macOS test packaged cold/warm AppleEvents with zero/one/multiple active profiles,
+  including a receiver launched with an explicit profile. Welcome retains the URL
+  handler before delivery; pending links survive later arrivals.
+
+Focus is compositor-controlled. ACK means bounded in-memory admission, not durable
+navigation/server completion. Packages advertise `matrix:` only.
 
 ## Long technical code messages
 
-Demo → Message formatting includes a 100-line code sample. Collapsed code shapes
-at most 12 lines / 2 KiB, whichever limit is reached first. Expansion uses full
-code layout; Collapse releases it. Uncolored oversized/unknown-language code
-keeps these controls. Incoming HTML beyond parser limits instead uses the plain
-message fallback, which has no code preview.
+Demo → Message formatting has a 100-line sample. Check collapsed 12-line/2-KiB
+budgets, full expansion, released layout on collapse, and uncolored code controls.
+HTML beyond parser limits falls back to plain text without previews.
 
-The upper-right corner contains Copy and Save icons, plus Expand/Collapse when
-truncated, with named hover tooltips. The message hover actions leave this corner
-clear and wrap in narrow panes without reducing text width. There is no top text
-row or left/right arrow control. A translucent bottom fade with **Expand code**
-also expands a truncated preview; it disappears when expanded or complete.
-
-Wide lines remain unwrapped. A horizontal scrollbar appears only when rendered
-code overflows; drag the thumb, click the track, or scroll horizontally with a
-trackpad. Glyph hit-testing follows the stored offset while overlays stay fixed.
-Vertical scrolling remains with the conversation. Release or focus loss cancels
-a captured drag, including after moving beyond the block. Settled redraws must
-not schedule timers.
-
-Copy and Save use the entire block, including text outside the preview, with
-Unicode/whitespace and hidden-spoiler placeholders intact. Icons, tooltips, the
-fade, and the scrollbar are excluded from copied/saved code. Save opens an
-asynchronous native picker suggesting `code.txt`, followed by an asynchronous
-write. Verify native cancellation and errors separately from source-copy tests.
-
-A 64-conversation session cache restores logical selection, spoiler reveals,
-code expansion, and horizontal offsets on return to a room/thread. Changed
-source rejects stale state; account transitions clear it. The pinned original
-keeps its own selection and top-anchored scroll offset, independently of replies.
-An intermediate loading view must not erase it. These presentation choices are
-not saved across app restarts; persisted event reading anchors are separate.
-
-Tab / Shift+Tab traverses visible corner icons in visual order; the focused icon
-shows an accent outline and tooltip. Enter/Space activates once per key press,
-including full-code Copy/Save. Escape releases code-control focus. Controls
-outside the viewport are skipped, and source replacement clears stale focus.
-Check keyboard expansion/collapse with selection and event anchors retained,
-then continue traversal into the composer and reverse back into the code.
-
-For desktop acceptance, select code, expand via both the chevron and bottom cue,
-drag the scrollbar past both endpoints, collapse, resize, and switch rooms or
-close/reopen the thread. Check full-code copy, fixed overlays, the visible event
-anchor, and the pinned original's independent position. Repeat at each message
-text size, in Light/Dark and compact panes. Also exercise all message hover
-actions beside the corner icons; none should cover another control.
+- Copy/Save/Expand corner icons and bottom Expand cue stay clear of message actions
+  at narrow widths. Tooltips/focus identify actions; Tab/Shift+Tab skip offscreen
+  controls, Enter/Space acts once, Escape releases focus, and source edits clear it.
+- Wide code scrolls horizontally by thumb/track/trackpad without moving overlays or
+  changing hit-testing. Release/unfocus ends drag even outside the block; vertical
+  scrolling stays with the conversation. No settled timer.
+- Copy/Save includes full Unicode/whitespace/spoiler placeholders, excluding chrome.
+  Check native clipboard, async picker cancellation/errors, and suggested `code.txt`.
+- Retain selection, expansion, offsets, and event anchors across resize, size/theme
+  changes, room return, and thread reopen/loading. The pinned original stays
+  independent of replies. Session state is bounded to 64 conversations and clears
+  on account/source changes; restart retains reading anchors, not code controls.
 
 ## Markdown tables
 
-Markdown pipe tables use the native grid in previews and sent formatted payloads;
-incoming HTML tables share it. Columns share equal widths, cells wrap, and row
-height follows the tallest cell. Headers are emphasized; left/center/right
-alignment is retained. Copy uses tabs between cells and newlines between rows,
-including empty cells, Unicode labels, and hidden-spoiler placeholders. Table
-chrome is excluded; links copy their displayed labels.
-
-The parser retains its byte/node/depth bounds and allows at most 32 columns.
-Nested tables fall back to plain message text; row/column spans do not create
-merged cells. Demo → Message formatting includes a wrapping table. Inspect
-aligned numbers, inline code/links/spoilers, empty cells, narrow widths, selection,
-and theme/size reflow. Automated parsing, outgoing Markdown, geometry, and
-Unicode hit-testing checks do not establish live cross-client interoperability.
+Inspect preview/sent/received grids, wrapping, equal widths, tallest-cell row height,
+headers, left/center/right alignment, narrow panes, and theme/size reflow. Copy retains
+tabs/newlines, empty cells, labels, Unicode, and hidden-spoiler placeholders, excluding
+chrome. Check parser limits: 32 columns, nested-table plain fallback, flattened spans.
+Confirm outgoing tables in another client.
 
 ## Independent message text sizing
 
-Settings → General → Message text offers 12/14/16/18 logical pixels separately
-from Interface size; existing files default to 14 px. Stage/cancel/Save and
-Reload/defaults must retain their ordinary preference semantics. Save updates
-plain/formatted bodies, proportional Markdown headings, code, tables, and
-previews. Room/thread headers, navigation, controls, composer editing, and
-authored media sizes retain their own sizes. Interface/desktop scaling still
-applies. Check selected-text copy, code state, and event anchors in both panes
-at each size. See [preference validation](ui-preferences.md#preferences).
-
-## Recorded technical-message validation
-
-Implementation checks recorded on **2026-11-24**:
-
-- The locked workspace suite passed during the milestone. The final UI suite
-  passed **709 tests**, with one opt-in measurement ignored. Format checking,
-  workspace/all-target Clippy with warnings denied, and the desktop build passed.
-- All three individual-message workloads ran in the debug fixture at 1,000 units
-  with one or two samples. These are functional measurements, not release
-  performance acceptance; see [the repeatable fixture](long-history.md).
-- An isolated tiny-skia/Wayland demo checked the final corner controls in Light
-  at 1440×960 and Dark at 640×480, tooltips, and icon expansion/collapse with
-  selection retained. Earlier milestone checks also exercised the bottom fade,
-  real-pointer scrollbar dragging beyond the block, room-return restoration,
-  pinned-original expansion/scroll through thread reopening, table alignment,
-  and applying 18 px text without enlarging shell/composer editing.
-- Automated regressions cover preview budgets, canonical copy, icon hit areas,
-  all message hover actions at narrow widths, scrollbar geometry/cancellation,
-  source changes, retained selection/anchors, and independent original/reply
-  state through a loading view. Screenshots/logs remain outside Git.
-
-Native clipboard round trips, Save code portal/native file dialogs, hardware GPU
-rendering, macOS, and live cross-client table behavior remain manual acceptance.
-Very long plain prose and explicitly expanded code still use full layout. The
-incoming HTML byte/node/depth limits and plain fallback behavior remain in place.
-
-Keyboard-control follow-up, **2026-11-25**: the locked UI suite passed **719
-tests**, with one opt-in measurement ignored. Formatting, workspace/all-target
-Clippy with warnings denied, and the desktop build passed. Automated checks
-cover forward/reverse traversal, viewport filtering, full-code Copy/Save, repeat
-suppression, focus/selection across resize and expand/collapse, source replacement,
-and keyboard expansion with a retained message-body anchor. An isolated network-free
-Linux/Wayland tiny-skia demo at 1400×900 in Light verified Shift+Tab from the
-composer into Save/Copy/Expand, forward traversal, focus outlines/tooltips, and
-Enter/Space expansion/collapse with the code header anchored. Screenshots remain
-outside Git. Native Save dialogs, hardware GPU rendering, compact/theme desktop
-coverage, and macOS remain manual checks for keyboard controls.
+Stage/cancel/Save 12/14/16/18 px independently of Interface size; test Reload/defaults
+and missing-setting 14 px. Bodies/headings/code/tables/previews change; shell/composer
+and authored media keep their own sizes. Retain copy, code state, and anchors in both
+panes. See [preference checks](ui-preferences.md#preferences).

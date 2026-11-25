@@ -46,17 +46,12 @@ back setup: retain any displayed key and let synchronization settle before retry
 
 ## Automated coverage
 
-`cargo test --locked --workspace` includes actual SDK cryptography against a local
-HTTP fixture: create recovery, import on a fresh device, reject an invalid key,
-replace the key, reject the old key, and preserve the original backup version.
-It also checks key retention after a failed final state refresh,
-existing-store protection, incomplete-secret guards, redaction,
-stale commands, key acknowledgement, and cancellation during a network request.
-
-UI tests cover registration's one-time recovery handoff, demo isolation,
-confirmation, key retention, conversation/draft/scroll preservation, clearing
-entered secrets, and footer layout in a 640×480 window. Demo previews use a clearly
-invalid sample key and perform no Matrix requests.
+The workspace suite exercises SDK recovery creation/import/replacement against
+local HTTP fixtures, including backup retention, invalid keys, partial failures,
+secret guards/redaction, and cancellation. UI fixtures cover onboarding, key
+acknowledgement/retention, stale actions, drafts/scroll, and 640×480 layout.
+Demo uses an invalid sample key without Matrix requests; live interoperability
+and native clipboard behavior require the checks below.
 
 ## Connected acceptance procedure
 
