@@ -54,9 +54,7 @@ fn message(event: Event) -> Message {
 }
 pub(super) fn is_toggle_shortcut(key: &Key, modifiers: Modifiers) -> bool {
     matches!(key.as_ref(), Key::Character("l" | "L"))
-        && modifiers.command()
-        && modifiers.shift()
-        && !modifiers.alt()
+        && modifiers == super::shortcuts::primary(true)
 }
 pub fn scope_key(scope: &Scope) -> String {
     match scope {
@@ -677,11 +675,10 @@ impl App {
         let home = super::tooltips::tooltip(home, "Home", iced::widget::tooltip::Position::Bottom);
         let roots = super::tooltips::tooltip(
             roots,
-            if cfg!(target_os = "macos") {
-                "Browse spaces · Search: Command+Shift+P"
-            } else {
-                "Browse spaces · Search: Ctrl+Shift+P"
-            },
+            super::shortcuts::label(
+                "Browse spaces · Search: Cmd+Shift+P",
+                "Browse spaces · Search: Ctrl+Shift+P",
+            ),
             iced::widget::tooltip::Position::Bottom,
         );
         let mut trail = row![home, roots].spacing(2).align_y(Alignment::Center);
@@ -837,11 +834,7 @@ impl App {
             format!(
                 "Include subspaces: {} · {}",
                 if included { "on" } else { "off" },
-                if cfg!(target_os = "macos") {
-                    "Cmd+Shift+L"
-                } else {
-                    "Ctrl+Shift+L"
-                }
+                super::shortcuts::label("Cmd+Shift+L", "Ctrl+Shift+L")
             ),
             iced::widget::tooltip::Position::Bottom,
         )
@@ -920,19 +913,23 @@ impl App {
                         {
                             return Some(shortcut);
                         }
-                        if matches!(
-                            key,
-                            Key::Named(
-                                Named::ArrowUp
-                                    | Named::ArrowDown
-                                    | Named::ArrowLeft
-                                    | Named::ArrowRight
-                                    | Named::Home
-                                    | Named::End
-                                    | Named::Tab
-                            )
-                        ) || matches!(key, Key::Character(_))
-                        {
+                        let navigation = modifiers.is_empty()
+                            && matches!(
+                                key,
+                                Key::Named(
+                                    Named::ArrowUp
+                                        | Named::ArrowDown
+                                        | Named::ArrowLeft
+                                        | Named::ArrowRight
+                                        | Named::Home
+                                        | Named::End
+                                )
+                            );
+                        let tab = matches!(key, Key::Named(Named::Tab))
+                            && super::shortcuts::traversal(modifiers);
+                        let typing = matches!(key, Key::Character(_))
+                            && super::shortcuts::traversal(modifiers);
+                        if navigation || tab || typing {
                             Some(message(Event::MenuKey(
                                 key_path.clone(),
                                 key.clone(),

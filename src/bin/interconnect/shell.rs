@@ -803,11 +803,10 @@ impl App {
         }
         let search = super::tooltips::tooltip(
             search.width(Length::Fill),
-            if cfg!(target_os = "macos") {
-                "Filter rooms (Cmd+Shift+K) · Switch rooms (Cmd+K)"
-            } else {
-                "Filter rooms (Ctrl+Shift+K) · Switch rooms (Ctrl+K)"
-            },
+            super::shortcuts::label(
+                "Filter rooms (Cmd+Shift+K) · Switch rooms (Cmd+K)",
+                "Filter rooms (Ctrl+Shift+K) · Switch rooms (Ctrl+K)",
+            ),
             widget::tooltip::Position::Bottom,
         );
         let mut saved_messages = row![
@@ -852,7 +851,10 @@ impl App {
                     "nav-message-search",
                     Message::GlobalSearch(super::global_search::Event::Open)
                 ),
-                "Search all rooms · Ctrl+Shift+F / ⌘⇧F",
+                super::shortcuts::label(
+                    "Search all rooms (Cmd+Shift+F)",
+                    "Search all rooms (Ctrl+Shift+F)",
+                ),
                 widget::tooltip::Position::Bottom,
             ),
             super::navigation_control::plain(
@@ -1099,11 +1101,7 @@ impl App {
                 "nav-new-chat",
                 new_chat_action,
             ),
-            if cfg!(target_os = "macos") {
-                "New chat (Cmd+N)"
-            } else {
-                "New chat (Ctrl+N)"
-            },
+            super::shortcuts::label("New chat (Cmd+N)", "New chat (Ctrl+N)"),
             widget::tooltip::Position::Bottom,
         );
         let create_room_action = Message::CreateRoom(super::create_room::Event::Open);
@@ -1118,11 +1116,7 @@ impl App {
                 "nav-create-room",
                 create_room_action,
             ),
-            if cfg!(target_os = "macos") {
-                "Create room (Cmd+Shift+N)"
-            } else {
-                "Create room (Ctrl+Shift+N)"
-            },
+            super::shortcuts::label("Create room (Cmd+Shift+N)", "Create room (Ctrl+Shift+N)"),
             widget::tooltip::Position::Bottom,
         );
         let manage_sections = Message::ContextMenu(super::context_menu::Event::Open(

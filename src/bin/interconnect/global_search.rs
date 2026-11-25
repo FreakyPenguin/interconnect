@@ -1113,12 +1113,12 @@ mod tests {
         assert!(matches!(
             crate::shell_shortcut(
                 &Key::Character("F".into()),
-                Modifiers::CTRL | Modifiers::SHIFT
+                Modifiers::COMMAND | Modifiers::SHIFT
             ),
             Some(Message::GlobalSearch(Event::Open))
         ));
         assert!(matches!(
-            crate::shell_shortcut(&Key::Character("f".into()), Modifiers::CTRL),
+            crate::shell_shortcut(&Key::Character("f".into()), Modifiers::COMMAND),
             Some(Message::RoomSearch(_))
         ));
         let mut app = demo_app();

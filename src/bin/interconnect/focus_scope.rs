@@ -169,7 +169,7 @@ impl<Message> Widget<Message, Theme, Renderer> for Scope<'_, Message> {
             ) => tree.state.downcast_mut::<State>().composing = false,
             _ => {}
         }
-        let tab = matches!(event, Event::Keyboard(iced::keyboard::Event::KeyPressed { key: Key::Named(Named::Tab), modifiers, .. }) if !modifiers.command() && !modifiers.alt() && !modifiers.control());
+        let tab = matches!(event, Event::Keyboard(iced::keyboard::Event::KeyPressed { key: Key::Named(Named::Tab), modifiers, .. }) if super::shortcuts::traversal(*modifiers));
         if tab && !tree.state.downcast_ref::<State>().composing {
             let backwards = matches!(event, Event::Keyboard(iced::keyboard::Event::KeyPressed { modifiers, .. }) if modifiers.shift());
             let mut count = Count::default();
@@ -219,8 +219,9 @@ impl<Message> Widget<Message, Theme, Renderer> for Scope<'_, Message> {
                 Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key: Key::Named(Named::Escape),
                     repeat: false,
+                    modifiers,
                     ..
-                })
+                }) if modifiers.is_empty()
             );
         let mut dropdown = OpenDropdown::default();
         if escape {
@@ -441,6 +442,150 @@ mod tests {
         let redraw = shell.redraw_request();
         (messages, captured, redraw)
     }
+    #[test]
+    fn modified_tab_and_escape_do_not_traverse_or_dismiss_the_scope() {
+        let mut form = dismissible(
+            column![
+                button("First").keyboard_navigation(true).on_press(1),
+                button("Second").keyboard_navigation(true).on_press(2),
+            ],
+            "modified-scope-keys",
+            9,
+        );
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&form);
+        let size = Size::new(300.0, 200.0);
+        let node =
+            form.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        for modifiers in [
+            iced::keyboard::Modifiers::CTRL,
+            iced::keyboard::Modifiers::ALT,
+            iced::keyboard::Modifiers::LOGO,
+        ] {
+            for named in [Named::Tab, Named::Escape] {
+                let mut event = key(named, false, false);
+                if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    modifiers: actual,
+                    ..
+                }) = &mut event
+                {
+                    *actual = modifiers;
+                }
+                let (messages, captured, _) = update(&mut form, &mut tree, &node, &renderer, event);
+                assert!(messages.is_empty());
+                assert!(!captured);
+                assert_eq!(
+                    update(
+                        &mut form,
+                        &mut tree,
+                        &node,
+                        &renderer,
+                        key(Named::Enter, false, false)
+                    )
+                    .0,
+                    [1]
+                );
+            }
+        }
+        assert_eq!(
+            update(
+                &mut form,
+                &mut tree,
+                &node,
+                &renderer,
+                key(Named::Escape, false, false)
+            )
+            .0,
+            [9]
+        );
+    }
+
+    #[test]
+    fn focused_dropdown_ignores_modified_activation_motion_and_escape() {
+        let mut form = view(
+            pick_list(["A", "B"], Some("A"), |_| 4)
+                .keyboard_navigation(true)
+                .on_open(7)
+                .on_close(8),
+            "modified-dropdown-keys",
+        );
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&form);
+        let size = Size::new(300.0, 200.0);
+        let node =
+            form.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        for modifiers in [
+            iced::keyboard::Modifiers::SHIFT,
+            iced::keyboard::Modifiers::CTRL,
+            iced::keyboard::Modifiers::ALT,
+            iced::keyboard::Modifiers::LOGO,
+        ] {
+            for named in [
+                Named::Enter,
+                Named::Space,
+                Named::ArrowUp,
+                Named::ArrowDown,
+                Named::Home,
+                Named::End,
+            ] {
+                let mut event = key(named, false, false);
+                if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    modifiers: actual,
+                    ..
+                }) = &mut event
+                {
+                    *actual = modifiers;
+                }
+                let (messages, captured, _) = update(&mut form, &mut tree, &node, &renderer, event);
+                assert!(messages.is_empty(), "{named:?} {modifiers:?}");
+                assert!(!captured, "{named:?} {modifiers:?}");
+            }
+        }
+        assert_eq!(
+            update(
+                &mut form,
+                &mut tree,
+                &node,
+                &renderer,
+                key(Named::Enter, false, false)
+            )
+            .0,
+            [7]
+        );
+        for modifiers in [
+            iced::keyboard::Modifiers::SHIFT,
+            iced::keyboard::Modifiers::CTRL,
+            iced::keyboard::Modifiers::ALT,
+            iced::keyboard::Modifiers::LOGO,
+        ] {
+            let mut event = key(Named::Escape, false, false);
+            if let Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                modifiers: actual, ..
+            }) = &mut event
+            {
+                *actual = modifiers;
+            }
+            assert!(
+                update(&mut form, &mut tree, &node, &renderer, event)
+                    .0
+                    .is_empty()
+            );
+        }
+        assert_eq!(
+            update(
+                &mut form,
+                &mut tree,
+                &node,
+                &renderer,
+                key(Named::Escape, false, false)
+            )
+            .0,
+            [8]
+        );
+    }
+
     #[test]
     fn scope_cycles_enabled_controls_activates_once_and_yields_to_ime() {
         let mut view = view(

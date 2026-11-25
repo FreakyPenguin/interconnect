@@ -259,15 +259,9 @@ impl App {
                     (enabled && available).then_some(Message::ConversationHistory(backwards)),
                 ),
                 if backwards {
-                    if cfg!(target_os = "macos") {
-                        "Back (⌘[)"
-                    } else {
-                        "Back (Alt+Left)"
-                    }
-                } else if cfg!(target_os = "macos") {
-                    "Forward (⌘])"
+                    super::shortcuts::label("Back (Cmd+[)", "Back (Alt+Left)")
                 } else {
-                    "Forward (Alt+Right)"
+                    super::shortcuts::label("Forward (Cmd+])", "Forward (Alt+Right)")
                 },
                 iced::widget::tooltip::Position::Bottom,
             )

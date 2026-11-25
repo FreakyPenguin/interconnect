@@ -399,8 +399,10 @@ impl<Message: Clone> overlay::Overlay<Message, Theme, Renderer> for Popup<'_, '_
                     event,
                     Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        modifiers,
+                        repeat: false,
                         ..
-                    })
+                    }) if modifiers.is_empty()
                 ))
         {
             shell.publish(self.dismiss.clone());
@@ -573,6 +575,38 @@ mod tests {
             }
             assert!(bounds.x >= 8.0 && bounds.y >= 8.0);
             assert!(bounds.x + bounds.width <= 632.0 && bounds.y + bounds.height <= 472.0);
+            for (modifiers, repeat) in [
+                (iced::keyboard::Modifiers::CTRL, false),
+                (iced::keyboard::Modifiers::ALT, false),
+                (iced::keyboard::Modifiers::LOGO, false),
+                (iced::keyboard::Modifiers::SHIFT, false),
+                (iced::keyboard::Modifiers::empty(), true),
+            ] {
+                let mut messages = Vec::new();
+                let mut shell = Shell::new(&mut messages);
+                overlay.update(
+                    &Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                        key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        modified_key: iced::keyboard::Key::Named(
+                            iced::keyboard::key::Named::Escape,
+                        ),
+                        physical_key: iced::keyboard::key::Physical::Code(
+                            iced::keyboard::key::Code::Escape,
+                        ),
+                        location: iced::keyboard::Location::Standard,
+                        modifiers,
+                        text: None,
+                        repeat,
+                    }),
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut shell,
+                );
+                assert!(shell.is_event_captured());
+                assert!(messages.is_empty());
+            }
             let mut messages = Vec::new();
             let mut shell = Shell::new(&mut messages);
             overlay.update(

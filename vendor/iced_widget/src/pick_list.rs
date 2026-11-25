@@ -482,8 +482,9 @@ where
                 ..
             }) if self.keyboard_navigation
                 && state.is_focused
-                && !modifiers.command()
-                && !modifiers.alt() =>
+                && (modifiers.is_empty()
+                    || (*modifiers == keyboard::Modifiers::SHIFT
+                        && matches!(key, keyboard::Key::Named(keyboard::key::Named::Tab)))) =>
             {
                 use keyboard::{Key, key::Named};
                 let options = self.options.borrow();

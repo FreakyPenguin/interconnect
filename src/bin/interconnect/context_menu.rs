@@ -901,31 +901,39 @@ impl App {
                                 .style(shell::quiet_button)
                                 .keyboard_navigation(menu_prefix(&state.target).is_none())
                                 .on_press_maybe(state.pending.is_none().then(|| action.clone()));
-                            let control: Element<'_, Message> =
-                                if let Some(prefix) = menu_prefix(&state.target) {
-                                    super::navigation_control::view(
-                                        control,
-                                        format!("{prefix}:{index}"),
-                                        action,
-                                        move |key, modifiers| {
-                                            use iced::keyboard::{Key, key::Named};
-                                            match key {
-                                                Key::Named(Named::ArrowUp) => {
-                                                    Some(message(Event::AccountMove(index, true)))
-                                                }
-                                                Key::Named(Named::ArrowDown) => {
-                                                    Some(message(Event::AccountMove(index, false)))
-                                                }
-                                                Key::Named(Named::Tab) => Some(message(
-                                                    Event::AccountMove(index, modifiers.shift()),
-                                                )),
-                                                _ => None,
+                            let control: Element<'_, Message> = if let Some(prefix) =
+                                menu_prefix(&state.target)
+                            {
+                                super::navigation_control::view(
+                                    control,
+                                    format!("{prefix}:{index}"),
+                                    action,
+                                    move |key, modifiers| {
+                                        use iced::keyboard::{Key, key::Named};
+                                        match key {
+                                            Key::Named(Named::ArrowUp) if modifiers.is_empty() => {
+                                                Some(message(Event::AccountMove(index, true)))
                                             }
-                                        },
-                                    )
-                                } else {
-                                    control.into()
-                                };
+                                            Key::Named(Named::ArrowDown)
+                                                if modifiers.is_empty() =>
+                                            {
+                                                Some(message(Event::AccountMove(index, false)))
+                                            }
+                                            Key::Named(Named::Tab)
+                                                if super::shortcuts::traversal(modifiers) =>
+                                            {
+                                                Some(message(Event::AccountMove(
+                                                    index,
+                                                    modifiers.shift(),
+                                                )))
+                                            }
+                                            _ => None,
+                                        }
+                                    },
+                                )
+                            } else {
+                                control.into()
+                            };
                             items.push(control)
                         });
                 if state.pending.is_some() {
@@ -1021,6 +1029,98 @@ impl App {
 mod tests {
     use super::*;
     use crate::tests::demo_app;
+
+    #[test]
+    fn account_menu_navigation_requires_plain_arrows_or_plain_tab() {
+        use iced::advanced::{
+            Layout, Shell, layout, mouse,
+            widget::{self, Tree},
+        };
+        use iced::keyboard::{
+            Key, Modifiers,
+            key::{Named, NativeCode, Physical},
+        };
+        let mut app = demo_app();
+        open(&mut app, &Target::Account);
+        let mut view = app.context_menu_view(iced::widget::space());
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&view);
+        let size = iced::Size::new(640.0, 480.0);
+        let node = view.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        let viewport = iced::Rectangle::with_size(size);
+        let mut overlay = view
+            .as_widget_mut()
+            .overlay(
+                &mut tree,
+                Layout::new(&node),
+                &renderer,
+                &viewport,
+                iced::Vector::ZERO,
+            )
+            .unwrap();
+        let overlay = overlay.as_overlay_mut();
+        let node = overlay.layout(&renderer, size);
+        overlay.operate(
+            Layout::new(&node),
+            &renderer,
+            &mut widget::operation::focusable::focus::<()>("account-action:0".into()),
+        );
+        for named in [Named::ArrowUp, Named::ArrowDown, Named::Tab] {
+            for modifiers in [Modifiers::CTRL, Modifiers::ALT, Modifiers::LOGO] {
+                let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: Key::Named(named),
+                    modified_key: Key::Named(named),
+                    physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                    location: iced::keyboard::Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat: false,
+                });
+                let mut messages = Vec::new();
+                overlay.update(
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                );
+                assert!(messages.is_empty(), "{named:?} {modifiers:?}");
+            }
+        }
+        for (named, modifiers, backwards) in [
+            (Named::ArrowDown, Modifiers::empty(), false),
+            (Named::ArrowUp, Modifiers::empty(), true),
+            (Named::Tab, Modifiers::empty(), false),
+            (Named::Tab, Modifiers::SHIFT, true),
+        ] {
+            let event = iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Named(named),
+                modified_key: Key::Named(named),
+                physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            });
+            let mut messages = Vec::new();
+            overlay.update(
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut Shell::new(&mut messages),
+            );
+            assert!(
+                matches!(messages.as_slice(), [Message::ContextMenu(Event::AccountMove(0, actual))] if *actual == backwards)
+            );
+        }
+    }
 
     #[test]
     fn sidebar_actions_recheck_space_permissions_and_keep_direct_creation_actions() {

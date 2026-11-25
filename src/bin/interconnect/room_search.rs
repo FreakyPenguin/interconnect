@@ -152,7 +152,7 @@ impl App {
                 .on_press(message(Event::Open)),
             )
             .id("room-search-button"),
-            "Find in room (Ctrl+F / ⌘F)",
+            super::shortcuts::label("Find in room (Cmd+F)", "Find in room (Ctrl+F)"),
             tooltip::Position::Bottom,
         )
         .into()
@@ -358,7 +358,7 @@ mod tests {
     fn shortcut_opens_search_and_respects_modals() {
         use iced::keyboard::{Key, Modifiers};
         let shortcut =
-            super::super::shell_shortcut(&Key::Character("f".into()), Modifiers::CTRL).unwrap();
+            super::super::shell_shortcut(&Key::Character("f".into()), Modifiers::COMMAND).unwrap();
         assert!(matches!(shortcut, Message::RoomSearch(Event::Open)));
         let mut app = app_with_messages();
         let _ = app.update(message(Event::Close));

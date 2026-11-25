@@ -26,6 +26,14 @@ struct Answers<'a> {
     keys: Vec<usize>,
     enabled: bool,
 }
+fn reorder_modifiers() -> iced::keyboard::Modifiers {
+    let option = iced::keyboard::Modifiers::ALT;
+    if cfg!(target_os = "macos") {
+        option | iced::keyboard::Modifiers::COMMAND
+    } else {
+        option
+    }
+}
 #[derive(Default)]
 struct State {
     identity: Option<(u64, u64)>,
@@ -250,7 +258,7 @@ impl Widget<Message, Theme, Renderer> for Answers<'_> {
         }
         if self.enabled
             && let Input::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event
-            && *modifiers == iced::keyboard::Modifiers::ALT
+            && *modifiers == reorder_modifiers()
             && matches!(
                 key,
                 iced::keyboard::Key::Named(
@@ -647,10 +655,24 @@ mod tests {
             &renderer,
             &mut widget::operation::focusable::focus::<()>("answer-0".into()),
         );
-        let alt_down = key(
-            iced::keyboard::key::Named::ArrowDown,
-            iced::keyboard::Modifiers::ALT,
-        );
+        let mut reserved = vec![reorder_modifiers() | iced::keyboard::Modifiers::SHIFT];
+        if cfg!(target_os = "macos") {
+            reserved.push(iced::keyboard::Modifiers::ALT);
+        }
+        for modifiers in reserved {
+            assert!(
+                input(
+                    &mut view,
+                    &mut tree,
+                    &renderer,
+                    &node,
+                    key(iced::keyboard::key::Named::ArrowDown, modifiers),
+                    Point::ORIGIN
+                )
+                .is_empty()
+            );
+        }
+        let alt_down = key(iced::keyboard::key::Named::ArrowDown, reorder_modifiers());
         assert!(matches!(
             input(
                 &mut view,
@@ -678,10 +700,7 @@ mod tests {
                 .bounds()
                 .contains(focus.0.unwrap().center())
         );
-        let alt_up = key(
-            iced::keyboard::key::Named::ArrowUp,
-            iced::keyboard::Modifiers::ALT,
-        );
+        let alt_up = key(iced::keyboard::key::Named::ArrowUp, reorder_modifiers());
         assert!(matches!(
             input(
                 &mut rebuilt,

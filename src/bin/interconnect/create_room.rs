@@ -54,9 +54,7 @@ fn message(event: Event) -> Message {
 }
 pub fn is_shortcut(key: &Key, modifiers: Modifiers) -> bool {
     matches!(key.as_ref(), Key::Character("n" | "N"))
-        && (modifiers.control() || modifiers.command())
-        && modifiers.shift()
-        && !modifiers.alt()
+        && modifiers == super::shortcuts::primary(true)
 }
 pub fn shortcut(
     event: iced::Event,
@@ -71,11 +69,13 @@ pub fn shortcut(
         return None;
     };
     match key.as_ref() {
-        Key::Named(Named::Escape) if status != iced::event::Status::Captured => {
-            Some(message(Event::Close))
+        Key::Named(Named::Escape) if modifiers.is_empty() => Some(message(Event::Close)),
+        Key::Named(Named::Enter) if modifiers == super::shortcuts::primary(false) => {
+            Some(message(Event::Submit))
         }
-        Key::Named(Named::Enter) if modifiers.command() => Some(message(Event::Submit)),
-        Key::Named(Named::Tab) => Some(message(Event::Focus(modifiers.shift()))),
+        Key::Named(Named::Tab) if super::shortcuts::traversal(modifiers) => {
+            Some(message(Event::Focus(modifiers.shift())))
+        }
         _ => None,
     }
 }
@@ -1016,7 +1016,8 @@ mod tests {
     }
     #[test]
     fn shift_shortcut_is_distinct_from_direct_chat_shortcut() {
-        for base in [Modifiers::CTRL, Modifiers::COMMAND] {
+        {
+            let base = Modifiers::COMMAND;
             assert!(matches!(
                 super::super::shell_shortcut(&Key::Character("N".into()), base | Modifiers::SHIFT),
                 Some(Message::CreateRoom(Event::Open))

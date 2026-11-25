@@ -56,13 +56,11 @@ fn is_room_query(query: &str) -> bool {
 }
 pub fn is_shortcut(key: &Key, modifiers: Modifiers) -> bool {
     matches!(key.as_ref(), Key::Character("n" | "N"))
-        && (modifiers.control() || modifiers.command())
-        && !modifiers.alt()
-        && !modifiers.shift()
+        && modifiers == super::shortcuts::primary(false)
 }
 pub fn shortcut(
     event: iced::Event,
-    _: iced::event::Status,
+    status: iced::event::Status,
     _: iced::window::Id,
 ) -> Option<Message> {
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event
@@ -70,10 +68,24 @@ pub fn shortcut(
         return None;
     };
     match key.as_ref() {
-        Key::Named(Named::Escape) => Some(message(Event::Close)),
-        Key::Named(Named::ArrowUp) => Some(message(Event::Move(true))),
-        Key::Named(Named::ArrowDown) => Some(message(Event::Move(false))),
-        Key::Named(Named::Tab) => Some(message(Event::Open)),
+        // The search input captures Escape just to unfocus; the picker owns dismissal.
+        Key::Named(Named::Escape) if modifiers.is_empty() => Some(message(Event::Close)),
+        Key::Named(Named::ArrowUp)
+            if modifiers.is_empty() && status != iced::event::Status::Captured =>
+        {
+            Some(message(Event::Move(true)))
+        }
+        Key::Named(Named::ArrowDown)
+            if modifiers.is_empty() && status != iced::event::Status::Captured =>
+        {
+            Some(message(Event::Move(false)))
+        }
+        Key::Named(Named::Tab)
+            if super::shortcuts::traversal(modifiers)
+                && status != iced::event::Status::Captured =>
+        {
+            Some(message(Event::Open))
+        }
         _ if is_shortcut(&key, modifiers) => Some(message(Event::Open)),
         _ => None,
     }
@@ -1365,7 +1377,8 @@ mod tests {
     #[test]
     fn shortcuts_and_other_pickers_do_not_overlap() {
         let mut app = demo_app();
-        for modifiers in [Modifiers::CTRL, Modifiers::COMMAND] {
+        {
+            let modifiers = Modifiers::COMMAND;
             assert!(matches!(
                 super::super::shell_shortcut(&Key::Character("n".into()), modifiers),
                 Some(Message::NewChat(Event::Open))

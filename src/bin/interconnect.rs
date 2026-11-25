@@ -147,6 +147,8 @@ mod sender_moderation;
 mod settings;
 #[path = "interconnect/shell.rs"]
 mod shell;
+#[path = "interconnect/shortcuts.rs"]
+mod shortcuts;
 #[path = "interconnect/sign_out.rs"]
 mod sign_out;
 #[path = "interconnect/single_line.rs"]
@@ -1011,6 +1013,7 @@ impl App {
                     | Message::Exit
                     | Message::WindowFocused(_)
                     | Message::WindowResized(_)
+                    | Message::Composing(_)
                     | Message::Control(_)
             ) {
                 return Task::none();
@@ -3201,14 +3204,15 @@ impl App {
             },
             // The popup handles Escape itself; a second global Escape could
             // otherwise also close the thread after dismissing the picker.
-            if self.draft_persistence.close_requested {
+            if self.draft_persistence.close_requested || self.composing {
                 Subscription::none()
             } else if self.sign_out_open {
                 iced::event::listen_with(|event, status, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        modifiers,
                         ..
-                    }) if status != iced::event::Status::Captured => {
+                    }) if modifiers.is_empty() && status != iced::event::Status::Captured => {
                         Some(Message::SignOut(sign_out::Event::Cancel))
                     }
                     _ => None,
@@ -3217,8 +3221,9 @@ impl App {
                 iced::event::listen_with(|event, status, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        modifiers,
                         ..
-                    }) if status != iced::event::Status::Captured => {
+                    }) if modifiers.is_empty() && status != iced::event::Status::Captured => {
                         Some(Message::Membership(membership::Event::Close))
                     }
                     _ => None,
@@ -3229,32 +3234,37 @@ impl App {
                 iced::event::listen_with(|event, status, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        modifiers,
                         ..
-                    }) if status != iced::event::Status::Captured => Some(Message::Escape),
+                    }) if modifiers.is_empty() && status != iced::event::Status::Captured => {
+                        Some(Message::Escape)
+                    }
                     _ => None,
                 })
             } else if self.message_report.is_some() || self.sender_moderation.is_some() {
                 iced::Subscription::none()
             } else if self.message_delete.is_some() {
                 self.delete_subscription()
-            } else if self.create_room.is_some() && !self.composing {
+            } else if self.create_room.is_some() {
                 iced::event::listen_with(create_room::shortcut)
-            } else if self.new_chat.is_some() && !self.composing {
+            } else if self.new_chat.is_some() {
                 iced::event::listen_with(new_chat::shortcut)
-            } else if self.room_picker.is_some() && !self.composing {
+            } else if self.room_picker.is_some() {
                 iced::event::listen_with(room_picker::shortcut)
             } else if self.verification.open {
                 iced::event::listen_with(|event, status, _| match event {
                     iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
                         key: iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+                        modifiers,
                         ..
-                    }) if status != iced::event::Status::Captured => Some(Message::Escape),
+                    }) if modifiers.is_empty() && status != iced::event::Status::Captured => {
+                        Some(Message::Escape)
+                    }
                     _ => None,
                 })
             } else if (self.demo.is_none() && self.model.authentication.is_some())
                 || self.context_menu.is_some()
                 || self.section_dragging()
-                || self.composing
                 || self.reaction_picker.is_some()
                 || self.composer_picker.is_some()
                 || self.shell.spaces.menu.is_some()
@@ -4608,23 +4618,16 @@ impl App {
                 } else if thread {
                     match shortcut {
                         interconnect::settings::SendShortcut::CtrlEnter => {
-                            if cfg!(target_os = "macos") {
-                                "Send reply (Cmd+Enter)"
-                            } else {
-                                "Send reply (Ctrl+Enter)"
-                            }
+                            shortcuts::label("Send reply (Cmd+Enter)", "Send reply (Ctrl+Enter)")
                         }
                         interconnect::settings::SendShortcut::Enter => "Send reply (Enter)",
                     }
                 } else {
                     match shortcut {
-                        interconnect::settings::SendShortcut::CtrlEnter => {
-                            if cfg!(target_os = "macos") {
-                                "Send message (Cmd+Enter)"
-                            } else {
-                                "Send message (Ctrl+Enter)"
-                            }
-                        }
+                        interconnect::settings::SendShortcut::CtrlEnter => shortcuts::label(
+                            "Send message (Cmd+Enter)",
+                            "Send message (Ctrl+Enter)",
+                        ),
                         interconnect::settings::SendShortcut::Enter => "Send message (Enter)",
                     }
                 },
@@ -4662,10 +4665,8 @@ impl App {
                         && shortcut == interconnect::settings::SendShortcut::Enter
                     {
                         "Enter"
-                    } else if cfg!(target_os = "macos") {
-                        "Cmd+Enter"
                     } else {
-                        "Ctrl+Enter"
+                        shortcuts::label("Cmd+Enter", "Ctrl+Enter")
                     }
                 )
                 .size(10)
@@ -4793,7 +4794,7 @@ fn shell_shortcut(
 ) -> Option<Message> {
     use iced::keyboard::{Key, Modifiers, key::Named};
     let base = modifiers - Modifiers::SHIFT;
-    let command = base == Modifiers::COMMAND || base == Modifiers::CTRL;
+    let command = modifiers == shortcuts::primary(modifiers.shift());
     if let Some(backwards) = conversation_history::shortcut(key, modifiers) {
         return Some(Message::ConversationHistory(backwards));
     }
@@ -4832,11 +4833,13 @@ fn shell_shortcut(
             Some(Message::AdjacentRoom(modifiers.shift()))
         }
         Key::Named(Named::Tab) if base.is_empty() => Some(Message::Focus(modifiers.shift())),
-        Key::Named(Named::Escape) => Some(Message::Escape),
-        Key::Named(Named::ArrowUp) if modifiers == iced::keyboard::Modifiers::ALT => {
+        Key::Named(Named::Escape) if modifiers.is_empty() => Some(Message::Escape),
+        Key::Named(Named::ArrowUp) if !cfg!(target_os = "macos") && modifiers == Modifiers::ALT => {
             Some(Message::AdjacentRoom(true))
         }
-        Key::Named(Named::ArrowDown) if modifiers == iced::keyboard::Modifiers::ALT => {
+        Key::Named(Named::ArrowDown)
+            if !cfg!(target_os = "macos") && modifiers == Modifiers::ALT =>
+        {
             Some(Message::AdjacentRoom(false))
         }
         Key::Character("t" | "T") if command && !modifiers.shift() => Some(Message::OpenLastThread),
@@ -6933,6 +6936,86 @@ mod tests {
     }
 
     #[test]
+    fn ime_preedit_blocks_room_settings_and_early_modal_shortcut_subscriptions() {
+        use iced::advanced::subscription;
+        use iced::futures::{FutureExt, StreamExt};
+        use iced::keyboard::{
+            Key, Modifiers,
+            key::{Named, NativeCode, Physical},
+        };
+
+        fn dispatch(app: &App, event: iced::Event) -> Vec<Message> {
+            subscription::into_recipes(app.subscription())
+                .into_iter()
+                .filter_map(|recipe| {
+                    recipe
+                        .stream(Box::pin(iced::futures::stream::iter([
+                            subscription::Event::Interaction {
+                                window: iced::window::Id::unique(),
+                                status: iced::event::Status::Ignored,
+                                event: event.clone(),
+                            },
+                        ])))
+                        .next()
+                        .now_or_never()
+                        .flatten()
+                })
+                .collect()
+        }
+        let key = |named| {
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Named(named),
+                modified_key: Key::Named(named),
+                physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                location: iced::keyboard::Location::Standard,
+                modifiers: Modifiers::empty(),
+                text: None,
+                repeat: false,
+            })
+        };
+        for room_settings in [false, true] {
+            let mut app = demo_app();
+            if room_settings {
+                let room = app.selection.room.as_ref().unwrap().1.clone();
+                let _ = app.update(Message::RoomSettings(crate::room_settings::Event::Open(
+                    room,
+                )));
+                assert!(app.room_settings.is_open());
+                assert!(matches!(
+                    dispatch(&app, key(Named::Tab)).as_slice(),
+                    [Message::RoomSettings(crate::room_settings::Event::Focus(
+                        false
+                    ))]
+                ));
+            } else {
+                app.sign_out_open = true;
+                assert!(matches!(
+                    dispatch(&app, key(Named::Escape)).as_slice(),
+                    [Message::SignOut(crate::sign_out::Event::Cancel)]
+                ));
+            }
+            let preedit = iced::Event::InputMethod(iced::advanced::input_method::Event::Preedit(
+                "候".into(),
+                None,
+            ));
+            for message in dispatch(&app, preedit) {
+                let _ = app.update(message);
+            }
+            assert!(app.composing);
+            assert!(dispatch(&app, key(Named::Tab)).is_empty());
+            assert!(dispatch(&app, key(Named::Escape)).is_empty());
+            for message in dispatch(
+                &app,
+                iced::Event::InputMethod(iced::advanced::input_method::Event::Commit("候".into())),
+            ) {
+                let _ = app.update(message);
+            }
+            assert!(!app.composing);
+            assert!(!dispatch(&app, key(Named::Escape)).is_empty());
+        }
+    }
+
+    #[test]
     fn composer_shortcuts_respect_focus_newlines_and_ime() {
         let key = DraftKey {
             room: "!one:example.org".into(),
@@ -6959,10 +7042,8 @@ mod tests {
         assert!(composer_binding(command.clone(), true, &key, Default::default()).is_none());
         command.status = text_editor::Status::Active;
         assert!(composer_binding(command, false, &key, Default::default()).is_none());
-        for base in [
-            iced::keyboard::Modifiers::CTRL,
-            iced::keyboard::Modifiers::COMMAND,
-        ] {
+        {
+            let base = iced::keyboard::Modifiers::COMMAND;
             assert!(matches!(
                 shell_shortcut(
                     &iced::keyboard::Key::Character("K".into()),
@@ -6991,13 +7072,21 @@ mod tests {
                     composer_binding(navigation, false, &key, Default::default()).is_none(),
                     "{letter} must reach the shell without changing the draft"
                 );
-                assert!(
-                    shell_shortcut(
-                        &iced::keyboard::Key::Character(letter.into()),
-                        modifiers | iced::keyboard::Modifiers::ALT
-                    )
-                    .is_none()
+                let with_option = shell_shortcut(
+                    &iced::keyboard::Key::Character(letter.into()),
+                    modifiers | iced::keyboard::Modifiers::ALT,
                 );
+                if cfg!(target_os = "macos") && matches!(letter, "j" | "J") {
+                    assert!(matches!(
+                        with_option,
+                        Some(Message::UnreadRoom {
+                            account_wide: false,
+                            ..
+                        })
+                    ));
+                } else {
+                    assert!(with_option.is_none());
+                }
             }
         }
         assert!(composer_binding(press.clone(), true, &key, Default::default()).is_none());

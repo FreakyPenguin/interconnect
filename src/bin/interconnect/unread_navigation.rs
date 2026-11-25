@@ -6,14 +6,20 @@ use iced::{
 };
 
 pub(super) fn shortcut(key: &Key, modifiers: Modifiers) -> Option<Message> {
-    let base = modifiers - Modifiers::SHIFT;
-    if matches!(key.as_ref(), Key::Character("j" | "J"))
-        && (base == Modifiers::COMMAND || base == Modifiers::CTRL)
-    {
-        return Some(Message::UnreadRoom {
-            previous: modifiers.shift(),
-            account_wide: true,
-        });
+    let primary = super::shortcuts::primary(modifiers.shift());
+    if matches!(key.as_ref(), Key::Character("j" | "J")) {
+        let account_wide = modifiers == primary;
+        let scoped = cfg!(target_os = "macos") && modifiers == (primary | Modifiers::ALT);
+        if account_wide || scoped {
+            return Some(Message::UnreadRoom {
+                previous: modifiers.shift(),
+                account_wide,
+            });
+        }
+    }
+    // Option+Shift+arrows belongs to paragraph selection on macOS.
+    if cfg!(target_os = "macos") {
+        return None;
     }
     if modifiers != (Modifiers::ALT | Modifiers::SHIFT) {
         return None;
@@ -175,31 +181,43 @@ mod tests {
     }
 
     #[test]
-    fn shortcuts_require_exact_modifiers_and_leave_ordinary_room_switching_intact() {
+    fn shortcuts_require_exact_modifiers_and_preserve_platform_text_navigation() {
         let down = Key::Named(Named::ArrowDown);
-        assert!(matches!(
-            crate::shell_shortcut(&down, Modifiers::ALT),
-            Some(Message::AdjacentRoom(false))
-        ));
-        assert!(matches!(
-            crate::shell_shortcut(&down, Modifiers::ALT | Modifiers::SHIFT),
-            Some(Message::UnreadRoom {
-                previous: false,
-                account_wide: false
-            })
-        ));
-        for base in [Modifiers::CTRL, Modifiers::COMMAND] {
-            for (letter, modifiers, previous) in
-                [("j", base, false), ("J", base | Modifiers::SHIFT, true)]
-            {
+        if cfg!(target_os = "macos") {
+            for modifiers in [Modifiers::ALT, Modifiers::ALT | Modifiers::SHIFT] {
+                assert!(crate::shell_shortcut(&down, modifiers).is_none());
+            }
+        } else {
+            assert!(matches!(
+                crate::shell_shortcut(&down, Modifiers::ALT),
+                Some(Message::AdjacentRoom(false))
+            ));
+            assert!(matches!(
+                crate::shell_shortcut(&down, Modifiers::ALT | Modifiers::SHIFT),
+                Some(Message::UnreadRoom {
+                    previous: false,
+                    account_wide: false
+                })
+            ));
+        }
+        for (letter, modifiers, previous) in [
+            ("j", Modifiers::COMMAND, false),
+            ("J", Modifiers::COMMAND | Modifiers::SHIFT, true),
+        ] {
+            assert!(matches!(
+                crate::shell_shortcut(&Key::Character(letter.into()), modifiers),
+                Some(Message::UnreadRoom { previous: actual, account_wide: true })
+                    if actual == previous
+            ));
+            let scoped = shortcut(&Key::Character(letter.into()), modifiers | Modifiers::ALT);
+            if cfg!(target_os = "macos") {
                 assert!(matches!(
-                    crate::shell_shortcut(&Key::Character(letter.into()), modifiers),
-                    Some(Message::UnreadRoom { previous: actual, account_wide: true })
+                    scoped,
+                    Some(Message::UnreadRoom { previous: actual, account_wide: false })
                         if actual == previous
                 ));
-                assert!(
-                    shortcut(&Key::Character(letter.into()), modifiers | Modifiers::ALT).is_none()
-                );
+            } else {
+                assert!(scoped.is_none());
             }
         }
         assert!(

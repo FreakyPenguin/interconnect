@@ -308,6 +308,7 @@ pub enum SendShortcut {
 impl std::fmt::Display for SendShortcut {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::CtrlEnter if cfg!(target_os = "macos") => "Cmd+Enter",
             Self::CtrlEnter => "Ctrl+Enter",
             Self::Enter => "Enter",
         })

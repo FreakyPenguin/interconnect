@@ -233,7 +233,7 @@ impl State {
 }
 pub fn shortcut(
     event: iced::Event,
-    _: iced::event::Status,
+    status: iced::event::Status,
     _: iced::window::Id,
 ) -> Option<Message> {
     let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event
@@ -241,11 +241,25 @@ pub fn shortcut(
         return None;
     };
     match key.as_ref() {
-        Key::Named(Named::Escape) => Some(message(Event::Close)),
-        Key::Named(Named::ArrowUp) => Some(message(Event::Move(true))),
-        Key::Named(Named::ArrowDown) => Some(message(Event::Move(false))),
+        // The search input captures Escape just to unfocus; the picker owns dismissal.
+        Key::Named(Named::Escape) if modifiers.is_empty() => Some(message(Event::Close)),
+        Key::Named(Named::ArrowUp)
+            if modifiers.is_empty() && status != iced::event::Status::Captured =>
+        {
+            Some(message(Event::Move(true)))
+        }
+        Key::Named(Named::ArrowDown)
+            if modifiers.is_empty() && status != iced::event::Status::Captured =>
+        {
+            Some(message(Event::Move(false)))
+        }
         // Enter is submitted by the text input, avoiding a duplicate action.
-        Key::Named(Named::Tab) => Some(message(Event::Refocus)),
+        Key::Named(Named::Tab)
+            if super::shortcuts::traversal(modifiers)
+                && status != iced::event::Status::Captured =>
+        {
+            Some(message(Event::Refocus))
+        }
         _ if is_shortcut(&key, modifiers) => Some(message(Event::Open)),
         Key::Character("p" | "P") if is_space_shortcut(&key, modifiers) => {
             Some(message(Event::OpenSpaces))
@@ -255,12 +269,11 @@ pub fn shortcut(
 }
 pub fn is_shortcut(key: &Key, modifiers: Modifiers) -> bool {
     matches!(key.as_ref(), Key::Character("k" | "K" | "p" | "P"))
-        && (modifiers == Modifiers::CTRL || modifiers == Modifiers::COMMAND)
+        && modifiers == super::shortcuts::primary(false)
 }
 pub fn is_space_shortcut(key: &Key, modifiers: Modifiers) -> bool {
     matches!(key.as_ref(), Key::Character("p" | "P"))
-        && (modifiers == (Modifiers::CTRL | Modifiers::SHIFT)
-            || modifiers == (Modifiers::COMMAND | Modifiers::SHIFT))
+        && modifiers == super::shortcuts::primary(true)
 }
 impl App {
     pub(super) fn space_add_picker_matches(&self, room: &str) -> bool {
@@ -1049,7 +1062,8 @@ mod tests {
     #[test]
     fn picker_shortcuts_switch_modes_and_tab_preserves_space_query_and_selection() {
         let mut app = space_app();
-        for modifiers in [Modifiers::CTRL, Modifiers::COMMAND] {
+        {
+            let modifiers = Modifiers::COMMAND;
             let _ = app.update(
                 super::super::shell_shortcut(
                     &Key::Character("P".into()),
@@ -1067,7 +1081,7 @@ mod tests {
                 let _ = app.update(
                     shortcut(
                         event,
-                        iced::event::Status::Captured,
+                        iced::event::Status::Ignored,
                         iced::window::Id::unique(),
                     )
                     .unwrap(),
@@ -1697,8 +1711,9 @@ mod tests {
     }
 
     #[test]
-    fn shortcut_works_with_control_and_platform_command() {
-        for modifiers in [Modifiers::CTRL, Modifiers::COMMAND] {
+    fn shortcut_uses_the_platform_command() {
+        {
+            let modifiers = Modifiers::COMMAND;
             for letter in ["k", "K", "p", "P"] {
                 assert!(matches!(
                     super::super::shell_shortcut(&Key::Character(letter.into()), modifiers),

@@ -667,7 +667,10 @@ impl App {
                         iced::widget::container(super::icons::icon(Kind::Grip))
                             .center_x(28)
                             .center_y(32),
-                        "Drag to reorder · Alt+↑/↓ in an answer field",
+                        super::shortcuts::label(
+                            "Drag to reorder · Cmd+Option+↑/↓ in an answer field",
+                            "Drag to reorder · Alt+↑/↓ in an answer field",
+                        ),
                         iced::widget::tooltip::Position::Top,
                     ),
                     text_input(&format!("Option {}", index + 1), answer)

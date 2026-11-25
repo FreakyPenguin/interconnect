@@ -1217,8 +1217,10 @@ pub fn shortcut(
     use iced::keyboard::{Key, key::Named};
     if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
         match key {
-            Key::Named(Named::Escape) => Some(message(Event::Close)),
-            Key::Named(Named::Tab) => Some(message(Event::Focus(modifiers.shift()))),
+            Key::Named(Named::Escape) if modifiers.is_empty() => Some(message(Event::Close)),
+            Key::Named(Named::Tab) if super::shortcuts::traversal(modifiers) => {
+                Some(message(Event::Focus(modifiers.shift())))
+            }
             _ => None,
         }
     } else {

@@ -67,3 +67,8 @@ existing laid-out editor. The message widget uses its glyph geometry to paint
 room-search matches without changing text, selection, fonts, or wrapping. This
 adds no update work or timers to Iced. Plain and formatted message raster tests
 cover highlight visibility, removal, and stable layout/selection.
+
+Opt-in `pick_list.rs` keyboard activation and arrows now require unmodified
+keys; Shift+Tab retains its traversal behavior. Other Control, Shift, Option/Alt,
+and Command/Super combinations remain available to text editing, the active
+focus scope, and platform commands.
