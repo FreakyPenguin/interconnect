@@ -199,6 +199,7 @@ mod tests {
                     event("m.room.member", "@peer:example.org", json!({"membership":"join"})),
                     event("m.room.member", "@pending:example.org", json!({"membership":"invite"})),
                     event("m.room.member", "@banned:example.org", json!({"membership":"ban"})),
+                    event("m.room.member", "@departed:example.org", json!({"membership":"leave"})),
                     event("m.room.name", "", json!({"name":"Original"})),
                     event("m.room.topic", "", json!({"topic":"Topic"})),
                     event("m.room.join_rules", "", json!({"join_rule":access})),
@@ -215,6 +216,7 @@ mod tests {
             ("peer", "join"),
             ("pending", "invite"),
             ("banned", "ban"),
+            ("departed", "leave"),
         ]
         .into_iter()
         .map(|(user, membership)| {
@@ -673,6 +675,59 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn ban_by_id_covers_departed_and_unknown_people_in_rooms_and_spaces() {
+        for space in [false, true] {
+            for power in [0, 50, 100] {
+                let (server, control) = fixture_kind(power, "invite", space).await;
+                let roster = control.clone().members().await.unwrap();
+                assert_eq!(roster.can_ban, power >= 50);
+                for user in [
+                    "invalid",
+                    "@test:example.org",
+                    "@peer:example.org",
+                    "@banned:example.org",
+                ] {
+                    assert!(
+                        control
+                            .clone()
+                            .change_member(MemberChange::BanId(user.into()))
+                            .await
+                            .is_err()
+                    );
+                }
+                for user in [
+                    "@departed:example.org",
+                    "@unknown:elsewhere.org",
+                    "@other:example.org",
+                ] {
+                    let request = Mock::given(method("POST"))
+                        .and(path_regex(".*/ban"))
+                        .and(body_json(json!({"user_id":user})))
+                        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                        .expect(if power >= 50 { 1 } else { 0 })
+                        .mount_as_scoped(&server)
+                        .await;
+                    assert_eq!(
+                        control
+                            .clone()
+                            .change_member(MemberChange::BanId(user.into()))
+                            .await
+                            .is_ok(),
+                        power >= 50
+                    );
+                    drop(request);
+                }
+                assert!(
+                    !server.received_requests().await.unwrap().iter().any(|r| r
+                        .url
+                        .path()
+                        .ends_with("/invite")
+                        || r.url.path().contains("/send/"))
+                );
+            }
+        }
+    }
+    #[tokio::test]
     async fn bans_and_unbans_check_membership_and_power_in_rooms_and_spaces() {
         for space in [false, true] {
             for actor in [0, 50, 100] {
@@ -846,6 +901,8 @@ pub struct Roster {
     pub rows: Vec<ManagedMember>,
     pub banned: Vec<BannedMember>,
     pub can_invite: bool,
+    pub can_ban: bool,
+    pub can_unban: bool,
 }
 #[derive(Clone, Debug)]
 pub enum MemberChange {
@@ -858,6 +915,7 @@ pub enum MemberChange {
         user: String,
         invited: bool,
     },
+    BanId(String),
     Unban(String),
     Role {
         user: String,
@@ -919,6 +977,8 @@ impl Management {
                 banned,
                 rows: managed,
                 can_invite: levels.user_can_invite(own),
+                can_ban: levels.user_can_ban(own),
+                can_unban: levels.user_can_unban(own),
             })
         })
         .await
@@ -936,6 +996,7 @@ impl Management {
             let input = match &change {
                 MemberChange::Remove { user, .. }
                 | MemberChange::Ban { user, .. }
+                | MemberChange::BanId(user)
                 | MemberChange::Unban(user)
                 | MemberChange::Role { user, .. } => user,
                 _ => unreachable!(),
@@ -945,12 +1006,20 @@ impl Management {
             if user == own {
                 return Err("Use room or space settings to manage your own membership.".into());
             }
+            if matches!(change, MemberChange::BanId(_)) {
+                self.0
+                    .sync_members()
+                    .await
+                    .map_err(|_| "Could not check membership before banning. Try Reload.")?;
+            }
             let member = self
                 .0
                 .get_member_no_sync(&user)
                 .await
-                .map_err(|_| "Could not check membership.")?
-                .ok_or("This person is no longer a member. Reload.")?;
+                .map_err(|_| "Could not check membership.")?;
+            if member.is_none() && !matches!(change, MemberChange::BanId(_)) {
+                return Err("This person is no longer a member. Reload.".into());
+            }
             let mut levels = self
                 .0
                 .power_levels()
@@ -963,7 +1032,10 @@ impl Management {
                     } else {
                         MembershipState::Join
                     };
-                    if member.membership() != &expected {
+                    if member
+                        .as_ref()
+                        .is_none_or(|member| member.membership() != &expected)
+                    {
                         return Err(
                             "Membership changed. Reload before removing this person.".into()
                         );
@@ -982,7 +1054,10 @@ impl Management {
                     } else {
                         MembershipState::Join
                     };
-                    if member.membership() != &expected {
+                    if member
+                        .as_ref()
+                        .is_none_or(|member| member.membership() != &expected)
+                    {
                         return Err("Membership changed. Reload before banning this person.".into());
                     }
                     if !levels.user_can_ban_user(own, &user) {
@@ -1004,8 +1079,39 @@ impl Management {
                             |_| "Could not confirm the ban. Reload membership before retrying.",
                         )?;
                 }
+                MemberChange::BanId(_) => {
+                    if member
+                        .as_ref()
+                        .is_some_and(|m| m.membership() == &MembershipState::Ban)
+                    {
+                        return Err(
+                            "This person is already banned. Reload to review their ban.".into()
+                        );
+                    }
+                    if !levels.user_can_ban_user(own, &user) {
+                        return Err("You no longer have permission to ban this person.".into());
+                    }
+                    let request =
+                        matrix_sdk::ruma::api::client::membership::ban_user::v3::Request::new(
+                            self.0.room_id().to_owned(),
+                            user,
+                        );
+                    self.0
+                        .client()
+                        .send(request)
+                        .with_request_config(
+                            matrix_sdk::config::RequestConfig::short_retry().retry_limit(0),
+                        )
+                        .await
+                        .map_err(
+                            |_| "Could not confirm the ban. Reload membership before retrying.",
+                        )?;
+                }
                 MemberChange::Unban(_) => {
-                    if member.membership() != &MembershipState::Ban {
+                    if member
+                        .as_ref()
+                        .is_none_or(|member| member.membership() != &MembershipState::Ban)
+                    {
                         return Err("This person is no longer banned. Reload.".into());
                     }
                     if !levels.user_can_unban_user(own, &user) {
@@ -1028,7 +1134,9 @@ impl Management {
                         )?;
                 }
                 MemberChange::Role { before, role, .. } => {
-                    if member.membership() != &MembershipState::Join
+                    if member
+                        .as_ref()
+                        .is_none_or(|member| member.membership() != &MembershipState::Join)
                         || levels.for_user(&user) != before
                     {
                         return Err("Membership or role changed. Reload before saving.".into());

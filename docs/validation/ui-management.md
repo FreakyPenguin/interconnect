@@ -127,3 +127,14 @@ Tiny Skia/Light verified room ban/unban and banned-list scrolling at 1280×800 a
 reason entry, and simulated submission. Keyboard dismissal was also covered by
 rendered-widget fixtures. No connected account was used; live moderation/report
 receipt, Dark/GPU, and native macOS acceptance were not established by this run.
+
+## Ban by Matrix ID
+
+- Room member management and space settings offer **Ban by Matrix ID** to permitted
+  moderators. Enter a full ID, choose **Review ban…**, then explicitly confirm.
+  Departed people and IDs absent from the roster are supported. Invalid IDs,
+  yourself, protected roles, and existing bans are rejected. Space scope remains
+  limited to that space; conversations, drafts, and reading positions remain.
+- Fixture coverage includes room/space requests for joined, departed, and unknown
+  people, permission boundaries, cancellation, reload, and stale form input.
+  Native desktop and live-server acceptance still require the dedicated checks.

@@ -21,6 +21,7 @@ pub(super) struct State {
     roster: Option<Roster>,
     query: String,
     banned: bool,
+    ban_user: String,
     page: usize,
     request: u64,
     load: Option<iced::task::Handle>,
@@ -62,6 +63,8 @@ pub enum Event {
     Invite,
     Remove(String),
     Ban(String),
+    BanInput(u64, String),
+    PrepareBanId(u64),
     Unban(String),
     Banned(bool),
     Role(String, Role),
@@ -98,9 +101,9 @@ fn apply_snapshot(snapshot: &mut interconnect::connected::Members, change: &Memb
     let rows = std::sync::Arc::make_mut(&mut snapshot.rows);
     match change {
         MemberChange::Unban(_) => {}
-        MemberChange::Remove { user, .. } | MemberChange::Ban { user, .. } => {
-            rows.retain(|member| member.user_id != *user)
-        }
+        MemberChange::Remove { user, .. }
+        | MemberChange::Ban { user, .. }
+        | MemberChange::BanId(user) => rows.retain(|member| member.user_id != *user),
         MemberChange::Role { user, role, .. } => {
             if let Some(member) = rows.iter_mut().find(|member| member.user_id == *user) {
                 member.role = role.to_string();
@@ -146,7 +149,7 @@ fn apply(roster: &mut Roster, change: &MemberChange) {
             }
         }
         MemberChange::Unban(user) => roster.banned.retain(|m| m.user_id != *user),
-        MemberChange::Ban { user, .. } => {
+        MemberChange::Ban { user, .. } | MemberChange::BanId(user) => {
             if let Some(index) = roster.rows.iter().position(|m| m.member.user_id == *user) {
                 let member = roster.rows.remove(index);
                 roster.banned.push(BannedMember {
@@ -154,10 +157,16 @@ fn apply(roster: &mut Roster, change: &MemberChange) {
                     name: member.member.name,
                     can_unban: member.can_remove && member.can_ban,
                 });
-                roster
-                    .banned
-                    .sort_by_cached_key(|m| (m.name.to_lowercase(), m.user_id.clone()));
+            } else if !roster.banned.iter().any(|m| m.user_id == *user) {
+                roster.banned.push(BannedMember {
+                    user_id: user.clone(),
+                    name: user.clone(),
+                    can_unban: roster.can_unban,
+                });
             }
+            roster
+                .banned
+                .sort_by_cached_key(|m| (m.name.to_lowercase(), m.user_id.clone()));
         }
         MemberChange::Remove { user, .. } => roster.rows.retain(|m| m.member.user_id != *user),
         MemberChange::Role { user, role, .. } => {
@@ -296,6 +305,8 @@ impl App {
                             .cloned()
                             .unwrap_or_default(),
                         can_invite: can_manage,
+                        can_ban: can_manage,
+                        can_unban: can_manage,
                         rows: rows
                             .iter()
                             .cloned()
@@ -374,6 +385,43 @@ impl App {
                         self.demo.is_some(),
                     )
                     .map(move |picker| host.message(Event::Picker(session, picker)));
+            }
+            Event::BanInput(request, input) if request == session && !panel.pending => {
+                panel.members.confirm = None;
+                panel.members.ban_user = input;
+                panel.error = None;
+            }
+            Event::PrepareBanId(request) if request == session && !panel.pending => {
+                panel.members.confirm = None;
+                let Some(roster) = &panel.members.roster else {
+                    return Task::none();
+                };
+                if !roster.can_ban {
+                    return Task::none();
+                }
+                let user = match interconnect::people::parse_user_id(&panel.members.ban_user) {
+                    Ok(user) => user.to_string(),
+                    Err(error) => {
+                        panel.error = Some(error);
+                        return Task::none();
+                    }
+                };
+                let own = self.account_id.as_deref().unwrap_or("@you:example.org");
+                if user == own
+                    || roster
+                        .rows
+                        .iter()
+                        .any(|m| m.member.user_id == user && !m.can_ban)
+                {
+                    panel.error = Some("You cannot ban yourself or this person's role does not permit you to ban them.".into());
+                } else if roster.banned.iter().any(|m| m.user_id == user) {
+                    panel.error = Some("This person is already banned.".into());
+                } else {
+                    panel.error = None;
+                    panel.success = false;
+                    panel.members.feedback = None;
+                    panel.members.confirm = Some(MemberChange::BanId(user));
+                }
             }
             Event::Remove(user) if !panel.pending => {
                 panel.success = false;
@@ -478,8 +526,9 @@ impl App {
                             roster.rows.iter().map(|m| m.member.clone()).collect(),
                         );
                     }
-                    if let MemberChange::Remove { user, .. } | MemberChange::Ban { user, .. } =
-                        &change
+                    if let MemberChange::Remove { user, .. }
+                    | MemberChange::Ban { user, .. }
+                    | MemberChange::BanId(user) = &change
                         && let Some(invitations) = demo.invitations.get_mut(&panel.id)
                     {
                         invitations.retain(|m| m.user_id != *user);
@@ -639,6 +688,31 @@ impl App {
             ]
             .spacing(8),
         );
+        if roster.can_ban {
+            let request = panel.request;
+            let mut form = column![
+                shell::title("Ban by Matrix ID", 14),
+                text_input("@name:server", &state.ban_user)
+                    .cursor_blinking(false)
+                    .padding(10)
+                    .on_input_maybe(
+                        (!busy).then_some(move |value| event(Event::BanInput(request, value)))
+                    ),
+                button(text("Review ban…").size(13))
+                    .keyboard_navigation(true)
+                    .padding([7, 10])
+                    .style(shell::quiet_button)
+                    .on_press_maybe(
+                        (!busy && interconnect::people::parse_user_id(&state.ban_user).is_ok())
+                            .then_some(event(Event::PrepareBanId(request)))
+                    ),
+            ]
+            .spacing(8);
+            if let Some(change @ MemberChange::BanId(_)) = &state.confirm {
+                form = form.push(confirmation(change, panel.space, busy, Host::Panel));
+            }
+            content = content.push(form);
+        }
         if roster.can_invite && !state.banned {
             let request = panel.request;
             content = content.push(
@@ -794,11 +868,9 @@ impl App {
                     .align_y(iced::Alignment::Center)
             ]
             .spacing(10);
-            if let Some(change) = state
-                .confirm
-                .as_ref()
-                .filter(|change| change_user(change) == member.user_id)
-            {
+            if let Some(change) = state.confirm.as_ref().filter(|change| {
+                !matches!(change, MemberChange::BanId(_)) && change_user(change) == member.user_id
+            }) {
                 entry = entry.push(confirmation(change, panel.space, busy, Host::Panel));
             }
             entry = entry.push(rule::horizontal(1));
@@ -940,6 +1012,7 @@ impl std::fmt::Display for RoleChoice {
 fn change_user(change: &MemberChange) -> &str {
     match change {
         MemberChange::Invite(user)
+        | MemberChange::BanId(user)
         | MemberChange::Ban { user, .. }
         | MemberChange::Unban(user)
         | MemberChange::Remove { user, .. }
@@ -949,7 +1022,7 @@ fn change_user(change: &MemberChange) -> &str {
 fn change_feedback(change: &MemberChange) -> String {
     match change {
         MemberChange::Invite(user) => format!("Invitation sent to {user}."),
-        MemberChange::Ban { user, .. } => format!("{user} banned."),
+        MemberChange::Ban { user, .. } | MemberChange::BanId(user) => format!("{user} banned."),
         MemberChange::Unban(user) => {
             format!("{user} unbanned. They have not been invited or rejoined.")
         }
@@ -982,7 +1055,7 @@ fn confirmation(
             }
         ),
         MemberChange::Role { user, role, .. } => format!("Make {user} {role}?"),
-        MemberChange::Ban { user, .. } => {
+        MemberChange::Ban { user, .. } | MemberChange::BanId(user) => {
             format!("Ban {user}? They cannot join or be invited until unbanned.")
         }
         MemberChange::Unban(user) => {
@@ -995,12 +1068,12 @@ fn confirmation(
         MemberChange::Remove { invited: false, .. } => "Remove member",
         MemberChange::Role { .. } => "Change role",
         MemberChange::Invite(_) => "Send invitation",
-        MemberChange::Ban { .. } => "Ban member",
+        MemberChange::Ban { .. } | MemberChange::BanId(_) => "Ban person",
         MemberChange::Unban(_) => "Unban member",
     };
     let destructive = matches!(
         change,
-        MemberChange::Remove { .. } | MemberChange::Ban { .. }
+        MemberChange::Remove { .. } | MemberChange::Ban { .. } | MemberChange::BanId(_)
     );
     container(
         column![
@@ -1282,6 +1355,98 @@ mod tests {
         assert!(app.space_settings.sidebar.is_none());
     }
     #[test]
+    fn ban_by_id_is_confirmed_session_scoped_and_preserves_the_conversation() {
+        for space in [false, true] {
+            let mut app = demo_app();
+            let selection = app.selection.room.clone();
+            let key = app.draft_key(false).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("unsent");
+            app.scroll_positions.insert(key.clone(), 120.0);
+            let session = open(&mut app, space);
+            for input in ["Maya", "@you:example.org", "@alex:example.org"] {
+                let _ = app.update(event(Event::BanInput(session, input.into())));
+                let _ = app.update(event(Event::PrepareBanId(session)));
+                assert!(
+                    app.space_settings
+                        .panel
+                        .as_ref()
+                        .unwrap()
+                        .members
+                        .confirm
+                        .is_none()
+                );
+            }
+            let user = "@departed:elsewhere.org";
+            let _ = app.update(event(Event::BanInput(session, user.into())));
+            let _ = app.update(event(Event::PrepareBanId(session)));
+            assert!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned
+                    .is_empty()
+            );
+            let _ = app.update(event(Event::Cancel));
+            let _ = app.update(event(Event::Confirm));
+            assert!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned
+                    .is_empty()
+            );
+            let _ = app.update(event(Event::PrepareBanId(session)));
+            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(event(Event::Reload));
+            assert_eq!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned[0]
+                    .user_id,
+                user
+            );
+            let _ = app.update(event(Event::PrepareBanId(session)));
+            assert!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .confirm
+                    .is_none()
+            );
+            let _ = app.update(event(Event::BanInput(
+                session + 999,
+                "@stale:example.org".into(),
+            )));
+            assert_eq!(
+                app.space_settings.panel.as_ref().unwrap().members.ban_user,
+                user
+            );
+            assert_eq!(app.selection.room, selection);
+            assert_eq!(app.drafts[&key].content.text(), "unsent");
+            assert_eq!(app.scroll_positions[&key], 120.0);
+            assert_eq!(app.pending_ops, 0);
+        }
+    }
+    #[test]
     fn banned_lists_survive_reload_and_unbanning_never_rejoins_or_invites() {
         for space in [false, true] {
             let mut app = demo_app();
@@ -1484,6 +1649,8 @@ mod tests {
                 rows: vec![],
                 banned: vec![],
                 can_invite: false,
+                can_ban: false,
+                can_unban: false,
             })),
         )));
         let _ = app.update(event(Event::Picker(
