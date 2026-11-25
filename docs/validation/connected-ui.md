@@ -548,7 +548,7 @@ stay read-only. Room notification overrides sync across clients; returning to
 account defaults works. History visibility must not promise old keys. Hidden
 conversation panes must not issue read receipts or demand visible-message media.
 
-Room settings also manage **Published Addresses** and **Local Addresses**:
+Room and space settings manage **Published Addresses** and **Local Addresses**:
 
 - Both address inputs show a fixed `#` prefix outside the text box, with no hash
   in the placeholder. Typing or pasting a leading hash must not duplicate it.
@@ -575,7 +575,7 @@ Room settings also manage **Published Addresses** and **Local Addresses**:
   drafts/scroll positions. Address writes have a 30-second deadline and disable
   automatic retries; after an uncertain response, Reload before retrying.
 - Demo: add `friendly` locally, publish it, select it as the main address, toggle
-  the directory, and reopen. Changes persist per room for the demo session only.
+  the directory, and reopen. Changes persist per room or space for the demo session only.
   Unpublish, then confirm local removal. Demo rejects publishing an address that
   has not been created in its in-memory local list and performs no network calls.
 
@@ -607,9 +607,42 @@ by the actor. Space actions must not affect child membership; removal does not b
 - Homeserver queries run only on submission, including empty search. Reload/Load
   more retain the submitted query. Tab switches cancel reads and retain separate
   query/result/continuation state; Current space disables outside a space.
+- In a writable current space, use **Link a room or subspace** with an alias,
+  room ID, `matrix.to` link, or `matrix:` room link. Alias resolution supplies
+  the target ID and routing servers; opaque IDs need a link with `via` servers.
+  **Link** on a discovery result uses its routing hints. Linking is independent
+  of joining and works for invitation-only results without child membership.
+- Links write only the selected parent's `m.space.child`. Check self/duplicate
+  rejection, known joined-graph cycles, shared parents, permission loss during
+  resolution, server denial, and uncertain responses. No hierarchy crawl or
+  child-side parent write occurs; unknown remote cycles cannot be ruled out.
+- Closing/navigating/account changes cancel pending link work. Accepted writes
+  may still complete; refresh the captured account's navigation after cancellation.
+  Retry retains the address. Tab changes retain link progress and feedback; a
+  result's Link action preserves any separately typed address. Draft address
+  input participates in the existing discard prompt. Keep conversation, thread,
+  drafts, and reading positions unchanged throughout.
 - Join public, invited, and eligible/ineligible restricted rooms with routing hints
   for remote/opaque IDs. No enabled join for uninvited invitation/knock-only rooms.
   Joining does not navigate or add a space link; explicit Open may navigate.
+
+Automated mock-server and demo UI tests cover space alias loading/creation/
+publication, unjoined address linking with routing hints, parent-only writes,
+no automatic write retry, cancellation/stale completion bookkeeping, and
+conversation/draft/scroll preservation. Existing shared address tests cover
+publication conflicts, permissions, local removal, and directory policy. Native
+Light/Dark/compact acceptance and connected-server writes remain manual checks
+with an authorized disposable account; automated fixtures do not establish them.
+
+Local validation (2026-11-25): the locked workspace suite passed (384 backend
+and 714 UI tests; three existing ignores). The UI suite passed again after the
+final layout/wording refinements, as did formatting, workspace/all-target Clippy
+with warnings denied, and the desktop build. An isolated headless Wayland demo
+using tiny-skia was inspected in Light/Dark at 1400×900 and 640×480. Result linking,
+address submission, local space alias creation/publication, compact scrolling,
+and fixed header actions were exercised. These checks used demo data only;
+GPU/macOS behavior, settled idle measurements, and real server writes remain
+unvalidated for this change.
 
 ### Leave and disband space confirmations
 

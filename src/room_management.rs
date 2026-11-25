@@ -1,5 +1,8 @@
 //! On-demand management for joined rooms and spaces without opening a timeline.
-use crate::connected::RuntimeOwned;
+use crate::connected::{
+    RuntimeOwned,
+    room_settings::addresses::{self, Addresses, Change as AddressChange},
+};
 use matrix_sdk::{
     Room, RoomState,
     ruma::events::{
@@ -13,6 +16,7 @@ use std::{sync::Arc, time::Duration};
 pub struct Management(Arc<RuntimeOwned<Room>>);
 #[derive(Clone, Debug)]
 pub struct Settings {
+    pub addresses: Result<Addresses, String>,
     pub avatar: crate::room_avatar::Details,
     pub name: String,
     pub topic: String,
@@ -21,6 +25,7 @@ pub struct Settings {
 }
 #[derive(Clone, Debug)]
 pub enum Change {
+    Address(AddressChange),
     Name(String, String),
     Topic(String, String),
     Access(Option<JoinRule>, JoinRule),
@@ -28,6 +33,11 @@ pub enum Change {
 impl Settings {
     pub fn apply(&mut self, change: &Change) {
         match change {
+            Change::Address(change) => {
+                if let Ok(saved) = &mut self.addresses {
+                    saved.apply(change);
+                }
+            }
             Change::Name(_, value) => self.name = value.clone(),
             Change::Topic(_, value) => self.topic = value.clone(),
             Change::Access(_, value) => self.access = Some(value.clone()),
@@ -76,6 +86,7 @@ impl Management {
             .await
             .map_err(|_| "Could not check permissions.")?;
         Ok(Settings {
+            addresses: Err("Addresses have not been loaded.".into()),
             avatar: crate::room_avatar::Details {
                 url: self.0.avatar_url(),
                 editable: levels
@@ -96,6 +107,9 @@ impl Management {
         tokio::time::timeout(Duration::from_secs(30), async {
             let mut settings = self.read_settings().await?;
             settings.avatar.url = crate::room_avatar::current(&self.0).await?;
+            if self.0.is_space() {
+                settings.addresses = addresses::read(&self.0).await;
+            }
             Ok(settings)
         })
         .await
@@ -105,8 +119,13 @@ impl Management {
     /// Matrix has no state compare-and-swap; a remote race remains possible.
     pub async fn save(self, change: Change) -> Result<(), String> {
         tokio::time::timeout(Duration::from_secs(30), async {
+            if let Change::Address(change) = change {
+                self.joined()?;
+                return addresses::save(&self.0, change).await;
+            }
             let settings = self.read_settings().await?;
             let (unchanged, allowed) = match &change {
+                Change::Address(_) => unreachable!(),
                 Change::Name(before, _) => (settings.name == *before, settings.editable[0]),
                 Change::Topic(before, _) => (settings.topic == *before, settings.editable[1]),
                 Change::Access(before, _) => (settings.access == *before, settings.editable[2]),
@@ -118,6 +137,7 @@ impl Management {
                 return Err("This setting changed. Reload before saving again.".into());
             }
             match change {
+                Change::Address(_) => unreachable!(),
                 Change::Name(_, value) => {
                     if value.trim().is_empty() || value.len() > 255 {
                         return Err("Enter a name within 255 bytes.".into());
@@ -251,6 +271,90 @@ mod tests {
         .unwrap();
         (server, control)
     }
+    #[tokio::test]
+    async fn space_aliases_use_the_shared_address_api_without_changing_metadata() {
+        let (server, control) = fixture(100, "invite").await;
+        for (endpoint, content) in [
+            (".*/state/m.room.canonical_alias/?", json!({})),
+            (".*/aliases", json!({"aliases":[]})),
+            (
+                "/_matrix/client/v3/directory/list/room/!space:example.org",
+                json!({"visibility":"private"}),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path_regex(endpoint))
+                .respond_with(ResponseTemplate::new(200).set_body_json(content))
+                .mount(&server)
+                .await;
+        }
+        let settings = control.clone().settings().await.unwrap();
+        let addresses = settings.addresses.unwrap();
+        assert!(addresses.editable);
+        assert_eq!(addresses.server, "example.org");
+        assert_eq!(addresses.directory, Ok(false));
+        let alias = matrix_sdk::ruma::owned_room_alias_id!("#space:example.org");
+        Mock::given(method("PUT"))
+            .and(path(
+                "/_matrix/client/v3/directory/room/%23space:example.org",
+            ))
+            .and(body_json(json!({"room_id":"!space:example.org"})))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .expect(1)
+            .mount(&server)
+            .await;
+        control
+            .clone()
+            .save(Change::Address(AddressChange::AddLocal(alias.clone())))
+            .await
+            .unwrap();
+        Mock::given(method("GET"))
+            .and(path(
+                "/_matrix/client/v3/directory/room/%23space:example.org",
+            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!({"room_id":"!space:example.org", "servers":["example.org"]}),
+                ),
+            )
+            .mount(&server)
+            .await;
+        avatar_permissions(&server, 100).await;
+        Mock::given(method("PUT"))
+            .and(path_regex(".*/state/m.room.canonical_alias/?"))
+            .and(body_json(json!({"alias":alias})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"event_id":"$published"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        control
+            .clone()
+            .save(Change::Address(AddressChange::Published(
+                addresses.published,
+                addresses::Published {
+                    main: Some(alias),
+                    alternatives: vec![],
+                },
+            )))
+            .await
+            .unwrap();
+        let settings = control.settings().await.unwrap();
+        assert_eq!(settings.name, "Original");
+        assert_eq!(settings.topic, "Topic");
+        assert_eq!(
+            server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .filter(|r| matches!(r.method.as_str(), "PUT" | "DELETE"))
+                .count(),
+            2
+        );
+    }
+
     async fn avatar_upload() -> crate::room_avatar::Upload {
         let file = tempfile::Builder::new().suffix(".png").tempfile().unwrap();
         image::DynamicImage::new_rgba8(2, 3)

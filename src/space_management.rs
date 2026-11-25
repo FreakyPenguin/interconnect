@@ -111,6 +111,65 @@ pub async fn remove_room(client: &Client, space: &str, child: &str) -> Result<()
 /// Link an existing joined room or space using a routing server known to be in it.
 /// Parent permission is sufficient; child-side metadata and membership stay intact.
 pub async fn add_room(client: &Client, space: &str, child: &str) -> Result<(), String> {
+    let id: OwnedRoomId = child.parse().map_err(|_| "Choose a valid room.")?;
+    let room = client
+        .get_room(&id)
+        .filter(|r| r.state() == RoomState::Joined)
+        .ok_or("The room is no longer available.")?;
+    link_room(
+        client,
+        space,
+        child,
+        vec![room.own_user_id().server_name().to_owned()],
+    )
+    .await
+}
+
+/// Resolve an address without joining, then write only the parent-side child link.
+/// Unknown children are terminal in the cached graph; remote cycles cannot be proven absent.
+pub async fn link_address(client: &Client, space: &str, input: &str) -> Result<String, String> {
+    let operation = async {
+        let address = crate::room_membership::Address::parse(input)?;
+        let (child, via) = match <OwnedRoomId>::try_from(address.room.clone()) {
+            Ok(id) => (id, address.via),
+            Err(_) => {
+                let alias = address
+                    .room
+                    .as_str()
+                    .parse::<matrix_sdk::ruma::OwnedRoomAliasId>()
+                    .map_err(|_| "Enter a valid room address.")?;
+                let resolved = client.resolve_room_alias(&alias).await.map_err(
+                    |_| "Could not resolve this address. Check the address and your connection.",
+                )?;
+                // Alias resolution returns servers known to participate in the room.
+                (resolved.room_id, resolved.servers)
+            }
+        };
+        let mut routes = Vec::new();
+        for server in via.into_iter().take(10) {
+            if !routes.contains(&server) {
+                routes.push(server);
+            }
+        }
+        if routes.is_empty() {
+            return Err(
+                "No routing servers are available. Use a room link containing via servers.".into(),
+            );
+        }
+        link_room(client, space, child.as_str(), routes).await?;
+        Ok(child.to_string())
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), operation)
+        .await
+        .map_err(|_| "Linking timed out. Reload the space before retrying.".to_owned())?
+}
+
+async fn link_room(
+    client: &Client,
+    space: &str,
+    child: &str,
+    via: Vec<matrix_sdk::ruma::OwnedServerName>,
+) -> Result<(), String> {
     let space: OwnedRoomId = space.parse().map_err(|_| "Choose a valid space.")?;
     let child: OwnedRoomId = child.parse().map_err(|_| "Choose a valid room.")?;
     tokio::time::timeout(std::time::Duration::from_secs(30), async {
@@ -118,10 +177,6 @@ pub async fn add_room(client: &Client, space: &str, child: &str) -> Result<(), S
             .get_room(&space)
             .filter(|r| r.state() == RoomState::Joined && r.is_space())
             .ok_or("The selected space is no longer available.")?;
-        let room = client
-            .get_room(&child)
-            .filter(|r| r.state() == RoomState::Joined)
-            .ok_or("The room is no longer available.")?;
         if space == child {
             return Err("A space cannot be added to itself.".into());
         }
@@ -147,14 +202,14 @@ pub async fn add_room(client: &Client, space: &str, child: &str) -> Result<(), S
                 return Err("This room is already directly linked to this space.".into());
             }
         }
-        if room.is_space() && !linkable_parents(&joined_graph(client).await?, child.as_str()).contains(space.as_str()) {
+        if !linkable_parents(&joined_graph(client).await?, child.as_str()).contains(space.as_str()) {
             return Err("This link would create a cycle in the known space hierarchy, or is already linked. Refresh the space list before retrying.".into());
         }
-        parent
-            .send_state_event_for_key(
-                &child,
-                SpaceChildEventContent::new(vec![room.own_user_id().server_name().to_owned()]),
-            )
+        let request = matrix_sdk::ruma::api::client::state::send_state_event::v3::Request::new(
+            space, &child, &SpaceChildEventContent::new(via))
+            .map_err(|_| "Could not prepare the space link.")?;
+        client.send(request)
+            .with_request_config(matrix_sdk::config::RequestConfig::default().disable_retry())
             .await
             .map_err(|_| {
                 "Could not add the room to the space. Check the room list before retrying."
@@ -306,6 +361,141 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[tokio::test]
+    async fn address_links_resolve_aliases_and_keep_unjoined_children_unjoined() {
+        let server = MockServer::start().await;
+        let client = fixture(&server, 50).await;
+        Mock::given(method("GET"))
+            .and(path("/_matrix/client/v3/directory/room/%23remote:elsewhere.org"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "room_id":"!remote-space", "servers":["route.example", "backup.example", "route.example"]
+            }))).expect(1).mount(&server).await;
+        for (child, via) in [
+            ("!remote-space", json!(["route.example", "backup.example"])),
+            ("!remote-room", json!(["hint.example"])),
+            ("!legacy:origin.example", json!(["origin.example"])),
+        ] {
+            Mock::given(method("PUT"))
+                .and(path(format!(
+                    "/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/{child}"
+                )))
+                .and(body_json(json!({"via":via})))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({"event_id":"$linked"})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        assert_eq!(
+            link_address(&client, "!space:example.org", "#remote:elsewhere.org")
+                .await
+                .unwrap(),
+            "!remote-space"
+        );
+        assert_eq!(
+            link_address(
+                &client,
+                "!space:example.org",
+                "https://matrix.to/#/!remote-room?via=hint.example"
+            )
+            .await
+            .unwrap(),
+            "!remote-room"
+        );
+        link_address(&client, "!space:example.org", "!legacy:origin.example")
+            .await
+            .unwrap();
+        for child in ["!remote-space", "!remote-room", "!legacy:origin.example"] {
+            assert!(
+                client
+                    .get_room(&child.parse::<OwnedRoomId>().unwrap())
+                    .is_none()
+            );
+        }
+        let requests = server.received_requests().await.unwrap();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|r| matches!(r.method.as_str(), "PUT" | "DELETE"))
+                .count(),
+            3
+        );
+        assert!(
+            requests
+                .iter()
+                .all(|r| !r.url.path().contains("/join")
+                    && !r.url.path().contains("/m.space.parent/"))
+        );
+    }
+
+    #[tokio::test]
+    async fn address_link_failures_do_not_join_or_write_child_state_and_writes_are_not_retried() {
+        for power in [0, 50] {
+            let server = MockServer::start().await;
+            let client = fixture(&server, power).await;
+            for input in [
+                "invalid",
+                "!opaque",
+                "!space:example.org",
+                "!room:example.org",
+                "!nested:example.org",
+            ] {
+                assert!(
+                    link_address(&client, "!space:example.org", input)
+                        .await
+                        .is_err(),
+                    "{input}"
+                );
+            }
+            Mock::given(method("GET"))
+                .and(path(
+                    "/_matrix/client/v3/directory/room/%23empty:example.org",
+                ))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"room_id":"!empty", "servers":[]})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+            assert!(
+                link_address(&client, "!space:example.org", "#empty:example.org")
+                    .await
+                    .unwrap_err()
+                    .contains("routing")
+            );
+            if power == 0 {
+                assert!(
+                    link_address(&client, "!space:example.org", "!remote:example.org")
+                        .await
+                        .unwrap_err()
+                        .contains("permission")
+                );
+            } else {
+                Mock::given(method("PUT"))
+                    .and(path("/_matrix/client/v3/rooms/!space:example.org/state/m.space.child/!remote:example.org"))
+                    .respond_with(ResponseTemplate::new(503).set_body_json(json!({"errcode":"M_UNKNOWN", "error":"Unavailable"})))
+                    .expect(1).mount(&server).await;
+                assert!(
+                    link_address(&client, "!space:example.org", "!remote:example.org")
+                        .await
+                        .is_err()
+                );
+            }
+            assert_eq!(
+                server
+                    .received_requests()
+                    .await
+                    .unwrap()
+                    .iter()
+                    .filter(|r| matches!(r.method.as_str(), "PUT" | "DELETE"))
+                    .count(),
+                usize::from(power == 50)
+            );
+        }
     }
 
     async fn fixture(server: &MockServer, power: u8) -> Client {

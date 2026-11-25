@@ -27,14 +27,55 @@ pub enum Tab {
 #[derive(Default)]
 pub(super) struct State {
     tab: Tab,
+    address: String,
+    linking: Option<u64>,
+    link_cancel: Option<tokio_util::sync::CancellationToken>,
+    consumes_address: bool,
+    linked: HashSet<String>,
+    link_feedback: Option<Result<(), String>>,
     space: Listing,
     homeserver: Listing,
 }
+impl Drop for State {
+    fn drop(&mut self) {
+        self.cancel_link();
+    }
+}
 impl State {
+    pub(super) fn validate_parent(
+        &mut self,
+        parent: Option<&interconnect::navigation::SpaceEntry>,
+    ) {
+        if let Some(parent) = parent {
+            // Retire optimistic ACKs once sync includes them, so later unlinks remain visible.
+            self.linked.retain(|id| !parent.children.contains(id));
+        }
+        if parent.is_none_or(|parent| !parent.can_manage_rooms) {
+            self.cancel_link();
+        }
+    }
+    pub(super) fn cancel_link(&mut self) {
+        if let Some(token) = self.link_cancel.take() {
+            token.cancel();
+        }
+    }
+    pub(super) fn discard_address(&mut self) {
+        self.address.clear();
+    }
+    pub(super) fn dirty(&self) -> bool {
+        !self.address.trim().is_empty()
+    }
     pub(super) fn new(space: bool) -> Self {
         Self {
             tab: if space { Tab::Space } else { Tab::Homeserver },
-            ..Default::default()
+            address: String::new(),
+            linking: None,
+            link_cancel: None,
+            consumes_address: false,
+            linked: HashSet::new(),
+            link_feedback: None,
+            space: Listing::default(),
+            homeserver: Listing::default(),
         }
     }
     fn filtered(&self) -> Vec<&Entry> {
@@ -82,6 +123,10 @@ pub(super) struct Listing {
 #[derive(Clone, Debug)]
 pub enum Event {
     Tab(Tab),
+    Address(String),
+    LinkAddress,
+    Link(String),
+    Linked(u64, Result<String, String>),
     Submit,
     Reload,
     More,
@@ -173,6 +218,48 @@ impl App {
         &mut self,
         incoming: Event,
     ) -> Task<Message> {
+        if let Event::Linked(operation, result) = incoming {
+            let Some((account, parent)) = self.space_settings.writes.remove(&operation) else {
+                return Task::none();
+            };
+            self.pending_ops = self.pending_ops.saturating_sub(1);
+            if self.closing
+                || self.stopped
+                || account != self.account_id
+                || (self.demo.is_none() && self.model.authentication.is_some())
+            {
+                return Task::none();
+            }
+            if self.demo.is_some()
+                && let Ok(child) = &result
+                && let Some(space) = std::sync::Arc::make_mut(&mut self.model.spaces)
+                    .iter_mut()
+                    .find(|s| s.id == parent)
+                && !space.children.contains(child)
+            {
+                space.children.push(child.clone());
+            }
+            if let Some(panel) = &mut self.space_settings.panel
+                && panel.id == parent
+                && panel.account == account
+                && let Some(state) = &mut panel.directory
+                && state.linking == Some(operation)
+            {
+                state.linking = None;
+                state.link_cancel = None;
+                match result {
+                    Ok(child) => {
+                        state.linked.insert(child);
+                        if state.consumes_address {
+                            state.address.clear();
+                        }
+                        state.link_feedback = Some(Ok(()));
+                    }
+                    Err(error) => state.link_feedback = Some(Err(error)),
+                }
+            }
+            return Task::none();
+        }
         if let Event::Joined {
             panel: session,
             operation,
@@ -246,6 +333,111 @@ impl App {
         };
         let session = panel.request;
         match incoming {
+            Event::Address(value) => {
+                if state.linking.is_none() {
+                    state.address = value;
+                    state.link_feedback = None;
+                }
+            }
+            Event::LinkAddress | Event::Link(_) => {
+                let Some(parent) = self
+                    .model
+                    .spaces
+                    .iter()
+                    .find(|s| s.id == panel.id && s.can_manage_rooms)
+                else {
+                    return Task::none();
+                };
+                if state.linking.is_some()
+                    || self.closing
+                    || self.stopped
+                    || self.sign_out_open
+                    || self.composing
+                    || self.pending_ops >= MAX_PENDING_OPERATIONS
+                    || self
+                        .space_settings
+                        .writes
+                        .values()
+                        .any(|target| target == &(panel.account.clone(), panel.id.clone()))
+                {
+                    return Task::none();
+                }
+                let consumes_address = matches!(incoming, Event::LinkAddress);
+                let address = match incoming {
+                    Event::Link(id) => {
+                        if parent.children.contains(&id) || state.linked.contains(&id) {
+                            return Task::none();
+                        }
+                        let Some(entry) = state.rows.iter().find(|r| r.id == id) else {
+                            return Task::none();
+                        };
+                        match entry.address(&state.routes) {
+                            Ok(address) => address,
+                            Err(error) => {
+                                state.link_feedback = Some(Err(error));
+                                return Task::none();
+                            }
+                        }
+                    }
+                    _ => state.address.clone(),
+                };
+                if let Err(error) = interconnect::room_membership::Address::parse(&address) {
+                    state.link_feedback = Some(Err(error));
+                    return Task::none();
+                }
+                let service = self.model.people_directory.clone();
+                if self.demo.is_none() && service.is_none() {
+                    state.link_feedback = Some(Err("The account is not ready. Try again.".into()));
+                    return Task::none();
+                }
+                self.generation += 1;
+                let operation = self.generation;
+                state.linking = Some(operation);
+                state.consumes_address = consumes_address;
+                state.link_feedback = None;
+                self.pending_ops += 1;
+                let parent = parent.id.clone();
+                self.space_settings
+                    .writes
+                    .insert(operation, (panel.account.clone(), parent.clone()));
+                if self.demo.is_some() {
+                    let address = interconnect::room_membership::Address::parse(&address).unwrap();
+                    let result = if address.room.is_room_id() {
+                        let child = address.room.to_string();
+                        if interconnect::space_management::linkable_parents(
+                            &self.model.spaces,
+                            &child,
+                        )
+                        .contains(&parent)
+                        {
+                            Ok(child)
+                        } else {
+                            Err("This room is already linked or would create a known cycle.".into())
+                        }
+                    } else {
+                        Err("Use a room ID or a discovery result in the demo; alias resolution needs a connection.".into())
+                    };
+                    return self.space_directory_event(Event::Linked(operation, result));
+                }
+                let cancel = tokio_util::sync::CancellationToken::new();
+                state.link_cancel = Some(cancel.clone());
+                let service = service.unwrap();
+                return Task::perform(
+                    async move {
+                        let refresh = service.clone();
+                        tokio::select! {
+                            biased;
+                            _ = cancel.cancelled() => {
+                                // The server may have accepted the link before cancellation.
+                                refresh.refresh_navigation();
+                                Err("Link cancelled. Reload the space before retrying.".into())
+                            },
+                            result = service.link_space_address(parent, address) => result,
+                        }
+                    },
+                    move |result| event(Event::Linked(operation, result)),
+                );
+            }
             Event::Tab(tab) => {
                 if state.tab == tab || (tab == Tab::Space && panel.id.is_empty()) {
                     return Task::none();
@@ -457,7 +649,7 @@ impl App {
                     })
                 });
             }
-            Event::Joined { .. } => unreachable!(),
+            Event::Joined { .. } | Event::Linked(..) => unreachable!(),
         }
         Task::none()
     }
@@ -531,6 +723,40 @@ impl App {
             row![search, search_action].spacing(8).align_y(iced::Alignment::Center),
             text(if state.tab == Tab::Space { format!("{} loaded · Search filters loaded rooms", state.rows.len()) }
                 else { format!("{} loaded · Results for {} · Joining keeps your conversation open", state.rows.len(), if state.submitted.is_empty() { "all public rooms".into() } else { format!("“{}”", state.submitted) }) }).size(12).style(shell::muted_text)].spacing(14);
+        let parent = self
+            .model
+            .spaces
+            .iter()
+            .find(|s| s.id == panel.id && s.can_manage_rooms);
+        if parent.is_some() {
+            let enabled = state.linking.is_none()
+                && self.pending_ops < MAX_PENDING_OPERATIONS
+                && !self
+                    .space_settings
+                    .writes
+                    .values()
+                    .any(|target| target == &(panel.account.clone(), panel.id.clone()));
+            content = content.push(column![
+                shell::title("Link a room or subspace", 16),
+                text("Add an address to this space without joining it. Links can appear under more than one parent. Only known hierarchy cycles can be checked.").size(12).style(shell::muted_text),
+                text_input("#alias:server, !room ID, or Matrix link", &state.address)
+                    .id("space-link-address").cursor_blinking(false).padding(10).style(shell::search_style)
+                    .on_input_maybe(enabled.then_some(|value| event(Event::Address(value))))
+                    .on_submit_maybe((enabled && !state.address.trim().is_empty()).then_some(event(Event::LinkAddress))),
+                button(if state.linking.is_some() { "Linking…" } else { "Link to this space" })
+                    .style(shell::quiet_button).keyboard_navigation(true)
+                    .on_press_maybe((enabled && !state.address.trim().is_empty()).then_some(event(Event::LinkAddress))),
+            ].spacing(9));
+            if let Some(result) = &state.link_feedback {
+                content = content.push(match result {
+                    Ok(()) => text("Linked to this space. Membership is unchanged.")
+                        .size(13)
+                        .style(shell::muted_text),
+                    Err(error) => text(error).size(13).style(shell::danger_text),
+                });
+            }
+            content = content.push(rule::horizontal(1));
+        }
         let rows = state.filtered();
         let page = state.page.min(rows.len().saturating_sub(1) / PAGE_SIZE);
         for room in rows.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
@@ -553,9 +779,27 @@ impl App {
             } else {
                 None
             };
+            let linked = parent.is_some_and(|s| s.children.contains(&room.id))
+                || state.linked.contains(&room.id);
+            let link: Element<'_, Message> = if parent.is_some() {
+                button(if linked { "Linked" } else { "Link" })
+                    .padding([7, 10])
+                    .style(shell::quiet_button)
+                    .keyboard_navigation(true)
+                    .on_press_maybe(
+                        (!linked
+                            && state.linking.is_none()
+                            && self.pending_ops < MAX_PENDING_OPERATIONS)
+                            .then(|| event(Event::Link(room.id.clone()))),
+                    )
+                    .into()
+            } else {
+                iced::widget::space().width(0).into()
+            };
             let title = row![
                 icons::icon(if room.space { Kind::Space } else { Kind::Room }),
                 text(&room.name).size(15).width(Length::Fill),
+                link,
                 button(
                     row![
                         icons::icon(if joined {
@@ -783,6 +1027,160 @@ mod tests {
     fn entry() -> Entry {
         demo("studio-space").entries.remove(0)
     }
+    #[test]
+    fn linking_discovery_results_and_addresses_preserves_membership_and_conversation() {
+        let mut app = demo_app();
+        let selection = app.selection.clone();
+        let scope = app.shell.space.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("Keep this draft");
+        app.scroll_positions.insert(key.clone(), 127.0);
+        let rooms = app.model.rooms.clone();
+        let spaces = app.model.spaces.len();
+        open(&mut app);
+        let _ = app.update(event(Event::Address("!remote-space:example.org".into())));
+        // A result's Link action must leave an unrelated address draft intact.
+        let _ = app.update(event(Event::Link("!demo-private:example.org".into())));
+        assert_eq!(state(&app).address, "!remote-space:example.org");
+        let _ = app.update(event(Event::Tab(Tab::Homeserver)));
+        let _ = app.update(event(Event::LinkAddress));
+        assert!(state(&app).address.is_empty());
+        let parent = app
+            .model
+            .spaces
+            .iter()
+            .find(|s| s.id == "studio-space")
+            .unwrap();
+        assert!(
+            parent
+                .children
+                .contains(&"!remote-space:example.org".into())
+        );
+        assert!(
+            parent
+                .children
+                .contains(&"!demo-private:example.org".into())
+        );
+        assert_eq!(app.model.rooms, rooms);
+        assert_eq!(app.model.spaces.len(), spaces);
+        assert_eq!(app.selection.room, selection.room);
+        assert_eq!(app.selection.thread, selection.thread);
+        assert_eq!(app.shell.space, scope);
+        assert_eq!(app.drafts[&key].content.text(), "Keep this draft");
+        assert_eq!(app.scroll_positions[&key], 127.0);
+        assert_eq!(app.pending_ops, 0);
+    }
+
+    #[test]
+    fn linking_rechecks_permissions_and_retains_invalid_or_unresolved_input() {
+        let mut app = demo_app();
+        open(&mut app);
+        for input in ["invalid", "#remote:example.org"] {
+            let _ = app.update(event(Event::Address(input.into())));
+            let _ = app.update(event(Event::LinkAddress));
+            assert_eq!(state(&app).address, input);
+            assert!(state(&app).link_feedback.as_ref().unwrap().is_err());
+            assert_eq!(app.pending_ops, 0);
+        }
+        let _ = app.update(event(Event::Address("!valid:example.org".into())));
+        std::sync::Arc::make_mut(&mut app.model.spaces)
+            .iter_mut()
+            .find(|s| s.id == "studio-space")
+            .unwrap()
+            .can_manage_rooms = false;
+        let spaces = app.model.spaces.clone();
+        let _ = app.update(event(Event::LinkAddress));
+        assert_eq!(app.model.spaces, spaces);
+        assert_eq!(app.pending_ops, 0);
+        let _ = app.update(message(PanelEvent::Close));
+        assert!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .transition
+                .is_some()
+        );
+        assert_eq!(state(&app).address, "!valid:example.org");
+    }
+
+    fn pending_link(app: &mut App) -> (u64, tokio_util::sync::CancellationToken) {
+        app.generation += 1;
+        let operation = app.generation;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        app.space_settings
+            .writes
+            .insert(operation, (app.account_id.clone(), "studio-space".into()));
+        app.pending_ops += 1;
+        let state = app
+            .space_settings
+            .panel
+            .as_mut()
+            .unwrap()
+            .directory
+            .as_mut()
+            .unwrap();
+        state.linking = Some(operation);
+        state.link_cancel = Some(cancel.clone());
+        (operation, cancel)
+    }
+
+    #[test]
+    fn cancelled_links_release_once_and_cannot_replace_a_new_browser() {
+        for reason in 0..4 {
+            let mut app = demo_app();
+            open(&mut app);
+            let (operation, cancel) = pending_link(&mut app);
+            match reason {
+                0 => {
+                    let _ = app.update(message(PanelEvent::Close));
+                }
+                1 => {
+                    let _ = app.update(Message::Space(Scope::Home));
+                }
+                2 => {
+                    app.account_id = Some("@another:example.org".into());
+                    app.validate_space_settings();
+                }
+                _ => {
+                    std::sync::Arc::make_mut(&mut app.model.spaces)
+                        .iter_mut()
+                        .find(|s| s.id == "studio-space")
+                        .unwrap()
+                        .can_manage_rooms = false;
+                    app.validate_space_settings();
+                    app.close_space_settings();
+                }
+            }
+            assert!(cancel.is_cancelled());
+            app.account_id = None;
+            let _ = app.update(Message::Space(Scope::Space("studio-space".into())));
+            open(&mut app);
+            let _ = app.update(event(Event::Linked(
+                operation,
+                Err("old cancellation".into()),
+            )));
+            assert!(state(&app).link_feedback.is_none());
+            assert!(state(&app).linking.is_none());
+            assert_eq!(app.pending_ops, 0);
+            let _ = app.update(event(Event::Linked(operation, Err("duplicate".into()))));
+            assert_eq!(app.pending_ops, 0);
+        }
+    }
+
+    #[test]
+    fn link_completion_survives_tab_switch_and_keeps_errors_for_retry() {
+        let mut app = demo_app();
+        open(&mut app);
+        let (operation, _) = pending_link(&mut app);
+        let _ = app.update(event(Event::Tab(Tab::Homeserver)));
+        let _ = app.update(event(Event::Linked(operation, Err("Denied".into()))));
+        assert_eq!(state(&app).link_feedback, Some(Err("Denied".into())));
+        assert!(state(&app).linking.is_none());
+        assert_eq!(app.pending_ops, 0);
+    }
+
     #[test]
     fn demo_discovery_and_join_preserve_conversation_draft_scope_and_scroll() {
         let mut app = demo_app();

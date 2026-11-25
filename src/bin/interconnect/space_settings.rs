@@ -6,12 +6,13 @@ mod space_directory;
 #[path = "space_exit.rs"]
 mod space_exit;
 
-use super::avatar_editor;
 use super::{App, MAX_PENDING_OPERATIONS, Message, icons::Kind, shell, tooltips::icon_button};
+use super::{avatar_editor, room_settings::addresses};
 use iced::{
     Element, Length, Task,
     widget::{column, container, pick_list, row, rule, scrollable, text, text_editor, text_input},
 };
+use interconnect::connected::room_settings::addresses::{Addresses, Change as AddressChange};
 use interconnect::room_avatar::{Details, Upload};
 use interconnect::{
     navigation::Scope,
@@ -44,6 +45,7 @@ impl State {
 }
 struct Panel {
     avatar: avatar_editor::State,
+    addresses: addresses::Editor,
     topic: text_editor::Content,
     space: bool,
     scope: Scope,
@@ -64,7 +66,9 @@ struct Panel {
 }
 impl Panel {
     fn dirty(&self) -> bool {
-        self.avatar.edit().is_some()
+        self.directory.as_ref().is_some_and(|state| state.dirty())
+            || self.addresses.dirty()
+            || self.avatar.edit().is_some()
             || self.avatar.is_picking()
             || self
                 .saved
@@ -100,6 +104,8 @@ pub enum Event {
     TopicEdit(text_editor::Action),
     Access(JoinRule),
     Save(usize),
+    Addresses(addresses::Event),
+    Commit(Change),
     Loaded(u64, Box<Result<(Management, Settings), String>>),
     Saved(u64, Change, Result<(), String>),
 }
@@ -204,6 +210,7 @@ impl App {
         let request = self.generation;
         self.space_settings.sidebar = Some(Panel {
             avatar: avatar_editor::State::default(),
+            addresses: addresses::Editor::default(),
             topic: text_editor::Content::new(),
             space: false,
             scope: self.shell.space.clone(),
@@ -263,6 +270,11 @@ impl App {
         }
     }
     pub(super) fn validate_space_settings(&mut self) {
+        if let Some(panel) = &mut self.space_settings.panel
+            && let Some(directory) = &mut panel.directory
+        {
+            directory.validate_parent(self.model.spaces.iter().find(|s| s.id == panel.id));
+        }
         if self.space_settings.sidebar.as_ref().is_some_and(|p| {
             self.closing
                 || self.stopped
@@ -351,6 +363,10 @@ impl App {
                         panel.saved.as_ref().map_or("", |s| s.topic.as_str()),
                     );
                     panel.avatar.reset();
+                    panel.addresses = addresses::Editor::default();
+                    if let Some(state) = &mut panel.directory {
+                        state.discard_address();
+                    }
                     return self.update(*next);
                 }
             }
@@ -533,6 +549,7 @@ impl App {
                 self.generation += 1;
                 self.space_settings.panel = Some(Panel {
                     avatar: avatar_editor::State::default(),
+                    addresses: addresses::Editor::default(),
                     topic: text_editor::Content::new(),
                     space,
                     scope: self.shell.space.clone(),
@@ -592,6 +609,7 @@ impl App {
                 self.generation += 1;
                 panel.request = self.generation;
                 panel.avatar = avatar_editor::State::default();
+                panel.addresses = addresses::Editor::default();
                 panel.error = None;
                 panel.success = false;
                 panel.exit = space_exit::State::default();
@@ -614,6 +632,7 @@ impl App {
                             .get(&panel.id)
                             .cloned()
                             .unwrap_or(Settings {
+                                addresses: Ok(Addresses::demo(editable)),
                                 avatar: Details {
                                     url: self
                                         .model
@@ -718,14 +737,89 @@ impl App {
                     ),
                     _ => return Task::none(),
                 };
-                if field == 0 && (draft.name.trim().is_empty() || draft.name.len() > 255) {
+                return self.space_settings_event(Event::Commit(change));
+            }
+            Event::Addresses(event) => {
+                let Some(panel) = &mut self.space_settings.panel else {
+                    return Task::none();
+                };
+                if !panel.space
+                    || panel.directory.is_some()
+                    || panel.exit.is_open()
+                    || panel.pending
+                    || panel.avatar.is_picking()
+                    || self.pending_ops >= MAX_PENDING_OPERATIONS
+                    || self
+                        .space_settings
+                        .writes
+                        .values()
+                        .any(|target| target == &(panel.account.clone(), panel.id.clone()))
+                {
+                    return Task::none();
+                }
+                let Some(Ok(saved)) = panel.saved.as_ref().map(|s| &s.addresses) else {
+                    return Task::none();
+                };
+                panel.error = None;
+                panel.success = false;
+                match panel.addresses.update(saved, event) {
+                    Ok(Some(change)) => {
+                        return self.space_settings_event(Event::Commit(Change::Address(change)));
+                    }
+                    Err(error) => panel.error = Some(error),
+                    Ok(None) => {}
+                }
+            }
+            Event::Commit(change) => {
+                let Some(panel) = &mut self.space_settings.panel else {
+                    return Task::none();
+                };
+                if !panel.space
+                    || panel.directory.is_some()
+                    || panel.exit.is_open()
+                    || panel.pending
+                    || panel.avatar.is_picking()
+                    || panel.saved.is_none()
+                    || self.pending_ops >= MAX_PENDING_OPERATIONS
+                    || self
+                        .space_settings
+                        .writes
+                        .values()
+                        .any(|target| target == &(panel.account.clone(), panel.id.clone()))
+                {
+                    return Task::none();
+                }
+                if matches!(&change, Change::Name(_, value) if value.trim().is_empty() || value.len() > 255)
+                {
                     panel.error = Some("Enter a name within 255 bytes.".into());
                     return Task::none();
                 }
                 panel.error = None;
                 panel.success = false;
                 if self.demo.is_some() {
+                    if let Change::Address(AddressChange::Published(_, after)) = &change
+                        && panel
+                            .saved
+                            .as_ref()
+                            .and_then(|s| s.addresses.as_ref().ok())
+                            .is_some_and(|saved| {
+                                after.all().iter().any(|a| {
+                                    !saved.local.as_ref().is_ok_and(|local| local.contains(a))
+                                })
+                            })
+                    {
+                        panel.error = Some(
+                            "Add this address locally before publishing it in the demo.".into(),
+                        );
+                        return Task::none();
+                    }
                     panel.saved.as_mut().unwrap().apply(&change);
+                    if let Change::Address(address) = &change {
+                        panel.addresses.saved(address);
+                        if let Some(draft) = &mut panel.draft {
+                            draft.apply(&change);
+                        }
+                    }
                     self.space_settings
                         .demo
                         .insert(panel.id.clone(), panel.saved.clone().unwrap());
@@ -762,6 +856,12 @@ impl App {
                         Ok(()) => {
                             if let Some(saved) = &mut panel.saved {
                                 saved.apply(&change);
+                            }
+                            if let Change::Address(address) = &change {
+                                panel.addresses.saved(address);
+                                if let Some(draft) = &mut panel.draft {
+                                    draft.apply(&change);
+                                }
                             }
                             panel.success = true;
                         }
@@ -957,6 +1057,17 @@ impl App {
                         .style(shell::muted_text),
                 );
             }
+            body = body.push(match &saved.addresses {
+                Ok(saved) => panel.addresses.view_for(
+                    saved,
+                    !panel.pending
+                        && !panel.avatar.is_picking()
+                        && self.pending_ops < MAX_PENDING_OPERATIONS,
+                    true,
+                    |event| message(Event::Addresses(event)),
+                ),
+                Err(error) => text(error).size(13).into(),
+            });
             body = body.push(
                 text("Space membership does not grant membership in its rooms or subspaces.")
                     .size(12)
@@ -1052,6 +1163,70 @@ mod tests {
             .unwrap()
             .0
     }
+    #[test]
+    fn space_aliases_save_independently_and_preserve_conversation_and_other_edits() {
+        use addresses::Event as Edit;
+        let mut app = demo_app();
+        let selection = app.selection.clone();
+        let key = app.draft_key(false).unwrap();
+        app.drafts.get_mut(&key).unwrap().content =
+            iced::widget::text_editor::Content::with_text("unsent");
+        app.scroll_positions.insert(key.clone(), 155.0);
+        open(&mut app);
+        let _ = app.update(message(Event::Name("Unsaved name".into())));
+        let alias = matrix_sdk::ruma::owned_room_alias_id!("#friendly:demo.invalid");
+        for edit in [
+            Edit::Local("friendly".into()),
+            Edit::AddLocal,
+            Edit::Published("friendly".into()),
+            Edit::Publish,
+            Edit::Main(Some(alias.clone())),
+            Edit::Directory(true),
+        ] {
+            let _ = app.update(message(Event::Addresses(edit)));
+        }
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        assert_eq!(panel.draft.as_ref().unwrap().name, "Unsaved name");
+        assert_ne!(panel.saved.as_ref().unwrap().name, "Unsaved name");
+        let saved = panel.saved.as_ref().unwrap().addresses.as_ref().unwrap();
+        assert_eq!(saved.published.main, Some(alias.clone()));
+        assert_eq!(saved.local, Ok(vec![alias.clone()]));
+        assert_eq!(saved.directory, Ok(true));
+        let _ = app.update(message(Event::Addresses(Edit::Remove(alias.clone()))));
+        let _ = app.update(message(Event::Addresses(Edit::ConfirmRemove)));
+        assert_eq!(
+            app.space_settings
+                .panel
+                .as_ref()
+                .unwrap()
+                .saved
+                .as_ref()
+                .unwrap()
+                .addresses
+                .as_ref()
+                .unwrap()
+                .local,
+            Ok(vec![alias.clone()])
+        );
+        let _ = app.update(message(Event::Addresses(Edit::Unpublish(alias.clone()))));
+        let _ = app.update(message(Event::Addresses(Edit::Remove(alias.clone()))));
+        let _ = app.update(message(Event::Addresses(Edit::CancelRemove)));
+        let _ = app.update(message(Event::Addresses(Edit::Remove(alias))));
+        let _ = app.update(message(Event::Addresses(Edit::ConfirmRemove)));
+        let _ = app.update(message(Event::Close));
+        let _ = app.update(message(Event::DiscardChanges(discard_serial(&app))));
+        open(&mut app);
+        let panel = app.space_settings.panel.as_ref().unwrap();
+        let saved = panel.saved.as_ref().unwrap().addresses.as_ref().unwrap();
+        assert!(saved.published.all().is_empty());
+        assert_eq!(saved.local, Ok(vec![]));
+        assert_eq!(saved.directory, Ok(true));
+        assert_eq!(app.selection.room, selection.room);
+        assert_eq!(app.selection.thread, selection.thread);
+        assert_eq!(app.drafts[&key].content.text(), "unsent");
+        assert_eq!(app.scroll_positions[&key], 155.0);
+    }
+
     #[test]
     fn reopening_a_space_form_waits_for_old_metadata_then_loads_once() {
         let mut app = demo_app();

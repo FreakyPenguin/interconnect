@@ -8,7 +8,7 @@ use interconnect::connected::room_settings::addresses::{self as model, Addresses
 use matrix_sdk::ruma::OwnedRoomAliasId;
 
 #[derive(Default)]
-pub(super) struct Editor {
+pub(crate) struct Editor {
     local: String,
     published: String,
     remove: Option<OwnedRoomAliasId>,
@@ -30,10 +30,10 @@ fn event(event: Event) -> Message {
     message(super::Event::Addresses(event))
 }
 impl Editor {
-    pub(super) fn dirty(&self) -> bool {
+    pub(crate) fn dirty(&self) -> bool {
         !self.local.trim().is_empty() || !self.published.trim().is_empty() || self.remove.is_some()
     }
-    pub(super) fn update(
+    pub(crate) fn update(
         &mut self,
         saved: &Addresses,
         event: Event,
@@ -123,7 +123,7 @@ impl Editor {
         };
         Ok(change)
     }
-    pub(super) fn saved(&mut self, change: &Change) {
+    pub(crate) fn saved(&mut self, change: &Change) {
         self.remove = None;
         match change {
             Change::AddLocal(_) => self.local.clear(),
@@ -138,15 +138,27 @@ impl Editor {
             _ => {}
         }
     }
-    pub(super) fn view<'a>(&'a self, saved: &'a Addresses, enabled: bool) -> Element<'a, Message> {
+    pub(crate) fn view<'a>(&'a self, saved: &'a Addresses, enabled: bool) -> Element<'a, Message> {
+        self.view_for(saved, enabled, false, event)
+    }
+    pub(crate) fn view_for<'a>(
+        &'a self,
+        saved: &'a Addresses,
+        enabled: bool,
+        space: bool,
+        event: fn(Event) -> Message,
+    ) -> Element<'a, Message> {
+        let target = if space { "space" } else { "room" };
         let editable = enabled && saved.editable;
         let aliases = saved.published.all();
         let mut choices = vec![Main(None)];
         choices.extend(aliases.iter().cloned().map(|a| Main(Some(a))));
         let main: Element<'a, Message> = if editable {
-            pick_list(choices, Some(Main(saved.published.main.clone())), |v| {
-                event(Event::Main(v.0))
-            })
+            pick_list(
+                choices,
+                Some(Main(saved.published.main.clone())),
+                move |v| event(Event::Main(v.0)),
+            )
             .style(shell::select_style)
             .keyboard_navigation(true)
             .padding([7, 10])
@@ -161,7 +173,7 @@ impl Editor {
         };
         let mut published = column![
             text("Published addresses").size(13),
-            text("Choose the main address people see and share. An address must already point to this room before you publish it.")
+            text(format!("Choose the main address people see and share. An address must already point to this {target} before you publish it."))
                 .size(12).style(shell::muted_text),
             text("Main address").size(12).style(shell::muted_text),
             main,
@@ -191,13 +203,20 @@ impl Editor {
             row![
                 text("#").size(13).style(shell::muted_text),
                 container(
-                    text_input("my-room:example.org", &self.published)
-                        .id("room-settings-published-address")
-                        .cursor_blinking(false)
-                        .style(shell::search_style)
-                        .size(13)
-                        .padding([8, 10])
-                        .on_input_maybe(editable.then_some(|v| event(Event::Published(v))))
+                    text_input(
+                        if space {
+                            "my-space:example.org"
+                        } else {
+                            "my-room:example.org"
+                        },
+                        &self.published
+                    )
+                    .id("room-settings-published-address")
+                    .cursor_blinking(false)
+                    .style(shell::search_style)
+                    .size(13)
+                    .padding([8, 10])
+                    .on_input_maybe(editable.then_some(move |v| event(Event::Published(v))))
                 )
                 .width(Length::Fill)
                 .id("room-settings-published-input"),
@@ -224,14 +243,14 @@ impl Editor {
         }
         let mut local_addresses = column![
             text("Local addresses").size(13),
-            text(format!("Create an address on {}. Publish it above when you want people to see it in this room.", saved.server))
+            text(format!("Create an address on {}. Publish it above when you want people to see it in this {target}.", saved.server))
                 .size(12).style(shell::muted_text).wrapping(text::Wrapping::Glyph),
         ].spacing(9);
         match &saved.local {
             Ok(local) => {
                 if local.is_empty() {
-                    local_addresses =
-                        local_addresses.push(text("This room has no local addresses.").size(13));
+                    local_addresses = local_addresses
+                        .push(text(format!("This {target} has no local addresses.")).size(13));
                 }
                 for alias in local {
                     local_addresses = local_addresses.push(
@@ -259,13 +278,13 @@ impl Editor {
                     row![
                         text("#").size(13).style(shell::muted_text),
                         container(
-                            text_input("my-room", &self.local)
+                            text_input(if space { "my-space" } else { "my-room" }, &self.local)
                                 .id("room-settings-local-address")
                                 .cursor_blinking(false)
                                 .style(shell::search_style)
                                 .size(13)
                                 .padding([8, 10])
-                                .on_input_maybe(enabled.then_some(|v| event(Event::Local(v))))
+                                .on_input_maybe(enabled.then_some(move |v| event(Event::Local(v))))
                         )
                         .width(Length::Fill)
                         .id("room-settings-local-input"),
@@ -326,7 +345,7 @@ impl Editor {
                     .text_size(13)
                     .size(16);
                 directory = directory.push(if enabled {
-                    control.on_toggle(|v| event(Event::Directory(v)))
+                    control.on_toggle(move |v| event(Event::Directory(v)))
                 } else {
                     control
                 });
@@ -341,7 +360,11 @@ impl Editor {
         }
         directory = directory.push(text("Listing does not change who can join or read history. Your server controls permission to list rooms and manage local addresses.").size(12).style(shell::muted_text));
         super::section(
-            "Room addresses",
+            if space {
+                "Space addresses"
+            } else {
+                "Room addresses"
+            },
             "Address and directory actions apply immediately.",
             column![
                 published,

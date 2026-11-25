@@ -317,6 +317,16 @@ impl Directory {
         let _ = self.1.send(());
         result
     }
+    /// Resolve and link a room or subspace without changing membership.
+    pub async fn link_space_address(
+        self,
+        space: String,
+        address: String,
+    ) -> Result<String, String> {
+        let result = crate::space_management::link_address(&self.0, &space, &address).await;
+        let _ = self.1.send(());
+        result
+    }
     /// Unlink a direct child without leaving either room or editing child-side state.
     pub async fn remove_room_from_space(self, space: String, room: String) -> Result<(), String> {
         let result = crate::space_management::remove_room(&self.0, &space, &room).await;

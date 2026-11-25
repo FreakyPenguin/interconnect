@@ -70,7 +70,12 @@ joining an unfamiliar room requires submitting that dialog.
 Space picker searches names/paths; Enter selects without switching conversation,
 Escape returns to composer, Tab refocuses search, and Ctrl+P/Ctrl+Shift+P switches
 room/space search. Ctrl+K also switches to room search.
-Space changes preserve drafts and reading positions.
+Space changes preserve drafts and reading positions. Space settings includes
+local and published addresses, a main address, and directory listing controls.
+In **Find rooms to join**, writable spaces also offer **Link a room or subspace**:
+paste an alias, room ID, or Matrix room link, then choose **Link to this space**.
+Use **Link** beside a discovery result to add it without joining. These actions
+keep the current conversation open.
 
 Breadcrumb bar: Left/Right moves controls, Home/End reaches ends, Down opens a
 menu, Enter/Space activates. Home's arrow exposes the whole tree; long paths put

@@ -154,7 +154,7 @@ async fn directory(room: &Room) -> Result<bool, String> {
         _ => Err("This directory visibility is unsupported.".into()),
     }
 }
-pub(super) async fn read(room: &Room) -> Result<Addresses, String> {
+pub(crate) async fn read(room: &Room) -> Result<Addresses, String> {
     // Independent failures leave the remaining settings usable; no recurring refresh.
     let operation = async {
         let (published, local, directory, levels) = tokio::join!(
@@ -211,7 +211,7 @@ async fn resolves_here(room: &Room, alias: &RoomAliasId) -> Result<(), String> {
     }
     Ok(())
 }
-pub(super) async fn save(room: &Room, change: Change) -> Result<(), String> {
+pub(crate) async fn save(room: &Room, change: Change) -> Result<(), String> {
     let operation = async {
         if room.state() != RoomState::Joined {
             return Err("You are no longer joined to this room.".into());

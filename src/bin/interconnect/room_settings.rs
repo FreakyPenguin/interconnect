@@ -1,6 +1,6 @@
 //! Room-bound settings with bounded asynchronous loads and serialized writes.
 #[path = "room_settings/addresses.rs"]
-mod addresses;
+pub(crate) mod addresses;
 use super::avatar_editor;
 use super::{App, MAX_PENDING_OPERATIONS, Message, current_pane, shell};
 use iced::{
