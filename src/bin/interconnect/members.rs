@@ -382,6 +382,20 @@ impl App {
                 .padding(16),
             );
         }
+        if let Some((_, room)) = &self.selection.room {
+            content = content.push(
+                container(
+                    button(text("Manage members & bans").size(12))
+                        .keyboard_navigation(true)
+                        .padding([6, 8])
+                        .style(shell::quiet_button)
+                        .on_press(Message::SpaceSettings(
+                            crate::space_settings::Event::OpenMembers(room.clone()),
+                        )),
+                )
+                .padding([4, 16]),
+            );
+        }
         content = content.push(
             scrollable(entries)
                 .id("room-people")

@@ -684,6 +684,9 @@ mod tests {
                     .find(|m| m.member.user_id == "@other:example.org")
                     .unwrap();
                 assert_eq!(other.can_ban, actor >= 50);
+                assert_eq!(roster.banned.len(), 1);
+                assert_eq!(roster.banned[0].user_id, "@banned:example.org");
+                assert_eq!(roster.banned[0].can_unban, actor >= 50);
                 for change in [
                     MemberChange::Ban {
                         user: "@test:example.org".into(),
@@ -833,8 +836,15 @@ pub struct ManagedMember {
     pub roles: Vec<Role>,
 }
 #[derive(Clone, Debug)]
+pub struct BannedMember {
+    pub user_id: String,
+    pub name: String,
+    pub can_unban: bool,
+}
+#[derive(Clone, Debug)]
 pub struct Roster {
     pub rows: Vec<ManagedMember>,
+    pub banned: Vec<BannedMember>,
     pub can_invite: bool,
 }
 #[derive(Clone, Debug)]
@@ -892,7 +902,21 @@ impl Management {
                     roles,
                 });
             }
+            let mut banned: Vec<_> = self
+                .0
+                .members(matrix_sdk::RoomMemberships::BAN)
+                .await
+                .map_err(|_| "Could not load banned members.")?
+                .into_iter()
+                .map(|m| BannedMember {
+                    user_id: m.user_id().to_string(),
+                    name: m.name().to_owned(),
+                    can_unban: m.user_id() != own && levels.user_can_unban_user(own, m.user_id()),
+                })
+                .collect();
+            banned.sort_by_cached_key(|m| (m.name.to_lowercase(), m.user_id.clone()));
             Ok(Roster {
+                banned,
                 rows: managed,
                 can_invite: levels.user_can_invite(own),
             })

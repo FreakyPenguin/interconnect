@@ -88,3 +88,13 @@ use need the dedicated desktop/connected checks.
   stale membership, and single-attempt server failures. UI fixtures cover ban
   confirmation/cancellation and conversation preservation. Live server behavior,
   native desktop layout, and macOS still require dedicated acceptance checks.
+
+- Room member management and space settings expose a **Banned** tab with search,
+  bounded pages, an empty state, Reload, and confirmed Unban. The People sidebar
+  links to **Manage members & bans**. Unbanning removes the ban without sending
+  an invitation or joining the person. Toggle tabs/search/page while confirming:
+  hidden confirmations cannot act. Demo bans persist in memory across reopening.
+- Fixtures verify separate banned/joined/invited projections and room/space unban
+  cancellation, reload, and preservation of the open conversation. Check a
+  dedicated server for remote bans/unbans, permission loss, and failed requests;
+  these connected checks have not been run by the fixtures.

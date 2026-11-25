@@ -269,6 +269,7 @@ pub fn spaces() -> Vec<SpaceEntry> {
 pub struct Demo {
     pub(super) emoji_packs: Option<interconnect::custom_emoji::management::Listing>,
     pub(super) emoji_uploads: std::collections::VecDeque<interconnect::image_media::Key>,
+    pub(super) banned_members: HashMap<String, Vec<interconnect::room_management::BannedMember>>,
     pub(super) managed_members: HashMap<String, Vec<interconnect::connected::Member>>,
     pub(super) invitations: HashMap<String, Vec<interconnect::connected::Member>>,
     conversations: HashMap<DraftKey, Vec<MessageRow>>,

@@ -11,7 +11,7 @@ use iced::{
 };
 use interconnect::{
     connected::Member,
-    room_management::{ManagedMember, Management, MemberChange, Role, Roster},
+    room_management::{BannedMember, ManagedMember, Management, MemberChange, Role, Roster},
 };
 use matrix_sdk::ruma::events::room::power_levels::UserPowerLevel;
 
@@ -20,6 +20,7 @@ const PAGE: usize = 50;
 pub(super) struct State {
     roster: Option<Roster>,
     query: String,
+    banned: bool,
     page: usize,
     request: u64,
     load: Option<iced::task::Handle>,
@@ -61,6 +62,8 @@ pub enum Event {
     Invite,
     Remove(String),
     Ban(String),
+    Unban(String),
+    Banned(bool),
     Role(String, Role),
     Confirm,
     Cancel,
@@ -142,10 +145,21 @@ fn apply(roster: &mut Roster, change: &MemberChange) {
                 });
             }
         }
-        MemberChange::Unban(_) => {}
-        MemberChange::Remove { user, .. } | MemberChange::Ban { user, .. } => {
-            roster.rows.retain(|m| m.member.user_id != *user)
+        MemberChange::Unban(user) => roster.banned.retain(|m| m.user_id != *user),
+        MemberChange::Ban { user, .. } => {
+            if let Some(index) = roster.rows.iter().position(|m| m.member.user_id == *user) {
+                let member = roster.rows.remove(index);
+                roster.banned.push(BannedMember {
+                    user_id: user.clone(),
+                    name: member.member.name,
+                    can_unban: member.can_remove && member.can_ban,
+                });
+                roster
+                    .banned
+                    .sort_by_cached_key(|m| (m.name.to_lowercase(), m.user_id.clone()));
+            }
         }
+        MemberChange::Remove { user, .. } => roster.rows.retain(|m| m.member.user_id != *user),
         MemberChange::Role { user, role, .. } => {
             if let Some(member) = roster.rows.iter_mut().find(|m| m.member.user_id == *user) {
                 member.power = UserPowerLevel::Int(power(*role));
@@ -276,6 +290,11 @@ impl App {
                         panel.saved.as_ref().is_some_and(|s| s.editable[0])
                     };
                     let roster = Roster {
+                        banned: demo
+                            .banned_members
+                            .get(&panel.id)
+                            .cloned()
+                            .unwrap_or_default(),
                         can_invite: can_manage,
                         rows: rows
                             .iter()
@@ -317,6 +336,12 @@ impl App {
                     panel.members.load = Some(handle.abort_on_drop());
                     return task;
                 }
+            }
+            Event::Banned(banned) => {
+                panel.members.banned = banned;
+                panel.members.page = 0;
+                panel.members.query.clear();
+                panel.members.confirm = None;
             }
             Event::Search(query) => {
                 panel.members.confirm = None;
@@ -362,6 +387,18 @@ impl App {
                         user,
                         invited: member.member.invited,
                     });
+                }
+            }
+            Event::Unban(user) if !panel.pending => {
+                panel.success = false;
+                panel.members.feedback = None;
+                if panel
+                    .members
+                    .roster
+                    .as_ref()
+                    .is_some_and(|r| r.banned.iter().any(|m| m.user_id == user && m.can_unban))
+                {
+                    panel.members.confirm = Some(MemberChange::Unban(user));
                 }
             }
             Event::Ban(user) if !panel.pending => {
@@ -434,6 +471,8 @@ impl App {
                 if let Some(demo) = &mut self.demo {
                     if let Some(roster) = &mut panel.members.roster {
                         apply(roster, &change);
+                        demo.banned_members
+                            .insert(panel.id.clone(), roster.banned.clone());
                         demo.managed_members.insert(
                             panel.id.clone(),
                             roster.rows.iter().map(|m| m.member.clone()).collect(),
@@ -579,7 +618,28 @@ impl App {
         let Some(roster) = &state.roster else {
             return content.into();
         };
-        if roster.can_invite {
+        content = content.push(
+            row![
+                button(text("Members").size(13))
+                    .keyboard_navigation(true)
+                    .style(move |theme, status| shell::navigation_button(
+                        theme,
+                        !state.banned,
+                        status
+                    ))
+                    .on_press(event(Event::Banned(false))),
+                button(text(format!("Banned ({})", roster.banned.len())).size(13))
+                    .keyboard_navigation(true)
+                    .style(move |theme, status| shell::navigation_button(
+                        theme,
+                        state.banned,
+                        status
+                    ))
+                    .on_press(event(Event::Banned(true))),
+            ]
+            .spacing(8),
+        );
+        if roster.can_invite && !state.banned {
             let request = panel.request;
             content = content.push(
                 column![
@@ -610,13 +670,98 @@ impl App {
             );
         }
         content = content.push(
-            text_input("Find a member…", &state.query)
-                .cursor_blinking(false)
-                .on_input(|q| event(Event::Search(q)))
-                .padding(10)
-                .style(shell::search_style),
+            text_input(
+                if state.banned {
+                    "Find a banned member…"
+                } else {
+                    "Find a member…"
+                },
+                &state.query,
+            )
+            .cursor_blinking(false)
+            .on_input(|q| event(Event::Search(q)))
+            .padding(10)
+            .style(shell::search_style),
         );
         let query = state.query.to_lowercase();
+        if state.banned {
+            let rows: Vec<_> = roster
+                .banned
+                .iter()
+                .filter(|m| {
+                    m.name.to_lowercase().contains(&query)
+                        || m.user_id.to_lowercase().contains(&query)
+                })
+                .collect();
+            let page = state.page.min(rows.len().saturating_sub(1) / PAGE);
+            content = content.push(text("Unbanning does not invite or rejoin a person. Space bans do not apply to child rooms.").size(12).style(shell::muted_text));
+            for member in rows.iter().skip(page * PAGE).take(PAGE) {
+                content = content.push(
+                    column![
+                        row![
+                            column![
+                                super::super::single_line::label(&member.name, 14),
+                                super::super::single_line::label(&member.user_id, 11)
+                                    .style(shell::muted_text)
+                            ]
+                            .spacing(3)
+                            .width(Length::Fill),
+                            button(text("Unban…").size(12))
+                                .padding([6, 8])
+                                .style(shell::quiet_button)
+                                .keyboard_navigation(true)
+                                .on_press_maybe(
+                                    (member.can_unban && !busy)
+                                        .then(|| event(Event::Unban(member.user_id.clone())))
+                                ),
+                        ]
+                        .spacing(12)
+                        .align_y(iced::Alignment::Center),
+                    ]
+                    .spacing(8),
+                );
+                if let Some(change) = state
+                    .confirm
+                    .as_ref()
+                    .filter(|c| change_user(c) == member.user_id)
+                {
+                    content = content.push(confirmation(change, panel.space, busy, Host::Panel));
+                }
+                content = content.push(rule::horizontal(1));
+            }
+            if rows.is_empty() {
+                content = content.push(
+                    text(if roster.banned.is_empty() {
+                        "No banned members."
+                    } else {
+                        "No matching banned members."
+                    })
+                    .size(13),
+                );
+            }
+            if rows.len() > PAGE {
+                content = content.push(
+                    row![
+                        icon_button(
+                            Kind::ChevronLeft,
+                            "Previous banned members",
+                            (page > 0).then(|| event(Event::Page(page - 1)))
+                        ),
+                        text(format!("{} / {}", page + 1, rows.len().div_ceil(PAGE))).size(12),
+                        icon_button(
+                            Kind::ChevronRight,
+                            "Next banned members",
+                            ((page + 1) * PAGE < rows.len()).then(|| event(Event::Page(page + 1)))
+                        ),
+                    ]
+                    .spacing(10),
+                );
+            }
+            if let Some(feedback) = &state.feedback {
+                content = content.push(text(feedback).size(13).style(shell::muted_text));
+            }
+            return content.into();
+        }
         let rows: Vec<_> = roster
             .rows
             .iter()
@@ -1137,6 +1282,67 @@ mod tests {
         assert!(app.space_settings.sidebar.is_none());
     }
     #[test]
+    fn banned_lists_survive_reload_and_unbanning_never_rejoins_or_invites() {
+        for space in [false, true] {
+            let mut app = demo_app();
+            let selected = app.selection.room.clone();
+            open(&mut app, space);
+            let user = "@maya:example.org";
+            let _ = app.update(event(Event::Ban(user.into())));
+            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(event(Event::Banned(true)));
+            let _ = app.update(event(Event::Reload));
+            assert_eq!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned[0]
+                    .user_id,
+                user
+            );
+            let _ = app.update(event(Event::Unban(user.into())));
+            let _ = app.update(event(Event::Search("hidden".into())));
+            let _ = app.update(event(Event::Confirm));
+            assert_eq!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned
+                    .len(),
+                1
+            );
+            let _ = app.update(event(Event::Search(String::new())));
+            let _ = app.update(event(Event::Unban(user.into())));
+            let _ = app.update(event(Event::Confirm));
+            let _ = app.update(event(Event::Reload));
+            assert!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .roster
+                    .as_ref()
+                    .unwrap()
+                    .banned
+                    .is_empty()
+            );
+            assert!(!rows(&app).iter().any(|m| m.member.user_id == user));
+            assert_eq!(app.selection.room, selected);
+            assert_eq!(app.pending_ops, 0);
+        }
+    }
+    #[test]
     fn bans_require_confirmation_in_rooms_spaces_and_sidebar_and_preserve_drafts() {
         for space in [false, true] {
             let mut app = demo_app();
@@ -1276,6 +1482,7 @@ mod tests {
             operation,
             Box::new(Ok(Roster {
                 rows: vec![],
+                banned: vec![],
                 can_invite: false,
             })),
         )));
