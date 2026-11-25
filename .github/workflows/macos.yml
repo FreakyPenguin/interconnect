@@ -57,6 +57,9 @@ jobs:
         run: |
           cargo test --locked --release --lib session::
 
+      - name: Test UI and native keyboard bindings without an account
+        run: cargo test --locked --release --bin interconnect
+
       - name: Verify app signature and icon
         run: |
           codesign --verify --strict --verbose=2 target/Interconnect.app

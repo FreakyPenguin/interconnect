@@ -1,31 +1,36 @@
 # Keyboard shortcuts
 
-On macOS, **Command** replaces **Ctrl** unless stated otherwise; **Alt** is **Option**.
-**Ctrl+Enter** sends on every platform; **Command+Enter** also sends on macOS.
-Dialogs, completion, and IME take precedence.
+The tables list platform defaults explicitly. **Cmd** means the macOS Command
+key; **Option** is the Mac Alt key. App commands use Cmd on macOS, leaving Control
+available for text editing. **Ctrl+Tab** still switches rooms, and **Ctrl+Enter**
+remains a send alias on macOS. Dialogs, completion, and IME take precedence.
 
 ## Navigation
 
-| Shortcut | Action |
-| --- | --- |
-| Ctrl+N | Start a direct chat or open/join a room by address. |
-| Ctrl+Shift+N | Create a room. |
-| Ctrl+K (also Ctrl+P) | Room switcher. |
-| Ctrl+Shift+P | Space picker. |
-| Ctrl+Shift+K | Focus room filter; Enter opens first match. |
-| Ctrl+L | Focus current breadcrumb (Home at root). |
-| Ctrl+Shift+L | Toggle Include subspaces, preserving focus/filter. |
-| F6 / Shift+F6 | Cycle breadcrumb, sidebar, composer; show sidebar if needed. |
-| Ctrl+F / Ctrl+Shift+F | Search loaded room messages / account-wide messages. |
-| Ctrl+, | Settings. |
-| Ctrl+Tab / Ctrl+Shift+Tab (also on macOS) | Next/previous visible room, wrapping. |
-| Alt+Up / Alt+Down | Previous/next visible room, wrapping (alternative). |
-| Ctrl+J / Ctrl+Shift+J | Next/previous unread room across the account. |
-| Alt+Shift+Up / Alt+Shift+Down | Previous/next unread room within the selected space and room filter. |
-| Alt+Left / Alt+Right (macOS: Command+[ / Command+]) | Back/forward through conversation history. |
-| Ctrl+T | Thread on latest non-thread room message; focus thread composer (also Alt+T on Linux/Windows). |
-| Tab / Shift+Tab | Traverse focusable controls; dialogs cycle within their active form. |
-| Escape | Dismiss overlay/search/filter, cancel reply, then close People/thread and focus room composer. |
+| Linux / Windows | macOS | Action |
+| --- | --- | --- |
+| Ctrl+N | Cmd+N | Start a direct chat or open/join a room by address. |
+| Ctrl+Shift+N | Cmd+Shift+N | Create a room. |
+| Ctrl+K (also Ctrl+P) | Cmd+K (also Cmd+P) | Room switcher. |
+| Ctrl+Shift+P | Cmd+Shift+P | Space picker. |
+| Ctrl+Shift+K | Cmd+Shift+K | Focus room filter; Enter opens first match. |
+| Ctrl+L | Cmd+L | Focus current breadcrumb (Home at root). |
+| Ctrl+Shift+L | Cmd+Shift+L | Toggle Include subspaces, preserving focus/filter. |
+| F6 / Shift+F6 | F6 / Shift+F6 | Cycle breadcrumb, sidebar, composer; show sidebar if needed. |
+| Ctrl+F / Ctrl+Shift+F | Cmd+F / Cmd+Shift+F | Search loaded room messages / account-wide messages. |
+| Ctrl+, | Cmd+, | Settings. |
+| Ctrl+Tab / Ctrl+Shift+Tab | Ctrl+Tab / Ctrl+Shift+Tab | Next/previous visible room, wrapping. |
+| Alt+Up / Alt+Down | — | Previous/next visible room, wrapping (alternative). |
+| Ctrl+J / Ctrl+Shift+J | Cmd+J / Cmd+Shift+J | Next/previous unread room across the account. |
+| Alt+Shift+Up / Alt+Shift+Down | Cmd+Option+Shift+J / Cmd+Option+J | Previous/next unread room within the selected space and room filter. |
+| Alt+Left / Alt+Right | Cmd+[ / Cmd+] | Back/forward through conversation history. |
+| Ctrl+T (also Alt+T) | Cmd+T | Thread on latest non-thread room message; focus thread composer. |
+| Tab / Shift+Tab | Tab / Shift+Tab | Traverse focusable controls; dialogs cycle within their active form. |
+| Escape | Escape | Dismiss overlay/search/filter, cancel reply, then close People/thread and focus room composer. |
+
+On Mac keyboards, F6 may require Fn, depending on the keyboard's function-key
+settings. Option+Up/Down and Option+Shift+Up/Down remain available for paragraph
+movement and selection; they do not navigate rooms.
 
 Received reply previews are focusable buttons: Enter/Space opens the original
 message, loading older history when necessary. Thread replies open in their thread;
@@ -57,19 +62,21 @@ Close are also keyboard accessible.
 
 Room topic: activate its caret or styled header snippet to expand/collapse the
 full formatted topic below the header. The conversation stays interactive;
-Escape collapses the topic. Copy selected text with Ctrl+C/Command+C, or choose
+Escape collapses the topic. Copy selected text with Ctrl+C/Cmd+C, or choose
 Copy Markdown for the original source. Edit opens a separate dialog where
 Tab/Shift+Tab stay inside and Escape cancels.
 
-The Ctrl+N picker accepts `#room:server`, `!room:server`, matrix.to room links,
-and `matrix:` room links. Enter opens known rooms or prefills the Join dialog;
+The New chat picker (Ctrl+N / macOS: Cmd+N) accepts `#room:server`,
+`!room:server`, matrix.to room links, and `matrix:` room links. Enter opens known
+rooms or prefills the Join dialog;
 joining an unfamiliar room requires submitting that dialog.
 
 ### Space navigation
 
 Space picker searches names/paths; Enter selects without switching conversation,
-Escape returns to composer, Tab refocuses search, and Ctrl+P/Ctrl+Shift+P switches
-room/space search. Ctrl+K also switches to room search.
+Escape returns to composer, Tab refocuses search, and Ctrl+P/Ctrl+Shift+P
+(macOS: Cmd+P/Cmd+Shift+P) switches room/space search. Ctrl+K (macOS: Cmd+K)
+also switches to room search.
 Space changes preserve drafts and reading positions. Space settings includes
 local and published addresses, a main address, and directory listing controls.
 In **Find rooms to join**, writable spaces also offer **Link a room or subspace**:
@@ -119,17 +126,33 @@ they do not send conversation read receipts.
 
 ## Composition
 
-| Shortcut | Action |
-| --- | --- |
-| Ctrl+Enter (macOS: also Command+Enter) | Send or save edit. |
-| Enter | Newline by default; optional Enter-to-send in Settings. |
-| Shift+Enter | Newline. |
-| Up in empty composer | Edit latest editable message. |
-| Escape while editing | Cancel and restore unsent draft. |
-| Page Up / Page Down | Scroll associated timeline. |
-| Ctrl+C/X/V/A (macOS: Command) | Copy/cut/paste/select all. |
-| Ctrl+Left/Right (macOS: Option) | Move by word; Shift selects. |
-| Ctrl+Backspace/Delete (macOS: Option) | Delete preceding/following word. |
+| Linux / Windows | macOS | Action |
+| --- | --- | --- |
+| Ctrl+Enter | Cmd+Enter (also Ctrl+Enter) | Send or save edit. |
+| Enter | Enter | Newline by default; optional Enter-to-send in Settings. |
+| Shift+Enter | Shift+Enter | Newline. |
+| Up in empty composer | Up in empty composer | Edit latest editable message. |
+| Escape while editing | Escape while editing | Cancel and restore unsent draft. |
+| Page Up / Page Down | Page Up / Page Down (Fn+Up / Fn+Down) | Scroll associated timeline. |
+| Ctrl+C/X/V/A | Cmd+C/X/V/A | Copy/cut/paste/select all. |
+| Ctrl+Left/Right | Option+Left/Right | Move by word; Shift selects. |
+| Ctrl+Backspace/Delete | Option+Backspace/Delete | Delete preceding/following word. |
+| Home / End | Cmd+Left/Right | Move to line start/end; Shift selects. |
+| Ctrl+Home / Ctrl+End | Cmd+Up/Down | Move to document start/end; Shift selects. |
+| — | Option+Up/Down | Move to paragraph start/end; Shift selects. |
+| — | Cmd+Backspace | Delete to line start. |
+
+On macOS, Delete on the main keyboard is Backspace; Fn+Delete is forward Delete.
+The text movement keys also apply to keyboard selection in message text.
+Multiline topic fields use the same text-editing bindings as composers, without
+the composer-only send, timeline paging, and empty-draft edit actions.
+
+Multiline fields also support macOS Control editing keys: Ctrl+A/E moves to
+line start/end, Ctrl+B/F moves a character, Ctrl+N/P moves a line, Ctrl+H/D deletes
+the preceding/following character, and Ctrl+O inserts a newline while retaining
+the insertion position. Ctrl+K deletes to paragraph end (or deletes the newline
+when already there). Ctrl+K does not populate a kill ring; Ctrl+Y yank, Ctrl+T
+transpose, and Ctrl+L centering are not implemented.
 
 Paste prefers file lists, then images, then text. Picker/paste/drop append
 attachments to that conversation's draft (50 MiB each). Files send individually
@@ -149,7 +172,7 @@ keep their target; deleting/replacing the whole label removes it. Any alteration
 to a bound `@room` removes its notification identity. Literal `@room`, code, and
 ordinary links do not create notifications. Room links do not notify everyone.
 
-Select timeline text and Ctrl+C / Command+C to copy across messages. Copy uses
+Select timeline text and Ctrl+C / Cmd+C to copy across messages. Copy uses
 displayed text, image alternatives, and LaTeX source; hidden spoilers use placeholders.
 
 Queued or failed local echoes offer **Cancel send…**, followed by **Cancel send**
@@ -220,13 +243,13 @@ Escape on that confirmation keeps editing. Explicit Cancel buttons discard their
 form. The sidebar has separate New chat (+) and Create room icons. Space/subspace
 creation is in its sidebar actions (⋯) menu; creation shortcuts still work.
 
-| View | Key |
-| --- | --- |
-| Create room | Tab/Shift+Tab through enabled form controls; Ctrl+Enter (macOS: Command+Enter) submits. |
-| Join room | Enter in address submits. |
-| Message deletion | Enter confirms; Escape cancels. |
-| Verification | Escape closes and cancels active exchange. |
-| Saved messages / image viewer | Escape returns to conversation. |
+| View | Linux / Windows | macOS |
+| --- | --- | --- |
+| Create room | Tab/Shift+Tab traverses enabled controls; Ctrl+Enter submits. | Tab/Shift+Tab traverses enabled controls; Cmd+Enter submits. |
+| Join room | Enter in address submits. | Enter in address submits. |
+| Message deletion | Enter confirms; Escape cancels. | Enter confirms; Escape cancels. |
+| Verification | Escape closes and cancels active exchange. | Escape closes and cancels active exchange. |
+| Saved messages / image viewer | Escape returns to conversation. | Escape returns to conversation. |
 
 Message and new-poll drafts, plus room/thread reading positions, survive restart.
 Reading-position restoration needs available history/keys and falls back to
@@ -243,7 +266,7 @@ Defaults are single-choice with visible results.
 Tab/Shift+Tab traverses the form. The plus icon adds an answer, the trash icon
 removes one, the checkmark creates/saves the poll, and X closes the form; hover
 for their action names. Enter/Space activates focused buttons and checkboxes.
-Drag an answer's grip, or use **Alt+Up/Down** (macOS: **Option+Up/Down**) in its
+Drag an answer's grip, or use **Alt+Up/Down** (macOS: **Cmd+Option+Up/Down**) in its
 field, to reorder it. Escape closes an open dropdown or cancels an active drag
 before dismissing the form. Closing retains unfinished new-poll values separately
 from the conversation's message draft.

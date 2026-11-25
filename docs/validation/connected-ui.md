@@ -41,6 +41,37 @@ and [discovery/media](ui-discovery.md) checklists for details. Covered conversat
 must retain live offsets without accepting input, read receipts, or media demand.
 Nested discard/exit confirmations must appear in the topmost active dialog.
 
+## macOS keyboard checks
+
+Run these checks in `--demo` after a locked desktop build. The macOS CI UI suite
+exercises bindings and focused widgets without an account; it does not establish
+native event delivery, IME behavior, or function-key settings on a physical Mac.
+This section is a manual acceptance checklist, not a completed validation record.
+
+- Compare Settings' send option, room/account search, room/space navigation, and
+  poll-reorder tooltips with the [platform shortcut tables](../keyboard.md).
+  Mac labels use Cmd and Option; Ctrl+Enter remains a send alias.
+- Open app commands with Cmd+N/K/P/F/L/T/J and their documented variants from
+  room/thread composers, sidebar/filter, breadcrumb, and search. Control-letter
+  combinations must not open app commands. Ctrl+Tab/Ctrl+Shift+Tab still switch
+  rooms; Cmd+Tab remains available to macOS.
+- In a multiline room/thread draft and a topic editor, check word, paragraph,
+  line, and document movement/selection, word deletion, and Cmd+Backspace.
+  Option+Up/Down and Option+Shift+Up/Down must edit/select within the field without
+  navigating rooms. Repeat movement/selection in plain and formatted messages.
+  Check the documented Control editing keys, including Ctrl+O's retained cursor
+  and Ctrl+K at paragraph end; do not expect kill-ring/yank support.
+- Exercise account unread navigation with Cmd+J/Cmd+Shift+J and filtered unread
+  navigation with Cmd+Option+J/Cmd+Option+Shift+J. Preserve the selected space,
+  both conversation drafts, and older reading positions.
+- In a new-poll form, Cmd+Option+Up/Down reorders an answer and retains its focus
+  and selection. Option+Up/Down must not reorder. Closing retains the draft.
+- In pickers and dialogs, plain arrows and Tab/Shift+Tab act once. Extra modifiers
+  must not accidentally select an item, traverse the form, or submit it. An open
+  dropdown or active IME composition takes precedence over the surrounding form.
+- Check F6/Shift+F6 region traversal, including Fn when required by keyboard
+  settings. Confirm keyboard events add no background animation or idle wakeups.
+
 ## Shared lifecycle checks
 
 For asynchronous features, close/reopen, navigate, switch accounts, and quit during
@@ -280,8 +311,9 @@ Use the [poll controls](../keyboard.md#polls) and a second client:
   text-template path. Check 2–20 distinct answers, explicit multi-choice limit,
   independent message/reply/attachment drafts, form close/reopen/restart, offline
   echoes, failure retention, and clearing only the admitted poll draft.
-- Reorder by grip and Alt+Up/Down: retain focus/selection, order, and settings in
-  sent/restored drafts. Click-only/outside drops, Escape, scroll, unfocus, and stale
+- Reorder by grip and Alt+Up/Down (macOS: Cmd+Option+Up/Down): retain
+  focus/selection, order, and settings in sent/restored drafts. Click-only/outside
+  drops, Escape, scroll, unfocus, and stale
   forms cancel dragging. Check compact scrolling and dropdown-first Escape.
 - Vote/revote up to the limit; pending guards span room/thread views. Hidden counts,
   voter names, bars, and Show votes stay hidden until the SDK end snapshot.

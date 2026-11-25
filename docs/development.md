@@ -30,8 +30,11 @@ regression tests and the opt-in history measurements remain separate checks.
 
 [Linux CI](../.github/workflows/linux.yml) builds, formats, tests, and lints.
 [macOS CI](../.github/workflows/macos.yml) builds an Apple Silicon release bundle,
-checks its signature/icon, and tests session lifecycle without Keychain access.
-CI builds do not establish native desktop acceptance.
+checks its signature/icon, and runs the UI/widget tests (including macOS-specific
+keyboard bindings) and session lifecycle tests without Keychain access. Linux
+tests cannot establish that Command and Control remain distinct on macOS.
+These automated checks do not establish native desktop/IME acceptance; use the
+[manual keyboard checks](validation/connected-ui.md#macos-keyboard-checks) in demo mode.
 
 ## Running the client
 

@@ -1,6 +1,6 @@
 # Settings and account profiles
 
-Open with **Ctrl+,** (macOS: **Command+,**). Preferences are application-wide.
+Open with **Ctrl+,** (macOS: **Cmd+,**). Preferences are application-wide.
 Save applies edits; Close asks before discarding them. Defaults stages defaults;
 Advanced → Reload rereads the file. Demo keeps changes in memory and ignores saved
 settings/accounts, including `--config`.
@@ -141,7 +141,9 @@ Override with `--config PATH`; copy legacy files manually.
   tables, and previews. Shell, composer, and authored media keep their own sizes;
   selection/code state/anchors survive changes. `appearance.message_text_size`
   uses `small`, `normal` (default 14 px), `large`, or `extra_large`.
-- Ctrl+Enter sends by default; Enter-to-send is optional.
+- Ctrl+Enter (macOS: Cmd+Enter) sends by default; Enter-to-send is optional.
+  Ctrl+Enter remains a send alias on macOS. The configuration value `ctrl_enter`
+  is the same on every platform.
 - Presence polling: off by default, focused-only, 60 seconds (range 15–3600).
   On-demand snapshots cache for 60 seconds.
 - GIFs require Play; choose one loop or 1–300 seconds.
@@ -179,11 +181,12 @@ See [proxy checks](validation/connected-ui.md#network-proxies).
 
 Home shows rooms outside joined spaces; **Include subspaces** shows all. In a space
 it includes descendants without duplicates. DMs obey the same rule. Toggle with
-Ctrl+Shift+L (Command on macOS). Space changes filter the sidebar and preserve the
+Ctrl+Shift+L (macOS: Cmd+Shift+L). Space changes filter the sidebar and preserve the
 open conversation/drafts/position.
 
-Use Home's tree, breadcrumb peers, or Ctrl+Shift+P. Shared spaces retain the route
-used. Routes/expanded branches/toggles persist in `navigation.json`, independently
+Use Home's tree, breadcrumb peers, or Ctrl+Shift+P (macOS: Cmd+Shift+P). Shared
+spaces retain the route used. Routes/expanded branches/toggles persist in
+`navigation.json`, independently
 of Element's Home filter. Legacy All rooms becomes recursive Home; Direct messages
 becomes Home. See [space navigation](keyboard.md#space-navigation).
 
