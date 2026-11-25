@@ -248,47 +248,6 @@ mod tests {
             "completion releases shutdown without another event"
         );
     }
-    #[test]
-    fn profile_field_has_a_static_caret_and_layout_fits_small_and_large_windows() {
-        use iced::advanced::{Shell, layout, mouse, widget};
-        for size in [
-            iced::Size::new(640.0, 480.0),
-            iced::Size::new(1440.0, 960.0),
-        ] {
-            let app = open();
-            let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-            let mut view = app.settings_view();
-            let mut tree = widget::Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            assert_eq!(node.size(), size);
-            view.as_widget_mut().operate(
-                &mut tree,
-                layout::Layout::new(&node),
-                &renderer,
-                &mut widget::operation::focusable::focus("account-display-name".into()),
-            );
-            for millis in [0, 500, 1000] {
-                let mut messages = Vec::new();
-                let mut shell = Shell::new(&mut messages);
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &iced::Event::Window(iced::window::Event::RedrawRequested(
-                        iced::time::Instant::now() + std::time::Duration::from_millis(millis),
-                    )),
-                    layout::Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut shell,
-                    &iced::Rectangle::with_size(size),
-                );
-                assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-                assert!(messages.is_empty());
-            }
-        }
-    }
 }
 impl State {
     pub(super) fn dirty(&self) -> bool {

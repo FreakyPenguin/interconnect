@@ -494,39 +494,4 @@ mod tests {
             );
         }
     }
-    #[test]
-    fn report_dialog_fits_small_windows_and_has_no_redraw_timer() {
-        use iced::advanced::{Shell, layout, mouse, widget};
-        let mut app = demo_app();
-        let target = target(&app, false);
-        open(&mut app, &target);
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
-        for size in [
-            iced::Size::new(640.0, 480.0),
-            iced::Size::new(1240.0, 820.0),
-        ] {
-            let mut view = app.view();
-            let mut tree = widget::Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            assert_eq!(node.size(), size);
-            let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    iced::time::Instant::now(),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-            assert!(messages.is_empty());
-        }
-    }
 }

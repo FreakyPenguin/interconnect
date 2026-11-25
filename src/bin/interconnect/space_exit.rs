@@ -754,47 +754,4 @@ mod tests {
         let _ = app.update(Message::State(Box::new(stale)));
         assert!(!app.model.spaces.iter().any(|s| s.id == "studio-space"));
     }
-    #[test]
-    fn confirmation_layout_fits_narrow_and_wide_windows_and_has_no_caret_timer() {
-        use iced::advanced::{Shell, layout, mouse, widget};
-        let mut app = demo_app();
-        open(&mut app, Action::Disband);
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-        for width in [320.0, 640.0, 1280.0] {
-            let size = iced::Size::new(width, 480.0);
-            let mut view = app.space_exit_view();
-            let mut tree = widget::Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            assert_eq!(node.size(), size);
-            view.as_widget_mut().operate(
-                &mut tree,
-                layout::Layout::new(&node),
-                &renderer,
-                &mut widget::operation::focusable::focus::<()>("space-exit-name".into()),
-            );
-            let now = iced::time::Instant::now();
-            for millis in [0, 750, 1250] {
-                let mut messages = vec![];
-                let mut shell = Shell::new(&mut messages);
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &iced::Event::Window(iced::window::Event::RedrawRequested(
-                        now + std::time::Duration::from_millis(millis),
-                    )),
-                    layout::Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut shell,
-                    &iced::Rectangle::with_size(size),
-                );
-                if millis > 0 {
-                    assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-                }
-                assert!(messages.is_empty());
-            }
-        }
-    }
 }

@@ -649,48 +649,6 @@ mod tests {
     }
 
     #[test]
-    fn focused_people_search_does_not_schedule_idle_redraws() {
-        use iced::advanced::{Shell, layout, mouse, widget};
-        let mut app = demo_app();
-        let _ = app.update(message(Event::Open));
-        let mut view = app.members_view();
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
-        let mut tree = widget::Tree::new(&view);
-        let size = iced::Size::new(360.0, 640.0);
-        let node = view.as_widget_mut().layout(
-            &mut tree,
-            &renderer,
-            &layout::Limits::new(iced::Size::ZERO, size),
-        );
-        view.as_widget_mut().operate(
-            &mut tree,
-            layout::Layout::new(&node),
-            &renderer,
-            &mut widget::operation::focusable::focus::<()>("member-search".into()),
-        );
-        let now = iced::time::Instant::now();
-        for milliseconds in [0, 750, 1250] {
-            let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    now + std::time::Duration::from_millis(milliseconds),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            if milliseconds > 0 {
-                assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-            }
-        }
-    }
-
-    #[test]
     fn people_and_threads_replace_each_other_preserving_drafts_and_room_scroll() {
         let mut app = demo_app();
         let room = app.draft_key(false).unwrap();

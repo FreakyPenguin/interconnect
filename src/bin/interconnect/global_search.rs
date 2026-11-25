@@ -1002,53 +1002,6 @@ mod tests {
     }
 
     #[test]
-    fn panel_layout_and_focused_search_remain_idle_at_narrow_and_wide_sizes() {
-        use iced::advanced::{Shell, layout, mouse, widget};
-        let mut app = demo_app();
-        let _ = app.update(message(Event::Open));
-        app.global_search.query = "hello".into();
-        app.global_search.submitted = "hello".into();
-        app.global_search.hits = vec![sample("studio", "one", "hello wrapped text שלום hello")];
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-        for size in [iced::Size::new(310.0, 420.0), iced::Size::new(900.0, 700.0)] {
-            let mut view = app.global_search_view();
-            let mut tree = widget::Tree::new(&view);
-            let node = view.as_widget_mut().layout(
-                &mut tree,
-                &renderer,
-                &layout::Limits::new(iced::Size::ZERO, size),
-            );
-            assert!(node.bounds().width <= size.width && node.bounds().height <= size.height);
-            view.as_widget_mut().operate(
-                &mut tree,
-                layout::Layout::new(&node),
-                &renderer,
-                &mut widget::operation::focusable::focus::<()>("global-message-search".into()),
-            );
-            let now = iced::time::Instant::now();
-            for milliseconds in [0, 750, 1250] {
-                let mut messages = Vec::new();
-                let mut shell = Shell::new(&mut messages);
-                view.as_widget_mut().update(
-                    &mut tree,
-                    &iced::Event::Window(iced::window::Event::RedrawRequested(
-                        now + std::time::Duration::from_millis(milliseconds),
-                    )),
-                    layout::Layout::new(&node),
-                    mouse::Cursor::Unavailable,
-                    &renderer,
-                    &mut iced::advanced::clipboard::Null,
-                    &mut shell,
-                    &iced::Rectangle::with_size(size),
-                );
-                if milliseconds > 0 {
-                    assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-                }
-            }
-        }
-    }
-
-    #[test]
     fn secondary_pages_share_the_reading_column_and_keep_full_width_scrollbars() {
         use iced::advanced::{Shell, layout, mouse, widget};
         #[derive(Default)]

@@ -1465,47 +1465,6 @@ mod tests {
     }
 
     #[test]
-    fn focused_duration_input_keeps_a_steady_caret_without_redraw_deadlines() {
-        use iced::advanced::{Shell, layout, mouse, widget};
-        let mut app = super::super::tests::demo_app();
-        let _ = app.settings_update(Event::Open);
-        let _ = app.settings_update(Event::Category(Category::Media));
-        let _ = app.settings_update(Event::GifPlayback(GifPlayback::Duration));
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-        let mut view = app.settings_view();
-        let mut tree = widget::Tree::new(&view);
-        let size = iced::Size::new(640.0, 480.0);
-        let node =
-            view.as_widget_mut()
-                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-        view.as_widget_mut().operate(
-            &mut tree,
-            layout::Layout::new(&node),
-            &renderer,
-            &mut widget::operation::focusable::focus("settings-gif-seconds".into()),
-        );
-        let now = iced::time::Instant::now();
-        for millis in [0, 500, 1000, 1500] {
-            let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    now + std::time::Duration::from_millis(millis),
-                )),
-                layout::Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            assert_eq!(shell.redraw_request(), iced::window::RedrawRequest::Wait);
-            assert!(messages.is_empty());
-        }
-    }
-
-    #[test]
     fn application_exit_captures_choice_and_rejects_old_confirmations() {
         let mut app = super::super::tests::demo_app();
         let _ = app.settings_update(Event::Open);

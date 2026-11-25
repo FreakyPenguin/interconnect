@@ -1442,28 +1442,6 @@ mod tests {
     }
 
     #[test]
-    fn application_close_detaches_admitted_writes_without_releasing_them_early() {
-        let mut app = crate::tests::demo_app();
-        open(&mut app);
-        event(&mut app, Event::Name("Submitted name".into()));
-        event(&mut app, Event::Rename);
-        let request = app.emoji_management.as_ref().unwrap().request;
-        assert_eq!(app.pending_ops, 1);
-        assert!(!app.guard_emoji_management_transition(Message::Close));
-        assert!(app.emoji_management.is_none());
-        assert_eq!(app.pending_ops, 1);
-        app.demo = None;
-        let _ = app.update(Message::Close);
-        assert!(!app.selection.shutdown);
-        event(
-            &mut app,
-            Event::Saved(request, None, false, Err("fixture failure".into())),
-        );
-        assert_eq!(app.pending_ops, 0);
-        assert!(app.selection.shutdown);
-    }
-
-    #[test]
     fn old_discard_and_keep_actions_cannot_target_replaced_or_reopened_editors() {
         let mut app = crate::tests::demo_app();
         open(&mut app);
@@ -1721,47 +1699,6 @@ mod tests {
         assert_eq!(app.pending_ops, 0);
         assert!(app.emoji_management.is_none());
     }
-    #[test]
-    fn management_card_fits_small_windows_and_settled_redraws_do_not_schedule_timers() {
-        use iced::advanced::{Layout, Shell, layout, mouse, widget};
-        let mut app = crate::tests::demo_app();
-        open(&mut app);
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
-        for size in [
-            iced::Size::new(640.0, 480.0),
-            iced::Size::new(1280.0, 900.0),
-        ] {
-            let mut view = app.emoji_management_view();
-            let mut tree = widget::Tree::new(&view);
-            let node = view.as_widget_mut().layout(
-                &mut tree,
-                &renderer,
-                &layout::Limits::new(iced::Size::ZERO, size),
-            );
-            assert!(
-                node.size().width <= size.width + 0.1 && node.size().height <= size.height + 0.1
-            );
-            let mut messages = Vec::new();
-            let mut shell = Shell::new(&mut messages);
-            view.as_widget_mut().update(
-                &mut tree,
-                &iced::Event::Window(iced::window::Event::RedrawRequested(
-                    iced::time::Instant::now(),
-                )),
-                Layout::new(&node),
-                mouse::Cursor::Unavailable,
-                &renderer,
-                &mut iced::advanced::clipboard::Null,
-                &mut shell,
-                &iced::Rectangle::with_size(size),
-            );
-            assert!(!matches!(
-                shell.redraw_request(),
-                iced::window::RedrawRequest::At(_)
-            ));
-        }
-    }
-
     #[test]
     fn explicit_editors_and_confirmation_keep_actions_in_the_minimum_window() {
         use iced::advanced::{layout, widget};

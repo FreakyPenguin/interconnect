@@ -1321,16 +1321,21 @@ mod tests {
     }
 
     #[test]
-    fn saving_a_topic_is_independent_of_an_invalid_unsaved_name() {
+    fn saving_a_multiline_topic_is_independent_of_an_invalid_unsaved_name() {
         let mut app = demo_app();
         open(&mut app);
         let _ = app.update(message(Event::Name(String::new())));
-        let _ = app.update(message(Event::Topic("A useful topic".into())));
+        let _ = app.update(message(Event::Topic("First line\nSecond line".into())));
         let _ = app.update(message(Event::Save(1)));
         let panel = app.space_settings.panel.as_ref().unwrap();
-        assert_eq!(panel.saved.as_ref().unwrap().topic, "A useful topic");
+        assert_eq!(
+            panel.saved.as_ref().unwrap().topic,
+            "First line\nSecond line"
+        );
         assert!(panel.draft.as_ref().unwrap().name.is_empty());
         assert!(panel.error.is_none());
+        assert_eq!(panel.topic.text(), "First line\nSecond line");
+        assert!(panel.dirty());
         let _ = app.update(message(Event::Save(0)));
         let panel = app.space_settings.panel.as_ref().unwrap();
         assert!(panel.error.is_some());
@@ -1373,23 +1378,6 @@ mod tests {
                 .transition
                 .is_none()
         );
-    }
-
-    #[test]
-    fn multiline_space_topic_stays_separate_from_an_unsaved_name() {
-        let mut app = demo_app();
-        open(&mut app);
-        let _ = app.update(message(Event::Topic("First line\nSecond line".into())));
-        let _ = app.update(message(Event::Name("Still editing the name".into())));
-        let _ = app.update(message(Event::Save(1)));
-        let panel = app.space_settings.panel.as_ref().unwrap();
-        assert_eq!(
-            panel.saved.as_ref().unwrap().topic,
-            "First line\nSecond line"
-        );
-        assert_eq!(panel.topic.text(), "First line\nSecond line");
-        assert!(panel.dirty());
-        assert_ne!(panel.saved.as_ref().unwrap().name, "Still editing the name");
     }
 
     #[test]
@@ -1599,21 +1587,5 @@ mod tests {
         let _ = app.update(message(Event::Saved(request, change, Ok(()))));
         assert_eq!(app.pending_ops, 0);
         assert!(!app.space_settings.is_open());
-    }
-    #[test]
-    fn full_size_panel_lays_out_at_narrow_and_wide_widths() {
-        use iced::advanced::{layout, widget};
-        let mut app = demo_app();
-        open(&mut app);
-        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
-        for width in [640.0, 1280.0] {
-            let size = iced::Size::new(width, 720.0);
-            let mut view = app.view();
-            let mut tree = widget::Tree::new(&view);
-            let node =
-                view.as_widget_mut()
-                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
-            assert_eq!(node.size(), size);
-        }
     }
 }

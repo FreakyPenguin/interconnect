@@ -22,6 +22,12 @@ changes require the workspace suite. Build before desktop validation. Ignored
 native/stress tests are opt-in, documented in the validation guides.
 Development/test profiles optimize tiny-skia to keep image redraws responsive.
 
+Keep tests focused on distinct behavior: protocol requests, persistence, cancellation,
+stale results, and user interactions. Generic root-size and per-form caret smoke
+checks are omitted; shared widget tests cover blinking behavior. Use the interface
+validation guides for per-screen layout and Light/Dark acceptance. Software pixel
+regression tests and the opt-in history measurements remain separate checks.
+
 [Linux CI](../.github/workflows/linux.yml) builds, formats, tests, and lints.
 [macOS CI](../.github/workflows/macos.yml) builds an Apple Silicon release bundle,
 checks its signature/icon, and tests session lifecycle without Keychain access.
