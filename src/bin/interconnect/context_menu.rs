@@ -1,6 +1,6 @@
 //! Event-driven context menus. Resolve actions again when selected so stale
 //! conversation generations and changed permissions cannot dispatch old actions.
-use super::{App, Message, popover, reaction_picker, shell};
+use super::{App, Message, popover, reaction_picker, sender_moderation, shell};
 use iced::{
     Element, Point, Task,
     widget::{button, column, container, text},
@@ -31,6 +31,12 @@ pub enum Target {
 #[derive(Clone, Debug)]
 pub enum Event {
     Open(Target, Point),
+    SenderLoaded(
+        u64,
+        Option<String>,
+        Target,
+        Box<Result<sender_moderation::Prepared, String>>,
+    ),
     Dismiss,
     Choose(Target, String),
     Move(Target, String),
@@ -49,6 +55,9 @@ pub struct State {
     pending: Option<u64>,
     error: Option<String>,
     space_path: Vec<String>,
+    sender: Option<sender_moderation::Prepared>,
+    sender_request: u64,
+    sender_load: Option<iced::task::Handle>,
 }
 enum Action {
     CreateSection,
@@ -132,6 +141,7 @@ impl App {
             && !self.room_settings.is_open()
             && self.message_delete.is_none()
             && self.message_report.is_none()
+            && self.sender_moderation.is_none()
             && self.attachment_picker.is_none()
             && self.clipboard_paste.is_none()
     }
@@ -413,6 +423,41 @@ impl App {
                         ))),
                     ));
                 }
+                if let Some(state) = self.context_menu.as_ref().filter(|s| {
+                    s.target == Target::Message(target.clone()) && s.account == self.account_id
+                }) && let Some(prepared) = self
+                    .demo_sender_moderation(target, &row.sender)
+                    .or_else(|| state.sender.clone())
+                    && prepared.sender.user_id == row.sender
+                    && self.sender_moderation_eligible(target, &row.sender)
+                {
+                    for (allowed, action, label) in [
+                        (
+                            prepared.sender.can_remove,
+                            sender_moderation::Action::Remove,
+                            "Remove sender…",
+                        ),
+                        (
+                            prepared.sender.can_ban,
+                            sender_moderation::Action::Ban,
+                            "Ban sender…",
+                        ),
+                    ] {
+                        if allowed && !self.sender_moderation_pending(&target.room, &row.sender) {
+                            actions.push((
+                                label,
+                                dispatch(Message::SenderModeration(
+                                    sender_moderation::Event::Open(
+                                        target.clone(),
+                                        self.account_id.clone(),
+                                        action,
+                                        Box::new(prepared.clone()),
+                                    ),
+                                )),
+                            ));
+                        }
+                    }
+                }
                 if let Some(action) = self.report_action(row, target.thread, target.generation) {
                     actions.push(("Report message…", dispatch(action)));
                 }
@@ -474,11 +519,40 @@ impl App {
             Event::EditSectionName(_) | Event::SaveSection | Event::CancelSection => {
                 return self.section_form_event(event);
             }
+            Event::SenderLoaded(request, account, target, result) => {
+                if account == self.account_id
+                    && self.context_menu_allowed()
+                    && let Some(state) = &mut self.context_menu
+                    && state.sender_request == request
+                    && state.target == target
+                    && state.account == account
+                {
+                    state.sender_load = None;
+                    match *result {
+                        Ok(prepared) => state.sender = Some(prepared),
+                        Err(error) => {
+                            state.error = Some(format!("{error} Reopen this menu to retry."))
+                        }
+                    }
+                }
+            }
             Event::Open(target, position) => {
                 if !self.context_actions(&target).is_empty() {
                     let focus = menu_prefix(&target).map(|prefix| format!("{prefix}:0"));
+                    self.generation += 1;
+                    let request = self.generation;
+                    let sender_target = match &target {
+                        Target::Message(source) => self
+                            .message_row(source)
+                            .filter(|row| self.sender_moderation_eligible(source, &row.sender))
+                            .map(|row| (source.clone(), row.sender.clone())),
+                        _ => None,
+                    };
+                    let sender = sender_target
+                        .as_ref()
+                        .and_then(|(source, user)| self.demo_sender_moderation(source, user));
                     self.context_menu = Some(State {
-                        target,
+                        target: target.clone(),
                         account: self.account_id.clone(),
                         position,
                         sections: false,
@@ -486,9 +560,40 @@ impl App {
                         pending: None,
                         error: None,
                         space_path: self.location_path(),
+                        sender,
+                        sender_request: request,
+                        sender_load: None,
                     });
                     self.emoji_completion.clear();
                     self.user_completion.clear();
+                    if self.demo.is_none()
+                        && let Some((source, user)) = sender_target
+                        && let Some(directory) = self.model.people_directory.clone()
+                    {
+                        let account = self.account_id.clone();
+                        let (task, handle) = Task::perform(
+                            async move {
+                                let control = directory.room_management(source.room).await?;
+                                let sender = control.clone().sender(user).await?;
+                                Ok(sender_moderation::Prepared {
+                                    sender,
+                                    control: Some(control),
+                                })
+                            },
+                            move |result| {
+                                message(Event::SenderLoaded(
+                                    request,
+                                    account.clone(),
+                                    target.clone(),
+                                    Box::new(result),
+                                ))
+                            },
+                        )
+                        .abortable();
+                        self.context_menu.as_mut().unwrap().sender_load =
+                            Some(handle.abort_on_drop());
+                        return task;
+                    }
                     if let Some(focus) = focus {
                         return iced::widget::operation::focus(focus);
                     }
@@ -830,6 +935,13 @@ impl App {
                         .is_some_and(|removal| state.pending == Some(removal.request));
                     items =
                         items.push(text(if removing { "Removing…" } else { "Saving…" }).size(12));
+                }
+                if state.sender_load.is_some() {
+                    items = items.push(
+                        text("Checking moderation permissions…")
+                            .size(11)
+                            .style(shell::muted_text),
+                    );
                 }
                 if let Some(error) = &state.error {
                     items = items.push(text(error).size(12));
@@ -1468,6 +1580,92 @@ mod tests {
         assert!(app.context_actions(&reply).is_empty());
         open(&mut app, &reply);
         assert!(app.context_menu.is_none());
+    }
+    #[test]
+    fn sender_actions_are_permission_gated_and_open_captured_room_and_thread_confirmations() {
+        for thread in [false, true] {
+            for label in ["Remove sender…", "Ban sender…"] {
+                let mut app = demo_app();
+                if thread {
+                    let _ = app.update(Message::Thread("review".into()));
+                }
+                let target = target(
+                    &app,
+                    thread,
+                    if thread { "review-reply-1" } else { "welcome" },
+                );
+                open(&mut app, &target);
+                assert!(
+                    app.context_actions(&target)
+                        .iter()
+                        .any(|(name, _)| *name == label)
+                );
+                choose(&mut app, &target, label);
+                assert!(app.sender_moderation.is_some());
+                assert!(app.context_menu.is_none());
+                let _ = app.update(Message::Escape);
+                assert!(app.sender_moderation.is_none());
+            }
+        }
+        let mut app = demo_app();
+        for id in ["proposal", "direction"] {
+            let target = target(&app, false, id);
+            open(&mut app, &target);
+            assert!(
+                !app.context_actions(&target)
+                    .iter()
+                    .any(|(name, _)| matches!(*name, "Ban sender…" | "Remove sender…"))
+            );
+        }
+        let target = target(&app, false, "welcome");
+        open(&mut app, &target);
+        std::sync::Arc::make_mut(&mut app.model.rooms)
+            .iter_mut()
+            .find(|r| r.id == "studio")
+            .unwrap()
+            .can_invite = false;
+        choose(&mut app, &target, "Ban sender…");
+        assert!(app.sender_moderation.is_none());
+    }
+    #[test]
+    fn old_sender_permission_results_cannot_replace_a_reopened_menu_or_another_account() {
+        let mut app = demo_app();
+        let target = target(&app, false, "welcome");
+        open(&mut app, &target);
+        let old = app.context_menu.as_ref().unwrap().sender_request;
+        let prepared = app.context_menu.as_ref().unwrap().sender.clone().unwrap();
+        let _ = app.update(message(Event::Dismiss));
+        open(&mut app, &target);
+        let current = app.context_menu.as_ref().unwrap().sender_request;
+        app.context_menu.as_mut().unwrap().sender = None;
+        let _ = app.update(message(Event::SenderLoaded(
+            old,
+            app.account_id.clone(),
+            target.clone(),
+            Box::new(Ok(prepared.clone())),
+        )));
+        assert!(app.context_menu.as_ref().unwrap().sender.is_none());
+        let _ = app.update(message(Event::SenderLoaded(
+            current,
+            Some("@other:example.org".into()),
+            target.clone(),
+            Box::new(Ok(prepared.clone())),
+        )));
+        assert!(app.context_menu.as_ref().unwrap().sender.is_none());
+        let _ = app.update(message(Event::SenderLoaded(
+            current,
+            app.account_id.clone(),
+            target.clone(),
+            Box::new(Err("fixture refusal".into())),
+        )));
+        assert!(app.context_menu.as_ref().unwrap().error.is_some());
+        let _ = app.update(message(Event::SenderLoaded(
+            current,
+            app.account_id.clone(),
+            target,
+            Box::new(Ok(prepared)),
+        )));
+        assert!(app.context_menu.as_ref().unwrap().sender.is_some());
     }
     #[test]
     fn reports_are_available_from_room_and_thread_menus_and_stale_choices_cannot_open_them() {

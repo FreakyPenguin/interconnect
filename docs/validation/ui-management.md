@@ -157,3 +157,36 @@ receipt, Dark/GPU, and native macOS acceptance were not established by this run.
 - Fixtures cover trimmed/omitted/oversized payloads, reason-bearing kick/ban/unban
   and redaction requests, server ban details, stale input, and retry preservation.
   Live-server event propagation and native platform acceptance remain manual.
+
+## Moderate a message sender
+
+- Right-click another person's room message or thread reply. **Remove sender…**
+  and **Ban sender…** appear when the account has permission for that sender.
+  Joined members/invitees can be removed; departed or unknown senders can still
+  be banned. Yourself, protected roles, and already-banned senders have no ban
+  action. Permission lookups run on demand and are cancelled with the menu.
+- The confirmation names the sender and source room and accepts an optional
+  reason. It targets that room even when browsing through a space. Cancel,
+  Escape, navigation, and account changes cannot submit a stale prompt. Drafts,
+  reading positions, and space filtering are preserved; messages are not deleted.
+- Submit rechecks membership and permissions. Keep reasons on failure and require
+  explicit retry. Prevent duplicate pending actions against the same account,
+  room, and sender, including actions from a different message. Admitted writes
+  finish independently of dismissal and release shutdown bookkeeping once.
+- Fixtures cover room/space permission boundaries, lazy-read cancellation,
+  demotion before submission, room/thread menu dispatch, stale lookup results,
+  invalid reasons, drafts, duplicate writes, shutdown, compact layout, Escape,
+  and no idle redraw deadline. Server enforcement and native platform behavior
+  still need dedicated acceptance checks.
+
+Validation on 2026-11-25 for these additions: the locked workspace suite passed
+(396 library tests; two ignored), followed by the final binary suite (738 passed;
+one ignored). Formatting, workspace/all-target Clippy with warnings denied, and
+the locked desktop build passed. The permission fast path also has a fixture
+asserting that a non-moderator's message menu does not request `/members`.
+An isolated Linux headless Wayland demo in Light/Tiny Skia checked sender menus,
+room-specific confirmation and simulated ban, reason entry, ban-by-ID form layout,
+and ban detail presentation; sender confirmation remained usable at 1280×800 and
+640×480. No saved account was used. Live server enforcement/propagation, complete
+native keyboard/IME acceptance, Dark/GPU rendering, macOS, and resource measurements
+remain outside this run.

@@ -141,6 +141,8 @@ mod section_reorder;
 mod selectable;
 #[path = "interconnect/selection.rs"]
 mod selection;
+#[path = "interconnect/sender_moderation.rs"]
+mod sender_moderation;
 #[path = "interconnect/settings.rs"]
 mod settings;
 #[path = "interconnect/shell.rs"]
@@ -227,6 +229,8 @@ struct App {
     context_menu: Option<context_menu::State>,
     message_delete: Option<message_delete::State>,
     message_report: Option<message_report::State>,
+    sender_moderation: Option<sender_moderation::State>,
+    sender_moderation_writes: HashMap<u64, sender_moderation::Sending>,
     reporting: HashMap<u64, (Option<String>, reaction_picker::Target)>,
     message_highlight: message_highlight::State,
     deleting: HashSet<message_delete::Sending>,
@@ -450,6 +454,7 @@ enum Message {
     Replying(message_reply::Event),
     Deletion(message_delete::Event),
     Reporting(message_report::Event),
+    SenderModeration(sender_moderation::Event),
     Edit(DraftKey, text_editor::Action),
     DeleteWord(DraftKey, text_editor::Motion),
     PageConversation {
@@ -506,6 +511,8 @@ impl App {
             context_menu: None,
             message_delete: None,
             message_report: None,
+            sender_moderation: None,
+            sender_moderation_writes: HashMap::new(),
             reporting: HashMap::new(),
             message_highlight: Default::default(),
             deleting: HashSet::new(),
@@ -1026,6 +1033,7 @@ impl App {
             if matches!(
                 message,
                 Message::ContextMenu(_)
+                    | Message::SenderModeration(sender_moderation::Event::Open(..))
                     | Message::Reporting(message_report::Event::Open(_))
                     | Message::Deletion(message_delete::Event::Open(_))
                     | Message::QuickRoom(_)
@@ -1050,6 +1058,14 @@ impl App {
                 return Task::none();
             }
         }
+        if let Some(state) = &self.sender_moderation {
+            if matches!(message, Message::Escape) {
+                return self.update(state.dismiss());
+            }
+            if matches!(message, Message::Focus(_)) {
+                return Task::none();
+            }
+        }
         if let Some(state) = &self.message_report {
             if matches!(message, Message::Escape) {
                 return self.update(state.dismiss());
@@ -1066,10 +1082,13 @@ impl App {
                 return Task::none();
             }
         }
-        if (self.message_delete.is_some() || self.message_report.is_some())
+        if (self.message_delete.is_some()
+            || self.message_report.is_some()
+            || self.sender_moderation.is_some())
             && matches!(
                 &message,
                 Message::ContextMenu(_)
+                    | Message::SenderModeration(sender_moderation::Event::Open(..))
                     | Message::Reporting(message_report::Event::Open(_))
                     | Message::Deletion(message_delete::Event::Open(_))
                     | Message::QuickRoom(_)
@@ -1571,6 +1590,7 @@ impl App {
                 | Message::Replying(_)
                 | Message::Deletion(_)
                 | Message::Reporting(_)
+                | Message::SenderModeration(_)
                 | Message::Edit(..)
                 | Message::DeleteWord(..)
                 | Message::Composing(_)
@@ -2096,6 +2116,7 @@ impl App {
             Message::Replying(event) => action_task = self.message_reply_event(event),
             Message::Deletion(event) => action_task = self.delete_event(event),
             Message::Reporting(event) => action_task = self.report_event(event),
+            Message::SenderModeration(event) => action_task = self.sender_moderation_event(event),
             Message::Composing(active) => {
                 self.composing = active;
                 if !active && let Some(key) = self.emoji_completion.editing.clone() {
@@ -2671,6 +2692,7 @@ impl App {
         self.validate_section_drag();
         self.validate_message_delete();
         self.validate_message_report();
+        self.validate_sender_moderation();
         self.validate_redacted_edits();
         self.validate_context_menu();
         self.validate_download();
@@ -3209,7 +3231,7 @@ impl App {
                     }) if status != iced::event::Status::Captured => Some(Message::Escape),
                     _ => None,
                 })
-            } else if self.message_report.is_some() {
+            } else if self.message_report.is_some() || self.sender_moderation.is_some() {
                 iced::Subscription::none()
             } else if self.message_delete.is_some() {
                 self.delete_subscription()
@@ -3388,7 +3410,8 @@ impl App {
         {
             return self.login_view(authentication);
         }
-        let covered = self.message_report.is_some()
+        let covered = self.sender_moderation.is_some()
+            || self.message_report.is_some()
             || self.poll_creation_open()
             || self.draft_persistence.close_requested
             || self.sign_out_open
@@ -3413,6 +3436,9 @@ impl App {
         if self.membership.open {
             return self
                 .context_menu_view(self.space_menu_view(layers.push(self.membership_view())));
+        }
+        if self.sender_moderation.is_some() {
+            layers = layers.push(self.sender_moderation_dialog());
         }
         if self.message_report.is_some() {
             layers = layers.push(self.report_dialog());

@@ -108,7 +108,10 @@ fn power(role: Role) -> matrix_sdk::ruma::Int {
         Role::Admin => matrix_sdk::ruma::int!(100),
     }
 }
-fn apply_snapshot(snapshot: &mut interconnect::connected::Members, change: &MemberChange) {
+pub(crate) fn apply_snapshot(
+    snapshot: &mut interconnect::connected::Members,
+    change: &MemberChange,
+) {
     let rows = std::sync::Arc::make_mut(&mut snapshot.rows);
     match change {
         MemberChange::Unban(_) => {}

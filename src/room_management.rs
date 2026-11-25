@@ -675,6 +675,135 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn sender_permissions_cover_members_departed_people_and_power_boundaries() {
+        for space in [false, true] {
+            for power in [0, 50, 100] {
+                let (_server, control) = fixture_kind(power, "invite", space).await;
+                for user in ["@test:example.org", "@peer:example.org"] {
+                    let sender = control.clone().sender(user.into()).await.unwrap();
+                    assert!(!sender.can_ban && !sender.can_remove);
+                }
+                for user in ["@other:example.org", "@pending:example.org"] {
+                    let sender = control.clone().sender(user.into()).await.unwrap();
+                    assert_eq!(sender.can_ban, power >= 50);
+                    assert_eq!(sender.can_remove, power >= 50);
+                    assert_eq!(sender.invited, user.contains("pending"));
+                }
+                for user in ["@departed:example.org", "@unknown:elsewhere.org"] {
+                    let sender = control.clone().sender(user.into()).await.unwrap();
+                    assert_eq!(sender.can_ban, power >= 50);
+                    assert!(!sender.can_remove);
+                }
+                let sender = control
+                    .clone()
+                    .sender("@banned:example.org".into())
+                    .await
+                    .unwrap();
+                assert!(!sender.can_ban && !sender.can_remove);
+                assert!(control.sender("invalid".into()).await.is_err());
+            }
+        }
+    }
+    #[tokio::test]
+    async fn non_moderator_message_menus_do_not_download_the_member_list() {
+        let (server, control) = fixture(0, "invite").await;
+        control.0.mark_members_missing();
+        let sender = control.sender("@other:example.org".into()).await.unwrap();
+        assert!(!sender.can_ban && !sender.can_remove);
+        assert!(
+            !server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| r.url.path().ends_with("/members"))
+        );
+    }
+    #[tokio::test]
+    async fn sender_permission_reads_cancel_and_stale_permissions_cannot_write() {
+        let (server, control) = fixture(100, "invite").await;
+        assert!(
+            control
+                .clone()
+                .sender("@other:example.org".into())
+                .await
+                .unwrap()
+                .can_ban
+        );
+        Mock::given(method("GET")).and(path("/_matrix/client/v3/sync"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"next_batch":"demoted","rooms":{"join":{"!space:example.org":{
+                "state":{"events":[{"type":"m.room.power_levels","state_key":"","event_id":"$demoted","sender":"@peer:example.org","origin_server_ts":2,"content":{"users":{"@test:example.org":0,"@peer:example.org":100}}}]},
+                "timeline":{"events":[],"limited":false}
+            }}}}))).with_priority(1).mount(&server).await;
+        control
+            .0
+            .client()
+            .sync_once(SyncSettings::default().timeout(Duration::ZERO))
+            .await
+            .unwrap();
+        assert!(
+            control
+                .clone()
+                .change_member_with_reason(
+                    MemberChange::BanId("@other:example.org".into()),
+                    "Spam".into()
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            control
+                .clone()
+                .change_member_with_reason(
+                    MemberChange::Remove {
+                        user: "@other:example.org".into(),
+                        invited: false
+                    },
+                    "Spam".into()
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            !server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| ["/ban", "/kick"].iter().any(|p| r.url.path().ends_with(p)))
+        );
+        let (server, control) = fixture(100, "invite").await;
+        let started = std::sync::Arc::new(tokio::sync::Notify::new());
+        let notify = started.clone();
+        Mock::given(method("GET"))
+            .and(path_regex(".*/members"))
+            .respond_with(move |_: &wiremock::Request| {
+                notify.notify_one();
+                ResponseTemplate::new(200)
+                    .set_delay(Duration::from_secs(60))
+                    .set_body_json(json!({"chunk":[]}))
+            })
+            .with_priority(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        control.0.mark_members_missing();
+        let task = tokio::spawn(control.sender("@other:example.org".into()));
+        tokio::time::timeout(Duration::from_secs(5), started.notified())
+            .await
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        assert!(
+            !server
+                .received_requests()
+                .await
+                .unwrap()
+                .iter()
+                .any(|r| ["/ban", "/kick"].iter().any(|p| r.url.path().ends_with(p)))
+        );
+    }
+    #[tokio::test]
     async fn moderation_reasons_and_authoritative_ban_details_cover_rooms_and_spaces() {
         for space in [false, true] {
             let (server, control) = fixture_kind(100, "invite", space).await;
@@ -970,6 +1099,14 @@ impl std::fmt::Display for Role {
     }
 }
 #[derive(Clone, Debug)]
+pub struct Sender {
+    pub user_id: String,
+    pub name: String,
+    pub invited: bool,
+    pub can_remove: bool,
+    pub can_ban: bool,
+}
+#[derive(Clone, Debug)]
 pub struct ManagedMember {
     pub member: crate::connected::Member,
     pub power: UserPowerLevel,
@@ -1018,6 +1155,77 @@ pub enum MemberChange {
     },
 }
 impl Management {
+    /// Resolve just the message sender's controls; lazy membership is fetched once
+    /// by the SDK and later menu openings read its synced store.
+    pub async fn sender(self, input: String) -> Result<Sender, String> {
+        tokio::time::timeout(Duration::from_secs(30), async {
+            use matrix_sdk::ruma::events::room::member::MembershipState;
+            self.joined()?;
+            let user = crate::people::parse_user_id(&input)?;
+            let levels = self
+                .0
+                .power_levels()
+                .await
+                .map_err(|_| "Could not check moderation permissions.")?;
+            let own = self.0.own_user_id();
+            if user == own
+                || (!levels.user_can_kick_user(own, &user) && !levels.user_can_ban_user(own, &user))
+            {
+                let cached = self
+                    .0
+                    .get_member_no_sync(&user)
+                    .await
+                    .map_err(|_| "Could not check the sender.")?;
+                return Ok(Sender {
+                    user_id: user.to_string(),
+                    name: cached
+                        .as_ref()
+                        .map_or_else(|| user.to_string(), |m| m.name().to_owned()),
+                    invited: cached
+                        .as_ref()
+                        .is_some_and(|m| m.membership() == &MembershipState::Invite),
+                    can_remove: false,
+                    can_ban: false,
+                });
+            }
+            self.0
+                .sync_members()
+                .await
+                .map_err(|_| "Could not load sender membership.")?;
+            let member = self
+                .0
+                .get_member_no_sync(&user)
+                .await
+                .map_err(|_| "Could not check the sender.")?;
+            let levels = self
+                .0
+                .power_levels()
+                .await
+                .map_err(|_| "Could not check moderation permissions.")?;
+            let own = self.0.own_user_id();
+            let membership = member.as_ref().map(|m| m.membership());
+            Ok(Sender {
+                name: member
+                    .as_ref()
+                    .map_or_else(|| user.to_string(), |m| m.name().to_owned()),
+                invited: membership == Some(&MembershipState::Invite),
+                can_remove: user != own
+                    && matches!(
+                        membership,
+                        Some(MembershipState::Join | MembershipState::Invite)
+                    )
+                    && levels.user_can_kick_user(own, &user),
+                can_ban: user != own
+                    && membership != Some(&MembershipState::Ban)
+                    && levels.user_can_ban_user(own, &user),
+                user_id: user.to_string(),
+            })
+        })
+        .await
+        .map_err(|_| {
+            "Loading sender controls timed out. Reopen the message menu to retry.".to_owned()
+        })?
+    }
     pub async fn members(self) -> Result<Roster, String> {
         tokio::time::timeout(Duration::from_secs(30), async {
             self.joined()?;
