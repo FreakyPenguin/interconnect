@@ -20,6 +20,7 @@ pub mod image_media;
 pub mod live;
 pub mod media;
 pub mod message_document;
+pub mod message_reporting;
 pub mod navigation;
 pub mod navigation_preferences;
 pub mod notifications;

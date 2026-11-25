@@ -210,6 +210,7 @@ impl App {
             && !self.draft_persistence.close_requested
             && !self.membership.open
             && self.message_delete.is_none()
+            && self.message_report.is_none()
             && !self.bookmarks.open
             && !self.global_search.open
             && !self.space_settings.is_open()

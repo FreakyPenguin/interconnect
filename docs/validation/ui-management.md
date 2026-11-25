@@ -98,3 +98,32 @@ use need the dedicated desktop/connected checks.
   cancellation, reload, and preservation of the open conversation. Check a
   dedicated server for remote bans/unbans, permission loss, and failed requests;
   these connected checks have not been run by the fixtures.
+
+## Reporting messages
+
+- In a room or thread reply, right-click a message and choose **Report message…**.
+  This includes rooms reached through a space. The dialog shows the room, sender, and
+  message preview, requires a reason (up to 4000 UTF-8 bytes), and sends only after
+  **Send report**. Reports go to the account's homeserver administrators.
+- Empty/oversized reasons cannot submit. Cancel/Escape preserve both composers,
+  drafts, scroll positions, and content. Reporting does not redact or ban. Demo
+  shows a simulated success and makes no network request.
+- During submission, prevent duplicate reports for the same account/room/event.
+  Closing or navigating does not retarget an admitted request. Late responses
+  must not update a newer dialog/account; quitting waits for admitted writes.
+  Errors preserve the reason and describe ambiguous delivery without auto-retry.
+- Headless fixtures cover request paths/bodies for room and space events, ordinary
+  member access, failure/cancellation, stale completions, drafts, small-window
+  layout, and absence of idle redraw timers. With authorized dedicated profiles,
+  verify report receipt in homeserver administration and permission/server errors.
+  These live checks and native Linux/macOS acceptance remain manual.
+
+Validation on 2026-11-25: locked workspace tests passed (388 library tests;
+2 ignored); after the final UI refinements, all 727 binary tests passed (1
+ignored). Formatting, workspace/all-target Clippy with warnings denied, and the
+locked desktop build passed. An isolated Linux headless Wayland demo with
+Tiny Skia/Light verified room ban/unban and banned-list scrolling at 1280×800 and
+640×480, space ban scope and banned-list display, and report opening, preview,
+reason entry, and simulated submission. Keyboard dismissal was also covered by
+rendered-widget fixtures. No connected account was used; live moderation/report
+receipt, Dark/GPU, and native macOS acceptance were not established by this run.

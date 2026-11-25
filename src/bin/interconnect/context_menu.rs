@@ -131,6 +131,7 @@ impl App {
             && self.topic_editor.is_none()
             && !self.room_settings.is_open()
             && self.message_delete.is_none()
+            && self.message_report.is_none()
             && self.attachment_picker.is_none()
             && self.clipboard_paste.is_none()
     }
@@ -411,6 +412,9 @@ impl App {
                             target.clone(),
                         ))),
                     ));
+                }
+                if let Some(action) = self.report_action(row, target.thread, target.generation) {
+                    actions.push(("Report message…", dispatch(action)));
                 }
                 if let Some(action) = self.delete_action(row, target.thread, target.generation) {
                     actions.push(("Delete message…", dispatch(action)));
@@ -1464,6 +1468,35 @@ mod tests {
         assert!(app.context_actions(&reply).is_empty());
         open(&mut app, &reply);
         assert!(app.context_menu.is_none());
+    }
+    #[test]
+    fn reports_are_available_from_room_and_thread_menus_and_stale_choices_cannot_open_them() {
+        for thread in [false, true] {
+            let mut app = demo_app();
+            if thread {
+                let _ = app.update(Message::Thread("review".into()));
+            }
+            let target = target(
+                &app,
+                thread,
+                if thread { "review-reply-2" } else { "review" },
+            );
+            open(&mut app, &target);
+            assert!(
+                app.context_actions(&target)
+                    .iter()
+                    .any(|(label, _)| *label == "Report message…")
+            );
+            choose(&mut app, &target, "Report message…");
+            assert!(app.message_report.is_some());
+            assert!(app.context_menu.is_none());
+            let _ = app.update(Message::Escape);
+            assert!(app.message_report.is_none());
+            open(&mut app, &target);
+            let _ = app.update(Message::Room("general".into()));
+            choose(&mut app, &target, "Report message…");
+            assert!(app.message_report.is_none());
+        }
     }
     #[test]
     fn thread_original_actions_and_modal_and_focus_dismissal() {

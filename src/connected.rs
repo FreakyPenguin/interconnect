@@ -534,6 +534,10 @@ impl Composer {
             })?
     }
 
+    pub async fn report_message(self, event: String, reason: String) -> Result<(), String> {
+        crate::message_reporting::report(self.0.room(), event, reason).await
+    }
+
     /// Set the state shown by a chip, so repeated/stale clicks cannot invert it.
     pub async fn set_reaction(
         self,
