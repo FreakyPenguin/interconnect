@@ -77,7 +77,7 @@ Light/Dark in Settings and let each state settle before capturing.
 Capture at 1440×960; resize GIF app content to 1200×800 with captions below
 (1200×876 total). Hold steps for 2–4 seconds, SAS comparison for 5. Use a shared
 256-color palette and inspect decoded frames. Keep fixtures/raw captures outside Git.
-Existing media predates current code/table controls; see [the guide](keyboard.md#code-blocks).
+Existing media predates current code/table controls; see [the guide](messages.md#code-blocks).
 
 For the authentication tour, use a temporary capture-only build outside the
 repository: render `Authentication::SignIn` over demo, keep SDK subscriptions off,
@@ -287,7 +287,7 @@ Use the native bundle for prompts and notification identity. See
 
 Linux file picking uses the desktop portal; macOS uses a native picker.
 Container runs need host-selected paths mounted at the same paths inside the
-container. See [composition](keyboard.md#composition) for attachment behavior.
+container. See [attachments](messages.md#attachments) for staging and send behavior.
 
 External attachment opening uses `xdg-open` or macOS `open`; temporary files stay
 until quit. Drops depend on the [Winit fork](architecture/winit-file-drops.md).

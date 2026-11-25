@@ -36,12 +36,6 @@ Received reply previews are focusable buttons: Enter/Space opens the original
 message, loading older history when necessary. Thread replies open in their thread;
 its original root opens in the room timeline.
 
-Message destinations opened from reply previews, Matrix message/file links,
-notifications, saved messages, global search, and pins receive a static tint and
-outline for three seconds once visible. Highlight expiry does not change focus or
-scroll; navigating away cancels the old marker. Restored reading positions stay
-unmarked.
-
 Back/forward restores the room, open thread, and reading location without changing
 the selected space filter. History keeps up to 64 locations per direction during
 the session; opening another conversation after Back clears Forward.
@@ -53,18 +47,13 @@ the space and room-text filters while preserving them. Room metadata determines
 unread status; notification-inbox flags and process-local thread badges are separate.
 
 Pickers: Up/Down selects, Enter opens, Escape closes. Room-search Enter steps to
-the previous match; account-search Enter submits. Account-wide search can filter
-by joined room, exact Matrix sender ID, and inclusive From/Through dates (UTC).
-Changing a filter clears the current results; press Enter or Search to submit.
-Filters also apply to older encrypted history and subsequent server pages. Tab
-reaches the room selector; arrows select a room. In-room search match arrows and
-Close are also keyboard accessible.
+the previous match; account-search Enter submits. In account-wide search, Tab
+reaches the room selector; arrows select a room. After changing a search filter,
+press Enter or activate Search to submit. In-room search match arrows and Close
+are also keyboard accessible. See [search filters](messages.md#finding-messages).
 
-Room topic: activate its caret or styled header snippet to expand/collapse the
-full formatted topic below the header. The conversation stays interactive;
-Escape collapses the topic. Copy selected text with Ctrl+C/Cmd+C, or choose
-Copy Markdown for the original source. Edit opens a separate dialog where
-Tab/Shift+Tab stay inside and Escape cancels.
+Room topic: Escape collapses an expanded topic. Copy selected text with
+Ctrl+C/Cmd+C. In the topic editor, Tab/Shift+Tab stay inside and Escape cancels.
 
 The New chat picker (Ctrl+N / macOS: Cmd+N) accepts `#room:server`,
 `!room:server`, matrix.to room links, and `matrix:` room links. Enter opens known
@@ -77,12 +66,8 @@ Space picker searches names/paths; Enter selects without switching conversation,
 Escape returns to composer, Tab refocuses search, and Ctrl+P/Ctrl+Shift+P
 (macOS: Cmd+P/Cmd+Shift+P) switches room/space search. Ctrl+K (macOS: Cmd+K)
 also switches to room search.
-Space changes preserve drafts and reading positions. Space settings includes
-local and published addresses, a main address, and directory listing controls.
-In **Find rooms to join**, writable spaces also offer **Link a room or subspace**:
-paste an alias, room ID, or Matrix room link, then choose **Link to this space**.
-Use **Link** beside a discovery result to add it without joining. These actions
-keep the current conversation open.
+Space changes preserve drafts and reading positions. See
+[space settings and linking](settings.md#spaces-and-member-management).
 
 Breadcrumb bar: Left/Right moves controls, Home/End reaches ends, Down opens a
 menu, Enter/Space activates. Home's arrow exposes the whole tree; long paths put
@@ -110,19 +95,10 @@ corresponding room or thread composer.
 
 ## Notifications
 
-The bell to the left of your account avatar opens Notifications. Its badge counts
-unread entries. The screen opens on **Unread**; **History** also includes entries
-marked read. Filter by Messages, Invitations, or Verification.
-
 Tab/Shift+Tab traverse the screen; Enter/Space activate a focused entry or control.
 F6/Shift+F6 move between the breadcrumb bar and the notification screen.
 Escape returns to the conversation with its drafts and reading positions intact.
-Opening an entry goes to its conversation/thread, invitation review, or device
-verification prompt. Invitations and verification still need your explicit choice.
-Unavailable entries remain in History and can still be marked read or unread.
-
-**Mark read**, **Mark unread**, and **Mark all read** affect this notification list;
-they do not send conversation read receipts.
+See [notification behavior](settings.md#notifications-and-recent-history).
 
 ## Composition
 
@@ -154,10 +130,8 @@ the insertion position. Ctrl+K deletes to paragraph end (or deletes the newline
 when already there). Ctrl+K does not populate a kill ring; Ctrl+Y yank, Ctrl+T
 transpose, and Ctrl+L centering are not implemented.
 
-Paste prefers file lists, then images, then text. Picker/paste/drop append
-attachments to that conversation's draft (50 MiB each). Files send individually
-in order, caption on first. Partial queue admission leaves only remaining files
-staged; caption clears when its file queues. Attachments do not survive restart.
+Paste prefers file lists, then images, then text. See
+[attachments](messages.md#attachments) for staging and send behavior.
 
 | Completion | Trigger |
 | --- | --- |
@@ -167,81 +141,34 @@ staged; caption clears when its file queues. Attachments do not survive restart.
 | Room notification | Choose **@room — Everyone in this room**; requires permission. |
 
 Up/Down selects, Enter/Tab or click inserts without sending, Escape dismisses.
-In full emoji search, Enter chooses the first match. Partial user/room-label edits
-keep their target; deleting/replacing the whole label removes it. Any alteration
-to a bound `@room` removes its notification identity. Literal `@room`, code, and
-ordinary links do not create notifications. Room links do not notify everyone.
+In full emoji search, Enter chooses the first match. See
+[mentions and room links](messages.md#mentions-and-room-links).
 
 Select timeline text and Ctrl+C / Cmd+C to copy across messages. Copy uses
 displayed text, image alternatives, and LaTeX source; hidden spoilers use placeholders.
 
-Queued or failed local echoes offer **Cancel send…**, followed by **Cancel send**
-or **Keep sending**. Tab cycles confirmation controls; Enter/Space activates, and
-Escape keeps sending. Both choices return focus to the composer. Cancellation stops
-pending uploads; a message already being sent may finish and then be removed by
-Matrix. Sent messages use the separate confirmed **Delete message…** action.
+In the **Cancel send…** confirmation, Tab cycles controls; Enter/Space activates,
+and Escape keeps sending. Both choices return focus to the composer. See
+[cancelling sends](messages.md#cancelling-sends).
 
 ## Code blocks
 
-Long code blocks initially show at most 12 lines or 2 KiB, whichever limit is
-reached first. The upper-right corner contains icons with hover tooltips:
+Tab/Shift+Tab visits visible **Copy code**, **Save code**, and **Expand code** /
+**Collapse code** controls in visual order. The focused control shows an outline
+and its tooltip; Enter/Space activates it. Escape releases code-control focus.
+Focus stays on the same control through expansion and resize; controls outside
+the conversation viewport are skipped.
 
-| Icon | Action |
-| --- | --- |
-| Overlapping pages | **Copy code**: copy the entire block, including text outside the preview. |
-| Download | **Save code**: choose a file for the entire block; the suggested name is `code.txt`. |
-| Down/up chevron | **Expand code** / **Collapse code**; shown only when the block exceeds the preview limit. |
-
-Tab / Shift+Tab visits visible corner icons in visual order. The focused icon
-shows an outline and its tooltip; Enter or Space activates it. Escape releases
-code-control focus. Focus stays on the same icon through expansion and resize;
-controls outside the conversation viewport are skipped.
-
-A translucent fade with **Expand code** at the bottom also expands a truncated
-preview. Wide lines stay unwrapped: drag the horizontal scrollbar, click its
-track, or use horizontal trackpad scrolling. The bar appears only when the
-currently rendered code overflows; vertical scrolling stays with the conversation.
-
-Copy/Save retain code whitespace and Unicode; hidden spoilers remain placeholders.
-Controls preserve an existing text selection. Recent conversations restore
-selection, expansion, and horizontal offsets when switching rooms or reopening
-threads during the session, including the pinned thread original's own scroll
-area. These presentation choices do not persist across app restarts.
-
-## Markdown tables
-
-Use pipe-table syntax in Markdown mode, then preview or send:
-
-```markdown
-| Operation | Items |
-| :--- | ---: |
-| `sync()` | 1024 |
-```
-
-Received HTML tables use the same grid. Cells wrap within shared column widths;
-row height follows the tallest cell, headers are emphasized, and left/center/right
-alignment is retained. Selecting and copying a table uses tabs between cells and
-newlines between rows, including empty cells. Plain text mode keeps the source
-literal. See [table limits](limitations.md#conversations-and-storage).
-
-To change conversation typography without enlarging navigation and controls,
-use Settings → General → **Message text**; see [settings](settings.md#configuration-file).
+See [code block previews and controls](messages.md#code-blocks).
 
 ## Dialogs and viewers
-
-Routine actions use contextual icon tooltips: disk for Save, circular arrow for
-Reload/Retry, X for Close/Cancel, and arrows for returning or paging. Destructive
-confirmation buttons keep explicit action text. Settings fills the window with
-categories and Save/Close in its toolbar; closing edited preferences asks before
-discarding them.
 
 Dialog buttons accept Enter/Space, checkboxes toggle with Enter/Space, and
 focused dropdowns accept arrows/Home/End. Escape closes an open dropdown before
 dismissing its dialog. Text input and IME composition retain their normal keys.
 Settings, metadata, and emoji forms ask before discarding unsaved changes;
 Escape on that confirmation keeps editing. Explicit Cancel buttons discard their
-form. The sidebar has separate New chat (+) and Create room icons. Space/subspace
-creation is in its sidebar actions (⋯) menu; creation shortcuts still work.
+form.
 
 | View | Linux / Windows | macOS |
 | --- | --- | --- |
@@ -251,35 +178,16 @@ creation is in its sidebar actions (⋯) menu; creation shortcuts still work.
 | Verification | Escape closes and cancels active exchange. | Escape closes and cancels active exchange. |
 | Saved messages / image viewer | Escape returns to conversation. | Escape returns to conversation. |
 
-Message and new-poll drafts, plus room/thread reading positions, survive restart.
-Reading-position restoration needs available history/keys and falls back to
-newest if unavailable.
-
 ## Polls
 
-Use the chart icon immediately to the right of emoji in a room or thread
-composer to open **Create poll**. Enter a question and 2–20 distinct, nonempty
-answers. Enable **Allow multiple answers** to set a selection limit and **Hide
-results until the poll ends** to delay results; these options can be combined.
-Defaults are single-choice with visible results.
+In the [poll form](messages.md#polls), Tab/Shift+Tab traverses controls;
+Enter/Space activates focused buttons and checkboxes. In an answer field,
+Alt+Up/Down (macOS: Cmd+Option+Up/Down) reorders the answer and retains focus.
+Escape closes an open dropdown or cancels an active drag before dismissing the
+form. When editing a sent poll, Escape cancels the edit.
 
-Tab/Shift+Tab traverses the form. The plus icon adds an answer, the trash icon
-removes one, the checkmark creates/saves the poll, and X closes the form; hover
-for their action names. Enter/Space activates focused buttons and checkboxes.
-Drag an answer's grip, or use **Alt+Up/Down** (macOS: **Cmd+Option+Up/Down**) in its
-field, to reorder it. Escape closes an open dropdown or cancels an active drag
-before dismissing the form. Closing retains unfinished new-poll values separately
-from the conversation's message draft.
+In the **End poll** confirmation, Escape keeps the poll open.
 
-For quick text entry, type `/poll Question?` followed by 2–20 answers on separate
-lines, or choose **Insert text template** from the form when the composer is
-empty. Edit the template and use the normal Send shortcut. This path creates a
-disclosed single-choice poll in that room or thread and requires no explicit
-reply target or attachments; validation errors retain the draft.
-
-Your open polls offer **End poll**, followed by an inline confirmation. **Keep
-open** or Escape cancels it. Ending closes voting and reveals hidden results.
-Use the pencil action or **Edit poll** context-menu entry to edit your own sent
-poll before anyone responds or it ends. The checkmark saves changes to the
-original poll; X/Escape cancels the edit and preserves other drafts. Responses
-also block editing when the poll's results are hidden.
+To create a poll from the composer, type `/poll Question?` followed by 2–20 answers
+on separate lines, then use the normal Send shortcut. See
+[poll requirements](messages.md#polls).

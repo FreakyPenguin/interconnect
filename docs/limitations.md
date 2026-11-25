@@ -76,13 +76,13 @@ builds are experimental.
 - MSC3381 polls support voting and single- or multiple-choice creation in rooms
   and threads, with visible or hidden results. Only your own polls can be ended
   or edited; editing requires no responses and no end event. Hidden results
-  become visible when the poll ends. See [poll controls](keyboard.md#polls) and
+  become visible when the poll ends. See [poll controls](messages.md#polls) and
   [poll validation](validation/connected-ui.md#polls) for interoperability limits.
 - In-room search checks loaded room messages. Account-wide search shows at most
   200 results; older encrypted history requires explicit scans of up to 1,000
   events per batch. Results depend on server search support, available history,
   and encryption keys; there is no complete persistent search index. See
-  [search controls](keyboard.md#navigation).
+  [search filters](messages.md#finding-messages).
 - [Saved messages](bookmarks.md) use experimental MSC4482 event names, which may
   differ in other clients. Initial hydration loads all
   bookmark history; writes require complete decrypted bookmark history and do
@@ -90,7 +90,7 @@ builds are experimental.
 - Markdown pipe tables and received HTML tables use a native grid with wrapping
   cells and left/center/right alignment. At most 32 columns; nested tables fall
   back to plain text, and row/column spans are flattened into individual cells.
-  See [table controls](keyboard.md#markdown-tables).
+  See [table formatting](messages.md#markdown-tables).
 - No visual rich-text editor, inline-image authoring, formatted media captions,
   language detection, or composer-source highlighting. Code highlighting needs a
   bundled declared language; blocks over 16 KiB or lines over 2048 bytes stay

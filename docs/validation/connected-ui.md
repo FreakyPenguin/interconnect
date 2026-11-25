@@ -305,7 +305,7 @@ Check encrypted/offline delivery, retry, partial admission, and shutdown.
 
 ## Polls
 
-Use the [poll controls](../keyboard.md#polls) and a second client:
+Use the [poll controls](../messages.md#polls) and a second client:
 
 - Create all four disclosure/single/multi-choice modes in room/thread forms and the
   text-template path. Check 2–20 distinct answers, explicit multi-choice limit,

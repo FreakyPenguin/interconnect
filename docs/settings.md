@@ -5,6 +5,10 @@ Save applies edits; Close asks before discarding them. Defaults stages defaults;
 Advanced → Reload rereads the file. Demo keeps changes in memory and ignores saved
 settings/accounts, including `--config`.
 
+Routine dialog actions use contextual icon tooltips: disk for Save, circular
+arrow for Reload/Retry, X for Close/Cancel, and arrows for returning or paging.
+Destructive confirmation buttons keep explicit action text.
+
 ## Privacy
 
 **Send typing indicators** and **Share read receipts** default on. Disabling typing
@@ -156,10 +160,19 @@ filesystem compare-and-swap guarantee.
 
 ## Notifications and recent history
 
-Native alerts/previews are independent of inbox collection. The bell shows unread
-messages, invitations, and verification; History includes read entries. Up to 256
-entries/read flags persist encrypted per profile/device and do not change Matrix
-receipts. Preview changes apply to new entries. See [notifications](validation/notifications.md).
+Native alerts/previews are independent of inbox collection. Preview changes apply
+to new entries. Up to 256 entries/read flags persist encrypted per profile/device
+and do not change Matrix receipts. See [notifications](validation/notifications.md).
+
+The bell to the left of your account avatar opens Notifications. Its badge counts
+unread entries. The screen opens on **Unread**; **History** also includes entries
+marked read. Filter by Messages, Invitations, or Verification.
+
+Opening an entry goes to its conversation/thread, invitation review, or device
+verification prompt. Invitations and verification still need your explicit choice.
+Unavailable entries remain in History and can still be marked read or unread.
+**Mark read**, **Mark unread**, and **Mark all read** affect this notification list;
+they do not send conversation read receipts. See [keyboard controls](keyboard.md#notifications).
 
 ## Network proxies
 
@@ -203,6 +216,11 @@ history settings. Reload replaces edits. Shared fields require permission;
 restricted/knock/custom access stays read-only. Public access does not list a room
 in a directory; history visibility does not provide old keys.
 
+Activate the room topic's caret or styled header snippet to expand/collapse the
+full formatted topic below the header. The conversation stays interactive.
+Copy selected text with Ctrl+C/Cmd+C, or choose **Copy Markdown** for the original
+source. **Edit** opens a separate dialog; see [keyboard controls](keyboard.md#navigation).
+
 Notification presets: account default, all messages, mentions/keywords, mute.
 They sync through Matrix push rules; mute does not clear unread badges.
 
@@ -226,8 +244,16 @@ may need Include subspaces. Linking an existing result/address is independent of
 
 ## Spaces and member management
 
+Space settings includes local and published addresses, a main address, and
+directory listing controls. In **Find rooms to join**, writable spaces also offer
+**Link a room or subspace**: paste an alias, room ID, or Matrix room link, then
+choose **Link to this space**. Use **Link** beside a discovery result to add it
+without joining. These actions keep the current conversation open.
+
 Globe-plus creates a root space from Home or a subspace in the selected writable
-space. Spaces are unencrypted, private/public. If linking fails after creation,
+space, through the sidebar actions (⋯) menu. The sidebar has separate **New chat**
+(+) and **Create room** icons. Spaces are unencrypted, private/public. If linking
+fails after creation,
 **Retry adding to space** reuses the ID; inspect the tree after ambiguous creation.
 
 For joined spaces, **Sidebar actions → Add this space to another space…** adds a

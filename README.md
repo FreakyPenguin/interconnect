@@ -46,8 +46,8 @@ bookmark the ones you want to find again.
 ![Dark theme: syntax-highlighted code and a LaTeX draft toggled between Markdown source and rendered preview](docs/images/formatting.gif)
 
 Images use local demo data and predate the current code controls. See
-[code blocks](docs/keyboard.md#code-blocks),
-[Markdown tables](docs/keyboard.md#markdown-tables),
+[code blocks](docs/messages.md#code-blocks),
+[Markdown tables](docs/messages.md#markdown-tables),
 [keyboard shortcuts](docs/keyboard.md), [settings](docs/settings.md), and
 [current limitations](docs/limitations.md) for the implemented behavior.
 

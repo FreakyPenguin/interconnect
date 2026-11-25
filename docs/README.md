@@ -2,8 +2,9 @@
 
 See the [project README](../README.md) for features and screenshots.
 
-- Using the client: [shortcuts and message controls](keyboard.md),
-  [settings and profiles](settings.md), [saved messages](bookmarks.md).
+- Using the client: [keyboard shortcuts](keyboard.md),
+  [messages and conversations](messages.md), [settings and profiles](settings.md),
+  [saved messages](bookmarks.md).
 - Scope: [limitations](limitations.md), [ideas](todo.md).
 - Development: [build, packaging, and desktop setup](development.md).
 - Architecture: [client](architecture/client.md), [local state](architecture/drafts.md),
