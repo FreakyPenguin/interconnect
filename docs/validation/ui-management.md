@@ -75,3 +75,16 @@ for server permissions and writes.
 UI fixtures cover layout, keyboard actions, stale results, drafts, and redraw
 deadlines. Native clipboard/browser/pickers, live server writes, macOS, and resource
 use need the dedicated desktop/connected checks.
+
+## Basic moderation
+
+- In room members, the room People sidebar, and space settings, Ban requires a
+  person-specific confirmation. Cancel, filtering, and paging must not ban anyone.
+  Members and pending invitees are eligible only when permissions allow; hide
+  controls for yourself and peers above the permitted power boundary.
+- A space ban affects the space alone. Child-room membership, the current
+  conversation, drafts, and reading positions remain intact.
+- Backend fixtures cover room/space ban and unban requests, permission boundaries,
+  stale membership, and single-attempt server failures. UI fixtures cover ban
+  confirmation/cancellation and conversation preservation. Live server behavior,
+  native desktop layout, and macOS still require dedicated acceptance checks.

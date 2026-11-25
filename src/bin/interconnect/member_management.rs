@@ -60,6 +60,7 @@ pub enum Event {
     Picker(u64, people_picker::Event),
     Invite,
     Remove(String),
+    Ban(String),
     Role(String, Role),
     Confirm,
     Cancel,
@@ -93,7 +94,10 @@ fn power(role: Role) -> matrix_sdk::ruma::Int {
 fn apply_snapshot(snapshot: &mut interconnect::connected::Members, change: &MemberChange) {
     let rows = std::sync::Arc::make_mut(&mut snapshot.rows);
     match change {
-        MemberChange::Remove { user, .. } => rows.retain(|member| member.user_id != *user),
+        MemberChange::Unban(_) => {}
+        MemberChange::Remove { user, .. } | MemberChange::Ban { user, .. } => {
+            rows.retain(|member| member.user_id != *user)
+        }
         MemberChange::Role { user, role, .. } => {
             if let Some(member) = rows.iter_mut().find(|member| member.user_id == *user) {
                 member.role = role.to_string();
@@ -133,17 +137,22 @@ fn apply(roster: &mut Roster, change: &MemberChange) {
                     },
                     power: UserPowerLevel::Int(matrix_sdk::ruma::int!(0)),
                     can_remove: false,
+                    can_ban: false,
                     roles: vec![],
                 });
             }
         }
-        MemberChange::Remove { user, .. } => roster.rows.retain(|m| m.member.user_id != *user),
+        MemberChange::Unban(_) => {}
+        MemberChange::Remove { user, .. } | MemberChange::Ban { user, .. } => {
+            roster.rows.retain(|m| m.member.user_id != *user)
+        }
         MemberChange::Role { user, role, .. } => {
             if let Some(member) = roster.rows.iter_mut().find(|m| m.member.user_id == *user) {
                 member.power = UserPowerLevel::Int(power(*role));
                 member.member.role = role.to_string();
                 // Permissions are a snapshot; require Reload before another administrative action.
                 member.can_remove = false;
+                member.can_ban = false;
                 member.roles.clear();
             }
         }
@@ -181,6 +190,7 @@ impl App {
                 Host::Panel => &mut self.space_settings.panel,
                 Host::Sidebar => &mut self.space_settings.sidebar,
             }) && panel.request == panel_request
+                && panel.account == account
             {
                 panel.pending = false;
                 match result {
@@ -288,6 +298,7 @@ impl App {
                                 };
                                 ManagedMember {
                                     can_remove: can_manage && !own && value < 100,
+                                    can_ban: can_manage && !own && value < 100,
                                     power: UserPowerLevel::Int(value.try_into().unwrap()),
                                     member,
                                     roles,
@@ -348,6 +359,20 @@ impl App {
                         .find(|m| m.member.user_id == user && m.can_remove)
                 }) {
                     panel.members.confirm = Some(MemberChange::Remove {
+                        user,
+                        invited: member.member.invited,
+                    });
+                }
+            }
+            Event::Ban(user) if !panel.pending => {
+                panel.success = false;
+                panel.members.feedback = None;
+                if let Some(member) = panel.members.roster.as_ref().and_then(|r| {
+                    r.rows
+                        .iter()
+                        .find(|m| m.member.user_id == user && m.can_ban)
+                }) {
+                    panel.members.confirm = Some(MemberChange::Ban {
                         user,
                         invited: member.member.invited,
                     });
@@ -414,7 +439,8 @@ impl App {
                             roster.rows.iter().map(|m| m.member.clone()).collect(),
                         );
                     }
-                    if let MemberChange::Remove { user, .. } = &change
+                    if let MemberChange::Remove { user, .. } | MemberChange::Ban { user, .. } =
+                        &change
                         && let Some(invitations) = demo.invitations.get_mut(&panel.id)
                     {
                         invitations.retain(|m| m.user_id != *user);
@@ -727,18 +753,30 @@ pub(crate) fn member_controls<'a>(
         iced::widget::space().into()
     };
 
+    let ban = button(text("Ban").size(12))
+        .padding([6, 8])
+        .style(shell::quiet_button)
+        .keyboard_navigation(true)
+        .on_press_maybe(
+            (managed.can_ban && !busy).then(|| host.message(Event::Ban(member.user_id.clone()))),
+        );
+    let moderation: Element<'_, Message> = if managed.can_ban {
+        row![ban, removal].spacing(4).into()
+    } else {
+        removal
+    };
     if matches!(host, Host::Sidebar) {
         row![
             container(role).width(128),
             iced::widget::space().width(Length::Fill),
-            container(removal).width(32),
+            moderation,
         ]
         .spacing(8)
         .width(Length::Fill)
         .align_y(iced::Alignment::Center)
         .into()
     } else {
-        row![container(role).width(128), container(removal).width(32)]
+        row![container(role).width(128), moderation]
             .spacing(12)
             .align_y(iced::Alignment::Center)
             .into()
@@ -757,6 +795,8 @@ impl std::fmt::Display for RoleChoice {
 fn change_user(change: &MemberChange) -> &str {
     match change {
         MemberChange::Invite(user)
+        | MemberChange::Ban { user, .. }
+        | MemberChange::Unban(user)
         | MemberChange::Remove { user, .. }
         | MemberChange::Role { user, .. } => user,
     }
@@ -764,6 +804,10 @@ fn change_user(change: &MemberChange) -> &str {
 fn change_feedback(change: &MemberChange) -> String {
     match change {
         MemberChange::Invite(user) => format!("Invitation sent to {user}."),
+        MemberChange::Ban { user, .. } => format!("{user} banned."),
+        MemberChange::Unban(user) => {
+            format!("{user} unbanned. They have not been invited or rejoined.")
+        }
         MemberChange::Remove {
             user,
             invited: true,
@@ -793,6 +837,12 @@ fn confirmation(
             }
         ),
         MemberChange::Role { user, role, .. } => format!("Make {user} {role}?"),
+        MemberChange::Ban { user, .. } => {
+            format!("Ban {user}? They cannot join or be invited until unbanned.")
+        }
+        MemberChange::Unban(user) => {
+            format!("Unban {user}? This allows joining or inviting under the current access rules.")
+        }
         _ => String::new(),
     };
     let label = match change {
@@ -800,8 +850,13 @@ fn confirmation(
         MemberChange::Remove { invited: false, .. } => "Remove member",
         MemberChange::Role { .. } => "Change role",
         MemberChange::Invite(_) => "Send invitation",
+        MemberChange::Ban { .. } => "Ban member",
+        MemberChange::Unban(_) => "Unban member",
     };
-    let destructive = matches!(change, MemberChange::Remove { .. });
+    let destructive = matches!(
+        change,
+        MemberChange::Remove { .. } | MemberChange::Ban { .. }
+    );
     container(
         column![
             text(description).size(14),
@@ -1080,6 +1135,55 @@ mod tests {
         assert!(panel.error.is_none());
         let _ = app.update(Message::Thread("proposal".into()));
         assert!(app.space_settings.sidebar.is_none());
+    }
+    #[test]
+    fn bans_require_confirmation_in_rooms_spaces_and_sidebar_and_preserve_drafts() {
+        for space in [false, true] {
+            let mut app = demo_app();
+            let selected = app.selection.room.clone();
+            let key = app.draft_key(false).unwrap();
+            app.drafts.get_mut(&key).unwrap().content =
+                iced::widget::text_editor::Content::with_text("unfinished");
+            app.scroll_positions.insert(key.clone(), 120.0);
+            open(&mut app, space);
+            let user = "@maya:example.org";
+            let _ = app.update(event(Event::Ban(user.into())));
+            assert!(rows(&app).iter().any(|m| m.member.user_id == user));
+            let _ = app.update(event(Event::Cancel));
+            let _ = app.update(event(Event::Confirm));
+            assert!(rows(&app).iter().any(|m| m.member.user_id == user));
+            let _ = app.update(event(Event::Ban("@you:example.org".into())));
+            assert!(
+                app.space_settings
+                    .panel
+                    .as_ref()
+                    .unwrap()
+                    .members
+                    .confirm
+                    .is_none()
+            );
+            let _ = app.update(event(Event::Ban(user.into())));
+            let _ = app.update(event(Event::Confirm));
+            assert!(!rows(&app).iter().any(|m| m.member.user_id == user));
+            let _ = app.update(event(Event::Reload));
+            assert!(!rows(&app).iter().any(|m| m.member.user_id == user));
+            assert_eq!(app.selection.room, selected);
+            assert_eq!(app.drafts[&key].content.text(), "unfinished");
+            assert_eq!(app.scroll_positions[&key], 120.0);
+        }
+        let mut app = demo_app();
+        open_sidebar(&mut app);
+        let _ = app.update(Host::Sidebar.message(Event::Ban("@maya:example.org".into())));
+        let _ = app.update(Host::Sidebar.message(Event::Confirm));
+        assert!(
+            !app.model
+                .members
+                .as_ref()
+                .unwrap()
+                .rows
+                .iter()
+                .any(|m| m.user_id == "@maya:example.org")
+        );
     }
     #[test]
     fn room_and_space_editors_share_invites_confirmations_and_preserve_the_conversation() {

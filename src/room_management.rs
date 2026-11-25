@@ -163,6 +163,9 @@ mod tests {
     };
 
     async fn fixture(power: u32, access: &str) -> (MockServer, Management) {
+        fixture_kind(power, access, true).await
+    }
+    async fn fixture_kind(power: u32, access: &str, space: bool) -> (MockServer, Management) {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/_matrix/client/versions"))
@@ -190,7 +193,7 @@ mod tests {
         let event = |kind: &str, key: &str, content: Value| json!({"type":kind,"state_key":key,"content":content,"sender":"@test:example.org","event_id":format!("${kind}-{key}"),"origin_server_ts":1});
         Mock::given(method("GET")).and(path("/_matrix/client/v3/sync"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!({"next_batch":"one","rooms":{"join":{"!space:example.org":{
-                "state":{"events":[event("m.room.create", "", json!({"creator":"@test:example.org","type":"m.space"})),
+                "state":{"events":[event("m.room.create", "", if space { json!({"creator":"@test:example.org","type":"m.space"}) } else { json!({"creator":"@test:example.org"}) }),
                     event("m.room.member", "@test:example.org", json!({"membership":"join"})),
                     event("m.room.member", "@other:example.org", json!({"membership":"join","displayname":"Other"})),
                     event("m.room.member", "@peer:example.org", json!({"membership":"join"})),
@@ -235,10 +238,15 @@ mod tests {
             )
             .mount(&server)
             .await;
-        let control = crate::people::Directory::new(client)
-            .space_management("!space:example.org".into())
-            .await
-            .unwrap();
+        let directory = crate::people::Directory::new(client);
+        let control = if space {
+            directory
+                .space_management("!space:example.org".into())
+                .await
+        } else {
+            directory.room_management("!space:example.org".into()).await
+        }
+        .unwrap();
         (server, control)
     }
     async fn avatar_upload() -> crate::room_avatar::Upload {
@@ -664,6 +672,95 @@ mod tests {
             assert_eq!(server.received_requests().await.unwrap().len(), before);
         }
     }
+    #[tokio::test]
+    async fn bans_and_unbans_check_membership_and_power_in_rooms_and_spaces() {
+        for space in [false, true] {
+            for actor in [0, 50, 100] {
+                let (server, control) = fixture_kind(actor, "invite", space).await;
+                let roster = control.clone().members().await.unwrap();
+                let other = roster
+                    .rows
+                    .iter()
+                    .find(|m| m.member.user_id == "@other:example.org")
+                    .unwrap();
+                assert_eq!(other.can_ban, actor >= 50);
+                for change in [
+                    MemberChange::Ban {
+                        user: "@test:example.org".into(),
+                        invited: false,
+                    },
+                    MemberChange::Ban {
+                        user: "@peer:example.org".into(),
+                        invited: false,
+                    },
+                    MemberChange::Ban {
+                        user: "@pending:example.org".into(),
+                        invited: false,
+                    },
+                    MemberChange::Unban("@other:example.org".into()),
+                    MemberChange::Unban("invalid".into()),
+                ] {
+                    assert!(control.clone().change_member(change).await.is_err());
+                }
+                for (action, user, change) in [
+                    (
+                        "ban",
+                        "@other:example.org",
+                        MemberChange::Ban {
+                            user: "@other:example.org".into(),
+                            invited: false,
+                        },
+                    ),
+                    (
+                        "ban",
+                        "@pending:example.org",
+                        MemberChange::Ban {
+                            user: "@pending:example.org".into(),
+                            invited: true,
+                        },
+                    ),
+                    (
+                        "unban",
+                        "@banned:example.org",
+                        MemberChange::Unban("@banned:example.org".into()),
+                    ),
+                ] {
+                    let response = Mock::given(method("POST"))
+                        .and(path(format!(
+                            "/_matrix/client/v3/rooms/!space:example.org/{action}"
+                        )))
+                        .and(body_json(json!({"user_id":user})))
+                        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                        .expect(if actor >= 50 { 1 } else { 0 })
+                        .mount_as_scoped(&server)
+                        .await;
+                    assert_eq!(
+                        control.clone().change_member(change).await.is_ok(),
+                        actor >= 50
+                    );
+                    drop(response);
+                }
+                Mock::given(method("POST"))
+                    .and(path_regex(".*/ban"))
+                    .respond_with(
+                        ResponseTemplate::new(500)
+                            .set_body_json(json!({"errcode":"M_UNKNOWN","error":"fixture"})),
+                    )
+                    .expect(if actor >= 50 { 1 } else { 0 })
+                    .mount(&server)
+                    .await;
+                assert!(
+                    control
+                        .change_member(MemberChange::Ban {
+                            user: "@other:example.org".into(),
+                            invited: false
+                        })
+                        .await
+                        .is_err()
+                );
+            }
+        }
+    }
 }
 
 /// Shared invitation checks for conversation invitations and space management.
@@ -732,6 +829,7 @@ pub struct ManagedMember {
     pub member: crate::connected::Member,
     pub power: UserPowerLevel,
     pub can_remove: bool,
+    pub can_ban: bool,
     pub roles: Vec<Role>,
 }
 #[derive(Clone, Debug)]
@@ -746,6 +844,11 @@ pub enum MemberChange {
         user: String,
         invited: bool,
     },
+    Ban {
+        user: String,
+        invited: bool,
+    },
+    Unban(String),
     Role {
         user: String,
         before: UserPowerLevel,
@@ -783,6 +886,7 @@ impl Management {
                     .collect();
                 managed.push(ManagedMember {
                     can_remove: other && levels.user_can_kick_user(own, &user),
+                    can_ban: other && levels.user_can_ban_user(own, &user),
                     member,
                     power,
                     roles,
@@ -806,7 +910,10 @@ impl Management {
             };
             self.joined()?;
             let input = match &change {
-                MemberChange::Remove { user, .. } | MemberChange::Role { user, .. } => user,
+                MemberChange::Remove { user, .. }
+                | MemberChange::Ban { user, .. }
+                | MemberChange::Unban(user)
+                | MemberChange::Role { user, .. } => user,
                 _ => unreachable!(),
             };
             let user = crate::people::parse_user_id(input)?;
@@ -844,6 +951,57 @@ impl Management {
                         .kick_user(&user, None)
                         .await
                         .map_err(|_| "Could not remove this person.")?;
+                }
+                MemberChange::Ban { invited, .. } => {
+                    let expected = if invited {
+                        MembershipState::Invite
+                    } else {
+                        MembershipState::Join
+                    };
+                    if member.membership() != &expected {
+                        return Err("Membership changed. Reload before banning this person.".into());
+                    }
+                    if !levels.user_can_ban_user(own, &user) {
+                        return Err("You no longer have permission to ban this person.".into());
+                    }
+                    let request =
+                        matrix_sdk::ruma::api::client::membership::ban_user::v3::Request::new(
+                            self.0.room_id().to_owned(),
+                            user,
+                        );
+                    self.0
+                        .client()
+                        .send(request)
+                        .with_request_config(
+                            matrix_sdk::config::RequestConfig::short_retry().retry_limit(0),
+                        )
+                        .await
+                        .map_err(
+                            |_| "Could not confirm the ban. Reload membership before retrying.",
+                        )?;
+                }
+                MemberChange::Unban(_) => {
+                    if member.membership() != &MembershipState::Ban {
+                        return Err("This person is no longer banned. Reload.".into());
+                    }
+                    if !levels.user_can_unban_user(own, &user) {
+                        return Err("You no longer have permission to unban this person.".into());
+                    }
+                    let request =
+                        matrix_sdk::ruma::api::client::membership::unban_user::v3::Request::new(
+                            self.0.room_id().to_owned(),
+                            user,
+                        );
+                    self.0
+                        .client()
+                        .send(request)
+                        .with_request_config(
+                            matrix_sdk::config::RequestConfig::short_retry().retry_limit(0),
+                        )
+                        .await
+                        .map_err(
+                            |_| "Could not confirm the unban. Reload membership before retrying.",
+                        )?;
                 }
                 MemberChange::Role { before, role, .. } => {
                     if member.membership() != &MembershipState::Join
