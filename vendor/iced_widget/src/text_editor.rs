@@ -1282,8 +1282,62 @@ impl<Message> Binding<Message> {
         }
 
         #[cfg(target_os = "macos")]
-        let modified_key =
-            convert_macos_shortcut(&key, modifiers).unwrap_or(modified_key);
+        {
+            use keyboard::Modifiers;
+            let base = modifiers - Modifiers::SHIFT;
+            let movement = |motion| {
+                if modifiers.shift() {
+                    Self::Select(motion)
+                } else {
+                    Self::Move(motion)
+                }
+            };
+            if base == Modifiers::LOGO {
+                let motion = match key.as_ref() {
+                    keyboard::Key::Named(key::Named::ArrowLeft) => {
+                        Some(Motion::Home)
+                    }
+                    keyboard::Key::Named(key::Named::ArrowRight) => {
+                        Some(Motion::End)
+                    }
+                    keyboard::Key::Named(key::Named::ArrowUp) => {
+                        Some(Motion::DocumentStart)
+                    }
+                    keyboard::Key::Named(key::Named::ArrowDown) => {
+                        Some(Motion::DocumentEnd)
+                    }
+                    _ => None,
+                };
+                if let Some(motion) = motion {
+                    return Some(movement(motion));
+                }
+            }
+            if modifiers == Modifiers::CTRL {
+                return match key.as_ref() {
+                    keyboard::Key::Character("a") => {
+                        Some(Self::Move(Motion::Home))
+                    }
+                    keyboard::Key::Character("e") => {
+                        Some(Self::Move(Motion::End))
+                    }
+                    keyboard::Key::Character("b") => {
+                        Some(Self::Move(Motion::Left))
+                    }
+                    keyboard::Key::Character("f") => {
+                        Some(Self::Move(Motion::Right))
+                    }
+                    keyboard::Key::Character("n") => {
+                        Some(Self::Move(Motion::Down))
+                    }
+                    keyboard::Key::Character("p") => {
+                        Some(Self::Move(Motion::Up))
+                    }
+                    keyboard::Key::Character("h") => Some(Self::Backspace),
+                    keyboard::Key::Character("d") => Some(Self::Delete),
+                    _ => None,
+                };
+            }
+        }
 
         match modified_key.as_ref() {
             keyboard::Key::Named(key::Named::Enter) => Some(Self::Enter),
@@ -1301,7 +1355,7 @@ impl<Message> Binding<Message> {
                     let c = text.chars().find(|c| !c.is_control())?;
 
                     Some(Self::Insert(c))
-                } else if let keyboard::Key::Named(named_key) = key.as_ref() {
+                } else if let keyboard::Key::Named(named_key) = modified_key.as_ref() {
                     let motion = motion(named_key)?;
 
                     let motion = if modifiers.macos_command() {
@@ -1440,6 +1494,13 @@ impl<Message> Update<Message> {
                 text,
                 ..
             }) => {
+                if state
+                    .preedit
+                    .as_ref()
+                    .is_some_and(|preedit| !preedit.content.is_empty())
+                {
+                    return None;
+                }
                 let status = if state.focus.is_some() {
                     Status::Focused {
                         is_hovered: cursor.is_over(bounds),

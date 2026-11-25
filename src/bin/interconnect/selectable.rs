@@ -212,11 +212,17 @@ fn normalize_selection(content: &mut text_editor::Content) {
         content.move_to(cursor);
     }
 }
+#[derive(Clone, Debug)]
+enum ReadAction {
+    Editor(Action),
+    Native(super::native_editing::Command),
+}
+
 fn editor(
     content: &text_editor::Content,
     appearance: Appearance,
     text_size: u16,
-) -> text_editor::TextEditor<'_, emoji::Highlighter, Action> {
+) -> text_editor::TextEditor<'_, emoji::Highlighter, ReadAction> {
     iced::widget::text_editor(content)
         .highlight_fonts_with::<emoji::Highlighter>(emoji::font(), |font| *font)
         .size(f32::from(match appearance {
@@ -226,8 +232,13 @@ fn editor(
         .padding(0)
         .cursor_blinking(false)
         .show_cursor(false)
-        .on_action(|action| action)
+        .on_action(ReadAction::Editor)
         .key_binding(|key| {
+            if let Some(command @ super::native_editing::Command::Paragraph { .. }) =
+                super::native_editing::command(&key)
+            {
+                return Some(Binding::Custom(ReadAction::Native(command)));
+            }
             Binding::from_key_press(key).filter(|binding| {
                 matches!(
                     binding,
@@ -572,76 +583,78 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
                 }
                 Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key,
+                    modified_key,
                     modifiers,
                     physical_key,
+                    text,
                     ..
                 }) if state.rich.as_ref().unwrap().focused
                     && state.rich.as_ref().unwrap().code_focus.is_none() =>
                 {
-                    use iced::keyboard::{Key, key::Named};
-                    if matches!(key.as_ref(), Key::Named(Named::ArrowUp | Named::ArrowDown)) {
-                        let cursor = state.content.cursor();
-                        let offset = state
-                            .body
-                            .split_inclusive('\n')
-                            .take(cursor.position.line)
-                            .map(str::len)
-                            .sum::<usize>()
-                            + cursor.position.column;
-                        let target = state
-                            .rich
-                            .as_ref()
-                            .unwrap()
-                            .vertical(offset, matches!(key.as_ref(), Key::Named(Named::ArrowDown)));
-                        state
-                            .content
-                            .perform(Action::Move(text_editor::Motion::DocumentStart));
-                        state.content.move_to(iced::advanced::text::editor::Cursor {
-                            position: position(&state.body, target),
-                            selection: modifiers
-                                .shift()
-                                .then_some(cursor.selection.unwrap_or(cursor.position)),
-                        });
+                    let press = text_editor::KeyPress {
+                        key: key.clone(),
+                        modified_key: modified_key.clone(),
+                        physical_key: *physical_key,
+                        modifiers: *modifiers,
+                        text: text.clone(),
+                        status: text_editor::Status::Focused { is_hovered: false },
+                    };
+                    if let Some(command @ super::native_editing::Command::Paragraph { .. }) =
+                        super::native_editing::command(&press)
+                    {
+                        command.perform(&mut state.content);
                         shell.capture_event();
                         shell.request_redraw();
                         return;
                     }
-                    let action = match key.as_ref() {
-                        Key::Character("a") if modifiers.command() => Some(Action::SelectAll),
-                        Key::Named(Named::ArrowLeft) => {
-                            Some(Action::Move(if modifiers.command() {
-                                text_editor::Motion::WordLeft
+                    let binding = Binding::<Message>::from_key_press(press);
+                    match binding {
+                        Some(Binding::Copy) => {
+                            if let Some(selected) = state.content.selection() {
+                                clipboard
+                                    .write(iced::advanced::clipboard::Kind::Standard, selected);
+                            }
+                        }
+                        Some(Binding::Move(motion) | Binding::Select(motion)) => {
+                            let select = matches!(binding, Some(Binding::Select(_)));
+                            if matches!(motion, text_editor::Motion::Up | text_editor::Motion::Down)
+                            {
+                                let cursor = state.content.cursor();
+                                let offset = state
+                                    .body
+                                    .split_inclusive('\n')
+                                    .take(cursor.position.line)
+                                    .map(str::len)
+                                    .sum::<usize>()
+                                    + cursor.position.column;
+                                let target = state
+                                    .rich
+                                    .as_ref()
+                                    .unwrap()
+                                    .vertical(offset, motion == text_editor::Motion::Down);
+                                state
+                                    .content
+                                    .perform(Action::Move(text_editor::Motion::DocumentStart));
+                                state.content.move_to(iced::advanced::text::editor::Cursor {
+                                    position: position(&state.body, target),
+                                    selection: select
+                                        .then_some(cursor.selection.unwrap_or(cursor.position)),
+                                });
                             } else {
-                                text_editor::Motion::Left
-                            }))
+                                state.content.perform(if select {
+                                    Action::Select(motion)
+                                } else {
+                                    Action::Move(motion)
+                                });
+                            }
                         }
-                        Key::Named(Named::ArrowRight) => {
-                            Some(Action::Move(if modifiers.command() {
-                                text_editor::Motion::WordRight
-                            } else {
-                                text_editor::Motion::Right
-                            }))
-                        }
-                        Key::Named(Named::Home) => Some(Action::Move(text_editor::Motion::Home)),
-                        Key::Named(Named::End) => Some(Action::Move(text_editor::Motion::End)),
-                        _ => None,
-                    };
-                    if modifiers.command() && key.to_latin(*physical_key) == Some('c') {
-                        if let Some(selected) = state.content.selection() {
-                            clipboard.write(iced::advanced::clipboard::Kind::Standard, selected);
-                        }
-                        shell.capture_event();
+                        Some(Binding::SelectAll) => state.content.perform(Action::SelectAll),
+                        Some(Binding::Unfocus) => state.rich.as_mut().unwrap().focused = false,
+                        // Message text is read-only, including native delete/cut/paste bindings.
+                        _ => return,
                     }
-                    if let Some(mut action) = action {
-                        if modifiers.shift()
-                            && let Action::Move(motion) = action
-                        {
-                            action = Action::Select(motion);
-                        }
-                        state.content.perform(action);
-                        shell.capture_event();
-                        shell.request_redraw();
-                    }
+                    shell.capture_event();
+                    shell.request_redraw();
                 }
                 _ => {}
             }
@@ -669,6 +682,14 @@ impl Widget<Message, Theme, Renderer> for Selectable<'_> {
         }
         shell.request_redraw_at(local.redraw_request());
         for action in actions {
+            let action = match action {
+                ReadAction::Editor(action) => action,
+                ReadAction::Native(command) => {
+                    command.perform(&mut state.content);
+                    shell.request_redraw();
+                    continue;
+                }
+            };
             if !action.is_edit() {
                 if matches!(
                     action,
@@ -1359,6 +1380,133 @@ mod tests {
                 &[yellow[0]; 3],
                 "editing, clearing, and closing remove highlights"
             );
+        }
+    }
+
+    #[test]
+    fn formatted_keyboard_selection_uses_native_motions_and_stays_read_only() {
+        use iced::keyboard::{
+            Key, Modifiers,
+            key::{Named, NativeCode, Physical},
+        };
+        let document =
+            Arc::new(Document::parse("<p>one two café</p><p>next paragraph</p>").unwrap());
+        let mut view = Selectable {
+            search: None,
+            id: "native-selection",
+            name: "Alice",
+            body: Cow::Borrowed("fallback"),
+            appearance: Appearance::Message,
+            mode: ThemeMode::Light,
+            document: Some(&document),
+            assets: Default::default(),
+            context: None,
+        };
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let mut tree = Tree::new(&view as &dyn Widget<Message, Theme, Renderer>);
+        let node = view.layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(Size::ZERO, Size::new(160.0, 400.0)),
+        );
+        tree.state
+            .downcast_mut::<State>()
+            .rich
+            .as_mut()
+            .unwrap()
+            .focused = true;
+        let source = tree.state.downcast_ref::<State>().content.text();
+        let word_modifier = if cfg!(target_os = "macos") {
+            Modifiers::ALT
+        } else {
+            Modifiers::CTRL
+        };
+        let mut clipboard = ClipboardText::default();
+        for (key, modifiers) in [
+            (
+                Key::Named(Named::ArrowRight),
+                word_modifier | Modifiers::SHIFT,
+            ),
+            (Key::Character("c".into()), Modifiers::COMMAND),
+            (Key::Character("x".into()), Modifiers::COMMAND),
+            (Key::Named(Named::Backspace), word_modifier),
+        ] {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.update(
+                &mut tree,
+                &Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    modified_key: key.clone(),
+                    key,
+                    modifiers,
+                    physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                    location: iced::keyboard::Location::Standard,
+                    text: None,
+                    repeat: false,
+                }),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &Rectangle::with_size(Size::new(160.0, 400.0)),
+            );
+            assert!(!matches!(
+                shell.redraw_request(),
+                iced::window::RedrawRequest::At(_)
+            ));
+            assert!(messages.is_empty());
+            assert_eq!(tree.state.downcast_ref::<State>().content.text(), source);
+            assert_eq!(
+                tree.state
+                    .downcast_ref::<State>()
+                    .content
+                    .selection()
+                    .as_deref(),
+                Some("one")
+            );
+        }
+        assert_eq!(clipboard.0, "one");
+        let macos = cfg!(target_os = "macos");
+        let last_line = tree.state.downcast_ref::<State>().content.line_count() - 1;
+        for (key, target) in [
+            (
+                if macos { Named::ArrowDown } else { Named::End },
+                text_editor::Position {
+                    line: last_line,
+                    column: "next paragraph".len(),
+                },
+            ),
+            (
+                if macos { Named::ArrowUp } else { Named::Home },
+                text_editor::Position { line: 0, column: 0 },
+            ),
+        ] {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.update(
+                &mut tree,
+                &Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: Key::Named(key),
+                    modified_key: Key::Named(key),
+                    modifiers: Modifiers::COMMAND,
+                    physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                    location: iced::keyboard::Location::Standard,
+                    text: None,
+                    repeat: false,
+                }),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard,
+                &mut shell,
+                &Rectangle::with_size(Size::new(160.0, 400.0)),
+            );
+            assert_eq!(
+                tree.state.downcast_ref::<State>().content.cursor().position,
+                target
+            );
+            assert_eq!(tree.state.downcast_ref::<State>().content.text(), source);
         }
     }
 

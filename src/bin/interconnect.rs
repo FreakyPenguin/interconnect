@@ -89,6 +89,8 @@ mod message_links;
 mod message_reply;
 #[path = "interconnect/message_report.rs"]
 mod message_report;
+#[path = "interconnect/native_editing.rs"]
+mod native_editing;
 #[path = "interconnect/navigation_control.rs"]
 mod navigation_control;
 #[path = "interconnect/new_chat.rs"]
@@ -459,6 +461,7 @@ enum Message {
     SenderModeration(sender_moderation::Event),
     Edit(DraftKey, text_editor::Action),
     DeleteWord(DraftKey, text_editor::Motion),
+    NativeEdit(DraftKey, native_editing::Command),
     PageConversation {
         key: DraftKey,
         generation: u64,
@@ -794,6 +797,7 @@ impl App {
                     message,
                     Message::Send(_)
                         | Message::Edit(..)
+                        | Message::NativeEdit(..)
                         | Message::DeleteWord(..)
                         | Message::Room(_)
                         | Message::Thread(_)
@@ -884,6 +888,7 @@ impl App {
                     | Message::ContextMenu(_)
                     | Message::Send(_)
                     | Message::Edit(..)
+                    | Message::NativeEdit(..)
                     | Message::DeleteWord(..)
                     | Message::QuickRoom(room_picker::Event::Open | room_picker::Event::OpenSpaces)
                     | Message::GlobalSearch(global_search::Event::Open)
@@ -954,6 +959,7 @@ impl App {
                             | create_room::Event::Submit
                     )
                     | Message::Edit(..)
+                    | Message::NativeEdit(..)
                     | Message::Send(_)
                     | Message::DeleteWord(..)
                     | Message::ComposerEmoji(_)
@@ -1058,6 +1064,7 @@ impl App {
                     )
                     | Message::Send(_)
                     | Message::Edit(..)
+                    | Message::NativeEdit(..)
             ) {
                 return Task::none();
             }
@@ -1113,6 +1120,7 @@ impl App {
                     | Message::Pin(pin_action::Event::Set(..))
                     | Message::Bookmark(bookmarks::Event::Set(..))
                     | Message::Edit(..)
+                    | Message::NativeEdit(..)
                     | Message::Send(_)
                     | Message::Markdown(
                         markdown_composer::Event::Mode(_) | markdown_composer::Event::Preview(_)
@@ -1472,6 +1480,7 @@ impl App {
                             | invite::Event::Cancel
                     )
                     | Message::Edit(..)
+                    | Message::NativeEdit(..)
                     | Message::Replying(_)
                     | Message::Editing(
                         message_edit::Event::Start(_)
@@ -1534,6 +1543,7 @@ impl App {
             && matches!(
                 message,
                 Message::Edit(..)
+                    | Message::NativeEdit(..)
                     | Message::Replying(_)
                     | Message::Editing(
                         message_edit::Event::Start(_)
@@ -1596,6 +1606,7 @@ impl App {
                 | Message::Reporting(_)
                 | Message::SenderModeration(_)
                 | Message::Edit(..)
+                | Message::NativeEdit(..)
                 | Message::DeleteWord(..)
                 | Message::Composing(_)
                 | Message::Members(_)
@@ -2157,6 +2168,7 @@ impl App {
                 }
             }
             Message::DeleteWord(key, motion) => return self.delete_word(key, motion),
+            Message::NativeEdit(key, command) => return self.native_edit(key, command),
             Message::Edit(key, action) if !self.closing && !self.stopped => {
                 if self.room_can_compose(&key.room)
                     && (self.draft_key(false).as_ref() == Some(&key)
@@ -6930,6 +6942,87 @@ mod tests {
                         if completing { ":sm" } else { "unsent draft" }
                     );
                     assert_eq!(app.scroll_positions[&key], 125.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn native_commands_only_change_the_current_uncovered_editable_draft() {
+        for thread in [false, true] {
+            for guard in [
+                "active",
+                "stale",
+                "settings",
+                "room-settings",
+                "context-menu",
+                "closing",
+                "stopped",
+                "ime",
+                "pending",
+            ] {
+                let mut app = demo_app();
+                if thread {
+                    let _ = app.update(Message::Thread("proposal".into()));
+                }
+                let key = app.draft_key(thread).unwrap();
+                app.drafts.get_mut(&key).unwrap().content =
+                    text_editor::Content::with_text("retained draft");
+                let before = app.drafts[&key].content.text();
+                let cursor = app.drafts[&key].content.cursor();
+                match guard {
+                    "stale" => {
+                        let room = app
+                            .model
+                            .rooms
+                            .iter()
+                            .find(|room| room.id != key.room)
+                            .unwrap()
+                            .id
+                            .clone();
+                        let _ = app.update(Message::Room(room));
+                        assert_ne!(app.draft_key(thread).as_ref(), Some(&key));
+                    }
+                    "settings" => {
+                        let _ = app.update(Message::Settings(settings::Event::Open));
+                    }
+                    "room-settings" => {
+                        let _ = app.update(Message::RoomSettings(room_settings::Event::Open(
+                            key.room.clone(),
+                        )));
+                    }
+                    "context-menu" => {
+                        let _ = app.update(Message::ContextMenu(context_menu::Event::Open(
+                            context_menu::Target::Account,
+                            iced::Point::ORIGIN,
+                        )));
+                    }
+                    "closing" => app.closing = true,
+                    "stopped" => app.stopped = true,
+                    "ime" => {
+                        let _ = app.update(Message::Composing(true));
+                    }
+                    "pending" => app.drafts.get_mut(&key).unwrap().pending = true,
+                    _ => {}
+                }
+                let _ = app.update(Message::NativeEdit(
+                    key.clone(),
+                    native_editing::Command::OpenLine,
+                ));
+                if guard == "active" {
+                    assert_ne!(app.drafts[&key].content.text(), before, "thread={thread}");
+                } else {
+                    assert_eq!(
+                        app.drafts[&key].content.text(),
+                        before,
+                        "{guard}, thread={thread}"
+                    );
+                    let after = app.drafts[&key].content.cursor();
+                    assert_eq!(after.position, cursor.position, "{guard}, thread={thread}");
+                    assert_eq!(
+                        after.selection, cursor.selection,
+                        "{guard}, thread={thread}"
+                    );
                 }
             }
         }

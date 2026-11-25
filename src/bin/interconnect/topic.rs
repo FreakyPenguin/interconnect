@@ -40,6 +40,7 @@ pub enum Event {
     View(u64, String),
     Open(u64, String),
     Edit(text_editor::Action),
+    Native(super::native_editing::Command),
     Save,
     Cancel,
     Copy(u64, String),
@@ -285,6 +286,14 @@ impl App {
                 self.stop_typing();
                 return iced::widget::operation::focus("room-topic");
             }
+            Event::Native(command) => {
+                if let Some(state) = &mut self.topic_editor
+                    && !state.pending
+                    && !self.composing
+                {
+                    command.perform(&mut state.content);
+                }
+            }
             Event::Edit(action) => {
                 if let Some(state) = &mut self.topic_editor
                     && (!state.pending || !action.is_edit())
@@ -523,6 +532,9 @@ impl App {
                 .size(14)
                 .height((size.height - 240.0).clamp(100.0, 320.0))
                 .on_action(|action| message(Event::Edit(action)))
+                .key_binding(|press| {
+                    super::native_editing::binding(press, |command| message(Event::Native(command)))
+                })
                 .into()
         };
         super::focus_scope::dismissible(

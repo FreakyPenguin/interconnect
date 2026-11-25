@@ -102,6 +102,7 @@ pub enum Event {
     #[cfg(test)]
     Topic(String),
     TopicEdit(text_editor::Action),
+    TopicNative(super::native_editing::Command),
     Access(JoinRule),
     Save(usize),
     Addresses(addresses::Event),
@@ -882,6 +883,10 @@ impl App {
                             panel.topic = text_editor::Content::with_text(&value);
                             draft.topic = value;
                         }
+                        Event::TopicNative(command) if draft.editable[1] && !self.composing => {
+                            command.perform(&mut panel.topic);
+                            draft.topic = panel.topic.text();
+                        }
                         Event::TopicEdit(action) if draft.editable[1] => {
                             panel.topic.perform(action);
                             draft.topic = panel.topic.text();
@@ -1002,7 +1007,13 @@ impl App {
                 .size(13)
                 .style(shell::editor_style);
             if saved.editable[1] && !panel.pending {
-                topic = topic.on_action(|action| message(Event::TopicEdit(action)));
+                topic = topic
+                    .on_action(|action| message(Event::TopicEdit(action)))
+                    .key_binding(|press| {
+                        super::native_editing::binding(press, |command| {
+                            message(Event::TopicNative(command))
+                        })
+                    });
             }
             body = body.push(super::room_settings::setting_field(
                 "Topic",

@@ -72,3 +72,17 @@ Opt-in `pick_list.rs` keyboard activation and arrows now require unmodified
 keys; Shift+Tab retains its traversal behavior. Other Control, Shift, Option/Alt,
 and Command/Super combinations remain available to text editing, the active
 focus scope, and platform commands.
+
+`src/text_editor.rs` recognizes native macOS Command line/document movement
+(including Shift selection) and Control A/E/B/F/N/P/H/D editing keys before
+filtering generated control text. Motion matching uses the converted key rather
+than the original character. Active IME preedit owns key events, including custom
+bindings. These are stateless event handlers with no animation deadlines.
+The application shares `native_editing.rs` between room/thread composers, topic
+editing, room/space settings, and read-only selection. Paragraph commands compute
+logical hard-line targets directly; deletion and Control-O use explicit command
+updates and ordinary edit actions. No speculative renderer mutation, word-by-word
+paragraph traversal, kill ring, or undo subsystem is added. Read-only widgets
+admit movement/selection/copy only. Application regressions cover wrapped Unicode
+and RTL text, paragraph boundaries, existing selections, deletion boundaries,
+Control-O logical restoration, and native macOS modifier routing.

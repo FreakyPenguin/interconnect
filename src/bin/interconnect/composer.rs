@@ -43,6 +43,12 @@ pub(super) fn editing_binding(
     use iced::keyboard::{Key, Modifiers, key::Named};
     use text_editor::{Binding, Motion, Status};
 
+    if composing || !matches!(press.status, Status::Focused { .. }) {
+        return None;
+    }
+    if let Some(command) = super::native_editing::command(&press) {
+        return Some(Binding::Custom(Message::NativeEdit(key.clone(), command)));
+    }
     let word_modifier = if cfg!(target_os = "macos") {
         Modifiers::ALT
     } else {
@@ -71,6 +77,36 @@ pub(super) fn editing_binding(
 }
 
 impl App {
+    pub(super) fn native_edit(
+        &mut self,
+        key: DraftKey,
+        command: super::native_editing::Command,
+    ) -> iced::Task<Message> {
+        if self.closing
+            || self.stopped
+            || self.composing
+            || !self.context_menu_allowed()
+            || self.context_menu.is_some()
+            || !self.room_can_compose(&key.room)
+            || (self.draft_key(false).as_ref() != Some(&key)
+                && self.draft_key(true).as_ref() != Some(&key))
+            || self.drafts.get(&key).is_none_or(|draft| draft.pending)
+        {
+            return iced::Task::none();
+        }
+        let prepared = command.prepare(&mut self.drafts.get_mut(&key).unwrap().content);
+        let task = if let Some(action) = prepared.edit.clone() {
+            // Keep message edits, mention bindings, typing and persistence on the
+            // same guarded path as ordinary editor actions.
+            self.update(Message::Edit(key.clone(), action))
+        } else {
+            iced::Task::none()
+        };
+        prepared.finish(&mut self.drafts.get_mut(&key).unwrap().content);
+        self.refresh_emoji_completion(&key);
+        iced::Task::batch([task, self.refresh_user_completion(&key)])
+    }
+
     pub(super) fn page_conversation(
         &mut self,
         key: DraftKey,
@@ -936,3 +972,7 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "native_editing_tests.rs"]
+mod native_editing_tests;
