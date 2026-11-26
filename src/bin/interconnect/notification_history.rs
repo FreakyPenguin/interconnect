@@ -15,6 +15,7 @@ pub(super) struct State {
     read_events: HashSet<(DraftKey, String)>,
     read_event_order: VecDeque<(DraftKey, String)>,
     read_through: VecDeque<(DraftKey, u64)>,
+    resolved_invitations: HashSet<(String, u64)>,
 }
 struct Visible {
     generation: u64,
@@ -296,12 +297,40 @@ impl App {
                 );
             }
         }
+        let joined: HashSet<_> = self
+            .model
+            .rooms
+            .iter()
+            .map(|room| room.id.as_str())
+            .chain(self.model.spaces.iter().map(|space| space.id.as_str()))
+            .collect();
+        let invitations: HashSet<_> = self
+            .model
+            .invitations
+            .iter()
+            .map(|invite| invite.id.as_str())
+            .collect();
+        let mut resolved_invitations = HashSet::new();
         let mut changed = false;
         for record in &mut self.notification_center.records {
+            let destination = record.entry.destination();
+            let newly_resolved = if matches!(&destination, Target::Invitation { room }
+                if joined.contains(room.as_str()) && !invitations.contains(room.as_str()))
+            {
+                let key = (record.entry.id.clone(), record.entry.timestamp);
+                let newly_resolved = !self
+                    .notification_history
+                    .resolved_invitations
+                    .contains(&key);
+                resolved_invitations.insert(key);
+                newly_resolved
+            } else {
+                false
+            };
             if record.read {
                 continue;
             }
-            let read = match &record.entry.destination() {
+            let read = match &destination {
                 Target::Conversation {
                     room,
                     thread,
@@ -330,7 +359,9 @@ impl App {
                         ))
                 }
                 Target::Invitation { room } => {
-                    self.membership.open && self.membership.focus_invitation.as_ref() == Some(room)
+                    newly_resolved
+                        || (self.membership.open
+                            && self.membership.focus_invitation.as_ref() == Some(room))
                 }
                 Target::Verification { flow, device } => {
                     self.verification.open
@@ -349,6 +380,9 @@ impl App {
                 changed = true;
             }
         }
+        // Track each occurrence once, including already-read records, so later
+        // manual unread choices survive. Retain at most the bounded inbox's IDs.
+        self.notification_history.resolved_invitations = resolved_invitations;
         changed
     }
 }
@@ -817,6 +851,63 @@ mod tests {
         publish(&mut app, vec![baseline]);
         assert!(!app.notification_center.records[0].read);
         assert_eq!(app.notification_center.records[0].entry.timestamp, 30);
+    }
+    #[test]
+    fn joined_invites_clear_on_sync_or_import_and_preserve_later_manual_unread() {
+        use interconnect::room_membership::Joined;
+        for space in [false, true] {
+            for import_after_join in [false, true] {
+                let mut app = app();
+                let joined = Joined {
+                    id: "!invite:example.org".into(),
+                    name: "Joined".into(),
+                    space,
+                };
+                let mut notice = entry("invite", 10);
+                notice.target = Target::Invitation {
+                    room: joined.id.clone(),
+                };
+                if !import_after_join {
+                    publish(&mut app, vec![notice.clone()]);
+                    assert!(!app.notification_center.records[0].read);
+                }
+                let mut model = app.model.clone();
+                if space {
+                    Arc::make_mut(&mut model.spaces).push(joined.space());
+                } else {
+                    Arc::make_mut(&mut model.rooms).push(joined.room());
+                }
+                let _ = app.update(Message::State(Box::new(model)));
+                if import_after_join {
+                    publish(&mut app, vec![notice.clone()]);
+                }
+                assert!(app.notification_center.records[0].read);
+                // This is the same read flag set by the inbox's manual control.
+                app.notification_center.records[0].read = false;
+                let model = app.model.clone();
+                let _ = app.update(Message::State(Box::new(model)));
+                assert!(!app.notification_center.records[0].read);
+
+                // A new invitation occurrence must stay unread even if the
+                // room-list snapshot still includes the previous membership.
+                notice.timestamp = 20;
+                let mut model = app.model.clone();
+                model.invitations = vec![interconnect::room_membership::Invitation {
+                    id: joined.id.clone(),
+                    name: joined.name.clone(),
+                    inviter: None,
+                    space,
+                }]
+                .into();
+                model.notification_history = vec![notice].into();
+                let _ = app.update(Message::State(Box::new(model)));
+                assert!(!app.notification_center.records[0].read);
+                let mut model = app.model.clone();
+                model.invitations = Arc::default();
+                let _ = app.update(Message::State(Box::new(model)));
+                assert!(app.notification_center.records[0].read);
+            }
+        }
     }
     #[test]
     fn bounded_history_retains_newest_entries_and_resets_for_another_account() {

@@ -473,6 +473,9 @@ impl App {
                 let visible = self.membership.open && self.membership.generation == origin;
                 match result {
                     Ok(joined) => {
+                        self.mark_notification_target_read(
+                            &interconnect::notifications::Target::Invitation { room: room.clone() },
+                        );
                         let change = joined
                             .clone()
                             .map(Change::Joined)
@@ -962,6 +965,70 @@ mod tests {
                     "!invite:example.org"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn successful_invitation_responses_clear_only_the_matching_bell_entry() {
+        use interconnect::notifications::{Entry, Record, Target};
+        for (accept, space) in [(true, false), (true, true), (false, false), (false, true)] {
+            let mut app = app();
+            std::sync::Arc::make_mut(&mut app.model.invitations)[0].space = space;
+            app.notification_center.records = ["!invite:example.org", "!other:example.org"]
+                .into_iter()
+                .map(|room| Record {
+                    entry: Entry {
+                        id: room.into(),
+                        target: Target::Invitation { room: room.into() },
+                        timestamp: 1,
+                        title: "Invitation".into(),
+                        body: String::new(),
+                    },
+                    read: false,
+                })
+                .collect();
+            let _ = app.update(message(Event::Open));
+            assert_eq!(app.notification_center.unread_count(), 2);
+            let _ = app.update(message(Event::Respond(
+                "!invite:example.org".into(),
+                accept,
+            )));
+            assert!(app.notification_center.records[0].read);
+            assert!(!app.notification_center.records[1].read);
+        }
+    }
+
+    #[test]
+    fn failed_and_stale_invitation_completions_leave_the_bell_unread() {
+        use interconnect::notifications::{Entry, Record, Target};
+        for (request, account, result) in [
+            (50, None, Err("Response failed".into())),
+            (49, None, Ok(None)),
+            (50, Some("@other:example.org".into()), Ok(None)),
+        ] {
+            let mut app = app();
+            app.notification_center.records = vec![Record {
+                entry: Entry {
+                    id: "invite".into(),
+                    target: Target::Invitation {
+                        room: "!invite:example.org".into(),
+                    },
+                    timestamp: 1,
+                    title: "Invitation".into(),
+                    body: String::new(),
+                },
+                read: false,
+            }];
+            app.membership.pending = Some((50, 10));
+            app.pending_ops = 1;
+            let _ = app.update(message(Event::Finished {
+                request,
+                account,
+                room: "!invite:example.org".into(),
+                result,
+            }));
+            assert!(!app.notification_center.records[0].read);
+            assert_eq!(app.model.invitations.len(), 1);
         }
     }
 

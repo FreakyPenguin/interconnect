@@ -34,6 +34,10 @@ and Verification. Unread is the default; History includes read entries. Category
 apply to either. Opening alone marks nothing read. Open an entry, mark read/unread,
 or Mark all read. Expired invitation/verification entries retain read controls but
 lose navigation. Native invitation clicks put the active invitation first for review.
+Successfully accepting or declining an invitation marks its bell entry read.
+Joined room/space snapshots also clear accepted invitations, including acceptance
+on another device and history imported after joining. Later manual unread choices
+remain until another explicit read action; a new invitation occurrence stays unread.
 
 The newest 256 entries/read flags persist encrypted per profile/device with drafts.
 Collection continues when alerts are disabled/suppressed, permission is pending,
@@ -109,6 +113,9 @@ Use a dedicated account and second client:
 - Restore cached invitations offline, then sync existing ones: collect silently.
   Receive a new invite and review without joining; decline/withdraw/reinvite/rename
   to distinguish invitation transitions from metadata changes.
+  Accept room and space invitations directly from Invitations and on another device;
+  their bell entries should become read. Declining locally also clears the entry;
+  failed responses and new invitations stay unread. Check manual unread afterward.
 - Receive own-device verification with the dialog open/closed and previews on/off.
   Click only reviews; cancelled/replaced banners cannot act.
 - While permission is pending/denied or alerts disabled/suppressed, history still
@@ -125,3 +132,5 @@ native banners/focus/permission UI or live delivery. Measure [idle resources](id
 History regressions also cover real DM layout visibility, delayed collection after
 scrolling/navigation, bounded read observations, account replacement, and unseen
 arrivals before their first layout. The connected checks above remain manual.
+Invitation regressions cover successful room/space responses, failed/stale results,
+joined snapshots, delayed history import, reinvites, and later manual unread choices.
