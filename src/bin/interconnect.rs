@@ -6740,9 +6740,25 @@ mod tests {
         impl Drop for Cleanup {
             fn drop(&mut self) {
                 let finished = self.0.clone();
-                drop(tokio::task::spawn_blocking(move || {
-                    finished.send(()).unwrap()
+                let (started, ready) = std::sync::mpsc::channel();
+                let (release, released) = std::sync::mpsc::channel::<()>();
+                // Runtime shutdown cancels this future, dropping the sender and
+                // releasing the blocking cleanup. Keep it alive even if the
+                // future is never polled before shutdown.
+                drop(tokio::spawn(async move {
+                    std::future::pending::<()>().await;
+                    drop(release);
                 }));
+                drop(tokio::task::spawn_blocking(move || {
+                    started.send(()).unwrap();
+                    assert!(released.recv().is_err());
+                    finished.send(()).unwrap();
+                }));
+                // Tokio may discard queued blocking tasks during shutdown; only
+                // already-running blocking work is guaranteed to finish.
+                ready
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("blocking cleanup must start before runtime shutdown");
             }
         }
         assert!(UiExecutor::new().is_err());
@@ -6761,6 +6777,10 @@ mod tests {
             drop(executor);
             drop(client);
             drop(Cleanup(finished));
+            assert_eq!(
+                received.try_recv(),
+                Err(std::sync::mpsc::TryRecvError::Empty)
+            );
             Ok(())
         })
         .unwrap();

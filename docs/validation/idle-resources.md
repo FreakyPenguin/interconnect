@@ -33,6 +33,14 @@ presentation future/pane, one timeline after thread close, none after shutdown/
 snapshot release. It does not bound RSS, SDK caches/subscriptions, or drafts
 across distinct rooms.
 
+The UI test `sqlite_cleanup_outlives_iced_executor_and_runs_before_return` opens a
+temporary SQLite store without an account or network requests, then drops Iced's
+executor before the SDK client. Its blocking cleanup probe acknowledges startup
+and waits until runtime shutdown cancels a pending task before completing. This
+checks that `run_ui` retains the runtime context through SDK teardown and waits
+for already-running blocking cleanup before returning. It does not assert that
+Tokio executes queued blocking tasks during shutdown; those may be discarded.
+
 ## Opt-in live diagnostics
 
 ```sh
