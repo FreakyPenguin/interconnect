@@ -4840,6 +4840,9 @@ fn shell_shortcut(
         Key::Character(",") if command && !modifiers.shift() => {
             Some(Message::Settings(settings::Event::Open))
         }
+        Key::Character("i" | "I") if command && !modifiers.shift() => Some(
+            Message::NotificationCenter(notification_center::Event::Open),
+        ),
         // Control stays Control on macOS, matching native tab navigation.
         Key::Named(Named::Tab) if base == Modifiers::CTRL => {
             Some(Message::AdjacentRoom(modifiers.shift()))
@@ -7156,6 +7159,7 @@ mod tests {
                 ("t", base),
                 ("j", base),
                 ("J", base | iced::keyboard::Modifiers::SHIFT),
+                ("i", base),
             ] {
                 let mut navigation = press.clone();
                 navigation.key = iced::keyboard::Key::Character(letter.into());

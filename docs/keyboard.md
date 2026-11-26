@@ -19,6 +19,7 @@ remains a send alias on macOS. Dialogs, completion, and IME take precedence.
 | F6 / Shift+F6 | F6 / Shift+F6 | Cycle breadcrumb, sidebar, composer; show sidebar if needed. |
 | Ctrl+F / Ctrl+Shift+F | Cmd+F / Cmd+Shift+F | Search loaded room messages / account-wide messages. |
 | Ctrl+, | Cmd+, | Settings. |
+| Ctrl+I | Cmd+I | Open Notifications and focus Unread. |
 | Ctrl+Tab / Ctrl+Shift+Tab | Ctrl+Tab / Ctrl+Shift+Tab | Next/previous visible room, wrapping. |
 | Alt+Up / Alt+Down | — | Previous/next visible room, wrapping (alternative). |
 | Ctrl+J / Ctrl+Shift+J | Cmd+J / Cmd+Shift+J | Next/previous unread room across the account. |
@@ -95,6 +96,10 @@ corresponding room or thread composer.
 
 ## Notifications
 
+Ctrl+I (macOS: Cmd+I) opens Notifications from the conversation,
+sidebar, breadcrumb, search, or saved messages. Dialogs and IME take precedence.
+Page Up/Down scroll the notification list immediately, including with Unread
+focused and the pointer outside the list. Open dropdowns retain their keys.
 Tab/Shift+Tab traverse the screen; Enter/Space activate a focused entry or control.
 F6/Shift+F6 move between the breadcrumb bar and the notification screen.
 Escape returns to the conversation with its drafts and reading positions intact.

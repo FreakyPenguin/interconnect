@@ -213,12 +213,13 @@ impl App {
         } else {
             control.into()
         };
+        let shortcut = super::shortcuts::label("Cmd+I", "Ctrl+I");
         super::tooltips::tooltip(
             container(control).id("notification-bell-button"),
             if count == 0 {
-                "Notifications".into()
+                format!("Notifications ({shortcut})")
             } else {
-                format!("Notifications · {count} unread")
+                format!("Notifications · {count} unread ({shortcut})")
             },
             iced::widget::tooltip::Position::Bottom,
         )
@@ -375,7 +376,7 @@ impl App {
                     .style(shell::result_row),
             );
         }
-        super::focus_scope::dismissible(
+        super::focus_scope::dismissible_paged(
             column![
                 self.room_column(
                     container(
@@ -413,6 +414,7 @@ impl App {
             .height(Length::Fill),
             "notification-center",
             message(Event::Close),
+            "notifications-list",
         )
     }
 }
@@ -479,7 +481,13 @@ mod tests {
             iced::widget::text_editor::Content::with_text("draft stays here");
         app.scroll_positions.insert(key.clone(), 125.0);
         app.notification_center.records = records();
-        let _ = app.notification_center_event(Event::Open);
+        let shortcut = super::super::shell_shortcut(
+            &iced::keyboard::Key::Character("I".into()),
+            super::super::shortcuts::primary(false),
+        )
+        .unwrap();
+        let _ = app.update(shortcut);
+        assert!(app.notification_center.open);
         assert_eq!(app.notification_center.unread_count(), 2);
         assert_eq!(
             app.notification_center
@@ -520,7 +528,8 @@ mod tests {
         assert_eq!(app.notification_center.unread_count(), 2);
         let _ = app.notification_center_event(Event::ReadAll(app.account_id.clone()));
         assert_eq!(app.notification_center.unread_count(), 0);
-        let _ = app.notification_center_event(Event::Close);
+        let _ = app.update(Message::Escape);
+        assert!(!app.notification_center.open);
         let _ = app.notification_center_event(Event::Open);
         assert_eq!(app.notification_center.tab, Tab::Unread);
         assert_eq!(app.notification_center.filter, Filter::All);
@@ -591,6 +600,162 @@ mod tests {
         assert!(app.notification_center.open);
         assert_eq!(app.notification_center.tab, Tab::Unread);
         assert_eq!(app.notification_center.filter, Filter::All);
+    }
+
+    #[test]
+    fn page_keys_scroll_immediately_after_the_shortcut_without_moving_focus() {
+        use iced::keyboard::{Key, Modifiers, key::Named};
+
+        #[derive(Default)]
+        struct Probe {
+            offset: f32,
+            height: f32,
+            maximum: f32,
+            focused: Option<widget::Id>,
+            dropdown_open: bool,
+        }
+        impl widget::Operation for Probe {
+            fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+                visit(self);
+            }
+            fn scrollable(
+                &mut self,
+                id: Option<&widget::Id>,
+                bounds: iced::Rectangle,
+                content: iced::Rectangle,
+                translation: iced::Vector,
+                _: &mut dyn widget::operation::Scrollable,
+            ) {
+                if id == Some(&"notifications-list".into()) {
+                    self.offset = translation.y;
+                    self.height = bounds.height;
+                    self.maximum = (content.height - bounds.height).max(0.0);
+                }
+            }
+            fn focusable(
+                &mut self,
+                id: Option<&widget::Id>,
+                _: iced::Rectangle,
+                state: &mut dyn widget::operation::Focusable,
+            ) {
+                if state.is_focused() {
+                    self.focused = id.cloned();
+                }
+            }
+            fn custom(
+                &mut self,
+                _: Option<&widget::Id>,
+                _: iced::Rectangle,
+                state: &mut dyn std::any::Any,
+            ) {
+                if let Some(menu) = state.downcast_ref::<pick_list::KeyboardState>() {
+                    self.dropdown_open |= menu.is_open();
+                }
+            }
+        }
+        fn key(named: Named, modifiers: Modifiers) -> iced::Event {
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Named(named),
+                modified_key: Key::Named(named),
+                physical_key: iced::keyboard::key::Physical::Unidentified(
+                    iced::keyboard::key::NativeCode::Unidentified,
+                ),
+                location: iced::keyboard::Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            })
+        }
+        let mut app = crate::tests::demo_app();
+        app.notification_center.records = (0..40)
+            .map(|index| {
+                let mut record = records().remove(0);
+                record.entry.id = format!("message-{index}");
+                record
+            })
+            .collect();
+        let before = app.notification_center.records.clone();
+        let shortcut =
+            crate::shell_shortcut(&Key::Character("i".into()), Modifiers::COMMAND).unwrap();
+        let _ = app.update(shortcut);
+        assert!(app.notification_center.open);
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(14.0));
+        let size = iced::Size::new(640.0, 480.0);
+        let mut view = app.notification_center_view();
+        let mut tree = widget::Tree::new(&view);
+        let node =
+            view.as_widget_mut()
+                .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+        view.as_widget_mut().operate(
+            &mut tree,
+            Layout::new(&node),
+            &renderer,
+            &mut widget::operation::focusable::focus::<()>("notifications-unread".into()),
+        );
+        let mut inspect = |event: Option<iced::Event>| {
+            if let Some(event) = event {
+                let mut messages = Vec::new();
+                view.as_widget_mut().update(
+                    &mut tree,
+                    &event,
+                    Layout::new(&node),
+                    mouse::Cursor::Unavailable,
+                    &renderer,
+                    &mut clipboard::Null,
+                    &mut Shell::new(&mut messages),
+                    &iced::Rectangle::with_size(size),
+                );
+                assert!(messages.is_empty());
+            }
+            let mut probe = Probe::default();
+            view.as_widget_mut()
+                .operate(&mut tree, Layout::new(&node), &renderer, &mut probe);
+            probe
+        };
+        let initial = inspect(None);
+        assert!(initial.maximum > initial.height * 2.0);
+        assert_eq!(initial.offset, 0.0);
+        let down = inspect(Some(key(Named::PageDown, Modifiers::empty())));
+        assert!((down.offset - initial.height * 0.9).abs() <= 1.0);
+        assert_eq!(down.focused, Some("notifications-unread".into()));
+        let up = inspect(Some(key(Named::PageUp, Modifiers::empty())));
+        assert!(up.offset <= 1.0);
+        assert!(inspect(Some(key(Named::PageUp, Modifiers::empty()))).offset <= 1.0);
+        for modifiers in [
+            Modifiers::SHIFT,
+            Modifiers::CTRL,
+            Modifiers::ALT,
+            Modifiers::LOGO,
+        ] {
+            assert!(inspect(Some(key(Named::PageDown, modifiers))).offset <= 1.0);
+        }
+        inspect(Some(iced::Event::InputMethod(
+            iced::advanced::input_method::Event::Preedit("候".into(), None),
+        )));
+        assert!(inspect(Some(key(Named::PageDown, Modifiers::empty()))).offset <= 1.0);
+        inspect(Some(iced::Event::InputMethod(
+            iced::advanced::input_method::Event::Closed,
+        )));
+        // Tab twice reaches the category dropdown from Unread. An open menu
+        // reserves page keys even if its child does not consume them.
+        inspect(Some(key(Named::Tab, Modifiers::empty())));
+        inspect(Some(key(Named::Tab, Modifiers::empty())));
+        assert!(inspect(Some(key(Named::Space, Modifiers::empty()))).dropdown_open);
+        assert!(inspect(Some(key(Named::PageDown, Modifiers::empty()))).offset <= 1.0);
+        inspect(Some(key(Named::Escape, Modifiers::empty())));
+        for _ in 0..=(initial.maximum / (initial.height * 0.9)).ceil() as usize {
+            let mut event = key(Named::PageDown, Modifiers::empty());
+            if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { repeat, .. }) =
+                &mut event
+            {
+                *repeat = true;
+            }
+            inspect(Some(event));
+        }
+        let end = inspect(Some(key(Named::PageDown, Modifiers::empty())));
+        assert!((end.offset - end.maximum).abs() <= 1.0);
+        drop(view);
+        assert_eq!(app.notification_center.records, before);
     }
 
     #[test]

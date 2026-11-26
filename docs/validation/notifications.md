@@ -28,8 +28,9 @@ in-process navigation IDs; legacy room-only entries still open the conversation.
 
 ## Notification screen and history
 
-The bell opens Notifications; its badge counts unread Messages, Invitations, and
-Verification. Unread is the default; History includes read entries. Category filters
+The bell or Ctrl+I (macOS: Cmd+I) opens Notifications and focuses Unread;
+the bell tooltip shows the shortcut. Its badge counts unread Messages, Invitations,
+and Verification. Unread is the default; History includes read entries. Category filters
 apply to either. Opening alone marks nothing read. Open an entry, mark read/unread,
 or Mark all read. Expired invitation/verification entries retain read controls but
 lose navigation. Native invitation clicks put the active invitation first for review.
@@ -82,6 +83,16 @@ for identity. Test sample delivery, permission allow/deny/retry in System Settin
 and relaunch with the same bundle.
 
 ## Acceptance
+
+In demo mode, check Ctrl+I (macOS: Cmd+I) from both composers,
+sidebar/filter, breadcrumb, room/account search, and Saved messages. Verify Unread
+receives focus without marking entries read, and Escape restores the conversation
+with drafts, space/filter, and reading positions intact. Dialogs and active IME
+composition must take precedence. These are manual checks, not a completed run.
+With enough entries to overflow, press Page Down/Up immediately after the shortcut,
+with the pointer outside the list. Check overlapping pages, repeated presses,
+top/bottom limits, and retained Unread focus. Extra modifiers, an open category
+dropdown, active IME, and covering dialogs must not page the underlying list.
 
 Use a dedicated account and second client:
 

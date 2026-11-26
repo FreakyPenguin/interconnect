@@ -62,6 +62,7 @@ mod tests {
             ("F", true),
             ("j", false),
             ("J", true),
+            ("i", false),
             ("t", false),
             (",", false),
         ] {
@@ -89,6 +90,61 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn notifications_shortcut_reaches_the_shell_and_respects_input_guards() {
+        use iced::advanced::subscription::{self, Event as RuntimeEvent};
+        use iced::futures::{FutureExt, StreamExt};
+
+        let mut app = crate::tests::demo_app();
+        for letter in ["i", "I"] {
+            assert!(matches!(
+                shell_shortcut(&Key::Character(letter.into()), primary(false)),
+                Some(Message::NotificationCenter(
+                    crate::notification_center::Event::Open
+                ))
+            ));
+            assert!(shell_shortcut(&Key::Character(letter.into()), primary(true)).is_none());
+        }
+        let dispatch = |app: &crate::App, status| {
+            subscription::into_recipes(app.subscription())
+                .into_iter()
+                .filter_map(|recipe| {
+                    let input = RuntimeEvent::Interaction {
+                        window: iced::window::Id::unique(),
+                        status,
+                        event: event(Key::Character("I".into()), primary(false)),
+                    };
+                    recipe
+                        .stream(Box::pin(iced::futures::stream::iter([input])))
+                        .next()
+                        .now_or_never()
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
+        };
+        for status in [Status::Ignored, Status::Captured] {
+            assert!(matches!(
+                dispatch(&app, status).as_slice(),
+                [Message::NotificationCenter(
+                    crate::notification_center::Event::Open
+                )]
+            ));
+        }
+        app.composing = true;
+        assert!(dispatch(&app, Status::Ignored).is_empty());
+        app.composing = false;
+        let _ = app.update(Message::NewChat(new_chat::Event::Open));
+        assert!(app.new_chat.is_some());
+        assert!(dispatch(&app, Status::Ignored).is_empty());
+        app.new_chat = None;
+        app.settings.draft = Some(app.settings.current.clone());
+        for message in dispatch(&app, Status::Ignored) {
+            let _ = app.update(message);
+        }
+        assert!(!app.notification_center.open);
+        assert!(app.settings.draft.is_some());
     }
 
     #[test]

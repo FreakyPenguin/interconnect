@@ -22,6 +22,7 @@ pub(super) fn view<'a, Message: 'a>(
         content: content.into(),
         id,
         on_escape: None,
+        page_scroll: None,
     })
 }
 
@@ -36,6 +37,23 @@ pub(super) fn dismissible<'a, Message: Clone + 'a>(
         content: content.into(),
         id,
         on_escape: Some(Box::new(move || dismiss.clone())),
+        page_scroll: None,
+    })
+}
+
+/// Unhandled Page Up/Down scrolls the named list, including with header focus
+/// and the pointer outside the list. Child controls, dropdowns, and IME win.
+pub(super) fn dismissible_paged<'a, Message: Clone + 'a>(
+    content: impl Into<Element<'a, Message>>,
+    id: &'static str,
+    dismiss: Message,
+    scroll_id: &'static str,
+) -> Element<'a, Message> {
+    Element::new(Scope {
+        content: content.into(),
+        id,
+        on_escape: Some(Box::new(move || dismiss.clone())),
+        page_scroll: Some(scroll_id),
     })
 }
 
@@ -67,6 +85,7 @@ struct Scope<'a, Message> {
     content: Element<'a, Message>,
     id: &'static str,
     on_escape: Option<Box<dyn Fn() -> Message + 'a>>,
+    page_scroll: Option<&'static str>,
 }
 #[derive(Default)]
 struct State {
@@ -223,8 +242,22 @@ impl<Message> Widget<Message, Theme, Renderer> for Scope<'_, Message> {
                     ..
                 }) if modifiers.is_empty()
             );
+        let page = match event {
+            Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                key: Key::Named(key @ (Named::PageUp | Named::PageDown)),
+                modifiers,
+                ..
+            }) if modifiers.is_empty() && !tree.state.downcast_ref::<State>().composing => {
+                self.page_scroll.map(|id| Page {
+                    id: id.into(),
+                    down: *key == Named::PageDown,
+                    moved: false,
+                })
+            }
+            _ => None,
+        };
         let mut dropdown = OpenDropdown::default();
-        if escape {
+        if escape || page.is_some() {
             self.content.as_widget_mut().operate(
                 &mut tree.children[0],
                 layout,
@@ -244,6 +277,21 @@ impl<Message> Widget<Message, Theme, Renderer> for Scope<'_, Message> {
         );
         if escape && !dropdown.0 {
             shell.publish((self.on_escape.as_ref().expect("escape action"))());
+            shell.capture_event();
+        }
+        if let Some(mut page) = page
+            && !dropdown.0
+            && !shell.is_event_captured()
+        {
+            self.content.as_widget_mut().operate(
+                &mut tree.children[0],
+                layout,
+                renderer,
+                &mut page,
+            );
+            if page.moved {
+                shell.request_redraw();
+            }
             shell.capture_event();
         }
     }
@@ -363,6 +411,40 @@ impl widget::Operation for OpenDropdown {
 }
 struct Reveal {
     focused: Rectangle,
+}
+
+struct Page {
+    id: widget::Id,
+    down: bool,
+    moved: bool,
+}
+impl widget::Operation for Page {
+    fn traverse(&mut self, visit: &mut dyn FnMut(&mut dyn widget::Operation)) {
+        visit(self);
+    }
+    fn scrollable(
+        &mut self,
+        id: Option<&widget::Id>,
+        bounds: Rectangle,
+        content: Rectangle,
+        translation: Vector,
+        state: &mut dyn Scrollable,
+    ) {
+        if id != Some(&self.id) {
+            return;
+        }
+        let page = bounds.height * if self.down { 0.9 } else { -0.9 };
+        let maximum = (content.height - bounds.height).max(0.0);
+        let delta = (translation.y + page).clamp(0.0, maximum) - translation.y;
+        if delta != 0.0 {
+            state.scroll_by(
+                widget::operation::scrollable::AbsoluteOffset { x: 0.0, y: delta },
+                bounds,
+                content,
+            );
+            self.moved = true;
+        }
+    }
 }
 impl widget::Operation for Reveal {
     fn traverse(&mut self, f: &mut dyn FnMut(&mut dyn widget::Operation)) {
