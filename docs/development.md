@@ -151,7 +151,7 @@ Prerelease versions create prereleases and use Debian `~` ordering. Other runs
 do not publish. The release must not already exist when the publishing job runs.
 The release description comes from `docs/releases/vVERSION.md`, where `VERSION`
 matches `Cargo.toml`, including any prerelease suffix; see the
-[v0.5.0 notes](releases/v0.5.0.md).
+[v0.5.1 notes](releases/v0.5.1.md).
 All three formats use the [shared notice inventory](../scripts/release-notices.sh);
 CI extracts the packages and checks every listed notice against the source file.
 
@@ -164,7 +164,7 @@ To package an existing local release build:
 
 ```sh
 cargo build --locked --release --bin interconnect
-bash scripts/package-linux-release.sh v0.5.0 target/release/interconnect
+bash scripts/package-linux-release.sh v0.5.1 target/release/interconnect
 ```
 
 Use the version matching the manifest. Outputs go to `target/linux-release/`
