@@ -42,8 +42,13 @@ Read controls send no Matrix receipts.
 
 Reading the newest visible conversation clears matching older message entries.
 Viewing one older event clears only it, including entries delivered after layout.
+Session-local read observations also handle entries collected after scrolling past
+their messages or leaving the conversation. These observations are bounded to 256
+events and 256 conversation boundaries, reset on account changes, and preserve
+existing manual read/unread choices when importing duplicate history. A newest
+boundary uses messages actually reported visible, excluding arrivals awaiting layout.
 Thread replies clear in their thread, not from a room summary. Covered, unfocused,
-loading, or unsettled panes clear nothing. The inbox suspends underlying input,
+loading, or unsettled panes record no new reads. The inbox suspends underlying input,
 receipts, media demand, and GIFs while retaining live room/thread offsets and drafts.
 Demo uses local history without delivery.
 
@@ -110,7 +115,13 @@ Use a dedicated account and second client:
   updates. Preview opt-out affects both native payloads and new history.
 - Read specific older messages through navigation/search, including late-arriving
   history; offscreen entries stay unread. Repeat for threads and restart persistence.
+- Read several DM messages, scroll past them, and switch rooms before notification
+  history arrives. Their bell entries should arrive read; unseen messages, later
+  arrivals, other rooms, and other threads should retain their unread state.
 
 Automated policy/history/queue/lifecycle and private D-Bus fixtures cover payloads,
 actions, baselines, stale targets, and encrypted persistence. They do not establish
 native banners/focus/permission UI or live delivery. Measure [idle resources](idle-resources.md) separately.
+History regressions also cover real DM layout visibility, delayed collection after
+scrolling/navigation, bounded read observations, account replacement, and unseen
+arrivals before their first layout. The connected checks above remain manual.

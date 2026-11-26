@@ -1,8 +1,8 @@
 //! Merge bounded worker snapshots with encrypted, device-local read state.
-use super::{App, current_pane, thread_activity, timeline};
+use super::{App, DraftKey, current_pane, thread_activity, timeline};
 use interconnect::notifications::{Entry, HISTORY_LIMIT, Record, Target};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     sync::Arc,
 };
 
@@ -12,11 +12,62 @@ pub(super) struct State {
     seen: Option<Arc<Vec<Entry>>>,
     previous: HashMap<String, Entry>,
     visible: [Option<Visible>; 2],
+    read_events: HashSet<(DraftKey, String)>,
+    read_event_order: VecDeque<(DraftKey, String)>,
+    read_through: VecDeque<(DraftKey, u64)>,
 }
 struct Visible {
     generation: u64,
     keys: HashSet<String>,
     metrics: timeline::Metrics,
+}
+impl State {
+    fn remember_reads(
+        &mut self,
+        conversation: DraftKey,
+        events: &HashSet<String>,
+        timestamp: Option<u64>,
+    ) {
+        for event in events {
+            let key = (conversation.clone(), event.clone());
+            if self.read_events.insert(key.clone()) {
+                self.read_event_order.push_back(key);
+                if self.read_event_order.len() > HISTORY_LIMIT
+                    && let Some(oldest) = self.read_event_order.pop_front()
+                {
+                    self.read_events.remove(&oldest);
+                }
+            }
+        }
+        if let Some(mut timestamp) = timestamp {
+            self.read_through.retain(|(key, previous)| {
+                if key == &conversation {
+                    timestamp = timestamp.max(*previous);
+                    false
+                } else {
+                    true
+                }
+            });
+            self.read_through.push_front((conversation, timestamp));
+            self.read_through.truncate(HISTORY_LIMIT);
+        }
+    }
+
+    fn was_read(&self, entry: &Entry) -> bool {
+        let Target::Conversation {
+            room,
+            thread,
+            event,
+        } = entry.destination()
+        else {
+            return false;
+        };
+        let key = DraftKey { room, root: thread };
+        event.is_some_and(|event| self.read_events.contains(&(key.clone(), event)))
+            || self.read_through.iter().any(|(conversation, timestamp)| {
+                conversation == &key && entry.timestamp <= *timestamp
+            })
+    }
 }
 impl App {
     pub(super) fn observe_notification_visibility(
@@ -131,7 +182,9 @@ impl App {
             if ids.insert(entry.id.clone()) {
                 self.notification_center.records.push(Record {
                     entry: entry.clone(),
-                    read: false,
+                    // Collection and layout arrive independently. A newly
+                    // imported event may already have been read in this session.
+                    read: self.notification_history.was_read(entry),
                 });
             } else if self
                 .notification_history
@@ -178,7 +231,12 @@ impl App {
         // Keep the last viewport so history delivered after layout is reconciled too.
         let visible = [false, true].map(|thread| self.visible_notification_events(thread));
         let latest = [false, true].map(|thread| {
-            if !self.selection.conversation_visible || self.saved_scroll(thread) > 1.0 {
+            let index = usize::from(thread);
+            let viewport = self.notification_history.visible[index].as_ref()?;
+            if visible[index].is_empty()
+                || viewport.metrics.maximum() - viewport.metrics.translation > 1.0
+                || self.saved_scroll(thread).min(viewport.metrics.maximum()) > 1.0
+            {
                 return None;
             }
             if !thread
@@ -220,11 +278,24 @@ impl App {
             let timestamp = pane
                 .rows
                 .iter()
-                .filter(|row| row.is_live || row.timestamp_ms.is_some())
+                .filter(|row| {
+                    row.event_id
+                        .as_ref()
+                        .is_some_and(|event| visible[index].contains(event))
+                })
                 .filter_map(|row| row.timestamp_ms)
                 .max()?;
             Some((id.clone(), u64::try_from(timestamp).ok()?))
         });
+        for (index, events) in visible.iter().enumerate() {
+            if let Some(conversation) = self.draft_key(index == 1) {
+                self.notification_history.remember_reads(
+                    conversation,
+                    events,
+                    latest[index].as_ref().map(|(_, timestamp)| *timestamp),
+                );
+            }
+        }
         let mut changed = false;
         for record in &mut self.notification_center.records {
             if record.read {
@@ -348,6 +419,203 @@ mod tests {
                 translation: 300.0,
             },
         }
+    }
+
+    #[test]
+    fn direct_message_layout_clears_visible_notifications() {
+        use iced::advanced::{Layout, Shell, clipboard, layout, mouse, widget};
+        let mut app = app();
+        let _ = app.update(Message::Room("alex".into()));
+        let _ = app.update(Message::WindowFocused(true));
+        let events: Vec<_> = app
+            .model
+            .room
+            .as_ref()
+            .unwrap()
+            .rows
+            .iter()
+            .filter_map(|row| row.event_id.clone())
+            .collect();
+        publish(
+            &mut app,
+            events
+                .iter()
+                .map(|event| message_entry(event, "alex", None, Some(event)))
+                .collect(),
+        );
+        assert_eq!(app.notification_center.unread_count(), events.len());
+        let renderer = crate::test_renderer(iced::Font::DEFAULT, iced::Pixels(16.0));
+        let size = iced::Size::new(1000.0, 1000.0);
+        let mut messages = Vec::new();
+        {
+            let mut view = app.pane_sized(false, size);
+            let mut tree = widget::Tree::new(&view);
+            let node =
+                view.as_widget_mut()
+                    .layout(&mut tree, &renderer, &layout::Limits::new(size, size));
+            view.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Window(iced::window::Event::RedrawRequested(
+                    iced::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                mouse::Cursor::Unavailable,
+                &renderer,
+                &mut clipboard::Null,
+                &mut Shell::new(&mut messages),
+                &iced::Rectangle::with_size(size),
+            );
+        }
+        assert!(messages.iter().any(
+            |message| matches!(message, Message::TimelineVisible { keys, .. } if !keys.is_empty())
+        ));
+        for message in messages {
+            let _ = app.update(message);
+        }
+        assert_eq!(app.notification_center.unread_count(), 0);
+    }
+
+    #[test]
+    fn notifications_delivered_after_scrolling_and_leaving_a_conversation_stay_read() {
+        let mut app = app();
+        let _ = app.update(Message::Room("busy".into()));
+        let _ = app.update(Message::WindowFocused(true));
+        for event in ["busy-20", "busy-21", "busy-22", "busy-23", "busy-24"] {
+            let view = older_view(&mut app, false, &[event]);
+            let _ = app.update(view);
+        }
+        let _ = app.update(Message::Room("general".into()));
+        publish(
+            &mut app,
+            (20..=25)
+                .map(|index| {
+                    let event = format!("busy-{index}");
+                    message_entry(&event, "busy", None, Some(&event))
+                })
+                .collect(),
+        );
+        assert_eq!(app.notification_center.unread_count(), 1);
+        assert!(
+            app.notification_center
+                .records
+                .iter()
+                .all(|record| { record.read == (record.entry.id != "busy-25") })
+        );
+    }
+
+    #[test]
+    fn newest_read_boundary_survives_navigation_without_consuming_unseen_arrivals() {
+        let mut app = app();
+        let _ = app.update(Message::Room("alex".into()));
+        let _ = app.update(Message::WindowFocused(true));
+        let row = Arc::make_mut(&mut app.model.room.as_mut().unwrap().rows)
+            .last_mut()
+            .unwrap();
+        row.timestamp_ms = Some(100);
+        let event = row.event_id.clone().unwrap();
+        let mut view = older_view(&mut app, false, &[&event]);
+        app.scroll_positions
+            .insert(app.draft_key(false).unwrap(), 0.0);
+        if let Message::TimelineVisible { metrics, .. } = &mut view {
+            metrics.translation = metrics.maximum();
+        }
+        let _ = app.update(view);
+        let mut unseen = app
+            .model
+            .room
+            .as_ref()
+            .unwrap()
+            .rows
+            .last()
+            .unwrap()
+            .clone();
+        unseen.key = "$unseen".into();
+        unseen.event_id = Some(unseen.key.clone());
+        unseen.timestamp_ms = Some(200);
+        let mut model = app.model.clone();
+        Arc::make_mut(&mut model.room.as_mut().unwrap().rows).push(unseen);
+        let _ = app.update(Message::State(Box::new(model)));
+        let _ = app.update(Message::Room("general".into()));
+        let mut read = message_entry("older", "alex", None, Some("$older"));
+        read.timestamp = 90;
+        let mut future = message_entry("future", "alex", None, Some("$unseen"));
+        future.timestamp = 200;
+        let mut other_room = read.clone();
+        other_room.id = "other-room".into();
+        other_room.target = Target::Conversation {
+            room: "general".into(),
+            thread: None,
+            event: Some("$older".into()),
+        };
+        let mut other_thread = read.clone();
+        other_thread.id = "other-thread".into();
+        other_thread.target = Target::Conversation {
+            room: "alex".into(),
+            thread: Some("$thread".into()),
+            event: Some("$older".into()),
+        };
+        publish(
+            &mut app,
+            vec![read.clone(), future, other_room, other_thread],
+        );
+        assert_eq!(app.notification_center.unread_count(), 3);
+        assert!(
+            app.notification_center
+                .records
+                .iter()
+                .find(|record| record.entry.id == "older")
+                .unwrap()
+                .read
+        );
+        // A saved/manual unread choice wins over a duplicate worker snapshot.
+        app.notification_center
+            .records
+            .iter_mut()
+            .find(|record| record.entry.id == "older")
+            .unwrap()
+            .read = false;
+        publish(&mut app, vec![read]);
+        assert_eq!(app.notification_center.unread_count(), 4);
+    }
+
+    #[test]
+    fn remembered_reads_are_bounded_and_cleared_on_account_replacement() {
+        let mut app = app();
+        for index in 0..HISTORY_LIMIT + 1 {
+            app.notification_history.remember_reads(
+                DraftKey {
+                    room: format!("room-{index}"),
+                    root: None,
+                },
+                &HashSet::from([format!("$event-{index}")]),
+                Some(100),
+            );
+        }
+        assert_eq!(app.notification_history.read_events.len(), HISTORY_LIMIT);
+        assert_eq!(
+            app.notification_history.read_event_order.len(),
+            HISTORY_LIMIT
+        );
+        assert_eq!(app.notification_history.read_through.len(), HISTORY_LIMIT);
+        assert!(!app.notification_history.was_read(&message_entry(
+            "expired",
+            "room-0",
+            None,
+            Some("$event-0")
+        )));
+        assert!(app.notification_history.was_read(&message_entry(
+            "recent",
+            "room-256",
+            None,
+            Some("$event-256")
+        )));
+        app.account_id = Some("@first:example.org".into());
+        let mut model = app.model.clone();
+        model.account_id = Some("@replacement:example.org".into());
+        let _ = app.update(Message::State(Box::new(model)));
+        assert!(app.notification_history.read_events.is_empty());
+        assert!(app.notification_history.read_event_order.is_empty());
+        assert!(app.notification_history.read_through.is_empty());
     }
 
     #[test]
