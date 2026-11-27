@@ -2,14 +2,13 @@
 # Package an existing native binary; never launch it or access saved accounts.
 set -euo pipefail
 
-if [[ $# != 3 || ! $1 =~ ^(stable|testing)$ ]]; then
-    echo "Usage: $0 stable|testing VERSION BINARY" >&2
+if [[ $# != 2 ]]; then
+    echo "Usage: $0 VERSION BINARY" >&2
     exit 1
 fi
-suite="$1"
-version="$2+$suite"
+version="$1"
 dpkg --validate-version "$version"
-binary="$(realpath -- "$3")"
+binary="$(realpath -- "$2")"
 test -x "$binary"
 project_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 architecture="$(dpkg --print-architecture)"

@@ -106,7 +106,7 @@ open target/Interconnect.app --args --demo
 Omit `--release` for a debug build. Both profiles produce `target/Interconnect.app`
 (or under `CARGO_TARGET_DIR`). The script builds and ad-hoc signs the bundle;
 it does not launch it. The bundle identifier is `io.github.interconnect.desktop`.
-Distribution signing and notarization are not configured.
+See the [installation guide](../INSTALL.md#macos) for distribution signing limitations.
 
 A debug linker warning about `__eh_frame section too large` can affect unwind
 performance; prefer a release build for desktop checks. The transitive Metal
@@ -116,29 +116,31 @@ Inspect the dependency with
 `cargo tree --locked --target aarch64-apple-darwin -i block@0.1.6` and the native
 build report with `cargo report future-incompatibilities --package block@0.1.6`.
 
-### Download a bleeding-edge macOS build
-
-Open **Actions → macOS build**, select a successful run, and download
-**Interconnect-macos-arm64-<commit>** from Artifacts. Extract the artifact ZIP,
-then `Interconnect-macos-arm64.tar.gz`, and open `Interconnect.app`.
-Artifacts require a GitHub login/read access and have limited retention.
-These experimental Apple Silicon builds are ad-hoc signed and not notarized.
-
 ## Debian package automation
 
 The [Debian workflow](../.github/workflows/debian.yml) builds an amd64 package
-on Debian stable and checks installation of the same package on stable and
-testing. Download **Interconnect-debian-stable-amd64-<commit>** from a successful
-**Actions → Debian packages** run, extract the ZIP, and install with:
+on stable and checks installation on stable/testing without launching the client.
+See [INSTALL.md](../INSTALL.md) for downloads and APT setup.
 
-```sh
-sudo apt install ./interconnect_VERSION_amd64.deb
-```
+### Forgejo publishing
 
-This is a downloadable package, without an APT update repository. GitHub artifacts
-require login/read access and expire. The package includes a desktop entry and
-derived system-library dependencies; desktop portals and keyring providers need
-a running desktop session. Installation checks do not launch an account.
+The [publisher](../.github/workflows/forgejo-debian.yml) uses `FORGEJO_REPO_TOKEN`
+(`write:package` and organization write access) to upload to `interconnect` at
+`git.famkaufmann.info`. APT suites are `main` and `dev`, both with component `main`.
+
+`main` receives published, non-prerelease releases. The tag workflow calls the
+publisher directly because `GITHUB_TOKEN`-created releases do not trigger workflows.
+Manually published releases must include an amd64 `.deb` asset. `dev` receives
+every branch/tag push after installation checks; PRs, schedules, and manual builds
+only produce artifacts. Push builds do not cancel one another.
+
+Release versions match the manifest; branch builds use `VERSION+dev.RUN.ATTEMPT.gSHA`.
+For example, `0.5.1 < 0.5.1+dev.123.1.gabcdef123456 < 0.5.2`.
+Prerelease hyphens become `~`. Duplicate uploads fail with HTTP 409.
+
+Validate packaging changes with `actionlint`, `bash -n`, `dpkg --compare-versions`,
+and `dpkg-deb --info`/`--contents`. Uploads and APT updates need a live workflow
+run to verify.
 
 ### Tagged releases
 
@@ -147,18 +149,17 @@ Tag pushes run the Linux format/test/Clippy checks and macOS build/signature/ses
 checks. After these and Debian installation checks pass, the workflow creates a GitHub Release
 containing an amd64 `.deb`, `interconnect-VERSION-linux-x86_64.tar.gz`,
 `Interconnect-macos-arm64.tar.gz`, and `SHA256SUMS` covering all three downloads.
-Prerelease versions create prereleases and use Debian `~` ordering. Other runs
-do not publish. The release must not already exist when the publishing job runs.
+Prerelease versions create prereleases and use Debian `~` ordering. Branch pushes
+publish snapshots to the Forgejo `dev` suite without creating GitHub Releases.
+The release must not already exist when the release creation job runs.
 The release description comes from `docs/releases/vVERSION.md`, where `VERSION`
 matches `Cargo.toml`, including any prerelease suffix; see the
 [v0.5.1 notes](releases/v0.5.1.md).
 All three formats use the [shared notice inventory](../scripts/release-notices.sh);
 CI extracts the packages and checks every listed notice against the source file.
 
-Download from **Releases** and verify with `sha256sum --check SHA256SUMS`.
-Published Linux builds use Debian stable's library baseline. Graphics libraries,
-desktop services, and fallback Unicode/emoji fonts come from the system. Extract the macOS archive to get
-`Interconnect.app`; it is Apple Silicon only, ad-hoc signed, and not notarized.
+See the [installation guide](../INSTALL.md) for release downloads and checksum
+verification.
 
 To package an existing local release build:
 
@@ -169,7 +170,8 @@ bash scripts/package-linux-release.sh v0.5.1 target/release/interconnect
 
 Use the version matching the manifest. Outputs go to `target/linux-release/`
 and `target/debian/`. Direct Debian packaging uses
-`scripts/package-debian.sh stable VERSION BINARY`.
+`scripts/package-debian.sh DEBIAN_VERSION BINARY`; the supplied version is used
+unchanged.
 
 Version bumps must update `Cargo.toml`, the root entry in `Cargo.lock`, packaging
 examples, release notes at `docs/releases/vVERSION.md`, and both

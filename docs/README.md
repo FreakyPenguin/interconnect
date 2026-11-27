@@ -2,6 +2,7 @@
 
 See the [project README](../README.md) for features and screenshots.
 
+- Installation: [downloads, Debian channels, and macOS setup](../INSTALL.md).
 - Using the client: [keyboard shortcuts](keyboard.md),
   [messages and conversations](messages.md), [settings and profiles](settings.md),
   [saved messages](bookmarks.md).

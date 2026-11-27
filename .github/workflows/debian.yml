@@ -11,8 +11,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Every push must finish so it can publish to dev, even during a busy series.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'push' && github.run_id || '' }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 jobs:
   checks:
@@ -84,9 +85,21 @@ jobs:
           if [[ -n "$RELEASE_TAG" ]]; then
             bash scripts/package-linux-release.sh "$RELEASE_TAG" target/release/interconnect
           else
-            version=$(cargo metadata --locked --no-deps --format-version 1 | python3 -c 'import json,sys; print(json.load(sys.stdin)["packages"][0]["version"])')
-            version="${version}~dev$(date -u +%Y%m%d%H%M%S).${GITHUB_RUN_NUMBER}.g${GITHUB_SHA:0:12}"
-            bash scripts/package-debian.sh stable "$version" target/release/interconnect
+            version=$(python3 - <<'PY'
+          import os
+          import tomllib
+
+          with open("Cargo.toml", "rb") as manifest:
+              version = tomllib.load(manifest)["package"]["version"]
+          base, separator, metadata = version.partition("+")
+          version = base.replace("-", "~", 1) + separator + metadata
+          run = os.environ["GITHUB_RUN_NUMBER"]
+          attempt = os.environ["GITHUB_RUN_ATTEMPT"]
+          commit = os.environ["GITHUB_SHA"][:12]
+          print(f"{version}+dev.{run}.{attempt}.g{commit}")
+          PY
+            )
+            bash scripts/package-debian.sh "$version" target/release/interconnect
           fi
           dpkg-deb --info target/debian/*.deb
           dpkg-deb --contents target/debian/*.deb
@@ -102,7 +115,7 @@ jobs:
       - name: Upload bleeding-edge package
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: Interconnect-debian-stable-amd64-${{ github.sha }}
+          name: Interconnect-debian-amd64-${{ github.sha }}
           path: target/debian/*.deb
           # Raw uploads ignore `name`; install jobs need this stable artifact name.
           archive: true
@@ -142,7 +155,7 @@ jobs:
       - name: Download package
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
         with:
-          name: Interconnect-debian-stable-amd64-${{ github.sha }}
+          name: Interconnect-debian-amd64-${{ github.sha }}
           path: downloads
 
       - name: Install in a clean runtime container
@@ -159,6 +172,17 @@ jobs:
             exit 1
           fi
 
+  publish-dev:
+    name: Publish Debian dev channel
+    if: github.event_name == 'push'
+    needs: [build, install]
+    uses: ./.github/workflows/forgejo-debian.yml
+    with:
+      channel: dev
+      artifact-name: Interconnect-debian-amd64-${{ github.sha }}
+    secrets:
+      FORGEJO_REPO_TOKEN: ${{ secrets.FORGEJO_REPO_TOKEN }}
+
   release:
     name: Publish tagged release
     if: github.event_name == 'push' && github.ref_type == 'tag'
@@ -167,6 +191,8 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: write
+    outputs:
+      prerelease: ${{ steps.publish.outputs.prerelease }}
     steps:
       - name: Check out release notes
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -193,6 +219,7 @@ jobs:
           sha256sum --check SHA256SUMS
 
       - name: Create GitHub release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -204,5 +231,20 @@ jobs:
           args=(--verify-tag --notes-file "$notes" --title "Interconnect $RELEASE_TAG")
           if [[ "${version%%+*}" == *-* ]]; then
             args+=(--prerelease)
+            echo 'prerelease=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'prerelease=false' >> "$GITHUB_OUTPUT"
           fi
           gh release create "$RELEASE_TAG" downloads/* "${args[@]}"
+
+  publish-main:
+    name: Publish Debian main channel
+    if: needs.release.outputs.prerelease == 'false'
+    needs: release
+    # GITHUB_TOKEN-created releases do not trigger another release workflow.
+    uses: ./.github/workflows/forgejo-debian.yml
+    with:
+      channel: main
+      release-tag: ${{ github.ref_name }}
+    secrets:
+      FORGEJO_REPO_TOKEN: ${{ secrets.FORGEJO_REPO_TOKEN }}

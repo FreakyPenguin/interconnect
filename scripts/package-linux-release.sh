@@ -38,8 +38,8 @@ strip --strip-unneeded "$archive_root/interconnect"
 bash "$project_root/scripts/release-notices.sh" copy "$archive_root"
 tar -czf "$output_dir/$archive_name.tar.gz" -C "$work_dir" "$archive_name"
 
-bash "$project_root/scripts/package-debian.sh" stable "$debian_version" "$binary"
-deb_name="interconnect_${debian_version}+stable_amd64.deb"
+bash "$project_root/scripts/package-debian.sh" "$debian_version" "$binary"
+deb_name="interconnect_${debian_version}_amd64.deb"
 cp -- "$project_root/target/debian/$deb_name" "$output_dir/$deb_name"
 (
     cd "$output_dir"

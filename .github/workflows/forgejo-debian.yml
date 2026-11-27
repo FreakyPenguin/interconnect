@@ -1,0 +1,84 @@
+name: Publish Debian package to Forgejo
+
+on:
+  release:
+    types: [published]
+  workflow_call:
+    inputs:
+      channel:
+        description: APT suite (main or dev)
+        required: true
+        type: string
+      artifact-name:
+        description: Package artifact from this run; otherwise use a GitHub Release
+        default: ''
+        type: string
+      release-tag:
+        description: Published GitHub Release to download when no artifact is given
+        default: ''
+        type: string
+    secrets:
+      FORGEJO_REPO_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Upload to Forgejo
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      CHANNEL: ${{ inputs.channel || 'main' }}
+    steps:
+      - name: Download checked Debian artifact
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: downloads
+
+      - name: Download published Debian release asset
+        if: inputs.artifact-name == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release-tag || github.event.release.tag_name }}
+        run: |
+          gh release download "$RELEASE_TAG" --pattern '*.deb' --dir downloads
+
+      - name: Publish Debian package
+        env:
+          FORGEJO_REPO_TOKEN: ${{ secrets.FORGEJO_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+          case "$CHANNEL" in
+            main|dev) ;;
+            *) echo "Unsupported APT suite: $CHANNEL" >&2; exit 1 ;;
+          esac
+          test -n "$FORGEJO_REPO_TOKEN"
+          packages=(downloads/*.deb)
+          test "${#packages[@]}" -eq 1
+          package="${packages[0]}"
+          test "$(dpkg-deb --field "$package" Package)" = interconnect
+          test "$(dpkg-deb --field "$package" Architecture)" = amd64
+          version="$(dpkg-deb --field "$package" Version)"
+          dpkg --validate-version "$version"
+          if ! status=$(curl --fail-with-body --silent --show-error \
+            --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 300 \
+            --header "Authorization: token $FORGEJO_REPO_TOKEN" \
+            --upload-file "$package" --output "$RUNNER_TEMP/forgejo-upload.txt" \
+            --write-out '%{http_code}' \
+            "https://git.famkaufmann.info/api/packages/interconnect/debian/pool/$CHANNEL/main/upload"); then
+            echo "Forgejo upload failed (HTTP $status)" >&2
+            cat "$RUNNER_TEMP/forgejo-upload.txt" >&2
+            exit 1
+          fi
+          if [[ "$status" != 201 ]]; then
+            echo "Forgejo upload returned HTTP $status; expected 201" >&2
+            cat "$RUNNER_TEMP/forgejo-upload.txt" >&2
+            exit 1
+          fi
+          echo "Published interconnect $version (amd64) to $CHANNEL" >> "$GITHUB_STEP_SUMMARY"

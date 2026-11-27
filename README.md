@@ -55,8 +55,7 @@ Images use local demo data and predate the current code controls. See
 
 Download a package from [GitHub Releases](https://github.com/FreakyPenguin/interconnect/releases):
 an amd64 Debian package, Linux tarball, or Apple Silicon macOS app.
-See [installation details](docs/development.md#tagged-releases);
-macOS builds are ad-hoc signed and not notarized.
+See the [installation guide](INSTALL.md) for setup and Debian update channels.
 
 Or install Rust and the [native dependencies](docs/development.md#build-and-checks),
 then explore without an account:
